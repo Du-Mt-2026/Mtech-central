@@ -23,3 +23,23 @@ Stage Summary:
 - Subnet 10.13.37.x para evitar conflitos
 - WIREGUARD_SERVER_ENDPOINT precisa ser configurado com IP público real
 - Pendente: integração real com WhatsApp (whatsmeow), envio real de mensagens
+
+---
+Task ID: 2
+Agent: Main
+Task: Fix NaN console error in DashboardTab
+
+Work Log:
+- Diagnosed root cause: stats API was missing `sentMessages`, `deliveredMessages`, `failedMessages`, `totalCampaigns` fields
+- API returned only `totalMessages`, `deliveryRate`, `disconnectedChips` — frontend expected more
+- Fixed `/src/app/api/stats/route.ts` to compute and return all fields the frontend needs
+- Added safety defaults in DashboardTab using `?? 0` nullish coalescing to prevent NaN
+- Replaced all `stats.` references in DashboardTab JSX with `s.` (safe defaults object)
+- Verified API returns all fields correctly with `curl`
+- Lint passes clean
+
+Stage Summary:
+- NaN console error fixed — stats API now returns complete data
+- DashboardTab is resilient to missing/undefined fields
+- Dev server running stable on port 3000
+- Cron job created for webDevReview (every 15 minutes)

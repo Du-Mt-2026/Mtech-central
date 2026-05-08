@@ -111,8 +111,19 @@ function StatusBadge({ status }: { status: string }) {
 function DashboardTab({ stats }: { stats: Stats | null }) {
   if (!stats) return <div className="flex items-center justify-center py-20"><RefreshCw className="size-6 animate-spin text-muted-foreground" /></div>
 
-  const deliveryRate = stats.totalMessages > 0 ? Math.round((stats.deliveredMessages / stats.totalMessages) * 100) : 0
-  const connectionRate = stats.totalChips > 0 ? Math.round((stats.connectedChips / stats.totalChips) * 100) : 0
+  // Safety defaults to prevent NaN
+  const s = {
+    totalChips: stats.totalChips ?? 0,
+    connectedChips: stats.connectedChips ?? 0,
+    totalCampaigns: stats.totalCampaigns ?? 0,
+    activeCampaigns: stats.activeCampaigns ?? 0,
+    totalMessages: stats.totalMessages ?? 0,
+    sentMessages: stats.sentMessages ?? 0,
+    deliveredMessages: stats.deliveredMessages ?? 0,
+    failedMessages: stats.failedMessages ?? 0,
+  }
+  const deliveryRate = s.totalMessages > 0 ? Math.round((s.deliveredMessages / s.totalMessages) * 100) : 0
+  const connectionRate = s.totalChips > 0 ? Math.round((s.connectedChips / s.totalChips) * 100) : 0
 
   return (
     <div className="space-y-6">
@@ -122,11 +133,11 @@ function DashboardTab({ stats }: { stats: Stats | null }) {
           <Card className="border-l-4 border-l-purple-500">
             <CardHeader>
               <CardDescription>Chips</CardDescription>
-              <CardTitle className="text-3xl">{stats.totalChips}</CardTitle>
+              <CardTitle className="text-3xl">{s.totalChips}</CardTitle>
               <CardAction><Smartphone className="size-5 text-purple-500" /></CardAction>
             </CardHeader>
             <CardContent>
-              <p className="text-sm text-muted-foreground">{stats.connectedChips} conectados</p>
+              <p className="text-sm text-muted-foreground">{s.connectedChips} conectados</p>
               <Progress value={connectionRate} className="mt-2 h-1.5" />
             </CardContent>
           </Card>
@@ -136,11 +147,11 @@ function DashboardTab({ stats }: { stats: Stats | null }) {
           <Card className="border-l-4 border-l-emerald-500">
             <CardHeader>
               <CardDescription>Campanhas</CardDescription>
-              <CardTitle className="text-3xl">{stats.totalCampaigns}</CardTitle>
+              <CardTitle className="text-3xl">{s.totalCampaigns}</CardTitle>
               <CardAction><Radio className="size-5 text-emerald-500" /></CardAction>
             </CardHeader>
             <CardContent>
-              <p className="text-sm text-muted-foreground">{stats.activeCampaigns} ativas</p>
+              <p className="text-sm text-muted-foreground">{s.activeCampaigns} ativas</p>
             </CardContent>
           </Card>
         </motion.div>
@@ -149,11 +160,11 @@ function DashboardTab({ stats }: { stats: Stats | null }) {
           <Card className="border-l-4 border-l-orange-500">
             <CardHeader>
               <CardDescription>Mensagens</CardDescription>
-              <CardTitle className="text-3xl">{stats.totalMessages}</CardTitle>
+              <CardTitle className="text-3xl">{s.totalMessages}</CardTitle>
               <CardAction><MessageSquare className="size-5 text-orange-500" /></CardAction>
             </CardHeader>
             <CardContent>
-              <p className="text-sm text-muted-foreground">{stats.sentMessages} enviadas</p>
+              <p className="text-sm text-muted-foreground">{s.sentMessages} enviadas</p>
             </CardContent>
           </Card>
         </motion.div>
@@ -166,7 +177,7 @@ function DashboardTab({ stats }: { stats: Stats | null }) {
               <CardAction><Activity className="size-5 text-rose-500" /></CardAction>
             </CardHeader>
             <CardContent>
-              <p className="text-sm text-muted-foreground">{stats.failedMessages} falharam</p>
+              <p className="text-sm text-muted-foreground">{s.failedMessages} falharam</p>
               <Progress value={deliveryRate} className="mt-2 h-1.5" />
             </CardContent>
           </Card>
@@ -183,19 +194,19 @@ function DashboardTab({ stats }: { stats: Stats | null }) {
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2"><Clock className="size-4 text-muted-foreground" /> Pendentes</div>
-                <span className="font-semibold">{stats.totalMessages - stats.sentMessages - stats.deliveredMessages - stats.failedMessages}</span>
+                <span className="font-semibold">{s.totalMessages - s.sentMessages - s.deliveredMessages - s.failedMessages}</span>
               </div>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2"><Send className="size-4 text-blue-500" /> Enviadas</div>
-                <span className="font-semibold">{stats.sentMessages}</span>
+                <span className="font-semibold">{s.sentMessages}</span>
               </div>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2"><Check className="size-4 text-emerald-500" /> Entregues</div>
-                <span className="font-semibold">{stats.deliveredMessages}</span>
+                <span className="font-semibold">{s.deliveredMessages}</span>
               </div>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2"><X className="size-4 text-rose-500" /> Falharam</div>
-                <span className="font-semibold text-rose-600">{stats.failedMessages}</span>
+                <span className="font-semibold text-rose-600">{s.failedMessages}</span>
               </div>
             </div>
           </CardContent>
@@ -209,11 +220,11 @@ function DashboardTab({ stats }: { stats: Stats | null }) {
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2"><Check className="size-4 text-emerald-500" /> Conectados</div>
-                <span className="font-semibold">{stats.connectedChips}</span>
+                <span className="font-semibold">{s.connectedChips}</span>
               </div>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2"><X className="size-4 text-muted-foreground" /> Desconectados</div>
-                <span className="font-semibold">{stats.totalChips - stats.connectedChips}</span>
+                <span className="font-semibold">{s.totalChips - s.connectedChips}</span>
               </div>
               <Separator className="my-2" />
               <div className="flex items-center justify-between">
