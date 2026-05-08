@@ -6,7 +6,8 @@ import {
   Smartphone, Radio, Send, Shield, BarChart3, Plus, Trash2,
   Copy, RefreshCw, Check, X, Clock, Zap, Users, MessageSquare,
   Activity, AlertCircle, ChevronDown, FileText, Settings, Eye,
-  Pause, Play, Edit
+  Pause, Play, Edit, Upload, Search, ArrowLeft, ListFilter, CalendarDays,
+  Phone, UserPlus, FileSpreadsheet, ArrowRight, ChevronRight
 } from 'lucide-react'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardAction } from '@/components/ui/card'
@@ -15,14 +16,18 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogClose } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogClose, DialogDescription } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Progress } from '@/components/ui/progress'
 import { Separator } from '@/components/ui/separator'
+import {
+  AlertDialog, AlertDialogTrigger, AlertDialogContent, AlertDialogHeader,
+  AlertDialogFooter, AlertDialogTitle, AlertDialogDescription, AlertDialogAction, AlertDialogCancel,
+} from '@/components/ui/alert-dialog'
 import { toast } from 'sonner'
 import QRCode from 'qrcode'
 
-// Types
+// ===== Types =====
 interface Chip {
   id: string
   name: string
@@ -37,6 +42,15 @@ interface Chip {
   updatedAt: string
 }
 
+interface SequenceStep {
+  id: string
+  campaignId: string
+  stepOrder: number
+  content: string
+  delayMinutes: number
+  createdAt: string
+}
+
 interface Campaign {
   id: string
   name: string
@@ -44,13 +58,33 @@ interface Campaign {
   messageVariations: string
   sendIntervalMin: number
   sendIntervalMax: number
+  contactListId: string | null
   scheduledAt: string | null
   startedAt: string | null
   completedAt: string | null
   createdAt: string
   updatedAt: string
   chips: { id: string; chipId: string; chip: Chip }[]
+  sequenceSteps: SequenceStep[]
+  contactList: { id: string; name: string } | null
   _count?: { messages: number }
+}
+
+interface ContactItem {
+  id: string
+  name: string
+  phone: string
+  contactListId: string | null
+  chipId: string | null
+  createdAt: string
+}
+
+interface ContactList {
+  id: string
+  name: string
+  createdAt: string
+  updatedAt: string
+  _count?: { contacts: number; campaigns: number }
 }
 
 interface Message {
@@ -80,7 +114,7 @@ interface Stats {
   failedMessages: number
 }
 
-// Status badge helper
+// ===== Status Badge Helper =====
 function StatusBadge({ status }: { status: string }) {
   const variants: Record<string, { variant: 'default' | 'secondary' | 'destructive' | 'outline'; icon: React.ReactNode; label: string }> = {
     disconnected: { variant: 'outline', icon: <X className="size-3" />, label: 'Desconectado' },
@@ -107,11 +141,49 @@ function StatusBadge({ status }: { status: string }) {
   )
 }
 
+// ===== Confirm Dialog (replaces window.confirm) =====
+function ConfirmDialog({
+  open,
+  onOpenChange,
+  title,
+  description,
+  onConfirm,
+  confirmLabel = 'Confirmar',
+  variant = 'destructive',
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  title: string
+  description: string
+  onConfirm: () => void
+  confirmLabel?: string
+  variant?: 'destructive' | 'default'
+}) {
+  return (
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{title}</AlertDialogTitle>
+          <AlertDialogDescription>{description}</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancelar</AlertDialogCancel>
+          <AlertDialogAction
+            onClick={() => { onConfirm(); onOpenChange(false) }}
+            className={variant === 'destructive' ? 'bg-rose-600 hover:bg-rose-700' : ''}
+          >
+            {confirmLabel}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  )
+}
+
 // ===== Dashboard Tab =====
 function DashboardTab({ stats }: { stats: Stats | null }) {
   if (!stats) return <div className="flex items-center justify-center py-20"><RefreshCw className="size-6 animate-spin text-muted-foreground" /></div>
 
-  // Safety defaults to prevent NaN
   const s = {
     totalChips: stats.totalChips ?? 0,
     connectedChips: stats.connectedChips ?? 0,
@@ -124,10 +196,10 @@ function DashboardTab({ stats }: { stats: Stats | null }) {
   }
   const deliveryRate = s.totalMessages > 0 ? Math.round((s.deliveredMessages / s.totalMessages) * 100) : 0
   const connectionRate = s.totalChips > 0 ? Math.round((s.connectedChips / s.totalChips) * 100) : 0
+  const pendingMessages = Math.max(0, s.totalMessages - s.sentMessages - s.failedMessages)
 
   return (
     <div className="space-y-6">
-      {/* Stats Grid */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0 }}>
           <Card className="border-l-4 border-l-purple-500">
@@ -184,7 +256,6 @@ function DashboardTab({ stats }: { stats: Stats | null }) {
         </motion.div>
       </div>
 
-      {/* Quick Stats Row */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <Card>
           <CardHeader>
@@ -194,10 +265,10 @@ function DashboardTab({ stats }: { stats: Stats | null }) {
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2"><Clock className="size-4 text-muted-foreground" /> Pendentes</div>
-                <span className="font-semibold">{s.totalMessages - s.sentMessages - s.deliveredMessages - s.failedMessages}</span>
+                <span className="font-semibold">{pendingMessages}</span>
               </div>
               <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2"><Send className="size-4 text-blue-500" /> Enviadas</div>
+                <div className="flex items-center gap-2"><Send className="size-4 text-sky-500" /> Enviadas</div>
                 <span className="font-semibold">{s.sentMessages}</span>
               </div>
               <div className="flex items-center justify-between">
@@ -249,6 +320,7 @@ function ChipsTab() {
   const [qrCodeUrl, setQrCodeUrl] = useState('')
   const [copied, setCopied] = useState(false)
   const [newChip, setNewChip] = useState({ name: '', phoneNumber: '' })
+  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
 
   const fetchChips = useCallback(async () => {
     try {
@@ -264,14 +336,10 @@ function ChipsTab() {
 
   useEffect(() => { fetchChips() }, [fetchChips])
 
-  // Generate QR code when config changes
   useEffect(() => {
     if (selectedChipConfig?.config) {
-      QRCode.toDataURL(selectedChipConfig.config, {
-        width: 300,
-        margin: 2,
-        color: { dark: '#000000', light: '#ffffff' },
-      }).then(url => setQrCodeUrl(url)).catch(() => setQrCodeUrl(''))
+      QRCode.toDataURL(selectedChipConfig.config, { width: 300, margin: 2, color: { dark: '#000000', light: '#ffffff' } })
+        .then(url => setQrCodeUrl(url)).catch(() => setQrCodeUrl(''))
     } else {
       setQrCodeUrl('')
     }
@@ -279,26 +347,18 @@ function ChipsTab() {
 
   const createChip = async () => {
     try {
-      const res = await fetch('/api/chips', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newChip),
-      })
-      if (!res.ok) {
-        const data = await res.json()
-        throw new Error(data.error)
-      }
+      const res = await fetch('/api/chips', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newChip) })
+      if (!res.ok) { const data = await res.json(); throw new Error(data.error) }
       toast.success('Chip criado com sucesso!')
       setAddDialogOpen(false)
       setNewChip({ name: '', phoneNumber: '' })
       fetchChips()
-    } catch (err: any) {
-      toast.error(err.message || 'Erro ao criar chip')
+    } catch (err: unknown) {
+      toast.error((err as Error).message || 'Erro ao criar chip')
     }
   }
 
   const deleteChip = async (id: string) => {
-    if (!confirm('Tem certeza que deseja remover este chip?')) return
     try {
       await fetch(`/api/chips/${id}`, { method: 'DELETE' })
       toast.success('Chip removido!')
@@ -310,11 +370,7 @@ function ChipsTab() {
 
   const updateChipStatus = async (id: string, status: string) => {
     try {
-      await fetch(`/api/chips/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status }),
-      })
+      await fetch(`/api/chips/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) })
       toast.success('Status atualizado!')
       fetchChips()
     } catch {
@@ -337,7 +393,7 @@ function ChipsTab() {
     try {
       await navigator.clipboard.writeText(text)
       setCopied(true)
-      toast.success('Copiado para a área de transferência!')
+      toast.success('Copiado!')
       setTimeout(() => setCopied(false), 2000)
     } catch {
       toast.error('Erro ao copiar')
@@ -358,11 +414,12 @@ function ChipsTab() {
           <DialogContent>
             <DialogHeader>
               <DialogTitle>Adicionar Chip</DialogTitle>
+              <DialogDescription>Cadastre um novo chip para envio de mensagens</DialogDescription>
             </DialogHeader>
             <div className="space-y-4 py-4">
               <div className="space-y-2">
                 <Label>Nome do Chip</Label>
-                <Input placeholder="Ex: Chip Claro" value={newChip.name} onChange={e => setNewChip(prev => ({ ...prev, name: e.target.value }))} />
+                <Input placeholder="Ex: Chip Claro 01" value={newChip.name} onChange={e => setNewChip(prev => ({ ...prev, name: e.target.value }))} />
               </div>
               <div className="space-y-2">
                 <Label>Número do Telefone</Label>
@@ -381,10 +438,12 @@ function ChipsTab() {
         <div className="flex items-center justify-center py-20"><RefreshCw className="size-6 animate-spin text-muted-foreground" /></div>
       ) : chips.length === 0 ? (
         <Card>
-          <CardContent className="flex flex-col items-center justify-center py-12">
-            <Smartphone className="size-12 text-muted-foreground mb-4" />
-            <p className="text-lg font-medium">Nenhum chip cadastrado</p>
-            <p className="text-sm text-muted-foreground">Adicione um chip para começar</p>
+          <CardContent className="flex flex-col items-center justify-center py-16">
+            <div className="flex size-16 items-center justify-center rounded-2xl bg-muted mb-4">
+              <Smartphone className="size-8 text-muted-foreground" />
+            </div>
+            <p className="text-lg font-semibold">Nenhum chip cadastrado</p>
+            <p className="text-sm text-muted-foreground mt-1">Adicione um chip para começar a enviar mensagens</p>
           </CardContent>
         </Card>
       ) : (
@@ -436,7 +495,7 @@ function ChipsTab() {
                       <Button variant="outline" size="sm" className="gap-1" onClick={() => fetchConfig(chip.id)}>
                         <Shield className="size-3.5" /> Config
                       </Button>
-                      <Button variant="outline" size="sm" className="text-rose-500 hover:text-rose-600" onClick={() => deleteChip(chip.id)}>
+                      <Button variant="outline" size="sm" className="text-rose-500 hover:text-rose-600" onClick={() => setDeleteConfirm(chip.id)}>
                         <Trash2 className="size-3.5" />
                       </Button>
                     </div>
@@ -448,7 +507,17 @@ function ChipsTab() {
         </div>
       )}
 
-      {/* WireGuard Config Dialog with QR Code and Tutorial */}
+      <ConfirmDialog
+        open={!!deleteConfirm}
+        onOpenChange={() => setDeleteConfirm(null)}
+        title="Remover Chip"
+        description="Tem certeza que deseja remover este chip? Esta ação não pode ser desfeita."
+        onConfirm={() => { if (deleteConfirm) deleteChip(deleteConfirm) }}
+        confirmLabel="Remover"
+        variant="destructive"
+      />
+
+      {/* WireGuard Config Dialog */}
       <Dialog open={configDialogOpen} onOpenChange={(open) => {
         setConfigDialogOpen(open)
         if (!open) { setSelectedChipConfig(null); setQrCodeUrl(''); setCopied(false) }
@@ -459,6 +528,7 @@ function ChipsTab() {
               <Shield className="size-5 text-emerald-500" />
               Configuração WireGuard — {selectedChipConfig?.chip.name}
             </DialogTitle>
+            <DialogDescription>Use as abas abaixo para visualizar o QR Code, copiar a configuração ou seguir o tutorial.</DialogDescription>
           </DialogHeader>
           {selectedChipConfig && (
             <Tabs defaultValue="qrcode" className="w-full">
@@ -468,7 +538,6 @@ function ChipsTab() {
                 <TabsTrigger value="tutorial" className="flex-1 gap-1.5">📋 Passo a Passo</TabsTrigger>
               </TabsList>
 
-              {/* QR Code Tab */}
               <TabsContent value="qrcode" className="mt-4">
                 <div className="flex flex-col items-center gap-4">
                   {qrCodeUrl ? (
@@ -499,7 +568,6 @@ function ChipsTab() {
                 </div>
               </TabsContent>
 
-              {/* Config Tab */}
               <TabsContent value="config" className="mt-4">
                 <div className="space-y-4">
                   <div className="relative">
@@ -508,11 +576,7 @@ function ChipsTab() {
                     </pre>
                   </div>
                   <Button onClick={() => copyToClipboard(selectedChipConfig.config)} variant="outline" className="w-full">
-                    {copied ? (
-                      <><Check className="size-4 mr-2 text-emerald-500" /> Copiado!</>
-                    ) : (
-                      <><Copy className="size-4 mr-2" /> Copiar Config</>
-                    )}
+                    {copied ? (<><Check className="size-4 mr-2 text-emerald-500" /> Copiado!</>) : (<><Copy className="size-4 mr-2" /> Copiar Config</>)}
                   </Button>
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
@@ -531,10 +595,8 @@ function ChipsTab() {
                 </div>
               </TabsContent>
 
-              {/* Tutorial Tab */}
               <TabsContent value="tutorial" className="mt-4">
                 <div className="space-y-5 text-sm">
-                  {/* Step 1 */}
                   <div className="space-y-2">
                     <h4 className="font-semibold text-base flex items-center gap-2">
                       <span className="flex items-center justify-center size-6 rounded-full bg-emerald-600 text-white text-xs font-bold shrink-0">1</span>
@@ -546,11 +608,8 @@ function ChipsTab() {
                       <p>• Cole em <code className="bg-muted px-1.5 py-0.5 rounded text-xs">/etc/wireguard/wg0.conf</code></p>
                       <p>• Ative: <code className="bg-muted px-1.5 py-0.5 rounded text-xs">wg-quick up wg0</code></p>
                       <p>• Habilite IP forwarding: <code className="bg-muted px-1.5 py-0.5 rounded text-xs">sysctl -w net.ipv4.ip_forward=1</code></p>
-                      <p>• Torne persistente: <code className="bg-muted px-1.5 py-0.5 rounded text-xs">systemctl enable wg-quick@wg0</code></p>
                     </div>
                   </div>
-
-                  {/* Step 2 */}
                   <div className="space-y-2">
                     <h4 className="font-semibold text-base flex items-center gap-2">
                       <span className="flex items-center justify-center size-6 rounded-full bg-emerald-600 text-white text-xs font-bold shrink-0">2</span>
@@ -561,12 +620,9 @@ function ChipsTab() {
                       <p>• Abra o app e toque no botão <strong>&quot;+&quot;</strong></p>
                       <p>• Escolha <strong>&quot;Escanear QR Code&quot;</strong></p>
                       <p>• Aponte a câmera para o QR Code da aba anterior</p>
-                      <p>• Ative o túnel WireGuard (chave liga/desliga)</p>
-                      <p>• Verifique se conectou — deve mostrar tempo de conexão ✅</p>
+                      <p>• Ative o túnel WireGuard</p>
                     </div>
                   </div>
-
-                  {/* Step 3 */}
                   <div className="space-y-2">
                     <h4 className="font-semibold text-base flex items-center gap-2">
                       <span className="flex items-center justify-center size-6 rounded-full bg-emerald-600 text-white text-xs font-bold shrink-0">3</span>
@@ -574,40 +630,17 @@ function ChipsTab() {
                     </h4>
                     <div className="ml-8 space-y-1.5 text-muted-foreground">
                       <p>• Instale o app <strong>Every Proxy</strong> (Play Store)</p>
-                      <p>• Abra o Every Proxy</p>
                       <p>• Vá na aba <strong>&quot;SOCKS5&quot;</strong></p>
                       <p>• Ligue o switch — <strong>é só ligar, não tem configuração!</strong></p>
-                      <p>• O app vai mostrar o IP (ex: <code className="bg-muted px-1 py-0.5 rounded text-xs">{selectedChipConfig.chip.wireguardIp}</code>) e porta <code className="bg-muted px-1 py-0.5 rounded text-xs">1080</code></p>
-                      <p>• Pronto! O proxy SOCKS5 está rodando no chip 🎉</p>
+                      <p>• Pronto! O proxy SOCKS5 está rodando no chip</p>
                     </div>
                   </div>
-
-                  {/* Step 4 */}
-                  <div className="space-y-2">
-                    <h4 className="font-semibold text-base flex items-center gap-2">
-                      <span className="flex items-center justify-center size-6 rounded-full bg-emerald-600 text-white text-xs font-bold shrink-0">4</span>
-                      Teste a Conexão
-                    </h4>
-                    <div className="ml-8 space-y-1.5 text-muted-foreground">
-                      <p>
-                        • No servidor, teste com:{' '}
-                        <code className="bg-muted px-1.5 py-0.5 rounded text-xs">
-                          curl --socks5 {selectedChipConfig.chip.wireguardIp}:1080 http://ifconfig.me
-                        </code>
-                      </p>
-                      <p>• Deve retornar o <strong>IP do 4G</strong> do chip</p>
-                      <p>• Se retornou, está tudo funcionando! ✅</p>
-                    </div>
-                  </div>
-
-                  {/* Troubleshooting */}
                   <div className="mt-6 p-4 rounded-lg bg-amber-500/10 border border-amber-500/20">
-                    <h4 className="font-semibold text-amber-400 mb-2">⚠️ Problemas Comuns:</h4>
+                    <h4 className="font-semibold text-amber-400 mb-2">Problemas Comuns:</h4>
                     <div className="space-y-1 text-sm text-muted-foreground">
                       <p>• <strong>WireGuard não conecta:</strong> Verifique se a porta 51820/UDP está aberta no firewall</p>
                       <p>• <strong>Proxy não funciona:</strong> Confirme que o WireGuard está conectado ANTES de ligar o Every Proxy</p>
                       <p>• <strong>IP errado no curl:</strong> Reinicie o Every Proxy após conectar o WireGuard</p>
-                      <p>• <strong>Sem internet no celular:</strong> Verifique se AllowedIPs = 0.0.0.0/0 e o endpoint está correto</p>
                     </div>
                   </div>
                 </div>
@@ -620,18 +653,40 @@ function ChipsTab() {
   )
 }
 
-// ===== Campaigns Tab =====
+// ===== Campaigns Tab (Enhanced) =====
 function CampaignsTab() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
   const [loading, setLoading] = useState(true)
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
+  const [detailDialogOpen, setDetailDialogOpen] = useState(false)
+  const [selectedCampaign, setSelectedCampaign] = useState<Campaign | null>(null)
+  const [detailMessages, setDetailMessages] = useState<Message[]>([])
   const [availableChips, setAvailableChips] = useState<Chip[]>([])
+  const [availableLists, setAvailableLists] = useState<ContactList[]>([])
+  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
+
   const [newCampaign, setNewCampaign] = useState({
     name: '',
-    messageVariations: [''],
     sendIntervalMin: 30,
     sendIntervalMax: 90,
     chipIds: [] as string[],
+    contactListId: '',
+    scheduledAt: '',
+    useSequence: false,
+    sequenceSteps: [{ content: '', delayMinutes: 0 }],
+    messageVariations: [''],
+  })
+
+  const resetNewCampaign = () => setNewCampaign({
+    name: '',
+    sendIntervalMin: 30,
+    sendIntervalMax: 90,
+    chipIds: [],
+    contactListId: '',
+    scheduledAt: '',
+    useSequence: false,
+    sequenceSteps: [{ content: '', delayMinutes: 0 }],
+    messageVariations: [''],
   })
 
   const fetchCampaigns = useCallback(async () => {
@@ -651,38 +706,47 @@ function CampaignsTab() {
       const res = await fetch('/api/chips')
       const data = await res.json()
       setAvailableChips(data)
-    } catch {}
+    } catch { /* empty */ }
   }, [])
 
-  useEffect(() => { fetchCampaigns(); fetchChips() }, [fetchCampaigns, fetchChips])
+  const fetchLists = useCallback(async () => {
+    try {
+      const res = await fetch('/api/contact-lists')
+      const data = await res.json()
+      setAvailableLists(data)
+    } catch { /* empty */ }
+  }, [])
+
+  useEffect(() => { fetchCampaigns(); fetchChips(); fetchLists() }, [fetchCampaigns, fetchChips, fetchLists])
 
   const createCampaign = async () => {
+    const steps = newCampaign.useSequence
+      ? newCampaign.sequenceSteps.map((s, i) => ({ stepOrder: i + 1, content: s.content, delayMinutes: s.delayMinutes }))
+      : []
+    const payload = {
+      name: newCampaign.name,
+      sendIntervalMin: newCampaign.sendIntervalMin,
+      sendIntervalMax: newCampaign.sendIntervalMax,
+      chipIds: newCampaign.chipIds,
+      contactListId: newCampaign.contactListId || null,
+      scheduledAt: newCampaign.scheduledAt ? new Date(newCampaign.scheduledAt).toISOString() : null,
+      steps,
+    }
     try {
-      const res = await fetch('/api/campaigns', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newCampaign),
-      })
-      if (!res.ok) {
-        const data = await res.json()
-        throw new Error(data.error)
-      }
+      const res = await fetch('/api/campaigns', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+      if (!res.ok) { const data = await res.json(); throw new Error(data.error) }
       toast.success('Campanha criada com sucesso!')
       setCreateDialogOpen(false)
-      setNewCampaign({ name: '', messageVariations: [''], sendIntervalMin: 30, sendIntervalMax: 90, chipIds: [] })
+      resetNewCampaign()
       fetchCampaigns()
-    } catch (err: any) {
-      toast.error(err.message || 'Erro ao criar campanha')
+    } catch (err: unknown) {
+      toast.error((err as Error).message || 'Erro ao criar campanha')
     }
   }
 
   const updateCampaignStatus = async (id: string, status: string) => {
     try {
-      await fetch(`/api/campaigns/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status }),
-      })
+      await fetch(`/api/campaigns/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) })
       toast.success('Status atualizado!')
       fetchCampaigns()
     } catch {
@@ -691,7 +755,6 @@ function CampaignsTab() {
   }
 
   const deleteCampaign = async (id: string) => {
-    if (!confirm('Tem certeza que deseja remover esta campanha?')) return
     try {
       await fetch(`/api/campaigns/${id}`, { method: 'DELETE' })
       toast.success('Campanha removida!')
@@ -701,25 +764,49 @@ function CampaignsTab() {
     }
   }
 
-  const addVariation = () => {
-    setNewCampaign(prev => ({ ...prev, messageVariations: [...prev.messageVariations, ''] }))
-  }
-
-  const removeVariation = (index: number) => {
-    setNewCampaign(prev => ({
-      ...prev,
-      messageVariations: prev.messageVariations.filter((_, i) => i !== index),
-    }))
+  const openDetail = async (campaign: Campaign) => {
+    setSelectedCampaign(campaign)
+    setDetailDialogOpen(true)
+    try {
+      const res = await fetch(`/api/messages?campaignId=${campaign.id}`)
+      const data = await res.json()
+      setDetailMessages(data)
+    } catch {
+      setDetailMessages([])
+    }
   }
 
   const toggleChip = (chipId: string) => {
     setNewCampaign(prev => ({
       ...prev,
-      chipIds: prev.chipIds.includes(chipId)
-        ? prev.chipIds.filter(id => id !== chipId)
-        : [...prev.chipIds, chipId],
+      chipIds: prev.chipIds.includes(chipId) ? prev.chipIds.filter(id => id !== chipId) : [...prev.chipIds, chipId],
     }))
   }
+
+  const addSequenceStep = () => {
+    setNewCampaign(prev => ({ ...prev, sequenceSteps: [...prev.sequenceSteps, { content: '', delayMinutes: 60 }] }))
+  }
+  const removeSequenceStep = (idx: number) => {
+    setNewCampaign(prev => ({ ...prev, sequenceSteps: prev.sequenceSteps.filter((_, i) => i !== idx) }))
+  }
+  const updateSequenceStep = (idx: number, field: 'content' | 'delayMinutes', value: string | number) => {
+    setNewCampaign(prev => {
+      const steps = [...prev.sequenceSteps]
+      steps[idx] = { ...steps[idx], [field]: value }
+      return { ...prev, sequenceSteps: steps }
+    })
+  }
+
+  const addVariation = () => {
+    setNewCampaign(prev => ({ ...prev, messageVariations: [...prev.messageVariations, ''] }))
+  }
+  const removeVariation = (index: number) => {
+    setNewCampaign(prev => ({ ...prev, messageVariations: prev.messageVariations.filter((_, i) => i !== index) }))
+  }
+
+  const canCreate = newCampaign.name.trim() && newCampaign.chipIds.length > 0 && (
+    newCampaign.useSequence ? newCampaign.sequenceSteps.some(s => s.content.trim()) : newCampaign.messageVariations.some(v => v.trim())
+  )
 
   return (
     <div className="space-y-4">
@@ -728,46 +815,146 @@ function CampaignsTab() {
           <h2 className="text-xl font-bold">Campanhas</h2>
           <p className="text-sm text-muted-foreground">Gerencie suas campanhas de envio em massa</p>
         </div>
-        <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
+        <Dialog open={createDialogOpen} onOpenChange={(o) => { setCreateDialogOpen(o); if (!o) resetNewCampaign() }}>
           <DialogTrigger asChild>
-            <Button className="gap-2"><Plus className="size-4" /> Nova Campanha</Button>
+            <Button className="gap-2 bg-emerald-600 hover:bg-emerald-700"><Plus className="size-4" /> Nova Campanha</Button>
           </DialogTrigger>
-          <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+          <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Criar Campanha</DialogTitle>
+              <DialogDescription>Configure uma nova campanha de envio em massa</DialogDescription>
             </DialogHeader>
-            <div className="space-y-4 py-4">
+            <div className="space-y-5 py-4">
+              {/* Name */}
               <div className="space-y-2">
                 <Label>Nome da Campanha</Label>
                 <Input placeholder="Ex: Campanha Black Friday" value={newCampaign.name} onChange={e => setNewCampaign(prev => ({ ...prev, name: e.target.value }))} />
               </div>
 
+              {/* Contact List */}
               <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <Label>Variações de Mensagem</Label>
-                  <Button variant="ghost" size="sm" onClick={addVariation}><Plus className="size-3.5" /> Adicionar</Button>
-                </div>
-                {newCampaign.messageVariations.map((v, i) => (
-                  <div key={i} className="flex gap-2">
-                    <Textarea
-                      placeholder="Use {nome} para personalização..."
-                      value={v}
-                      onChange={e => {
-                        const updated = [...newCampaign.messageVariations]
-                        updated[i] = e.target.value
-                        setNewCampaign(prev => ({ ...prev, messageVariations: updated }))
-                      }}
-                      className="min-h-[60px]"
-                    />
-                    {newCampaign.messageVariations.length > 1 && (
-                      <Button variant="ghost" size="sm" className="text-rose-500 shrink-0" onClick={() => removeVariation(i)}>
-                        <X className="size-4" />
-                      </Button>
-                    )}
-                  </div>
-                ))}
+                <Label>Lista de Contatos</Label>
+                <Select value={newCampaign.contactListId} onValueChange={v => setNewCampaign(prev => ({ ...prev, contactListId: v }))}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecione uma lista de contatos" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {availableLists.map(l => (
+                      <SelectItem key={l.id} value={l.id}>
+                        <div className="flex items-center gap-2">
+                          <Users className="size-3.5" />
+                          {l.name}
+                          <span className="text-xs text-muted-foreground">({l._count?.contacts || 0})</span>
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {availableLists.length === 0 && (
+                  <p className="text-xs text-muted-foreground">Nenhuma lista criada. Vá para a aba &quot;Contatos&quot; para criar uma.</p>
+                )}
               </div>
 
+              {/* Schedule */}
+              <div className="space-y-2">
+                <Label className="flex items-center gap-2"><CalendarDays className="size-4 text-muted-foreground" /> Agendamento (opcional)</Label>
+                <Input
+                  type="datetime-local"
+                  value={newCampaign.scheduledAt}
+                  onChange={e => setNewCampaign(prev => ({ ...prev, scheduledAt: e.target.value }))}
+                />
+                <p className="text-xs text-muted-foreground">Deixe vazio para executar imediatamente ao iniciar</p>
+              </div>
+
+              {/* Message mode toggle */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label>Tipo de Mensagem</Label>
+                  <div className="flex items-center gap-2">
+                    <span className={`text-sm ${!newCampaign.useSequence ? 'font-semibold' : 'text-muted-foreground'}`}>Variações</span>
+                    <button
+                      type="button"
+                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${newCampaign.useSequence ? 'bg-emerald-600' : 'bg-muted'}`}
+                      onClick={() => setNewCampaign(prev => ({ ...prev, useSequence: !prev.useSequence }))}
+                    >
+                      <span className={`inline-block size-4 rounded-full bg-white transition-transform ${newCampaign.useSequence ? 'translate-x-6' : 'translate-x-1'}`} />
+                    </button>
+                    <span className={`text-sm ${newCampaign.useSequence ? 'font-semibold' : 'text-muted-foreground'}`}>Sequência</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Sequence Steps */}
+              {newCampaign.useSequence ? (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <Label className="flex items-center gap-1.5"><ListFilter className="size-4" /> Sequência de Mensagens</Label>
+                    <Button variant="ghost" size="sm" onClick={addSequenceStep}><Plus className="size-3.5" /> Adicionar Passo</Button>
+                  </div>
+                  {newCampaign.sequenceSteps.map((step, i) => (
+                    <motion.div key={i} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-2 p-3 rounded-lg border bg-muted/30">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="flex size-6 items-center justify-center rounded-full bg-emerald-100 dark:bg-emerald-900/30 text-xs font-bold text-emerald-600">{i + 1}</span>
+                          <span className="text-sm font-medium">Passo {i + 1}</span>
+                        </div>
+                        {newCampaign.sequenceSteps.length > 1 && (
+                          <Button variant="ghost" size="sm" className="text-rose-500 h-6 w-6 p-0" onClick={() => removeSequenceStep(i)}>
+                            <X className="size-3.5" />
+                          </Button>
+                        )}
+                      </div>
+                      <Textarea
+                        placeholder={`Conteúdo da mensagem do passo ${i + 1}...`}
+                        value={step.content}
+                        onChange={e => updateSequenceStep(i, 'content', e.target.value)}
+                        className="min-h-[60px]"
+                      />
+                      <div className="flex items-center gap-2">
+                        <Clock className="size-3.5 text-muted-foreground shrink-0" />
+                        <span className="text-xs text-muted-foreground whitespace-nowrap">Enviar próximo passo após</span>
+                        <Input
+                          type="number"
+                          min={0}
+                          value={step.delayMinutes}
+                          onChange={e => updateSequenceStep(i, 'delayMinutes', parseInt(e.target.value) || 0)}
+                          className="h-8 w-20 text-xs"
+                        />
+                        <span className="text-xs text-muted-foreground">minutos</span>
+                      </div>
+                    </motion.div>
+                  ))}
+                </div>
+              ) : (
+                /* Message Variations */
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label>Variações de Mensagem</Label>
+                    <Button variant="ghost" size="sm" onClick={addVariation}><Plus className="size-3.5" /> Adicionar</Button>
+                  </div>
+                  {newCampaign.messageVariations.map((v, i) => (
+                    <div key={i} className="flex gap-2">
+                      <Textarea
+                        placeholder="Use {nome} para personalização..."
+                        value={v}
+                        onChange={e => {
+                          const updated = [...newCampaign.messageVariations]
+                          updated[i] = e.target.value
+                          setNewCampaign(prev => ({ ...prev, messageVariations: updated }))
+                        }}
+                        className="min-h-[60px]"
+                      />
+                      {newCampaign.messageVariations.length > 1 && (
+                        <Button variant="ghost" size="sm" className="text-rose-500 shrink-0" onClick={() => removeVariation(i)}>
+                          <X className="size-4" />
+                        </Button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Intervals */}
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-2">
                   <Label>Intervalo Mín (seg)</Label>
@@ -779,17 +966,15 @@ function CampaignsTab() {
                 </div>
               </div>
 
+              {/* Chips */}
               <div className="space-y-2">
-                <Label>Chips</Label>
+                <Label>Chips <span className="text-muted-foreground font-normal">(selecione pelo menos 1)</span></Label>
                 <div className="space-y-2 max-h-40 overflow-y-auto">
-                  {availableChips.map(chip => (
+                  {availableChips.length === 0 ? (
+                    <p className="text-sm text-muted-foreground p-2">Nenhum chip disponível. Adicione chips na aba &quot;Chips&quot;.</p>
+                  ) : availableChips.map(chip => (
                     <label key={chip.id} className="flex items-center gap-2 p-2 rounded-lg hover:bg-muted cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={newCampaign.chipIds.includes(chip.id)}
-                        onChange={() => toggleChip(chip.id)}
-                        className="rounded"
-                      />
+                      <input type="checkbox" checked={newCampaign.chipIds.includes(chip.id)} onChange={() => toggleChip(chip.id)} className="rounded" />
                       <Smartphone className="size-4 text-purple-500" />
                       <span className="text-sm">{chip.name}</span>
                       <span className="text-xs text-muted-foreground ml-auto">{chip.phoneNumber}</span>
@@ -800,7 +985,7 @@ function CampaignsTab() {
             </div>
             <DialogFooter>
               <DialogClose asChild><Button variant="outline">Cancelar</Button></DialogClose>
-              <Button onClick={createCampaign} disabled={!newCampaign.name || newCampaign.messageVariations.every(v => !v.trim())}>Criar Campanha</Button>
+              <Button onClick={createCampaign} disabled={!canCreate} className="bg-emerald-600 hover:bg-emerald-700">Criar Campanha</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
@@ -810,10 +995,12 @@ function CampaignsTab() {
         <div className="flex items-center justify-center py-20"><RefreshCw className="size-6 animate-spin text-muted-foreground" /></div>
       ) : campaigns.length === 0 ? (
         <Card>
-          <CardContent className="flex flex-col items-center justify-center py-12">
-            <Radio className="size-12 text-muted-foreground mb-4" />
-            <p className="text-lg font-medium">Nenhuma campanha cadastrada</p>
-            <p className="text-sm text-muted-foreground">Crie uma campanha para começar</p>
+          <CardContent className="flex flex-col items-center justify-center py-16">
+            <div className="flex size-16 items-center justify-center rounded-2xl bg-muted mb-4">
+              <Radio className="size-8 text-muted-foreground" />
+            </div>
+            <p className="text-lg font-semibold">Nenhuma campanha cadastrada</p>
+            <p className="text-sm text-muted-foreground mt-1">Crie sua primeira campanha para começar a enviar mensagens</p>
           </CardContent>
         </Card>
       ) : (
@@ -821,9 +1008,10 @@ function CampaignsTab() {
           <AnimatePresence>
             {campaigns.map((campaign, i) => {
               const variations = JSON.parse(campaign.messageVariations || '[]')
+              const hasSequence = campaign.sequenceSteps && campaign.sequenceSteps.length > 0
               return (
                 <motion.div key={campaign.id} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}>
-                  <Card>
+                  <Card className="hover:shadow-md transition-shadow">
                     <CardHeader>
                       <div className="flex items-center gap-3">
                         <div className="flex size-10 items-center justify-center rounded-lg bg-emerald-100 dark:bg-emerald-900/30">
@@ -832,7 +1020,8 @@ function CampaignsTab() {
                         <div className="flex-1 min-w-0">
                           <CardTitle className="truncate">{campaign.name}</CardTitle>
                           <CardDescription>
-                            {campaign.chips.length} chip(s) • {campaign._count?.messages || 0} mensagens • Intervalo: {campaign.sendIntervalMin}-{campaign.sendIntervalMax}s
+                            {campaign.chips.length} chip(s) &bull; {campaign._count?.messages || 0} msgs &bull; {campaign.sendIntervalMin}-{campaign.sendIntervalMax}s
+                            {hasSequence && <span className="ml-1">&bull; <span className="text-emerald-500 font-medium">Sequência ({campaign.sequenceSteps.length} passos)</span></span>}
                           </CardDescription>
                         </div>
                         <CardAction><StatusBadge status={campaign.status} /></CardAction>
@@ -840,14 +1029,46 @@ function CampaignsTab() {
                     </CardHeader>
                     <CardContent>
                       <div className="space-y-3">
-                        <div>
-                          <p className="text-xs font-medium text-muted-foreground mb-1">Variações de mensagem:</p>
-                          <div className="space-y-1 max-h-24 overflow-y-auto">
-                            {variations.map((v: string, j: number) => (
-                              <p key={j} className="text-sm bg-muted rounded px-2 py-1 truncate">&quot;{v}&quot;</p>
-                            ))}
-                          </div>
+                        {/* Contact list & schedule */}
+                        <div className="flex flex-wrap gap-2 text-xs">
+                          {campaign.contactList && (
+                            <Badge variant="outline" className="gap-1">
+                              <Users className="size-3" /> {campaign.contactList.name}
+                            </Badge>
+                          )}
+                          {campaign.scheduledAt && (
+                            <Badge variant="outline" className="gap-1">
+                              <CalendarDays className="size-3" /> {new Date(campaign.scheduledAt).toLocaleString('pt-BR')}
+                            </Badge>
+                          )}
                         </div>
+
+                        {/* Sequence preview or variations */}
+                        {hasSequence ? (
+                          <div>
+                            <p className="text-xs font-medium text-muted-foreground mb-1">Passos da sequência:</p>
+                            <div className="flex flex-wrap gap-1">
+                              {campaign.sequenceSteps.map((step) => (
+                                <Badge key={step.id} variant="secondary" className="gap-1 text-xs">
+                                  <span className="flex size-4 items-center justify-center rounded-full bg-emerald-600 text-white text-[10px] font-bold">{step.stepOrder}</span>
+                                  {step.content.slice(0, 30)}{step.content.length > 30 ? '...' : ''}
+                                  {step.delayMinutes > 0 && <span className="text-muted-foreground">+{step.delayMinutes}min</span>}
+                                </Badge>
+                              ))}
+                            </div>
+                          </div>
+                        ) : variations.length > 0 ? (
+                          <div>
+                            <p className="text-xs font-medium text-muted-foreground mb-1">Variações de mensagem:</p>
+                            <div className="space-y-1 max-h-24 overflow-y-auto">
+                              {variations.slice(0, 2).map((v: string, j: number) => (
+                                <p key={j} className="text-sm bg-muted rounded px-2 py-1 truncate">&quot;{v}&quot;</p>
+                              ))}
+                              {variations.length > 2 && <p className="text-xs text-muted-foreground">+{variations.length - 2} mais variações</p>}
+                            </div>
+                          </div>
+                        ) : null}
+
                         <div className="flex flex-wrap gap-1">
                           {campaign.chips.map(cc => (
                             <Badge key={cc.id} variant="outline" className="gap-1 text-xs">
@@ -855,10 +1076,14 @@ function CampaignsTab() {
                             </Badge>
                           ))}
                         </div>
+
                         <Separator />
                         <div className="flex gap-2 flex-wrap">
+                          <Button variant="outline" size="sm" className="gap-1" onClick={() => openDetail(campaign)}>
+                            <Eye className="size-3.5" /> Detalhes
+                          </Button>
                           {campaign.status === 'draft' && (
-                            <Button size="sm" className="gap-1" onClick={() => updateCampaignStatus(campaign.id, 'running')}>
+                            <Button size="sm" className="gap-1 bg-emerald-600 hover:bg-emerald-700" onClick={() => updateCampaignStatus(campaign.id, 'running')}>
                               <Play className="size-3.5" /> Iniciar
                             </Button>
                           )}
@@ -868,7 +1093,7 @@ function CampaignsTab() {
                             </Button>
                           )}
                           {campaign.status === 'paused' && (
-                            <Button size="sm" className="gap-1" onClick={() => updateCampaignStatus(campaign.id, 'running')}>
+                            <Button size="sm" className="gap-1 bg-emerald-600 hover:bg-emerald-700" onClick={() => updateCampaignStatus(campaign.id, 'running')}>
                               <Play className="size-3.5" /> Retomar
                             </Button>
                           )}
@@ -877,7 +1102,7 @@ function CampaignsTab() {
                               <Check className="size-3.5" /> Concluir
                             </Button>
                           )}
-                          <Button size="sm" variant="outline" className="text-rose-500 hover:text-rose-600 gap-1" onClick={() => deleteCampaign(campaign.id)}>
+                          <Button size="sm" variant="outline" className="text-rose-500 hover:text-rose-600 gap-1" onClick={() => setDeleteConfirm(campaign.id)}>
                             <Trash2 className="size-3.5" /> Remover
                           </Button>
                         </div>
@@ -890,6 +1115,528 @@ function CampaignsTab() {
           </AnimatePresence>
         </div>
       )}
+
+      <ConfirmDialog
+        open={!!deleteConfirm}
+        onOpenChange={() => setDeleteConfirm(null)}
+        title="Remover Campanha"
+        description="Tem certeza que deseja remover esta campanha? Todas as mensagens associadas serão perdidas."
+        onConfirm={() => { if (deleteConfirm) deleteCampaign(deleteConfirm) }}
+        confirmLabel="Remover"
+        variant="destructive"
+      />
+
+      {/* Campaign Detail Dialog */}
+      <Dialog open={detailDialogOpen} onOpenChange={setDetailDialogOpen}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              {selectedCampaign?.contactList && <Users className="size-5 text-purple-500" />}
+              {selectedCampaign?.name}
+            </DialogTitle>
+            <DialogDescription>Detalhes completos da campanha</DialogDescription>
+          </DialogHeader>
+          {selectedCampaign && (
+            <div className="space-y-5">
+              {/* Status & dates */}
+              <div className="flex flex-wrap items-center gap-2">
+                <StatusBadge status={selectedCampaign.status} />
+                {selectedCampaign.contactList && (
+                  <Badge variant="outline" className="gap-1"><Users className="size-3" /> {selectedCampaign.contactList.name}</Badge>
+                )}
+                {selectedCampaign.scheduledAt && (
+                  <Badge variant="outline" className="gap-1"><CalendarDays className="size-3" /> {new Date(selectedCampaign.scheduledAt).toLocaleString('pt-BR')}</Badge>
+                )}
+              </div>
+
+              {/* Sequence Steps */}
+              {selectedCampaign.sequenceSteps && selectedCampaign.sequenceSteps.length > 0 && (
+                <div className="space-y-3">
+                  <h4 className="font-semibold text-sm flex items-center gap-2"><ListFilter className="size-4" /> Sequência de Mensagens</h4>
+                  <div className="space-y-2">
+                    {selectedCampaign.sequenceSteps.map((step) => (
+                      <div key={step.id} className="flex gap-3 p-3 rounded-lg border bg-muted/20">
+                        <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-white text-xs font-bold">{step.stepOrder}</span>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm whitespace-pre-wrap">{step.content}</p>
+                          {step.delayMinutes > 0 && (
+                            <p className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
+                              <Clock className="size-3" /> Próximo passo após {step.delayMinutes} min
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Variations fallback */}
+              {(!selectedCampaign.sequenceSteps || selectedCampaign.sequenceSteps.length === 0) && (
+                <div className="space-y-2">
+                  <h4 className="font-semibold text-sm">Variações de Mensagem</h4>
+                  <div className="space-y-1">
+                    {JSON.parse(selectedCampaign.messageVariations || '[]').map((v: string, j: number) => (
+                      <p key={j} className="text-sm bg-muted rounded px-3 py-2">&quot;{v}&quot;</p>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Chips */}
+              <div className="space-y-2">
+                <h4 className="font-semibold text-sm">Chips Atribuídos</h4>
+                <div className="flex flex-wrap gap-2">
+                  {selectedCampaign.chips.map(cc => (
+                    <Badge key={cc.id} variant="outline" className="gap-1">
+                      <Smartphone className="size-3" /> {cc.chip?.name} <span className="text-muted-foreground">({cc.chip?.phoneNumber})</span>
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+
+              {/* Stats */}
+              <div className="space-y-2">
+                <h4 className="font-semibold text-sm">Progresso</h4>
+                <div className="grid grid-cols-4 gap-3">
+                  <div className="text-center p-2 rounded-lg bg-muted/50">
+                    <p className="text-xl font-bold">{detailMessages.filter(m => m.status === 'pending').length}</p>
+                    <p className="text-xs text-muted-foreground">Pendentes</p>
+                  </div>
+                  <div className="text-center p-2 rounded-lg bg-sky-50 dark:bg-sky-900/20">
+                    <p className="text-xl font-bold text-sky-600">{detailMessages.filter(m => m.status === 'sent' || m.status === 'delivered' || m.status === 'read').length}</p>
+                    <p className="text-xs text-muted-foreground">Entregues</p>
+                  </div>
+                  <div className="text-center p-2 rounded-lg bg-emerald-50 dark:bg-emerald-900/20">
+                    <p className="text-xl font-bold text-emerald-600">{detailMessages.filter(m => m.status === 'delivered' || m.status === 'read').length}</p>
+                    <p className="text-xs text-muted-foreground">Confirmadas</p>
+                  </div>
+                  <div className="text-center p-2 rounded-lg bg-rose-50 dark:bg-rose-900/20">
+                    <p className="text-xl font-bold text-rose-600">{detailMessages.filter(m => m.status === 'failed').length}</p>
+                    <p className="text-xs text-muted-foreground">Falharam</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Recent Messages */}
+              {detailMessages.length > 0 && (
+                <div className="space-y-2">
+                  <h4 className="font-semibold text-sm">Mensagens Recentes ({detailMessages.length})</h4>
+                  <div className="space-y-2 max-h-60 overflow-y-auto">
+                    {detailMessages.slice(0, 20).map((msg) => (
+                      <div key={msg.id} className="flex items-start gap-2 p-2 rounded-lg bg-muted/30 text-sm">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium">{msg.contact.name}</span>
+                            <span className="text-xs text-muted-foreground">{msg.contact.phone}</span>
+                          </div>
+                          <p className="text-xs mt-0.5 truncate">{msg.content}</p>
+                        </div>
+                        <StatusBadge status={msg.status} />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {detailMessages.length === 0 && (
+                <p className="text-sm text-muted-foreground text-center py-4">Nenhuma mensagem enviada nesta campanha ainda.</p>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
+}
+
+// ===== Contacts Tab (NEW) =====
+function ContactsTab() {
+  const [lists, setLists] = useState<ContactList[]>([])
+  const [loading, setLoading] = useState(true)
+  const [createListOpen, setCreateListOpen] = useState(false)
+  const [selectedList, setSelectedList] = useState<(ContactList & { contacts: ContactItem[] }) | null>(null)
+  const [contacts, setContacts] = useState<ContactItem[]>([])
+  const [contactsLoading, setContactsLoading] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [addContactOpen, setAddContactOpen] = useState(false)
+  const [importOpen, setImportOpen] = useState(false)
+  const [newListName, setNewListName] = useState('')
+  const [newContact, setNewContact] = useState({ name: '', phone: '' })
+  const [importDragOver, setImportDragOver] = useState(false)
+  const [deleteListConfirm, setDeleteListConfirm] = useState<string | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [importFile, setImportFile] = useState<File | null>(null)
+  const [importing, setImporting] = useState(false)
+
+  const fetchLists = useCallback(async () => {
+    try {
+      const res = await fetch('/api/contact-lists')
+      const data = await res.json()
+      setLists(data)
+    } catch {
+      toast.error('Erro ao carregar listas')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { fetchLists() }, [fetchLists])
+
+  const fetchContacts = useCallback(async (listId: string, search = '') => {
+    setContactsLoading(true)
+    try {
+      const params = new URLSearchParams()
+      if (search) params.set('search', search)
+      const res = await fetch(`/api/contact-lists/${listId}/contacts?${params.toString()}`)
+      const data = await res.json()
+      setContacts(data.contacts || [])
+    } catch {
+      toast.error('Erro ao carregar contatos')
+    } finally {
+      setContactsLoading(false)
+    }
+  }, [])
+
+  const createList = async () => {
+    try {
+      const res = await fetch('/api/contact-lists', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: newListName }) })
+      if (!res.ok) throw new Error()
+      toast.success('Lista criada!')
+      setCreateListOpen(false)
+      setNewListName('')
+      fetchLists()
+    } catch {
+      toast.error('Erro ao criar lista')
+    }
+  }
+
+  const deleteList = async (id: string) => {
+    try {
+      await fetch(`/api/contact-lists/${id}`, { method: 'DELETE' })
+      toast.success('Lista removida!')
+      if (selectedList?.id === id) { setSelectedList(null); setContacts([]) }
+      fetchLists()
+    } catch {
+      toast.error('Erro ao remover lista')
+    }
+  }
+
+  const openList = async (list: ContactList) => {
+    try {
+      const res = await fetch(`/api/contact-lists/${list.id}`)
+      const data = await res.json()
+      setSelectedList(data)
+      setContacts(data.contacts || [])
+      setSearchQuery('')
+    } catch {
+      toast.error('Erro ao carregar lista')
+    }
+  }
+
+  const goBack = () => {
+    setSelectedList(null)
+    setContacts([])
+    setSearchQuery('')
+  }
+
+  const addContact = async () => {
+    if (!selectedList) return
+    try {
+      const res = await fetch(`/api/contact-lists/${selectedList.id}/contacts`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newContact),
+      })
+      if (!res.ok) throw new Error()
+      toast.success('Contato adicionado!')
+      setNewContact({ name: '', phone: '' })
+      setAddContactOpen(false)
+      fetchContacts(selectedList.id, searchQuery)
+      fetchLists()
+    } catch {
+      toast.error('Erro ao adicionar contato')
+    }
+  }
+
+  const handleSearch = (query: string) => {
+    setSearchQuery(query)
+    if (selectedList) {
+      fetchContacts(selectedList.id, query)
+    }
+  }
+
+  const handleCSVImport = async () => {
+    if (!selectedList || !importFile) return
+    setImporting(true)
+    try {
+      const formData = new FormData()
+      formData.append('file', importFile)
+      const res = await fetch(`/api/contact-lists/${selectedList.id}/import`, { method: 'POST', body: formData })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error)
+      toast.success(`${data.imported} contatos importados de ${data.total} encontrados!`)
+      setImportOpen(false)
+      setImportFile(null)
+      fetchContacts(selectedList.id, searchQuery)
+      fetchLists()
+    } catch (err: unknown) {
+      toast.error((err as Error).message || 'Erro ao importar CSV')
+    } finally {
+      setImporting(false)
+    }
+  }
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    setImportDragOver(false)
+    const file = e.dataTransfer.files[0]
+    if (file && (file.name.endsWith('.csv') || file.type === 'text/csv')) {
+      setImportFile(file)
+    } else {
+      toast.error('Apenas arquivos CSV são aceitos')
+    }
+  }
+
+  // Detail view for a specific contact list
+  if (selectedList) {
+    return (
+      <div className="space-y-4">
+        <div className="flex items-center gap-3">
+          <Button variant="ghost" size="sm" className="gap-1" onClick={goBack}>
+            <ArrowLeft className="size-4" /> Voltar
+          </Button>
+          <Separator orientation="vertical" className="h-6" />
+          <div className="flex-1 min-w-0">
+            <h2 className="text-xl font-bold truncate">{selectedList.name}</h2>
+            <p className="text-sm text-muted-foreground">{selectedList.contacts.length} contatos</p>
+          </div>
+          <div className="flex gap-2">
+            <Dialog open={addContactOpen} onOpenChange={setAddContactOpen}>
+              <DialogTrigger asChild>
+                <Button size="sm" className="gap-1.5 bg-emerald-600 hover:bg-emerald-700"><UserPlus className="size-3.5" /> Adicionar</Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Adicionar Contato</DialogTitle>
+                  <DialogDescription>Adicione um contato manualmente a esta lista</DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4 py-4">
+                  <div className="space-y-2">
+                    <Label>Nome</Label>
+                    <Input placeholder="Nome do contato" value={newContact.name} onChange={e => setNewContact(prev => ({ ...prev, name: e.target.value }))} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Telefone</Label>
+                    <Input placeholder="Ex: 11999990001" value={newContact.phone} onChange={e => setNewContact(prev => ({ ...prev, phone: e.target.value }))} />
+                  </div>
+                </div>
+                <DialogFooter>
+                  <DialogClose asChild><Button variant="outline">Cancelar</Button></DialogClose>
+                  <Button onClick={addContact} disabled={!newContact.name || !newContact.phone} className="bg-emerald-600 hover:bg-emerald-700">Adicionar</Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+            <Dialog open={importOpen} onOpenChange={(o) => { setImportOpen(o); if (!o) setImportFile(null) }}>
+              <DialogTrigger asChild>
+                <Button size="sm" variant="outline" className="gap-1.5"><FileSpreadsheet className="size-3.5" /> Importar CSV</Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Importar Contatos via CSV</DialogTitle>
+                  <DialogDescription>Envie um arquivo CSV com colunas &quot;nome&quot; e &quot;telefone&quot;</DialogDescription>
+                </DialogHeader>
+                <div
+                  className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors cursor-pointer ${importDragOver ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/10' : 'border-muted hover:border-muted-foreground/50'}`}
+                  onDragOver={(e) => { e.preventDefault(); setImportDragOver(true) }}
+                  onDragLeave={() => setImportDragOver(false)}
+                  onDrop={handleDrop}
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <input ref={fileInputRef} type="file" accept=".csv" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) setImportFile(f) }} />
+                  {importFile ? (
+                    <div className="space-y-2">
+                      <FileText className="size-8 text-emerald-500 mx-auto" />
+                      <p className="text-sm font-medium">{importFile.name}</p>
+                      <p className="text-xs text-muted-foreground">{(importFile.size / 1024).toFixed(1)} KB</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <Upload className="size-8 text-muted-foreground mx-auto" />
+                      <p className="text-sm font-medium">Arraste o arquivo CSV aqui</p>
+                      <p className="text-xs text-muted-foreground">ou clique para selecionar</p>
+                    </div>
+                  )}
+                </div>
+                <div className="bg-muted/50 rounded-lg p-3 text-xs text-muted-foreground space-y-1">
+                  <p className="font-medium">Formato esperado do CSV:</p>
+                  <code className="block">nome,telefone</code>
+                  <code className="block">João Silva,11999990001</code>
+                  <code className="block">Maria Santos,11999990002</code>
+                </div>
+                <DialogFooter>
+                  <DialogClose asChild><Button variant="outline">Cancelar</Button></DialogClose>
+                  <Button onClick={handleCSVImport} disabled={!importFile || importing} className="bg-emerald-600 hover:bg-emerald-700">
+                    {importing ? <><RefreshCw className="size-4 animate-spin mr-2" /> Importando...</> : <><Upload className="size-4 mr-2" /> Importar</>}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          </div>
+        </div>
+
+        {/* Search */}
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
+          <Input
+            placeholder="Buscar contatos..."
+            value={searchQuery}
+            onChange={e => handleSearch(e.target.value)}
+            className="pl-9"
+          />
+        </div>
+
+        {contactsLoading ? (
+          <div className="flex items-center justify-center py-20"><RefreshCw className="size-6 animate-spin text-muted-foreground" /></div>
+        ) : contacts.length === 0 ? (
+          <Card>
+            <CardContent className="flex flex-col items-center justify-center py-12">
+              <Users className="size-10 text-muted-foreground mb-3" />
+              <p className="font-medium">Nenhum contato encontrado</p>
+              <p className="text-sm text-muted-foreground">{searchQuery ? 'Tente outro termo de busca' : 'Adicione contatos manualmente ou importe um CSV'}</p>
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="space-y-2 max-h-[500px] overflow-y-auto">
+            <AnimatePresence>
+              {contacts.map((contact, i) => (
+                <motion.div key={contact.id} initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.02 }}>
+                  <Card className="py-2.5">
+                    <CardContent className="py-0">
+                      <div className="flex items-center gap-3">
+                        <div className="flex size-8 items-center justify-center rounded-full bg-purple-100 dark:bg-purple-900/30 shrink-0">
+                          <UserPlus className="size-3.5 text-purple-600 dark:text-purple-400" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate">{contact.name}</p>
+                          <p className="text-xs text-muted-foreground">{contact.phone}</p>
+                        </div>
+                        <Badge variant="outline" className="text-xs">
+                          <Phone className="size-2.5 mr-1" /> {contact.phone}
+                        </Badge>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </motion.div>
+              ))}
+            </AnimatePresence>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // List view
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-xl font-bold">Contatos</h2>
+          <p className="text-sm text-muted-foreground">Gerencie suas listas de contatos para campanhas</p>
+        </div>
+        <Dialog open={createListOpen} onOpenChange={setCreateListOpen}>
+          <DialogTrigger asChild>
+            <Button className="gap-2 bg-emerald-600 hover:bg-emerald-700"><Plus className="size-4" /> Nova Lista</Button>
+          </DialogTrigger>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Criar Lista de Contatos</DialogTitle>
+              <DialogDescription>As listas organizam contatos para uso nas campanhas</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label>Nome da Lista</Label>
+                <Input placeholder="Ex: Clientes VIP, Leads Janeiro..." value={newListName} onChange={e => setNewListName(e.target.value)} />
+              </div>
+            </div>
+            <DialogFooter>
+              <DialogClose asChild><Button variant="outline">Cancelar</Button></DialogClose>
+              <Button onClick={createList} disabled={!newListName.trim()} className="bg-emerald-600 hover:bg-emerald-700">Criar Lista</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </div>
+
+      {loading ? (
+        <div className="flex items-center justify-center py-20"><RefreshCw className="size-6 animate-spin text-muted-foreground" /></div>
+      ) : lists.length === 0 ? (
+        <Card>
+          <CardContent className="flex flex-col items-center justify-center py-16">
+            <div className="flex size-16 items-center justify-center rounded-2xl bg-muted mb-4">
+              <Users className="size-8 text-muted-foreground" />
+            </div>
+            <p className="text-lg font-semibold">Nenhuma lista de contatos</p>
+            <p className="text-sm text-muted-foreground mt-1">Crie uma lista para organizar seus contatos</p>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <AnimatePresence>
+            {lists.map((list, i) => (
+              <motion.div key={list.id} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}>
+                <Card className="hover:shadow-md transition-shadow cursor-pointer group" onClick={() => openList(list)}>
+                  <CardHeader>
+                    <div className="flex items-center gap-3">
+                      <div className="flex size-10 items-center justify-center rounded-lg bg-purple-100 dark:bg-purple-900/30">
+                        <Users className="size-5 text-purple-600 dark:text-purple-400" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <CardTitle className="truncate">{list.name}</CardTitle>
+                        <CardDescription>
+                          {list._count?.contacts || 0} contatos &bull; {new Date(list.createdAt).toLocaleDateString('pt-BR')}
+                        </CardDescription>
+                      </div>
+                      <CardAction className="opacity-0 group-hover:opacity-100 transition-opacity">
+                        <ChevronRight className="size-5 text-muted-foreground" />
+                      </CardAction>
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="flex items-center justify-between">
+                      <div className="flex gap-1">
+                        {list._count?.campaigns ? (
+                          <Badge variant="secondary" className="text-xs gap-1">
+                            <Radio className="size-3" /> {list._count.campaigns} campanha(s)
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-xs">Sem campanhas</Badge>
+                        )}
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-rose-500 hover:text-rose-600 opacity-0 group-hover:opacity-100 transition-opacity"
+                        onClick={(e) => { e.stopPropagation(); setDeleteListConfirm(list.id) }}
+                      >
+                        <Trash2 className="size-3.5" />
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              </motion.div>
+            ))}
+          </AnimatePresence>
+        </div>
+      )}
+
+      <ConfirmDialog
+        open={!!deleteListConfirm}
+        onOpenChange={() => setDeleteListConfirm(null)}
+        title="Remover Lista de Contatos"
+        description="Tem certeza que deseja remover esta lista? Os contatos não vinculados a chips serão excluídos."
+        onConfirm={() => { if (deleteListConfirm) deleteList(deleteListConfirm) }}
+        confirmLabel="Remover"
+        variant="destructive"
+      />
     </div>
   )
 }
@@ -967,17 +1714,10 @@ function WireGuardTab() {
             <div className="space-y-2">
               <h4 className="font-semibold">1. No VPS (Servidor)</h4>
               <pre className="rounded-lg bg-muted p-3 text-xs font-mono overflow-x-auto">
-{`# Instale o WireGuard
-apt install wireguard
-
-# Cole a configuração do servidor
+{`apt install wireguard
 nano /etc/wireguard/wg0.conf
-
-# Ative o IP forwarding
 echo "net.ipv4.ip_forward=1" >> /etc/sysctl.conf
 sysctl -p
-
-# Inicie o WireGuard
 wg-quick up wg0
 systemctl enable wg-quick@wg0`}
               </pre>
@@ -985,21 +1725,16 @@ systemctl enable wg-quick@wg0`}
             <div className="space-y-2">
               <h4 className="font-semibold">2. No Celular (Cliente)</h4>
               <pre className="rounded-lg bg-muted p-3 text-xs font-mono overflow-x-auto">
-{`# Instale o app WireGuard
-# Android: Play Store "WireGuard"
-# iOS: App Store "WireGuard"
-
-# Para cada chip:
-# 1. Clique em "Adicionar Túnel" > "Criar do zero"
-# 2. Use a config gerada na aba Chips
-# 3. Ative o túnel`}
+{`# Instale o app WireGuard (Play Store / App Store)
+# Para cada chip, use a config gerada na aba Chips
+# Ative o túnel`}
               </pre>
             </div>
             <div className="space-y-2">
               <h4 className="font-semibold">3. Configure o Proxy SOCKS5</h4>
               <pre className="rounded-lg bg-muted p-3 text-xs font-mono overflow-x-auto">
-{`# No celular, instale um app SOCKS5 proxy
-# Configure para escutar na porta atribuída
+{`# No celular, instale o Every Proxy (Play Store)
+# Vá na aba SOCKS5 e ligue o switch
 # O tráfego será roteado via WireGuard`}
               </pre>
             </div>
@@ -1069,10 +1804,12 @@ function MessagesTab() {
         <div className="flex items-center justify-center py-20"><RefreshCw className="size-6 animate-spin text-muted-foreground" /></div>
       ) : messages.length === 0 ? (
         <Card>
-          <CardContent className="flex flex-col items-center justify-center py-12">
-            <MessageSquare className="size-12 text-muted-foreground mb-4" />
-            <p className="text-lg font-medium">Nenhuma mensagem encontrada</p>
-            <p className="text-sm text-muted-foreground">As mensagens aparecerão aqui quando as campanhas forem executadas</p>
+          <CardContent className="flex flex-col items-center justify-center py-16">
+            <div className="flex size-16 items-center justify-center rounded-2xl bg-muted mb-4">
+              <MessageSquare className="size-8 text-muted-foreground" />
+            </div>
+            <p className="text-lg font-semibold">Nenhuma mensagem encontrada</p>
+            <p className="text-sm text-muted-foreground mt-1">As mensagens aparecerão aqui quando as campanhas forem executadas</p>
           </CardContent>
         </Card>
       ) : (
@@ -1119,42 +1856,42 @@ export default function Home() {
   const [stats, setStats] = useState<Stats | null>(null)
   const [activeTab, setActiveTab] = useState('dashboard')
 
-  // Initial fetch on mount
   useEffect(() => {
     const loadStats = async () => {
       try {
         const res = await fetch('/api/stats')
         const data = await res.json()
         setStats(data)
-      } catch {}
+      } catch { /* empty */ }
     }
     loadStats()
   }, [])
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-purple-50/30 dark:from-slate-950 dark:to-purple-950/20">
+    <div className="min-h-screen flex flex-col bg-gradient-to-br from-slate-50 to-purple-50/30 dark:from-slate-950 dark:to-purple-950/20">
       {/* Header */}
-      <header className="sticky top-0 z-50 border-b bg-white/80 dark:bg-slate-950/80 backdrop-blur-sm">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
+      <header className="sticky top-0 z-50 border-b bg-white/80 dark:bg-slate-950/80 backdrop-blur-md">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="relative size-9">
-              <img src="/logo.png" alt="OctupusZap Logo" className="size-9 rounded-lg object-cover" />
+            <div className="relative size-8">
+              <img src="/logo.png" alt="OctupusZap Logo" className="size-8 rounded-lg object-cover" />
             </div>
             <div>
-              <h1 className="text-lg font-bold tracking-tight">OctupusZap</h1>
-              <p className="text-xs text-muted-foreground -mt-0.5">WhatsApp Mass Messaging</p>
+              <h1 className="text-base font-bold tracking-tight leading-none">OctupusZap</h1>
+              <p className="text-[10px] text-muted-foreground leading-none mt-0.5">WhatsApp Mass Messaging</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <Badge variant="outline" className="gap-1 hidden sm:flex">
+            <Badge variant="outline" className="gap-1 hidden sm:flex text-xs">
               <Zap className="size-3" /> v1.0
             </Badge>
-            <Button variant="ghost" size="sm" className="gap-1" onClick={async () => {
+            <Button variant="ghost" size="icon" className="size-8" onClick={async () => {
               try {
                 const res = await fetch('/api/stats')
                 const data = await res.json()
                 setStats(data)
-              } catch {}
+                toast.success('Dados atualizados!')
+              } catch { /* empty */ }
             }}>
               <RefreshCw className="size-3.5" />
             </Button>
@@ -1163,7 +1900,7 @@ export default function Home() {
       </header>
 
       {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6 flex-1 w-full">
         <Tabs value={activeTab} onValueChange={setActiveTab}>
           <TabsList className="mb-6 w-full sm:w-auto flex-wrap h-auto gap-1 p-1">
             <TabsTrigger value="dashboard" className="gap-1.5">
@@ -1174,6 +1911,9 @@ export default function Home() {
             </TabsTrigger>
             <TabsTrigger value="campaigns" className="gap-1.5">
               <Radio className="size-4" /> <span className="hidden sm:inline">Campanhas</span>
+            </TabsTrigger>
+            <TabsTrigger value="contacts" className="gap-1.5">
+              <Users className="size-4" /> <span className="hidden sm:inline">Contatos</span>
             </TabsTrigger>
             <TabsTrigger value="wireguard" className="gap-1.5">
               <Shield className="size-4" /> <span className="hidden sm:inline">WireGuard</span>
@@ -1192,6 +1932,9 @@ export default function Home() {
           <TabsContent value="campaigns">
             <CampaignsTab />
           </TabsContent>
+          <TabsContent value="contacts">
+            <ContactsTab />
+          </TabsContent>
           <TabsContent value="wireguard">
             <WireGuardTab />
           </TabsContent>
@@ -1204,7 +1947,7 @@ export default function Home() {
       {/* Footer */}
       <footer className="border-t bg-white/50 dark:bg-slate-950/50 mt-auto">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between text-xs text-muted-foreground">
-          <span>OctupusZap © 2024</span>
+          <span>OctupusZap &copy; {new Date().getFullYear()}</span>
           <span>Powered by WireGuard VPN</span>
         </div>
       </footer>

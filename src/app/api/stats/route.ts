@@ -3,10 +3,11 @@ import { db } from '@/lib/db'
 
 export async function GET() {
   try {
-    const [chips, campaigns, messages] = await Promise.all([
+    const [chips, campaigns, messages, contacts] = await Promise.all([
       db.chip.findMany(),
       db.campaign.findMany(),
       db.message.findMany(),
+      db.contact.findMany(),
     ])
 
     const connectedChips = chips.filter((c) => c.status === 'connected').length
@@ -30,6 +31,7 @@ export async function GET() {
       deliveredMessages,
       failedMessages,
       deliveryRate,
+      totalContacts: contacts.length,
     })
   } catch (error) {
     console.error('Stats error:', error)
@@ -44,6 +46,7 @@ export async function GET() {
         deliveredMessages: 0,
         failedMessages: 0,
         deliveryRate: 0,
+        totalContacts: 0,
       },
       { status: 500 }
     )

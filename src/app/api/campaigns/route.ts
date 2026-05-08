@@ -9,6 +9,17 @@ export async function GET() {
         _count: {
           select: { messages: true, chips: true },
         },
+        chips: {
+          include: {
+            chip: { select: { id: true, name: true, phoneNumber: true, status: true } },
+          },
+        },
+        sequenceSteps: {
+          orderBy: { stepOrder: 'asc' },
+        },
+        contactList: {
+          select: { id: true, name: true },
+        },
       },
     })
     return NextResponse.json(campaigns)
@@ -21,7 +32,7 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const body = await request.json()
-    const { name, messageVariations, sendIntervalMin, sendIntervalMax, chipIds } = body
+    const { name, sendIntervalMin, sendIntervalMax, chipIds, contactListId, steps } = body
 
     if (!name) {
       return NextResponse.json({ error: 'Name is required' }, { status: 400 })
@@ -30,13 +41,21 @@ export async function POST(request: Request) {
     const campaign = await db.campaign.create({
       data: {
         name,
-        messageVariations: messageVariations || '',
+        messageVariations: '[]',
         sendIntervalMin: sendIntervalMin || 30,
         sendIntervalMax: sendIntervalMax || 90,
+        contactListId: contactListId || null,
         status: 'draft',
         chips: {
           create: (chipIds || []).map((chipId: string) => ({
             chipId,
+          })),
+        },
+        sequenceSteps: {
+          create: (steps || []).map((step: { stepOrder: number; content: string; delayMinutes: number }) => ({
+            stepOrder: step.stepOrder,
+            content: step.content,
+            delayMinutes: step.delayMinutes ?? 0,
           })),
         },
       },
@@ -44,67 +63,23 @@ export async function POST(request: Request) {
         _count: {
           select: { messages: true, chips: true },
         },
+        chips: {
+          include: {
+            chip: { select: { id: true, name: true, phoneNumber: true, status: true } },
+          },
+        },
+        sequenceSteps: {
+          orderBy: { stepOrder: 'asc' },
+        },
+        contactList: {
+          select: { id: true, name: true },
+        },
       },
     })
 
     return NextResponse.json(campaign, { status: 201 })
   } catch (error) {
     console.error('Campaigns POST error:', error)
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    )
-  }
-}
-
-export async function PATCH(request: Request) {
-  try {
-    const body = await request.json()
-    const { id, status } = body
-
-    if (!id || !status) {
-      return NextResponse.json(
-        { error: 'ID and status are required' },
-        { status: 400 }
-      )
-    }
-
-    const campaign = await db.campaign.update({
-      where: { id },
-      data: { status },
-      include: {
-        _count: {
-          select: { messages: true, chips: true },
-        },
-      },
-    })
-
-    return NextResponse.json(campaign)
-  } catch (error) {
-    console.error('Campaigns PATCH error:', error)
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    )
-  }
-}
-
-export async function DELETE(request: Request) {
-  try {
-    const { searchParams } = new URL(request.url)
-    const id = searchParams.get('id')
-
-    if (!id) {
-      return NextResponse.json({ error: 'ID is required' }, { status: 400 })
-    }
-
-    await db.campaignChip.deleteMany({ where: { campaignId: id } })
-    await db.message.deleteMany({ where: { campaignId: id } })
-    await db.campaign.delete({ where: { id } })
-
-    return NextResponse.json({ success: true })
-  } catch (error) {
-    console.error('Campaigns DELETE error:', error)
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }

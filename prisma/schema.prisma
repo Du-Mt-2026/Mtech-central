@@ -11,11 +11,11 @@ model Chip {
   id              String   @id @default(cuid())
   name            String
   phoneNumber     String   @unique
-  wireguardIp     String   // e.g. 10.13.37.2
-  wireguardPrivKey String  // Base64 encoded x25519 private key
-  wireguardPubKey  String  // Base64 encoded x25519 public key
-  socksPort       Int      @default(1080)  // SOCKS5 port on phone
-  status          String   @default("disconnected")  // disconnected, connecting, connected, error
+  wireguardIp     String
+  wireguardPrivKey String
+  wireguardPubKey  String
+  socksPort       Int      @default(1080)
+  status          String   @default("disconnected")
   lastSeen        DateTime?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
@@ -24,31 +24,58 @@ model Chip {
   campaigns       CampaignChip[]
 }
 
+model ContactList {
+  id          String   @id @default(cuid())
+  name        String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  contacts    Contact[]
+  campaigns   Campaign[]
+}
+
 model Contact {
-  id        String   @id @default(cuid())
-  name      String
-  phone     String
-  chipId    String
-  chip      Chip     @relation(fields: [chipId], references: [id], onDelete: Cascade)
-  messages  Message[]
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id            String   @id @default(cuid())
+  name          String
+  phone         String
+  chipId        String?
+  chip          Chip?    @relation(fields: [chipId], references: [id], onDelete: Cascade)
+  contactListId String?
+  contactList   ContactList? @relation(fields: [contactListId], references: [id], onDelete: SetNull)
+  messages      Message[]
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 }
 
 model Campaign {
-  id          String   @id @default(cuid())
-  name        String
-  status      String   @default("draft")  // draft, scheduled, running, paused, completed, error
-  messageVariations String  // JSON string with array of message variations
-  sendIntervalMin Int  @default(30)  // min seconds between messages
-  sendIntervalMax Int  @default(90)  // max seconds between messages
-  scheduledAt DateTime?
-  startedAt   DateTime?
-  completedAt DateTime?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  chips       CampaignChip[]
-  messages    Message[]
+  id              String   @id @default(cuid())
+  name            String
+  status          String   @default("draft")
+  messageVariations String  @default("[]")
+  sendIntervalMin Int      @default(30)
+  sendIntervalMax Int      @default(90)
+  contactListId   String?
+  contactList     ContactList? @relation(fields: [contactListId], references: [id], onDelete: SetNull)
+  scheduledAt     DateTime?
+  startedAt       DateTime?
+  completedAt     DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  chips           CampaignChip[]
+  messages        Message[]
+  sequenceSteps   SequenceStep[]
+}
+
+model SequenceStep {
+  id           String   @id @default(cuid())
+  campaignId   String
+  campaign     Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  stepOrder    Int
+  content      String
+  delayMinutes Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([campaignId, stepOrder])
 }
 
 model CampaignChip {
@@ -68,7 +95,7 @@ model Message {
   chipId     String
   contactId  String
   content    String
-  status     String   @default("pending")  // pending, sent, delivered, read, failed
+  status     String   @default("pending")
   sentAt     DateTime?
   deliveredAt DateTime?
   readAt     DateTime?
