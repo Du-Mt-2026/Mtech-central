@@ -3,8 +3,14 @@ import { sendTextMessage, setPresence, formatPhoneNumber, getInstanceName } from
 import { db } from '@/lib/db'
 
 export async function POST(request: Request) {
+  let chipId: string | undefined
+  let contactId: string | undefined
+
   try {
-    const { chipId, contactId, contactPhone, content, delayMs } = await request.json()
+    const body = await request.json()
+    chipId = body.chipId
+    contactId = body.contactId
+    const { contactPhone, content, delayMs } = body
 
     if (!chipId || !contactPhone || !content) {
       return NextResponse.json(
@@ -62,6 +68,7 @@ export async function POST(request: Request) {
         data: {
           status: 'sent',
           sentAt: new Date(),
+          evolutionMessageId: result.key?.id || null,
         },
       })
     }
@@ -80,16 +87,17 @@ export async function POST(request: Request) {
   } catch (error: any) {
     console.error('Send message error:', error)
 
-    // Update message status to failed if contactId is provided
-    try {
-      const { chipId, contactId } = await request.json().catch(() => ({}))
-      if (chipId && contactId) {
+    // Update message status to failed
+    if (chipId && contactId) {
+      try {
         await db.message.updateMany({
           where: { chipId, contactId, status: 'sending' },
-          data: { status: 'failed', error: error.message },
+          data: { status: 'failed', error: error.message || 'Erro desconhecido' },
         })
+      } catch (dbErr) {
+        console.error('Failed to update message status:', dbErr)
       }
-    } catch {}
+    }
 
     return NextResponse.json(
       { error: error.message || 'Erro ao enviar mensagem' },

@@ -142,19 +142,20 @@ model CampaignChip {
 }
 
 model Message {
-  id          String    @id @default(cuid())
-  campaignId  String?
-  chipId      String
-  contactId   String
-  content     String
-  status      String    @default("pending")
-  sentAt      DateTime?
-  deliveredAt DateTime?
-  readAt      DateTime?
-  error       String?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  campaign    Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
-  chip        Chip      @relation(fields: [chipId], references: [id], onDelete: Cascade)
-  contact     Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  id                  String    @id @default(cuid())
+  campaignId          String?
+  chipId              String
+  contactId           String
+  content             String
+  status              String    @default("pending")
+  sentAt              DateTime?
+  deliveredAt         DateTime?
+  readAt              DateTime?
+  error               String?
+  evolutionMessageId  String?   @unique
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+  campaign            Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  chip                Chip      @relation(fields: [chipId], references: [id], onDelete: Cascade)
+  contact             Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
 }

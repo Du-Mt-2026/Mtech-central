@@ -126,6 +126,7 @@ interface MessageItem {
   deliveredAt: string | null
   readAt: string | null
   error: string | null
+  evolutionMessageId: string | null
   createdAt: string
   chip: { name: string; phoneNumber: string }
   contact: { name: string; phone: string }
@@ -259,10 +260,10 @@ function DashboardTab({ stats }: { stats: Stats | null }) {
   }
 
   const statCards = [
-    { title: 'Chips', value: s.totalChips, sub: `${s.connectedChips} conectados`, icon: Smartphone, gradient: 'from-violet-500 to-purple-600', trend: '+2', trendUp: true },
-    { title: 'Campanhas', value: s.totalCampaigns, sub: `${s.activeCampaigns} ativas`, icon: Send, gradient: 'from-emerald-500 to-teal-600', trend: '+5', trendUp: true },
-    { title: 'Mensagens', value: s.totalMessages, sub: `${s.sentMessages} enviadas`, icon: MessageSquare, gradient: 'from-amber-500 to-orange-600', trend: '+12%', trendUp: true },
-    { title: 'Taxa de Entrega', value: `${s.deliveryRate}%`, sub: `${s.failedMessages} falharam`, icon: Activity, gradient: 'from-rose-500 to-pink-600', trend: s.deliveryRate > 80 ? '+3%' : '-2%', trendUp: s.deliveryRate > 80 },
+    { title: 'Chips', value: s.totalChips, sub: `${s.connectedChips} conectados`, icon: Smartphone, gradient: 'from-violet-500 to-purple-600', trend: s.connectedChips > 0 ? `${s.connectedChips} online` : 'nenhum online', trendUp: s.connectedChips > 0 },
+    { title: 'Campanhas', value: s.totalCampaigns, sub: `${s.activeCampaigns} ativas`, icon: Send, gradient: 'from-emerald-500 to-teal-600', trend: s.activeCampaigns > 0 ? `${s.activeCampaigns} rodando` : 'nenhuma ativa', trendUp: s.activeCampaigns > 0 },
+    { title: 'Mensagens', value: s.totalMessages, sub: `${s.sentMessages} enviadas`, icon: MessageSquare, gradient: 'from-amber-500 to-orange-600', trend: s.pendingMessages > 0 ? `${s.pendingMessages} pendentes` : 'todas processadas', trendUp: s.totalMessages > 0 },
+    { title: 'Taxa de Entrega', value: s.deliveryRate > 0 ? `${s.deliveryRate}%` : '—', sub: `${s.failedMessages} falharam`, icon: Activity, gradient: 'from-rose-500 to-pink-600', trend: s.deliveryRate > 80 ? 'boa' : s.deliveryRate > 0 ? 'atenção' : 'sem dados', trendUp: s.deliveryRate > 80 },
   ]
 
   return (
@@ -385,14 +386,14 @@ function DashboardTab({ stats }: { stats: Stats | null }) {
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
-              {stats.runningCampaigns.map((c) => (
+              {stats.runningCampaigns.map((c: any) => (
                 <div key={c.id} className="flex items-center gap-4 p-3 rounded-lg bg-muted/30">
                   <div className="flex-1 min-w-0">
                     <p className="font-medium truncate">{c.name}</p>
-                    <p className="text-xs text-muted-foreground">{c.chips?.length || 0} chips • {c.sequenceSteps?.length || 0} etapas</p>
+                    <p className="text-xs text-muted-foreground">{c.chips?.length || 0} chips • {c._completedMessages || 0}/{c._totalMessages || 0} mensagens</p>
                   </div>
-                  <Progress value={65} className="w-32 h-2" />
-                  <Badge variant="default" className="bg-emerald-600">Executando</Badge>
+                  <Progress value={c._progress || 0} className="w-32 h-2" />
+                  <Badge variant="default" className="bg-emerald-600">{c._progress || 0}%</Badge>
                 </div>
               ))}
             </div>
@@ -1481,6 +1482,16 @@ function CampanhasTab() {
     } catch (err: unknown) { toast.error((err as Error).message || 'Erro ao criar campanha') }
   }
 
+  const startCampaignAction = async (id: string) => {
+    try {
+      const res = await fetch(`/api/campaigns/${id}/start`, { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Erro ao iniciar campanha')
+      toast.success(`Campanha iniciada! ${data.messageCount || 0} mensagens criadas.`)
+      fetchCampaigns()
+    } catch (err: unknown) { toast.error((err as Error).message || 'Erro ao iniciar campanha') }
+  }
+
   const updateCampaignStatus = async (id: string, status: string) => {
     try {
       await fetch(`/api/campaigns/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) })
@@ -1722,7 +1733,7 @@ function CampanhasTab() {
                       <TooltipProvider><Tooltip><TooltipTrigger asChild>
                         <Button variant="outline" size="sm" onClick={() => openDetail(c)}><Eye className="size-4" /></Button>
                       </TooltipTrigger><TooltipContent>Detalhes</TooltipContent></Tooltip></TooltipProvider>
-                      {c.status === 'draft' && <Button size="sm" className="gap-1 bg-emerald-600 hover:bg-emerald-700" onClick={() => updateCampaignStatus(c.id, 'running')}><Play className="size-3.5" /> Iniciar</Button>}
+                      {c.status === 'draft' && <Button size="sm" className="gap-1 bg-emerald-600 hover:bg-emerald-700" onClick={() => startCampaignAction(c.id)}><Play className="size-3.5" /> Iniciar</Button>}
                       {c.status === 'running' && <Button variant="outline" size="sm" className="gap-1" onClick={() => updateCampaignStatus(c.id, 'paused')}><Pause className="size-3.5" /> Pausar</Button>}
                       {c.status === 'paused' && <Button size="sm" className="gap-1 bg-emerald-600 hover:bg-emerald-700" onClick={() => updateCampaignStatus(c.id, 'running')}><Play className="size-3.5" /> Retomar</Button>}
                       <Button variant="outline" size="sm" className="text-rose-500 hover:text-rose-600" onClick={() => setDeleteConfirm(c.id)}><Trash2 className="size-3.5" /></Button>

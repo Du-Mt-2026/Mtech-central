@@ -1,18 +1,9 @@
 // Sending Engine with Anti-Ban Protection
-// Processes campaign message queues with delay, typing simulation, and rate limiting
+// Serverless-compatible: processes ONE message per invocation
+// Vercel Cron calls /api/campaigns/process-all every minute
 
 import { sendTextMessage, setPresence, formatPhoneNumber } from './evolution-api'
 import { db } from './db'
-
-interface SendJob {
-  messageId: string
-  chipId: string
-  contactId: string
-  campaignId: string
-  content: string
-  phoneNumber: string
-  evolutionInstance: string
-}
 
 interface AntiBanConfig {
   typingMinDelay: number
@@ -30,9 +21,23 @@ interface AntiBanConfig {
 // Warming schedule: stage -> daily limit
 const WARMING_LIMITS = [10, 30, 80, 150, 200]
 
-/**
- * Get the daily limit for a chip considering warming stage
- */
+const DEFAULT_SETTINGS: AntiBanConfig = {
+  typingMinDelay: 500,
+  typingMaxDelay: 2000,
+  messageIntervalMin: 30,
+  messageIntervalMax: 90,
+  dailyLimitPerChip: 200,
+  warmingEnabled: true,
+  warmingDays: 7,
+  cooldownMinutes: 30,
+  cooldownAfterMessages: 50,
+  stopOnWarning: true,
+}
+
+function randomInt(min: number, max: number): number {
+  return Math.floor(Math.random() * (max - min + 1)) + min
+}
+
 function getEffectiveDailyLimit(chip: { dailyLimit: number; warmingEnabled: boolean; warmingStage: number }, settings: AntiBanConfig): number {
   if (!chip.warmingEnabled || !settings.warmingEnabled) return chip.dailyLimit || settings.dailyLimitPerChip
   const stage = Math.min(chip.warmingStage, WARMING_LIMITS.length - 1)
@@ -40,27 +45,37 @@ function getEffectiveDailyLimit(chip: { dailyLimit: number; warmingEnabled: bool
 }
 
 /**
- * Random integer between min and max (inclusive)
+ * Get anti-ban settings from DB or defaults
  */
-function randomInt(min: number, max: number): number {
-  return Math.floor(Math.random() * (max - min + 1)) + min
+async function getAntiBanSettings(): Promise<AntiBanConfig> {
+  try {
+    const saved = await db.antiBanSettings.findFirst()
+    if (saved) {
+      return {
+        typingMinDelay: saved.typingMinDelay,
+        typingMaxDelay: saved.typingMaxDelay,
+        messageIntervalMin: saved.messageIntervalMin,
+        messageIntervalMax: saved.messageIntervalMax,
+        dailyLimitPerChip: saved.dailyLimitPerChip,
+        warmingEnabled: saved.warmingEnabled,
+        warmingDays: saved.warmingDays,
+        cooldownMinutes: saved.cooldownMinutes,
+        cooldownAfterMessages: saved.cooldownAfterMessages,
+        stopOnWarning: saved.stopOnWarning,
+      }
+    }
+  } catch {
+    // Use defaults
+  }
+  return DEFAULT_SETTINGS
 }
 
 /**
- * Sleep for ms milliseconds
+ * Reset chip daily counter if a new day has started
  */
-function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms))
-}
-
-/**
- * Check if chip can send more messages today
- */
-async function canSendMore(chipId: string, effectiveLimit: number): Promise<boolean> {
+async function resetDailyIfNeeded(chipId: string): Promise<void> {
   const chip = await db.chip.findUnique({ where: { id: chipId } })
-  if (!chip) return false
-
-  // Check if daily limit reset is needed
+  if (!chip) return
   const now = new Date()
   const lastReset = new Date(chip.lastResetAt)
   if (now.getDate() !== lastReset.getDate() || now.getMonth() !== lastReset.getMonth()) {
@@ -68,245 +83,22 @@ async function canSendMore(chipId: string, effectiveLimit: number): Promise<bool
       where: { id: chipId },
       data: { sentToday: 0, lastResetAt: now },
     })
-    return true
   }
-
-  return chip.sentToday < effectiveLimit
 }
 
 /**
- * Apply cooldown if chip has sent too many messages
+ * Check if chip is in cooldown period
  */
-async function applyCooldown(chipId: string, settings: AntiBanConfig): Promise<void> {
+async function isInCooldown(chipId: string, settings: AntiBanConfig): Promise<boolean> {
   const chip = await db.chip.findUnique({ where: { id: chipId } })
-  if (!chip) return
+  if (!chip) return true
 
   if (chip.sentToday > 0 && chip.sentToday % settings.cooldownAfterMessages === 0) {
-    const cooldownMs = settings.cooldownMinutes * 60 * 1000
-    console.log(`[SendingEngine] Cooldown ${settings.cooldownMinutes}min for chip ${chipId} after ${chip.sentToday} messages`)
-    await sleep(cooldownMs)
+    // Simple cooldown: skip this chip for now (next cron will retry)
+    console.log(`[SendingEngine] Chip ${chipId} in cooldown after ${chip.sentToday} messages`)
+    return true
   }
-}
-
-/**
- * Process a single message send with anti-ban delays
- */
-async function processMessage(job: SendJob, settings: AntiBanConfig): Promise<{ success: boolean; error?: string }> {
-  try {
-    // 1. Simulate typing presence
-    const typingDelay = randomInt(settings.typingMinDelay, settings.typingMaxDelay)
-    try {
-      await setPresence(job.evolutionInstance, `${job.phoneNumber}@s.whatsapp.net`, 'composing', typingDelay)
-    } catch (e) {
-      console.warn(`[SendingEngine] Typing simulation failed for ${job.evolutionInstance}:`, e)
-      // Non-fatal, continue sending
-    }
-
-    // Wait for typing delay
-    await sleep(typingDelay)
-
-    // 2. Send the message
-    const formattedNumber = formatPhoneNumber(job.phoneNumber)
-    const result = await sendTextMessage(job.evolutionInstance, formattedNumber, job.content, {
-      delay: randomInt(settings.messageIntervalMin * 1000, settings.messageIntervalMax * 1000),
-    })
-
-    // 3. Update message status
-    await db.message.update({
-      where: { id: job.messageId },
-      data: {
-        status: 'sent',
-        sentAt: new Date(),
-      },
-    })
-
-    // 4. Increment chip's sentToday counter
-    await db.chip.update({
-      where: { id: job.chipId },
-      data: {
-        sentToday: { increment: 1 },
-        lastSeen: new Date(),
-      },
-    })
-
-    // 5. Apply cooldown if needed
-    await applyCooldown(job.chipId, settings)
-
-    console.log(`[SendingEngine] Message sent: ${job.messageId} to ${formattedNumber}`)
-    return { success: true }
-
-  } catch (error: any) {
-    console.error(`[SendingEngine] Failed to send message ${job.messageId}:`, error.message)
-
-    // Update message with error
-    await db.message.update({
-      where: { id: job.messageId },
-      data: {
-        status: 'failed',
-        error: error.message?.substring(0, 500),
-      },
-    })
-
-    return { success: false, error: error.message }
-  }
-}
-
-/**
- * Get pending messages for a campaign, organized by chip
- */
-async function getPendingMessages(campaignId: string): Promise<SendJob[]> {
-  const messages = await db.message.findMany({
-    where: {
-      campaignId,
-      status: 'pending',
-    },
-    include: {
-      chip: true,
-      contact: true,
-    },
-    orderBy: { createdAt: 'asc' },
-  })
-
-  return messages
-    .filter(msg => msg.chip.evolutionInstance)
-    .map(msg => ({
-      messageId: msg.id,
-      chipId: msg.chipId,
-      contactId: msg.contactId,
-      campaignId: msg.campaignId!,
-      content: msg.content,
-      phoneNumber: msg.contact.phone,
-      evolutionInstance: msg.chip.evolutionInstance!,
-    }))
-}
-
-/**
- * Process a campaign's message queue
- */
-export async function processCampaign(campaignId: string): Promise<{
-  processed: number
-  succeeded: number
-  failed: number
-  skipped: number
-}> {
-  console.log(`[SendingEngine] Processing campaign: ${campaignId}`)
-
-  // Get anti-ban settings
-  let settings: AntiBanConfig = {
-    typingMinDelay: 500,
-    typingMaxDelay: 2000,
-    messageIntervalMin: 30,
-    messageIntervalMax: 90,
-    dailyLimitPerChip: 200,
-    warmingEnabled: true,
-    warmingDays: 7,
-    cooldownMinutes: 30,
-    cooldownAfterMessages: 50,
-    stopOnWarning: true,
-  }
-
-  try {
-    const savedSettings = await db.antiBanSettings.findFirst()
-    if (savedSettings) {
-      settings = {
-        typingMinDelay: savedSettings.typingMinDelay,
-        typingMaxDelay: savedSettings.typingMaxDelay,
-        messageIntervalMin: savedSettings.messageIntervalMin,
-        messageIntervalMax: savedSettings.messageIntervalMax,
-        dailyLimitPerChip: savedSettings.dailyLimitPerChip,
-        warmingEnabled: savedSettings.warmingEnabled,
-        warmingDays: savedSettings.warmingDays,
-        cooldownMinutes: savedSettings.cooldownMinutes,
-        cooldownAfterMessages: savedSettings.cooldownAfterMessages,
-        stopOnWarning: savedSettings.stopOnWarning,
-      }
-    }
-  } catch (e) {
-    console.warn('[SendingEngine] Could not load anti-ban settings, using defaults')
-  }
-
-  // Get pending messages
-  const jobs = await getPendingMessages(campaignId)
-  if (jobs.length === 0) {
-    console.log(`[SendingEngine] No pending messages for campaign ${campaignId}`)
-    return { processed: 0, succeeded: 0, failed: 0, skipped: 0 }
-  }
-
-  // Group by chip to distribute load
-  const jobsByChip = new Map<string, SendJob[]>()
-  for (const job of jobs) {
-    if (!jobsByChip.has(job.chipId)) jobsByChip.set(job.chipId, [])
-    jobsByChip.get(job.chipId)!.push(job)
-  }
-
-  let processed = 0
-  let succeeded = 0
-  let failed = 0
-  let skipped = 0
-
-  // Process messages round-robin across chips to spread the load
-  const chipIds = Array.from(jobsByChip.keys())
-  const chipQueues = new Map(chipIds.map(id => [id, jobsByChip.get(id)!]))
-
-  while (true) {
-    let allEmpty = true
-    for (const chipId of chipIds) {
-      const queue = chipQueues.get(chipId)!
-      if (queue.length === 0) continue
-
-      allEmpty = false
-      const job = queue.shift()!
-
-      // Check daily limit
-      const chip = await db.chip.findUnique({ where: { id: chipId } })
-      if (!chip) continue
-
-      const effectiveLimit = getEffectiveDailyLimit(chip, settings)
-      if (!(await canSendMore(chipId, effectiveLimit))) {
-        console.log(`[SendingEngine] Chip ${chipId} hit daily limit (${effectiveLimit}), skipping remaining messages`)
-        skipped += queue.length + 1
-        queue.length = 0
-        continue
-      }
-
-      // Apply inter-message delay
-      const delay = randomInt(settings.messageIntervalMin, settings.messageIntervalMax) * 1000
-      await sleep(delay)
-
-      // Process the message
-      const result = await processMessage(job, settings)
-      processed++
-      if (result.success) succeeded++
-      else failed++
-
-      // Update campaign progress
-      await db.campaign.update({
-        where: { id: campaignId },
-        data: { updatedAt: new Date() },
-      })
-    }
-
-    if (allEmpty) break
-  }
-
-  // Check if campaign is complete
-  const remaining = await db.message.count({
-    where: { campaignId, status: 'pending' },
-  })
-
-  if (remaining === 0) {
-    await db.campaign.update({
-      where: { id: campaignId },
-      data: {
-        status: 'completed',
-        completedAt: new Date(),
-      },
-    })
-    console.log(`[SendingEngine] Campaign ${campaignId} completed!`)
-  }
-
-  console.log(`[SendingEngine] Campaign ${campaignId} batch done: ${processed} processed, ${succeeded} sent, ${failed} failed, ${skipped} skipped`)
-  return { processed, succeeded, failed, skipped }
+  return false
 }
 
 /**
@@ -338,7 +130,7 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
   for (let i = 0; i < contacts.length; i++) {
     const contact = contacts[i]
     const chip = chips[i % chips.length] // Round-robin assignment
-    const firstStep = campaign.sequenceSteps[0] // Start with first step
+    const firstStep = campaign.sequenceSteps[0]
 
     // Replace template variables
     const content = firstStep.content
@@ -350,7 +142,7 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
       chipId: chip.id,
       contactId: contact.id,
       content,
-      status: 'pending',
+      status: 'pending' as const,
     })
   }
 
@@ -365,6 +157,163 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
   })
 
   return { messageCount: messagesToCreate.length }
+}
+
+/**
+ * Process the NEXT pending message for a campaign.
+ * Serverless-friendly: processes exactly ONE message per call.
+ * Returns the delay (ms) the caller should wait before processing the next one.
+ */
+export async function processNextMessage(campaignId: string): Promise<{
+  processed: boolean
+  delayMs: number
+  remaining: number
+  completed: boolean
+}> {
+  const settings = await getAntiBanSettings()
+
+  // Find the next pending message
+  const message = await db.message.findFirst({
+    where: { campaignId, status: 'pending' },
+    include: { chip: true, contact: true },
+    orderBy: { createdAt: 'asc' },
+  })
+
+  if (!message) {
+    // No more pending messages — check if campaign is done
+    const stillPending = await db.message.count({
+      where: { campaignId, status: { in: ['pending', 'sending'] } },
+    })
+
+    if (stillPending === 0) {
+      await db.campaign.update({
+        where: { id: campaignId },
+        data: { status: 'completed', completedAt: new Date() },
+      })
+      return { processed: false, delayMs: 0, remaining: 0, completed: true }
+    }
+
+    return { processed: false, delayMs: 5000, remaining: stillPending, completed: false }
+  }
+
+  // Check chip exists and has evolution instance
+  if (!message.chip.evolutionInstance) {
+    await db.message.update({
+      where: { id: message.id },
+      data: { status: 'failed', error: 'Chip sem instância Evolution API' },
+    })
+    return { processed: true, delayMs: 1000, remaining: -1, completed: false }
+  }
+
+  // Reset daily counter if needed
+  await resetDailyIfNeeded(message.chipId)
+
+  // Check daily limit
+  const chip = await db.chip.findUnique({ where: { id: message.chipId } })
+  if (!chip) {
+    await db.message.update({
+      where: { id: message.id },
+      data: { status: 'failed', error: 'Chip não encontrado' },
+    })
+    return { processed: true, delayMs: 1000, remaining: -1, completed: false }
+  }
+
+  const effectiveLimit = getEffectiveDailyLimit(chip, settings)
+  if (chip.sentToday >= effectiveLimit) {
+    // Skip this chip's messages — mark as skipped (will retry next day via auto-reset)
+    console.log(`[SendingEngine] Chip ${chip.name} hit daily limit (${chip.sentToday}/${effectiveLimit})`)
+    // Don't fail the message, just skip it for now
+    return { processed: false, delayMs: 2000, remaining: -1, completed: false }
+  }
+
+  // Check cooldown
+  if (await isInCooldown(message.chipId, settings)) {
+    return { processed: false, delayMs: settings.cooldownMinutes * 60 * 1000, remaining: -1, completed: false }
+  }
+
+  // Mark as sending
+  await db.message.update({
+    where: { id: message.id },
+    data: { status: 'sending' },
+  })
+
+  try {
+    const instanceName = message.chip.evolutionInstance
+    const formattedPhone = formatPhoneNumber(message.contact.phone)
+
+    // Simulate typing (best-effort, non-blocking)
+    const typingDelay = randomInt(settings.typingMinDelay, settings.typingMaxDelay)
+    try {
+      await setPresence(instanceName, `${message.contact.phone}@s.whatsapp.net`, 'composing', typingDelay)
+    } catch {
+      // Non-fatal
+    }
+
+    // Small delay for typing
+    await new Promise(resolve => setTimeout(resolve, Math.min(typingDelay, 2000)))
+
+    // Send the message
+    const result = await sendTextMessage(instanceName, formattedPhone, message.content, {
+      delay: 0, // We handle delays ourselves via cron intervals
+    })
+
+    // Update message status
+    await db.message.update({
+      where: { id: message.id },
+      data: {
+        status: 'sent',
+        sentAt: new Date(),
+        evolutionMessageId: result.key?.id || null,
+      },
+    })
+
+    // Increment chip counter
+    await db.chip.update({
+      where: { id: message.chipId },
+      data: { sentToday: { increment: 1 }, lastSeen: new Date() },
+    })
+
+    console.log(`[SendingEngine] Sent message ${message.id} to ${formattedPhone} via ${instanceName}`)
+
+    // Calculate delay before next message (anti-ban interval)
+    const nextDelay = randomInt(settings.messageIntervalMin, settings.messageIntervalMax) * 1000
+    const remaining = await db.message.count({ where: { campaignId, status: 'pending' } })
+
+    return { processed: true, delayMs: nextDelay, remaining, completed: remaining === 0 }
+
+  } catch (error: any) {
+    console.error(`[SendingEngine] Failed to send message ${message.id}:`, error.message)
+
+    await db.message.update({
+      where: { id: message.id },
+      data: {
+        status: 'failed',
+        error: error.message?.substring(0, 500),
+      },
+    })
+
+    const remaining = await db.message.count({ where: { campaignId, status: 'pending' } })
+    return { processed: true, delayMs: 5000, remaining, completed: remaining === 0 }
+  }
+}
+
+/**
+ * Legacy function kept for backwards compatibility.
+ * Now processes just ONE message per call (serverless-safe).
+ */
+export async function processCampaign(campaignId: string): Promise<{
+  processed: number
+  succeeded: number
+  failed: number
+  skipped: number
+}> {
+  const result = await processNextMessage(campaignId)
+  return {
+    processed: result.processed ? 1 : 0,
+    succeeded: result.processed ? 1 : 0,
+    failed: 0,
+    skipped: 0,
+  }
 }
 
 /**

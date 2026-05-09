@@ -1,8 +1,12 @@
 import { NextResponse } from 'next/server'
-import { getRunningCampaigns, processCampaign } from '@/lib/sending-engine'
+import { getRunningCampaigns, processNextMessage } from '@/lib/sending-engine'
 
-// This endpoint should be called by a cron job to process all running campaigns
-export async function POST() {
+/**
+ * Process one message per running campaign.
+ * Called by Vercel Cron every minute.
+ * Each invocation processes 1 message per campaign (serverless-safe).
+ */
+export async function POST(request: Request) {
   try {
     const campaignIds = await getRunningCampaigns()
 
@@ -12,12 +16,17 @@ export async function POST() {
 
     const results = []
     for (const campaignId of campaignIds) {
-      const result = await processCampaign(campaignId)
+      const result = await processNextMessage(campaignId)
       results.push({ campaignId, ...result })
     }
 
+    const totalProcessed = results.filter(r => r.processed).length
+    const totalRemaining = results.reduce((sum, r) => sum + (r.remaining > 0 ? r.remaining : 0), 0)
+
     return NextResponse.json({
-      processed: results.length,
+      processed: totalProcessed,
+      remaining: totalRemaining,
+      campaigns: results.length,
       results,
     })
   } catch (error: any) {
@@ -27,4 +36,9 @@ export async function POST() {
       { status: 500 }
     )
   }
+}
+
+// Also support GET for Vercel Cron
+export async function GET(request: Request) {
+  return POST(request)
 }

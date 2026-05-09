@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { getInstanceName } from '@/lib/evolution-api'
+import { INSTANCE_PREFIX } from '@/lib/evolution-api'
 import { db } from '@/lib/db'
 
 /**
@@ -13,8 +13,6 @@ export async function POST(request: Request) {
   try {
     const body = await request.json()
 
-    console.log('Webhook received:', JSON.stringify(body).substring(0, 200))
-
     const event = body.event
     const instance = body.instance
     const data = body.data
@@ -23,39 +21,54 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true })
     }
 
+    // Only process OctupusZap instances
+    if (!instance.startsWith(INSTANCE_PREFIX)) {
+      return NextResponse.json({ ok: true })
+    }
+
     // Handle different events
     switch (event) {
       case 'CONNECTION_UPDATE': {
-        // Connection status changed - find chip by instance name
-        const chips = await db.chip.findMany()
-        for (const chip of chips) {
-          const chipInstanceName = getInstanceName(chip.id, chip.name)
-          if (chipInstanceName === instance) {
-            const newStatus = data?.state === 'open' ? 'connected'
-              : data?.state === 'connecting' ? 'connecting'
-              : 'disconnected'
+        // Connection status changed - find chip by evolutionInstance
+        const chip = await db.chip.findFirst({
+          where: { evolutionInstance: instance },
+        })
 
-            await db.chip.update({
-              where: { id: chip.id },
-              data: {
-                status: newStatus,
-                isQrPaired: data?.state === 'open',
-                lastSeen: data?.state === 'open' ? new Date() : chip.lastSeen,
-              },
-            })
+        if (chip) {
+          const newStatus = data?.state === 'open' ? 'connected'
+            : data?.state === 'connecting' ? 'connecting'
+            : 'disconnected'
 
-            console.log(`Chip ${chip.name} status updated to ${newStatus}`)
-            break
-          }
+          await db.chip.update({
+            where: { id: chip.id },
+            data: {
+              status: newStatus,
+              isQrPaired: data?.state === 'open',
+              lastSeen: data?.state === 'open' ? new Date() : chip.lastSeen,
+            },
+          })
         }
         break
       }
 
       case 'SEND_MESSAGE': {
-        // Our message was sent - update status
+        // Our message was sent — update status and store evolutionMessageId
         if (data?.key?.id) {
-          // Find message by external ID or update by chip status
-          console.log(`Message sent: ${data.key.id} to ${data.key.remoteJid}`)
+          // Try to find message by evolutionMessageId
+          const existing = await db.message.findFirst({
+            where: { evolutionMessageId: data.key.id },
+          })
+
+          if (existing) {
+            await db.message.update({
+              where: { id: existing.id },
+              data: {
+                status: 'sent',
+                sentAt: existing.sentAt || new Date(),
+                evolutionMessageId: data.key.id,
+              },
+            })
+          }
         }
         break
       }
@@ -64,8 +77,42 @@ export async function POST(request: Request) {
         // Message status updated (delivered, read, etc.)
         if (data && Array.isArray(data)) {
           for (const msg of data) {
-            if (msg.status === 'delivered' || msg.status === 'read') {
-              console.log(`Message ${msg.key?.id} status: ${msg.status}`)
+            const evolutionId = msg.key?.id
+            if (!evolutionId) continue
+
+            // Find our message by the Evolution API message ID
+            const message = await db.message.findFirst({
+              where: { evolutionMessageId: evolutionId },
+            })
+
+            if (!message) continue
+
+            // Map Evolution API status to our status
+            if (msg.status === 'delivered') {
+              await db.message.update({
+                where: { id: message.id },
+                data: {
+                  status: 'delivered',
+                  deliveredAt: new Date(),
+                },
+              })
+            } else if (msg.status === 'read') {
+              await db.message.update({
+                where: { id: message.id },
+                data: {
+                  status: 'read',
+                  deliveredAt: message.deliveredAt || new Date(),
+                  readAt: new Date(),
+                },
+              })
+            } else if (msg.status === 'failed' || msg.status === 'error') {
+              await db.message.update({
+                where: { id: message.id },
+                data: {
+                  status: 'failed',
+                  error: `Webhook: message ${msg.status}`,
+                },
+              })
             }
           }
         }
@@ -73,13 +120,16 @@ export async function POST(request: Request) {
       }
 
       case 'MESSAGES_UPSERT': {
-        // New incoming message - log for now
-        console.log('Incoming message from:', data?.key?.remoteJid)
+        // Incoming messages — log for now (future: inbox feature)
+        if (data?.key?.remoteJid && !data?.key?.fromMe) {
+          console.log(`Incoming message from ${data.key.remoteJid} on ${instance}`)
+        }
         break
       }
 
       default:
-        console.log(`Unhandled webhook event: ${event}`)
+        // Silently ignore unhandled events
+        break
     }
 
     return NextResponse.json({ ok: true })

@@ -26,9 +26,26 @@ export async function GET() {
     ).length
     const readMessages = messages.filter((m) => m.status === 'read').length
     const failedMessages = messages.filter((m) => m.status === 'failed').length
-    const pendingMessages = messages.filter((m) => m.status === 'pending').length
+    const pendingMessages = messages.filter((m) => m.status === 'pending' || m.status === 'sending').length
     const deliveryRate = totalMessages > 0 ? Math.round((deliveredMessages / totalMessages) * 100) : 0
     const totalSent = sentMessages + deliveredMessages + readMessages + failedMessages
+
+    // Calculate campaign progress from message counts
+    const runningCampaigns = campaigns.filter((c) => c.status === 'running' || c.status === 'paused').map((c) => {
+      const campaignMessages = messages.filter((m) => m.campaignId === c.id)
+      const total = campaignMessages.length
+      const completed = campaignMessages.filter((m) =>
+        ['sent', 'delivered', 'read', 'failed'].includes(m.status)
+      ).length
+      const progress = total > 0 ? Math.round((completed / total) * 100) : 0
+
+      return {
+        ...c,
+        _progress: progress,
+        _totalMessages: total,
+        _completedMessages: completed,
+      }
+    })
 
     return NextResponse.json({
       totalChips: chips.length,
@@ -47,7 +64,7 @@ export async function GET() {
       totalContacts: contacts.length,
       totalSent,
       recentMessages,
-      runningCampaigns: campaigns.filter((c) => c.status === 'running'),
+      runningCampaigns,
       chipStatuses: chips.map((c) => ({ id: c.id, name: c.name, phoneNumber: c.phoneNumber, status: c.status, sentToday: c.sentToday, dailyLimit: c.dailyLimit })),
     })
   } catch (error) {
