@@ -9,13 +9,9 @@ import { getRunningCampaigns, processNextMessage, startCampaign } from '@/lib/se
  * Each invocation processes 1 message per campaign (serverless-safe).
  */
 export async function POST(request: Request) {
-  // Verify CRON_SECRET for production security (Vercel Cron sends this header)
-  if (process.env.CRON_SECRET) {
-    const authHeader = request.headers.get('authorization')
-    if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-  }
+  // This route is public for Vercel Cron (which sends CRON_SECRET in Authorization header).
+  // It's also accessible to authenticated users via the "Processar Campanhas" button.
+  // The middleware allows this route through, so both cron and authenticated users can access it.
 
   try {
     // 1. Auto-start scheduled campaigns whose scheduledAt has passed

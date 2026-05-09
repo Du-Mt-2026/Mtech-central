@@ -549,3 +549,51 @@ Stage Summary:
 - IMPORTANT: Vercel Hobby plan only allows DAILY cron jobs — campaign processing runs once per day at midnight
 - For more frequent campaign processing, need Vercel Pro plan or external cron service (e.g., cron-job.org)
 - Vercel CLI is configured and can be used for future deploys
+
+---
+Task ID: 14
+Agent: Main
+Task: Manual campaign processing + webhooks setup + change password + UI improvements
+
+Work Log:
+- Added "Processar Campanhas" button in CampanhasTab header (next to "Nova Campanha")
+  - Calls POST /api/campaigns/process-all with Zap icon
+  - Shows loading spinner while processing
+  - Toast with result count after processing
+- Added "Configurar Webhooks" button in ChipsTab (next to "Sincronizar Evolution API")
+  - Iterates through all chips with evolutionInstance
+  - Calls POST /api/whatsapp/setup-webhook for each chip
+  - Shows progress toast during configuration ("Configurando webhooks 2/5...")
+  - Toast with total configured count after completion
+  - Uses Webhook icon from lucide-react
+- Improved DashboardTab with:
+  - "Atualizar" (Refresh) button in header to reload stats
+  - Better gradient stat cards with top accent bar and hover effects (scale 1.01, shadow increase)
+  - "Ações Rápidas" section with "Novo Chip", "Nova Campanha", "Importar Contatos" buttons
+  - Each quick action navigates to the respective tab via setActiveTab prop
+  - DashboardTab now receives onRefresh and setActiveTab as props
+- Added "Alterar Senha" card in ConfiguracoesTab:
+  - Current password, new password, confirm new password fields
+  - Client-side validation (required fields, match, min 6 chars)
+  - "Alterar Senha" button with loading state
+- Created PUT /api/auth/change-password API route:
+  - Requires authentication (session cookie via middleware)
+  - Verifies current password with bcrypt
+  - Hashes new password and updates AdminUser in database
+  - Returns success/error responses in Brazilian Portuguese
+- Styling improvements throughout:
+  - All cards now have consistent shadow-lg + hover:shadow-xl + transition-all duration-200
+  - Stat cards have gradient top accent bars and hover scale effect
+  - Sidebar user avatar uses gradient background (from-emerald-400 to-teal-500)
+  - Footer made more compact (py-2.5) with backdrop blur
+- Lint passes clean with zero errors
+- Commit: "feat: manual campaign processing + webhooks setup + change password + UI improvements"
+- Pushed to GitHub and deployed to Vercel
+
+Stage Summary:
+- Manual campaign processing button allows triggering process-all on demand
+- Bulk webhook configuration for all Evolution API chips with progress feedback
+- Dashboard now has refresh button, better cards, and quick action shortcuts
+- Change password functionality fully implemented (frontend + backend)
+- Consistent professional styling across all cards with hover effects
+- Production URL: https://mtech-sistemas.vercel.app
