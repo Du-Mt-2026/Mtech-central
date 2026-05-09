@@ -271,3 +271,37 @@ Stage Summary:
 - Complete error handling with retry capability
 - Zero lint errors
 
+
+---
+Task ID: 7
+Agent: Main
+Task: Integrate Evolution API + Campaign Execution Engine + VPS Config
+
+Work Log:
+- Updated .env with Evolution API credentials (URL, API Key, Token)
+- Updated .env.example with all required env vars
+- Updated wireguard.ts to use correct VPS subnet (10.0.0.x instead of 10.13.37.x)
+- Updated wireguard.ts with actual VPS endpoint (187.77.48.22:51820)
+- Updated /api/whatsapp/status/route.ts to use getInstanceName() instead of chip.evolutionInstance
+- Created /api/whatsapp/instances/route.ts — GET: fetches all Evolution instances, syncs chip statuses
+- Created /api/whatsapp/qr/[chipId]/route.ts — GET: fetches fresh QR code for a chip
+- Created /api/campaigns/[campaignId]/execute/route.ts — POST/GET: campaign execution engine with:
+  - Creates pending messages for all contacts × sequence steps
+  - Distributes messages across assigned chips (round-robin)
+  - Anti-ban: typing simulation, configurable interval delays, daily limit checks
+  - Status updates: pending → sending → sent/failed
+  - Auto-complete when all messages processed
+- Verified Evolution API connectivity: 9 instances found, 3 connected
+- All changes committed and pushed to GitHub
+- Lint passes clean
+
+Stage Summary:
+- Evolution API fully integrated with OctupusZap
+- QR Code real do WhatsApp funciona via Evolution API
+- Motor de envio com anti-ban implementado
+- VPS KVM8 detectada com Evolution API + Evolution Go rodando
+- VPS KVM4-1 com WireGuard Server (4 peers)
+- Deploy na Vercel atualizado via git push
+- Pendente: Configurar webhook público para Vercel receber status updates
+- Pendente: VPS precisa ter Node.js 20+ instalado para workers
+- Pendente: Configurar roteamento reverso WireGuard (4G do celular)
