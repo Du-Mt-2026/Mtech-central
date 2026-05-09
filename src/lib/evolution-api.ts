@@ -1,11 +1,104 @@
 // Evolution API Service Layer
 // Handles all communication with the Evolution API (WhatsApp Baileys)
+// Credentials are stored in the database (Settings table) with env var fallback
 
-const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL || '';
-const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY || '';
+import { db } from './db'
 
 // Prefix for all OctupusZap instances — only instances with this prefix are managed by the site
 export const INSTANCE_PREFIX = 'OctupusZap_';
+
+// ============ Credential Management (DB-first with env var fallback) ============
+
+interface EvolutionCredentials {
+  apiUrl: string
+  apiKey: string
+}
+
+// In-memory cache with TTL to avoid hitting DB on every API call
+let cachedCredentials: EvolutionCredentials | null = null
+let cacheTimestamp = 0
+const CACHE_TTL_MS = 60_000 // 60 seconds
+
+/**
+ * Get Evolution API credentials from DB Settings table.
+ * Falls back to environment variables if not found in DB.
+ * Uses in-memory cache with 60s TTL to avoid excessive DB queries.
+ */
+async function getCredentials(): Promise<EvolutionCredentials> {
+  const now = Date.now()
+  if (cachedCredentials && (now - cacheTimestamp) < CACHE_TTL_MS) {
+    return cachedCredentials
+  }
+
+  try {
+    const settings = await db.settings.findMany({
+      where: {
+        key: { in: ['evolution_api_url', 'evolution_api_key'] }
+      }
+    })
+
+    const settingsMap = new Map(settings.map(s => [s.key, s.value]))
+    const apiUrl = settingsMap.get('evolution_api_url') || process.env.EVOLUTION_API_URL || ''
+    const apiKey = settingsMap.get('evolution_api_key') || process.env.EVOLUTION_API_KEY || ''
+
+    if (apiUrl && apiKey) {
+      cachedCredentials = { apiUrl, apiKey }
+      cacheTimestamp = now
+      return cachedCredentials
+    }
+  } catch {
+    // DB not available yet, fall through to env vars
+  }
+
+  // Fallback to environment variables
+  const creds = {
+    apiUrl: process.env.EVOLUTION_API_URL || '',
+    apiKey: process.env.EVOLUTION_API_KEY || '',
+  }
+
+  if (creds.apiUrl && creds.apiKey) {
+    cachedCredentials = creds
+    cacheTimestamp = now
+  }
+
+  return creds
+}
+
+/**
+ * Clear the credentials cache — call after saving new settings
+ */
+export function clearCredentialsCache(): void {
+  cachedCredentials = null
+  cacheTimestamp = 0
+}
+
+/**
+ * Test Evolution API connection — returns true if credentials are valid
+ */
+export async function testConnection(): Promise<{ success: boolean; error?: string; instanceCount?: number }> {
+  try {
+    const creds = await getCredentials()
+    if (!creds.apiUrl || !creds.apiKey) {
+      return { success: false, error: 'URL ou API Key não configurados' }
+    }
+    const response = await fetch(`${creds.apiUrl}/instance/fetchInstances`, {
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': creds.apiKey,
+      },
+    })
+    if (!response.ok) {
+      const text = await response.text()
+      return { success: false, error: `API retornou ${response.status}: ${text.substring(0, 200)}` }
+    }
+    const instances = await response.json()
+    return { success: true, instanceCount: Array.isArray(instances) ? instances.length : 0 }
+  } catch (error: any) {
+    return { success: false, error: error.message || 'Erro ao conectar' }
+  }
+}
+
+// ============ Evolution API Types ============
 
 interface EvolutionInstance {
   id: string;
@@ -52,13 +145,16 @@ interface SendMessageResponse {
   status: string;
 }
 
+// ============ Core API Client ============
+
 async function evolutionFetch(endpoint: string, options: RequestInit = {}) {
-  const url = `${EVOLUTION_API_URL}${endpoint}`;
+  const creds = await getCredentials()
+  const url = `${creds.apiUrl}${endpoint}`;
   const response = await fetch(url, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
-      'apikey': EVOLUTION_API_KEY,
+      'apikey': creds.apiKey,
       ...options.headers,
     },
   });

@@ -6,6 +6,13 @@ const AUTH_SECRET = new TextEncoder().encode(
   process.env.AUTH_SECRET || 'octupuszap-dev-secret-change-in-production'
 )
 
+// Routes that don't require authentication (external services call these)
+const PUBLIC_API_ROUTES = [
+  '/api/auth/',                // Login/logout/session
+  '/api/whatsapp/webhook',     // Evolution API webhook callbacks
+  '/api/campaigns/process-all', // Vercel Cron job (has its own CRON_SECRET check)
+]
+
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl
 
@@ -14,8 +21,8 @@ export async function middleware(req: NextRequest) {
     return NextResponse.next()
   }
 
-  // Allow auth routes without authentication
-  if (pathname.startsWith('/api/auth/')) {
+  // Allow public routes without authentication
+  if (PUBLIC_API_ROUTES.some(route => pathname.startsWith(route))) {
     return NextResponse.next()
   }
 

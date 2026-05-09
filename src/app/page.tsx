@@ -2719,9 +2719,12 @@ function ConfiguracoesTab() {
   const [config, setConfig] = useState({
     resetHour: 0, defaultProxyMode: 'none', globalDailyLimit: 1000,
     emailNotifications: true, timezone: 'America/Sao_Paulo',
+    evolutionApiUrl: '', evolutionApiKey: '',
   })
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [testingConnection, setTestingConnection] = useState(false)
+  const [connectionResult, setConnectionResult] = useState<{ success: boolean; message: string } | null>(null)
 
   useEffect(() => {
     const loadSettings = async () => {
@@ -2733,6 +2736,8 @@ function ConfiguracoesTab() {
         if (data.globalDailyLimit) setConfig(prev => ({ ...prev, globalDailyLimit: parseInt(data.globalDailyLimit) || 1000 }))
         if (data.emailNotifications !== undefined) setConfig(prev => ({ ...prev, emailNotifications: data.emailNotifications === 'true' }))
         if (data.timezone) setConfig(prev => ({ ...prev, timezone: data.timezone }))
+        if (data.evolution_api_url) setConfig(prev => ({ ...prev, evolutionApiUrl: data.evolution_api_url }))
+        if (data.evolution_api_key) setConfig(prev => ({ ...prev, evolutionApiKey: data.evolution_api_key }))
       } catch { /* empty */ }
       finally { setLoading(false) }
     }
@@ -2750,12 +2755,47 @@ function ConfiguracoesTab() {
           globalDailyLimit: String(config.globalDailyLimit),
           emailNotifications: String(config.emailNotifications),
           timezone: config.timezone,
+          evolution_api_url: config.evolutionApiUrl,
+          evolution_api_key: config.evolutionApiKey,
         }),
       })
       if (!res.ok) throw new Error()
       toast.success('Configurações salvas!')
+      setConnectionResult(null)
     } catch { toast.error('Erro ao salvar configurações') }
     finally { setSaving(false) }
+  }
+
+  const testEvolutionConnection = async () => {
+    setTestingConnection(true)
+    setConnectionResult(null)
+    try {
+      // First save the settings so the test uses the latest values
+      const saveRes = await fetch('/api/settings', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          evolution_api_url: config.evolutionApiUrl,
+          evolution_api_key: config.evolutionApiKey,
+        }),
+      })
+      if (!saveRes.ok) throw new Error('Erro ao salvar antes de testar')
+
+      const res = await fetch('/api/whatsapp/test-connection', { method: 'POST' })
+      const data = await res.json()
+      if (data.success) {
+        setConnectionResult({ success: true, message: `Conexão OK! ${data.instanceCount} instância(s) encontrada(s)` })
+        toast.success('Conexão com Evolution API bem sucedida!')
+      } else {
+        setConnectionResult({ success: false, message: data.error || 'Erro ao conectar' })
+        toast.error('Falha na conexão com Evolution API')
+      }
+    } catch (err: unknown) {
+      const msg = (err as Error).message || 'Erro ao testar conexão'
+      setConnectionResult({ success: false, message: msg })
+      toast.error(msg)
+    } finally {
+      setTestingConnection(false)
+    }
   }
 
   if (loading) return <div className="flex items-center justify-center py-20"><RefreshCw className="size-6 animate-spin text-muted-foreground" /></div>
@@ -2768,6 +2808,54 @@ function ConfiguracoesTab() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Evolution API Card - FULL WIDTH */}
+        <Card className="shadow-md border-0 lg:col-span-2">
+          <CardHeader>
+            <div className="flex items-center gap-2">
+              <div className="flex size-8 items-center justify-center rounded-lg bg-emerald-100 dark:bg-emerald-900/30">
+                <Globe className="size-4 text-emerald-600" />
+              </div>
+              <CardTitle className="text-lg">Evolution API</CardTitle>
+              <Badge variant="outline" className="gap-1 text-xs ml-auto">
+                <Zap className="size-3" /> WhatsApp Engine
+              </Badge>
+            </div>
+            <CardDescription>Configure a conexão com a Evolution API que gerencia as instâncias WhatsApp</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>URL da API</Label>
+                <Input placeholder="https://evolution.seudominio.com" value={config.evolutionApiUrl}
+                  onChange={e => setConfig(p => ({ ...p, evolutionApiUrl: e.target.value }))} />
+                <p className="text-xs text-muted-foreground">Endereço do servidor Evolution API</p>
+              </div>
+              <div className="space-y-2">
+                <Label>API Key</Label>
+                <Input type="password" placeholder="Sua API Key" value={config.evolutionApiKey}
+                  onChange={e => setConfig(p => ({ ...p, evolutionApiKey: e.target.value }))} />
+                <p className="text-xs text-muted-foreground">Chave de autenticação da Evolution API</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <Button variant="outline" className="gap-2" onClick={testEvolutionConnection} disabled={testingConnection || !config.evolutionApiUrl || !config.evolutionApiKey}>
+                {testingConnection ? <RefreshCw className="size-4 animate-spin" /> : <Activity className="size-4" />}
+                {testingConnection ? 'Testando...' : 'Testar Conexão'}
+              </Button>
+              {connectionResult && (
+                <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium ${
+                  connectionResult.success
+                    ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
+                    : 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400'
+                }`}>
+                  {connectionResult.success ? <Check className="size-4" /> : <AlertCircle className="size-4" />}
+                  {connectionResult.message}
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
         <Card className="shadow-md border-0">
           <CardHeader>
             <div className="flex items-center gap-2">

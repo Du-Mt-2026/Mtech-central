@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { clearCredentialsCache } from '@/lib/evolution-api'
 
 // GET /api/settings — Returns all settings as key-value pairs
 export async function GET() {
@@ -44,6 +45,12 @@ export async function PUT(request: Request) {
         create: { key, value },
       })
       results.push(setting)
+    }
+
+    // Clear Evolution API credentials cache if those keys were updated
+    const updatedKeys = entries.map(([k]) => k)
+    if (updatedKeys.includes('evolution_api_url') || updatedKeys.includes('evolution_api_key')) {
+      clearCredentialsCache()
     }
 
     return NextResponse.json({ updated: results.length, settings: results })
