@@ -266,3 +266,49 @@ Unresolved / Next Steps:
 - 4G proxy routing via WireGuard still not configured
 - Authentication/login system not implemented
 
+---
+Task ID: 10
+Agent: Main
+Task: Fix all 6 critical bugs
+
+Work Log:
+- **CRÍTICO 1 — Botão "Iniciar" campanha**: Criada função `startCampaignAction()` que chama `POST /api/campaigns/${id}/start` ao invés de só mudar o status. Botão "Iniciar" agora cria mensagens pending e dispara o envio.
+- **CRÍTICO 2 — Handler de erro no envio**: Movido `chipId`/`contactId` para variáveis declaradas ANTES do try block. Antes, `request.json()` era chamado de novo no catch, mas o body já tinha sido consumido. Agora mensagens falhas são corretamente marcadas como "failed" no banco.
+- **CRÍTICO 3 — Validação antiban PATCH**: Adicionada whitelist de 12 campos permitidos (`ALLOWED_FIELDS`). Qualquer campo não na lista é ignorado. Previne injeção arbitrária de dados.
+- **CRÍTICO 4 — Webhook delivery tracking**: 
+  - Adicionado campo `evolutionMessageId` ao modelo Message no Prisma (String?, @unique)
+  - Pushed schema para Neon PostgreSQL
+  - Webhook agora processa MESSAGES_UPDATE: atualiza mensagens como "delivered" ou "read" no banco baseado no evolutionMessageId
+  - Webhook agora filtra por INSTANCE_PREFIX (só processa instâncias OctupusZap_)
+  - Webhook SEND_MESSAGE agora salva evolutionMessageId na mensagem
+  - Rota /api/whatsapp/send agora salva evolutionMessageId ao enviar
+- **CRÍTICO 5 — Dashboard hardcoded**:
+  - Trends agora mostram dados reais: "2 online" ao invés de "+2", "1 rodando" ao invés de "+5", "5 pendentes" ao invés de "+12%"
+  - Taxa de entrega mostra "—" quando não há dados, "boa"/"atenção"/"sem dados" ao invés de porcentagens fake
+  - Progress bar de campanhas agora calculada a partir de mensagens reais (não mais hardcoded 65%)
+  - Stats API agora retorna `_progress`, `_totalMessages`, `_completedMessages` para cada campanha rodando
+- **CRÍTICO 6 — Motor de envio compatível com Vercel**:
+  - Reescrito `sending-engine.ts`: agora processa UMA mensagem por invocação (serverless-safe)
+  - Removido loop while com sleep(30-90s) que matava o processo na Vercel
+  - Nova função `processNextMessage()` — processa 1 msg e retorna o delay recomendado
+  - `processCampaign()` mantido como wrapper para compatibilidade
+  - `process-all` route agora suporta GET (para Vercel Cron) e POST
+  - Criado `vercel.json` com cron que chama `/api/campaigns/process-all` a cada minuto
+  - Anti-ban delays agora são implementados via intervalo do cron (1 msg por minuto por campanha)
+
+Stage Summary:
+- Todas as 6 correções críticas implementadas e testadas
+- Lint passa limpo
+- Commit: "fix: all 6 critical bugs"
+- Push para GitHub → Vercel auto-deploy com vercel.json cron
+
+Unresolved / Next Steps:
+- INCOMPLETO: Configurações tab não persiste (só localStorage)
+- INCOMPLETO: Proxy SOCKS5 só salva no DB, não configura na Evolution API
+- INCOMPLETO: Deletar contato individual sem UI
+- FALTANDO: Autenticação/Login
+- FALTANDO: Envio de mídia
+- FALTANDO: Editar templates
+- FALTANDO: Caixa de entrada (mensagens recebidas)
+- FALTANDO: Reenviar mensagem falha
+
