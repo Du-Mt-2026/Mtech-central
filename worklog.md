@@ -462,3 +462,45 @@ Stage Summary:
 - Resend failed: POST /api/messages/[id]/resend resets single message; POST /api/messages/resend-all-failed resets all (optionally by campaign)
 - 6 new API routes created, 3 existing files modified, 3 Prisma model changes applied
 
+
+---
+Task ID: 11
+Agent: Main
+Task: Move Evolution API credentials from env vars to DB + fix critical auth bugs
+
+Work Log:
+- Rewrote src/lib/evolution-api.ts: credentials now read from DB Settings table first, with env var fallback and 60s in-memory cache
+- Added getCredentials(), clearCredentialsCache(), and testConnection() functions to evolution-api.ts
+- Created /api/whatsapp/test-connection route: POST endpoint that tests Evolution API connectivity and returns instance count
+- Seeded evolution_api_url and evolution_api_key into Settings table in Neon PostgreSQL
+- Updated /api/settings/route.ts: added clearCredentialsCache() import, cache is cleared when Evolution API settings are updated
+- Updated ConfiguracoesTab in page.tsx: added Evolution API config card (full-width, 2-column) with URL + API Key fields and "Testar Conexão" button
+- Test button saves settings first, then calls test-connection endpoint, shows success/error result inline
+- FIXED CRITICAL BUG: middleware was blocking /api/whatsapp/webhook (Evolution API callbacks) — added to PUBLIC_API_ROUTES allowlist
+- FIXED CRITICAL BUG: middleware was blocking /api/campaigns/process-all (Vercel Cron) — added to PUBLIC_API_ROUTES allowlist  
+- Added CRON_SECRET verification in process-all route handler for production security
+- All lint passes clean
+- All API endpoints tested and working: settings, test-connection, auth, stats, chips, templates, inbox, instances
+- Pushed to GitHub (auto-deploys to Vercel)
+
+Stage Summary:
+- Evolution API credentials now stored in database (Settings table), configurable from the UI
+- No need to redeploy or change env vars to update Evolution API connection
+- Critical auth bug fixed: webhook and cron routes are now accessible without session cookie
+- CRON_SECRET verification added for production security on process-all endpoint
+- Test connection button provides instant feedback on Evolution API connectivity
+
+Previous Session Completion Summary (13 items from Artur's request):
+- ✅ Settings persistence (DB instead of localStorage)
+- ✅ Webhook auto-config in Evolution API instances
+- ✅ SOCKS5 proxy applied to Evolution API
+- ✅ Delete individual contact UI
+- ✅ Authentication/Login system (JWT + middleware)
+- ✅ Media sending (images/audio/documents)
+- ✅ Edit templates UI
+- ✅ Pause/Resume campaign
+- ✅ Real campaign scheduling (auto-start via cron)
+- ✅ Inbox (received messages UI)
+- ✅ Edit contact UI
+- ✅ Resend failed messages (single + bulk)
+- ✅ WireGuard 4G routing (code-level integration complete, VPS setup is deployment step)
