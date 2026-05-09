@@ -3367,7 +3367,7 @@ export default function OctupusZapApp() {
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
               <span className="relative inline-flex rounded-full size-2 bg-emerald-500"></span>
             </span>
-            <span className="text-[11px] text-zinc-500">Auto-refresh 60s</span>
+            <span className="text-[11px] text-zinc-500">Auto-refresh 60s • Auto-deploy</span>
           </div>
         </div>
       </aside>
