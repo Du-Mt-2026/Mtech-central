@@ -4,6 +4,9 @@
 const EVOLUTION_API_URL = process.env.EVOLUTION_API_URL || '';
 const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY || '';
 
+// Prefix for all OctupusZap instances — only instances with this prefix are managed by the site
+export const INSTANCE_PREFIX = 'OctupusZap_';
+
 interface EvolutionInstance {
   id: string;
   name: string;
@@ -84,6 +87,15 @@ export async function createInstance(instanceName: string): Promise<EvolutionIns
 export async function fetchInstances(): Promise<EvolutionInstance[]> {
   const response = await evolutionFetch('/instance/fetchInstances');
   return response.json();
+}
+
+/**
+ * Fetch only OctupusZap instances (filtered by INSTANCE_PREFIX).
+ * Other instances on the same Evolution API server are ignored.
+ */
+export async function fetchOctupusZapInstances(): Promise<EvolutionInstance[]> {
+  const all = await fetchInstances();
+  return all.filter(inst => inst.name.startsWith(INSTANCE_PREFIX));
 }
 
 export async function deleteInstance(instanceName: string): Promise<void> {
@@ -257,7 +269,14 @@ export function getInstanceName(chipId: string, chipName: string): string {
   // Use a sanitized version of chip name + last 8 chars of ID
   const sanitizedName = chipName.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 20);
   const shortId = chipId.substring(chipId.length - 8);
-  return `OctupusZap_${sanitizedName}_${shortId}`;
+  return `${INSTANCE_PREFIX}${sanitizedName}_${shortId}`;
+}
+
+/**
+ * Check if an instance name belongs to OctupusZap
+ */
+export function isOctupusZapInstance(instanceName: string): boolean {
+  return instanceName.startsWith(INSTANCE_PREFIX);
 }
 
 /**
@@ -272,7 +291,7 @@ export async function findInstanceByName(instanceName: string): Promise<Evolutio
  * Get all Evolution instances with their connection status as a map
  */
 export async function getInstancesStatusMap(): Promise<Map<string, { status: string; profileName: string | null; profilePicUrl: string | null; ownerJid: string | null }>> {
-  const instances = await fetchInstances();
+  const instances = await fetchOctupusZapInstances();
   const map = new Map();
   for (const inst of instances) {
     map.set(inst.name, {

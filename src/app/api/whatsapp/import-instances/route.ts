@@ -1,20 +1,20 @@
-import { fetchInstances } from '@/lib/evolution-api'
+import { fetchOctupusZapInstances, INSTANCE_PREFIX } from '@/lib/evolution-api'
 import { db } from '@/lib/db'
 import { NextResponse } from 'next/server'
 
 /**
  * POST /api/whatsapp/import-instances
- * Import Evolution API instances that are not yet linked to any chip.
- * Creates new chips for each unlinked instance.
- * Body: { instanceNames?: string[] } — optional filter, imports all if empty
+ * Import OctupusZap Evolution API instances that are not yet linked to any chip.
+ * Only imports instances with the OctupusZap_ prefix.
+ * Body: { instanceNames?: string[] } — optional filter, imports all unlinked if empty
  */
 export async function POST(request: Request) {
   try {
     const body = await request.json().catch(() => ({}))
     const { instanceNames } = body as { instanceNames?: string[] }
 
-    // Fetch all instances from Evolution API
-    const instances = await fetchInstances()
+    // Fetch only OctupusZap instances from Evolution API
+    const instances = await fetchOctupusZapInstances()
 
     // Get all chips that already have an evolution instance linked
     const existingChips = await db.chip.findMany()
@@ -24,12 +24,14 @@ export async function POST(request: Request) {
         .map(c => c.evolutionInstance!)
     )
 
-    // Find unlinked instances
+    // Find unlinked instances (already filtered by prefix)
     let unlinked = instances.filter(inst => !existingInstanceNames.has(inst.name))
 
     // Filter by requested names if provided
     if (instanceNames && instanceNames.length > 0) {
-      unlinked = unlinked.filter(inst => instanceNames.includes(inst.name))
+      // Only allow importing names that have the OctupusZap prefix
+      const safeNames = instanceNames.filter(n => n.startsWith(INSTANCE_PREFIX))
+      unlinked = unlinked.filter(inst => safeNames.includes(inst.name))
     }
 
     const imported: Array<{ id: string; name: string; instanceName: string; status: string }> = []
@@ -67,7 +69,7 @@ export async function POST(request: Request) {
       }
 
       // Create a new chip for this instance
-      const chipName = inst.profileName || inst.name.replace(/_/g, ' ')
+      const chipName = inst.profileName || inst.name.replace(INSTANCE_PREFIX, '').replace(/_/g, ' ')
       const newStatus = inst.connectionStatus === 'open' ? 'connected' : inst.connectionStatus === 'close' ? 'disconnected' : 'connecting'
 
       try {
@@ -101,6 +103,7 @@ export async function POST(request: Request) {
       totalInstances: instances.length,
       alreadyLinked: instances.length - unlinked.length,
       newImports: imported.length,
+      prefix: INSTANCE_PREFIX,
     })
   } catch (error) {
     console.error('Error importing instances:', error)

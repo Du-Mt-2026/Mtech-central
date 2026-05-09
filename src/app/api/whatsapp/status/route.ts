@@ -1,4 +1,4 @@
-import { getConnectionState, fetchInstances, getInstanceName } from '@/lib/evolution-api'
+import { getConnectionState, fetchOctupusZapInstances, getInstanceName, INSTANCE_PREFIX } from '@/lib/evolution-api'
 import { db } from '@/lib/db'
 import { NextResponse } from 'next/server'
 
@@ -46,9 +46,9 @@ export async function GET(request: Request) {
       }
     }
 
-    // No chipId — return all instances and sync statuses
+    // No chipId — return only OctupusZap instances and sync statuses
     const [instances, chips] = await Promise.all([
-      fetchInstances().catch(() => []),
+      fetchOctupusZapInstances().catch(() => []),
       db.chip.findMany(),
     ])
 
@@ -56,7 +56,11 @@ export async function GET(request: Request) {
       instances.map((inst) => [inst.name, inst.connectionStatus])
     )
 
+    // Only sync chips that belong to OctupusZap
     for (const chip of chips) {
+      if (chip.evolutionInstance && !chip.evolutionInstance.startsWith(INSTANCE_PREFIX)) {
+        continue
+      }
       const instanceName = getInstanceName(chip.id, chip.name)
       const instanceState = instanceMap.get(instanceName)
       if (instanceState) {
@@ -78,6 +82,7 @@ export async function GET(request: Request) {
       chips: await db.chip.findMany(),
       total: instances.length,
       connected: instances.filter((i: any) => i.connectionStatus === 'open').length,
+      prefix: INSTANCE_PREFIX,
     })
   } catch (error: any) {
     console.error('Status fetch error:', error)

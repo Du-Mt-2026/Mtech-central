@@ -921,7 +921,7 @@ function ChipsTab() {
             <DialogTitle className="flex items-center gap-2">
               <Database className="size-5 text-emerald-500" /> Importar Instâncias do Evolution API
             </DialogTitle>
-            <DialogDescription>Selecione as instâncias que deseja importar como chips</DialogDescription>
+            <DialogDescription>Selecione instâncias OctupusZap (prefixo &quot;OctupusZap_&quot;) para importar como chips. Instâncias externas não aparecem.</DialogDescription>
           </DialogHeader>
           <div className="py-4">
             {instancesLoading ? (

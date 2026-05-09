@@ -1,11 +1,11 @@
 import { NextResponse } from 'next/server'
-import { fetchInstances, getConnectionState, getInstanceName } from '@/lib/evolution-api'
+import { fetchOctupusZapInstances, getInstanceName, INSTANCE_PREFIX } from '@/lib/evolution-api'
 import { db } from '@/lib/db'
 
 export async function GET() {
   try {
-    // Fetch all Evolution API instances
-    const instances = await fetchInstances()
+    // Fetch only OctupusZap instances (filtered by prefix)
+    const instances = await fetchOctupusZapInstances()
 
     // Create a map of instance name -> connection status
     const instanceMap = new Map<string, any>()
@@ -51,6 +51,7 @@ export async function GET() {
       chips: updatedChips,
       total: instances.length,
       connected: instances.filter((i: any) => i.connectionStatus === 'open').length,
+      prefix: INSTANCE_PREFIX,
     })
   } catch (error: any) {
     console.error('Instances fetch error:', error)
