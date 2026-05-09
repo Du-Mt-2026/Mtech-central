@@ -261,7 +261,15 @@ function ConfirmDialog({
 }
 
 // ===== Dashboard Tab =====
-function DashboardTab({ stats }: { stats: Stats | null }) {
+function DashboardTab({ stats, onRefresh, setActiveTab }: { stats: Stats | null; onRefresh: () => void; setActiveTab: (tab: string) => void }) {
+  const [refreshing, setRefreshing] = useState(false)
+
+  const handleRefresh = async () => {
+    setRefreshing(true)
+    onRefresh()
+    setTimeout(() => setRefreshing(false), 1000)
+  }
+
   if (!stats) return <div className="flex items-center justify-center py-20"><RefreshCw className="size-6 animate-spin text-muted-foreground" /></div>
 
   const s = {
@@ -274,20 +282,39 @@ function DashboardTab({ stats }: { stats: Stats | null }) {
   }
 
   const statCards = [
-    { title: 'Chips', value: s.totalChips, sub: `${s.connectedChips} conectados`, icon: Smartphone, gradient: 'from-violet-500 to-purple-600', trend: s.connectedChips > 0 ? `${s.connectedChips} online` : 'nenhum online', trendUp: s.connectedChips > 0 },
-    { title: 'Campanhas', value: s.totalCampaigns, sub: `${s.activeCampaigns} ativas`, icon: Send, gradient: 'from-emerald-500 to-teal-600', trend: s.activeCampaigns > 0 ? `${s.activeCampaigns} rodando` : 'nenhuma ativa', trendUp: s.activeCampaigns > 0 },
-    { title: 'Mensagens', value: s.totalMessages, sub: `${s.sentMessages} enviadas`, icon: MessageSquare, gradient: 'from-amber-500 to-orange-600', trend: s.pendingMessages > 0 ? `${s.pendingMessages} pendentes` : 'todas processadas', trendUp: s.totalMessages > 0 },
+    { title: 'Chips', value: s.totalChips, sub: `${s.connectedChips} conectados`, icon: Smartphone, gradient: 'from-emerald-500 to-teal-600', trend: s.connectedChips > 0 ? `${s.connectedChips} online` : 'nenhum online', trendUp: s.connectedChips > 0 },
+    { title: 'Campanhas', value: s.totalCampaigns, sub: `${s.activeCampaigns} ativas`, icon: Send, gradient: 'from-amber-500 to-orange-600', trend: s.activeCampaigns > 0 ? `${s.activeCampaigns} rodando` : 'nenhuma ativa', trendUp: s.activeCampaigns > 0 },
+    { title: 'Mensagens', value: s.totalMessages, sub: `${s.sentMessages} enviadas`, icon: MessageSquare, gradient: 'from-cyan-500 to-sky-600', trend: s.pendingMessages > 0 ? `${s.pendingMessages} pendentes` : 'todas processadas', trendUp: s.totalMessages > 0 },
     { title: 'Taxa de Entrega', value: s.deliveryRate > 0 ? `${s.deliveryRate}%` : '—', sub: `${s.failedMessages} falharam`, icon: Activity, gradient: 'from-rose-500 to-pink-600', trend: s.deliveryRate > 80 ? 'boa' : s.deliveryRate > 0 ? 'atenção' : 'sem dados', trendUp: s.deliveryRate > 80 },
+  ]
+
+  const quickActions = [
+    { label: 'Novo Chip', icon: Smartphone, tab: 'chips', color: 'from-violet-500 to-purple-600' },
+    { label: 'Nova Campanha', icon: Send, tab: 'campanhas', color: 'from-emerald-500 to-teal-600' },
+    { label: 'Importar Contatos', icon: Users, tab: 'contatos', color: 'from-amber-500 to-orange-600' },
   ]
 
   return (
     <div className="space-y-6">
+      {/* Header with Refresh */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-2xl font-bold">Dashboard</h2>
+          <p className="text-sm text-muted-foreground">Visão geral do sistema</p>
+        </div>
+        <Button variant="outline" className="gap-2" onClick={handleRefresh} disabled={refreshing}>
+          <RefreshCw className={`size-4 ${refreshing ? 'animate-spin' : ''}`} />
+          Atualizar
+        </Button>
+      </div>
+
       {/* Stat Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {statCards.map((card, i) => (
           <motion.div key={card.title} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.1 }}>
-            <Card className="relative overflow-hidden border-0 shadow-lg">
-              <div className={`absolute inset-0 bg-gradient-to-br ${card.gradient} opacity-10`} />
+            <Card className="relative overflow-hidden border-0 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-[1.01]">
+              <div className={`absolute inset-0 bg-gradient-to-br ${card.gradient} opacity-[0.08]`} />
+              <div className={`absolute top-0 left-0 right-0 h-1 bg-gradient-to-r ${card.gradient}`} />
               <CardHeader className="relative pb-2">
                 <CardDescription className="text-sm font-medium">{card.title}</CardDescription>
                 <CardTitle className="text-3xl font-bold">{card.value}</CardTitle>
@@ -311,9 +338,38 @@ function DashboardTab({ stats }: { stats: Stats | null }) {
         ))}
       </div>
 
+      {/* Quick Actions */}
+      <Card className="shadow-lg border-0">
+        <CardHeader className="pb-3">
+          <div className="flex items-center gap-2">
+            <div className="flex size-8 items-center justify-center rounded-lg bg-zinc-100 dark:bg-zinc-800">
+              <Zap className="size-4 text-zinc-600 dark:text-zinc-400" />
+            </div>
+            <CardTitle className="text-lg">Ações Rápidas</CardTitle>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            {quickActions.map((action) => (
+              <button key={action.tab} onClick={() => setActiveTab(action.tab)}
+                className="flex items-center gap-3 p-4 rounded-xl border border-border/50 bg-muted/30 hover:bg-muted/60 hover:shadow-md transition-all duration-200 hover:scale-[1.01] text-left">
+                <div className={`flex size-10 items-center justify-center rounded-xl bg-gradient-to-br ${action.color} shadow-md`}>
+                  <action.icon className="size-5 text-white" />
+                </div>
+                <div>
+                  <p className="font-semibold text-sm">{action.label}</p>
+                  <p className="text-xs text-muted-foreground">Ir para {action.label.toLowerCase()}</p>
+                </div>
+                <ChevronRight className="size-4 text-muted-foreground ml-auto" />
+              </button>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Recent Activity */}
-        <Card className="shadow-md border-0">
+        <Card className="shadow-lg border-0 hover:shadow-xl transition-all duration-200">
           <CardHeader>
             <div className="flex items-center gap-2">
               <div className="flex size-8 items-center justify-center rounded-lg bg-amber-100 dark:bg-amber-900/30">
@@ -351,7 +407,7 @@ function DashboardTab({ stats }: { stats: Stats | null }) {
         </Card>
 
         {/* Chip Statuses */}
-        <Card className="shadow-md border-0">
+        <Card className="shadow-lg border-0 hover:shadow-xl transition-all duration-200">
           <CardHeader>
             <div className="flex items-center gap-2">
               <div className="flex size-8 items-center justify-center rounded-lg bg-violet-100 dark:bg-violet-900/30">
@@ -389,7 +445,7 @@ function DashboardTab({ stats }: { stats: Stats | null }) {
 
       {/* Active Campaigns */}
       {stats.runningCampaigns && stats.runningCampaigns.length > 0 && (
-        <Card className="shadow-md border-0">
+        <Card className="shadow-lg border-0 hover:shadow-xl transition-all duration-200">
           <CardHeader>
             <div className="flex items-center gap-2">
               <div className="flex size-8 items-center justify-center rounded-lg bg-emerald-100 dark:bg-emerald-900/30">
@@ -448,6 +504,7 @@ function ChipsTab() {
   const [instancesLoading, setInstancesLoading] = useState(false)
   const [unlinkedInstances, setUnlinkedInstances] = useState<Array<{ name: string; connectionStatus: string; profileName: string | null; profilePicUrl: string | null; number: string | null; disconnectionReasonCode: number | null }>>([])
   const [selectedInstances, setSelectedInstances] = useState<Set<string>>(new Set())
+  const [webhookConfiguring, setWebhookConfiguring] = useState(false)
 
   const fetchChips = useCallback(async () => {
     try {
@@ -692,6 +749,41 @@ function ChipsTab() {
     }
   }
 
+  const configureWebhooks = async () => {
+    const chipsWithInstance = chips.filter(c => c.evolutionInstance)
+    if (chipsWithInstance.length === 0) {
+      toast.error('Nenhum chip com instância Evolution API encontrada')
+      return
+    }
+    setWebhookConfiguring(true)
+    let configured = 0
+    let failed = 0
+    for (let i = 0; i < chipsWithInstance.length; i++) {
+      try {
+        const res = await fetch('/api/whatsapp/setup-webhook', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chipId: chipsWithInstance[i].id }),
+        })
+        if (res.ok) configured++
+        else failed++
+      } catch {
+        failed++
+      }
+      // Update progress toast
+      if (i < chipsWithInstance.length - 1) {
+        toast.loading(`Configurando webhooks ${i + 1}/${chipsWithInstance.length}...`, { id: 'webhook-progress' })
+      }
+    }
+    toast.dismiss('webhook-progress')
+    if (configured > 0) {
+      toast.success(`${configured} webhook(s) configurado(s) com sucesso!${failed > 0 ? ` — ${failed} falha(s)` : ''}`)
+    } else {
+      toast.error('Falha ao configurar webhooks')
+    }
+    setWebhookConfiguring(false)
+  }
+
   const openImportDialog = async () => {
     setImportDialogOpen(true)
     setInstancesLoading(true)
@@ -769,6 +861,10 @@ function ChipsTab() {
             {syncing ? <RefreshCw className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
             {syncing ? 'Sincronizando...' : 'Sincronizar Evolution API'}
           </Button>
+          <Button variant="outline" className="gap-2" onClick={configureWebhooks} disabled={webhookConfiguring}>
+            {webhookConfiguring ? <RefreshCw className="size-4 animate-spin" /> : <Webhook className="size-4" />}
+            {webhookConfiguring ? 'Configurando...' : 'Configurar Webhooks'}
+          </Button>
           <Button variant="outline" className="gap-2" onClick={openImportDialog} disabled={importLoading}>
             <ArrowDownToLine className="size-4" /> Importar Instâncias
           </Button>
@@ -810,7 +906,7 @@ function ChipsTab() {
           { label: 'Desconectados', value: disconnected, icon: X, color: 'text-zinc-600 bg-zinc-100 dark:bg-zinc-900/30' },
           { label: 'Erro', value: errorCount, icon: AlertCircle, color: 'text-rose-600 bg-rose-100 dark:bg-rose-900/30' },
         ].map(s => (
-          <Card key={s.label} className="shadow-sm">
+          <Card key={s.label} className="shadow-lg">
             <CardContent className="p-4 flex items-center gap-3">
               <div className={`flex size-10 items-center justify-center rounded-xl ${s.color}`}>
                 <s.icon className="size-5" />
@@ -828,7 +924,7 @@ function ChipsTab() {
       {loading ? (
         <div className="flex items-center justify-center py-20"><RefreshCw className="size-6 animate-spin text-muted-foreground" /></div>
       ) : chips.length === 0 ? (
-        <Card className="shadow-md border-0">
+        <Card className="shadow-lg border-0 hover:shadow-xl transition-all duration-200">
           <CardContent className="flex flex-col items-center justify-center py-16">
             <div className="flex size-16 items-center justify-center rounded-2xl bg-violet-100 dark:bg-violet-900/30 mb-4">
               <Smartphone className="size-8 text-violet-500" />
@@ -842,7 +938,7 @@ function ChipsTab() {
           <AnimatePresence>
             {chips.map((chip, i) => (
               <motion.div key={chip.id} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}>
-                <Card className="shadow-md hover:shadow-lg transition-all border-0 relative overflow-hidden">
+                <Card className="shadow-lg hover:shadow-xl transition-all duration-200 border-0 relative overflow-hidden">
                   <div className={`absolute top-0 left-0 right-0 h-1 ${chip.status === 'connected' ? 'bg-gradient-to-r from-emerald-400 to-teal-500' : chip.status === 'error' ? 'bg-gradient-to-r from-rose-400 to-pink-500' : chip.status === 'connecting' ? 'bg-gradient-to-r from-amber-400 to-orange-500' : 'bg-zinc-300'}`} />
                   <CardHeader className="pb-3">
                     <div className="flex items-center gap-3">
@@ -1374,7 +1470,7 @@ function ContatosTab() {
           </div>
 
           {contacts.length === 0 ? (
-            <Card className="shadow-md border-0">
+            <Card className="shadow-lg border-0 hover:shadow-xl transition-all duration-200">
               <CardContent className="flex flex-col items-center justify-center py-12">
                 <Users className="size-10 text-muted-foreground mb-3" />
                 <p className="font-semibold">Nenhum contato nesta lista</p>
@@ -1382,7 +1478,7 @@ function ContatosTab() {
               </CardContent>
             </Card>
           ) : (
-            <Card className="shadow-md border-0">
+            <Card className="shadow-lg border-0 hover:shadow-xl transition-all duration-200">
               <CardContent className="p-0">
                 <ScrollArea className="max-h-96">
                   <table className="w-full text-sm">
@@ -1423,7 +1519,7 @@ function ContatosTab() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {contactLists.map((list, i) => (
             <motion.div key={list.id} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}>
-              <Card className="shadow-md hover:shadow-lg transition-all cursor-pointer border-0" onClick={() => { setSelectedList(list); fetchContacts(list.id) }}>
+              <Card className="shadow-lg hover:shadow-xl transition-all duration-200 cursor-pointer border-0" onClick={() => { setSelectedList(list); fetchContacts(list.id) }}>
                 <CardHeader>
                   <div className="flex items-center gap-3">
                     <div className="flex size-10 items-center justify-center rounded-xl bg-sky-100 dark:bg-sky-900/30">
@@ -1442,7 +1538,7 @@ function ContatosTab() {
             </motion.div>
           ))}
           {contactLists.length === 0 && (
-            <Card className="shadow-md border-0 col-span-full">
+            <Card className="shadow-lg border-0 hover:shadow-xl transition-all duration-200 col-span-full">
               <CardContent className="flex flex-col items-center justify-center py-16">
                 <Users className="size-10 text-muted-foreground mb-3" />
                 <p className="font-semibold">Nenhuma lista criada</p>
@@ -1524,6 +1620,7 @@ function CampanhasTab() {
   const [availableChips, setAvailableChips] = useState<Chip[]>([])
   const [availableLists, setAvailableLists] = useState<ContactList[]>([])
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
+  const [processing, setProcessing] = useState(false)
 
   const [newCampaign, setNewCampaign] = useState({
     name: '', sendIntervalMin: 30, sendIntervalMax: 90,
@@ -1592,6 +1689,22 @@ function CampanhasTab() {
     catch { toast.error('Erro ao remover campanha') }
   }
 
+  const processAllCampaigns = async () => {
+    setProcessing(true)
+    try {
+      const res = await fetch('/api/campaigns/process-all', { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Erro ao processar campanhas')
+      const processed = data.processed ?? data.startedScheduled ?? 0
+      toast.success(`${processed} campanha(s) processada(s) com sucesso!`)
+      fetchCampaigns()
+    } catch (err: unknown) {
+      toast.error((err as Error).message || 'Erro ao processar campanhas')
+    } finally {
+      setProcessing(false)
+    }
+  }
+
   const openDetail = async (campaign: Campaign) => {
     setSelectedCampaign(campaign); setDetailDialogOpen(true)
     try { const res = await fetch(`/api/messages?campaignId=${campaign.id}`); setDetailMessages(await res.json()) }
@@ -1622,12 +1735,17 @@ function CampanhasTab() {
           <h2 className="text-2xl font-bold">Campanhas</h2>
           <p className="text-sm text-muted-foreground">Gerencie suas campanhas de envio em massa</p>
         </div>
-        <Dialog open={createDialogOpen} onOpenChange={(o) => { setCreateDialogOpen(o); if (!o) resetNewCampaign() }}>
-          <DialogTrigger asChild>
-            <Button className="gap-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 shadow-lg">
-              <Plus className="size-4" /> Nova Campanha
-            </Button>
-          </DialogTrigger>
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button variant="outline" className="gap-2" onClick={processAllCampaigns} disabled={processing}>
+            {processing ? <RefreshCw className="size-4 animate-spin" /> : <Zap className="size-4" />}
+            {processing ? 'Processando...' : 'Processar Campanhas'}
+          </Button>
+          <Dialog open={createDialogOpen} onOpenChange={(o) => { setCreateDialogOpen(o); if (!o) resetNewCampaign() }}>
+            <DialogTrigger asChild>
+              <Button className="gap-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 shadow-lg">
+                <Plus className="size-4" /> Nova Campanha
+              </Button>
+            </DialogTrigger>
           <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Criar Campanha</DialogTitle>
@@ -1802,12 +1920,13 @@ function CampanhasTab() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
 
       {loading ? (
         <div className="flex items-center justify-center py-20"><RefreshCw className="size-6 animate-spin text-muted-foreground" /></div>
       ) : campaigns.length === 0 ? (
-        <Card className="shadow-md border-0">
+        <Card className="shadow-lg border-0 hover:shadow-xl transition-all duration-200">
           <CardContent className="flex flex-col items-center justify-center py-16">
             <Send className="size-10 text-muted-foreground mb-3" />
             <p className="font-semibold">Nenhuma campanha criada</p>
@@ -1818,7 +1937,7 @@ function CampanhasTab() {
         <div className="space-y-3">
           {campaigns.map((c, i) => (
             <motion.div key={c.id} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}>
-              <Card className="shadow-md hover:shadow-lg transition-all border-0">
+              <Card className="shadow-lg hover:shadow-xl transition-all duration-200 border-0">
                 <CardContent className="p-5">
                   <div className="flex items-center gap-4">
                     <div className="flex size-12 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-400 to-teal-500 shadow-lg">
@@ -1878,10 +1997,10 @@ function CampanhasTab() {
                 <Badge variant="outline" className="gap-1">{selectedCampaign.warmingMode === 'stealth' ? <><Snowflake className="size-3" /> Furtivo</> : selectedCampaign.warmingMode === 'agressive' ? <><Flame className="size-3" /> Agressivo</> : <><Shield className="size-3" /> Normal</>}</Badge>
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <Card className="shadow-sm"><CardContent className="p-3 text-center"><p className="text-xs text-muted-foreground">Pendentes</p><p className="text-xl font-bold">{detailMessages.filter(m => m.status === 'pending').length}</p></CardContent></Card>
-                <Card className="shadow-sm"><CardContent className="p-3 text-center"><p className="text-xs text-muted-foreground">Enviadas</p><p className="text-xl font-bold text-sky-600">{detailMessages.filter(m => m.status === 'sent').length}</p></CardContent></Card>
-                <Card className="shadow-sm"><CardContent className="p-3 text-center"><p className="text-xs text-muted-foreground">Entregues</p><p className="text-xl font-bold text-emerald-600">{detailMessages.filter(m => m.status === 'delivered' || m.status === 'read').length}</p></CardContent></Card>
-                <Card className="shadow-sm"><CardContent className="p-3 text-center"><p className="text-xs text-muted-foreground">Falharam</p><p className="text-xl font-bold text-rose-600">{detailMessages.filter(m => m.status === 'failed').length}</p></CardContent></Card>
+                <Card className="shadow-lg"><CardContent className="p-3 text-center"><p className="text-xs text-muted-foreground">Pendentes</p><p className="text-xl font-bold">{detailMessages.filter(m => m.status === 'pending').length}</p></CardContent></Card>
+                <Card className="shadow-lg"><CardContent className="p-3 text-center"><p className="text-xs text-muted-foreground">Enviadas</p><p className="text-xl font-bold text-sky-600">{detailMessages.filter(m => m.status === 'sent').length}</p></CardContent></Card>
+                <Card className="shadow-lg"><CardContent className="p-3 text-center"><p className="text-xs text-muted-foreground">Entregues</p><p className="text-xl font-bold text-emerald-600">{detailMessages.filter(m => m.status === 'delivered' || m.status === 'read').length}</p></CardContent></Card>
+                <Card className="shadow-lg"><CardContent className="p-3 text-center"><p className="text-xs text-muted-foreground">Falharam</p><p className="text-xl font-bold text-rose-600">{detailMessages.filter(m => m.status === 'failed').length}</p></CardContent></Card>
               </div>
               {selectedCampaign.sequenceSteps?.length > 0 && (
                 <div className="space-y-2">
@@ -2049,7 +2168,7 @@ function TemplatesTab() {
       {loading ? (
         <div className="flex items-center justify-center py-20"><RefreshCw className="size-6 animate-spin text-muted-foreground" /></div>
       ) : filtered.length === 0 ? (
-        <Card className="shadow-md border-0">
+        <Card className="shadow-lg border-0 hover:shadow-xl transition-all duration-200">
           <CardContent className="flex flex-col items-center justify-center py-16">
             <FileText className="size-10 text-muted-foreground mb-3" />
             <p className="font-semibold">Nenhum template encontrado</p>
@@ -2062,7 +2181,7 @@ function TemplatesTab() {
             const vars = t.content.match(/\{[^}]+\}/g) || []
             return (
               <motion.div key={t.id} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}>
-                <Card className="shadow-md hover:shadow-lg transition-all border-0 group">
+                <Card className="shadow-lg hover:shadow-xl transition-all duration-200 border-0 group">
                   <CardHeader className="pb-3">
                     <div className="flex items-center gap-3">
                       <div className="flex size-10 items-center justify-center rounded-xl bg-teal-100 dark:bg-teal-900/30">
@@ -2231,7 +2350,7 @@ function AntiBanTab() {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {protectionItems.map((item, i) => (
           <motion.div key={item.key} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.1 }}>
-            <Card className="shadow-md hover:shadow-lg transition-all border-0">
+            <Card className="shadow-lg hover:shadow-xl transition-all duration-200 border-0">
               <CardContent className="p-4">
                 <div className="flex items-center gap-3">
                   <div className={`flex size-10 items-center justify-center rounded-xl ${item.enabled ? 'bg-emerald-100 dark:bg-emerald-900/30' : 'bg-zinc-100 dark:bg-zinc-900/30'}`}>
@@ -2250,7 +2369,7 @@ function AntiBanTab() {
       </div>
 
       {/* Typing Simulation */}
-      <Card className="shadow-md border-0">
+      <Card className="shadow-lg border-0 hover:shadow-xl transition-all duration-200">
         <CardHeader>
           <div className="flex items-center gap-2">
             <div className="flex size-8 items-center justify-center rounded-lg bg-amber-100 dark:bg-amber-900/30">
@@ -2293,7 +2412,7 @@ function AntiBanTab() {
       </Card>
 
       {/* Message Interval */}
-      <Card className="shadow-md border-0">
+      <Card className="shadow-lg border-0 hover:shadow-xl transition-all duration-200">
         <CardHeader>
           <div className="flex items-center gap-2">
             <div className="flex size-8 items-center justify-center rounded-lg bg-sky-100 dark:bg-sky-900/30">
@@ -2335,7 +2454,7 @@ function AntiBanTab() {
       </Card>
 
       {/* Progressive Warming */}
-      <Card className="shadow-md border-0">
+      <Card className="shadow-lg border-0 hover:shadow-xl transition-all duration-200">
         <CardHeader>
           <div className="flex items-center gap-2">
             <div className="flex size-8 items-center justify-center rounded-lg bg-orange-100 dark:bg-orange-900/30">
@@ -2382,7 +2501,7 @@ function AntiBanTab() {
       </Card>
 
       {/* Cooldown & Limits */}
-      <Card className="shadow-md border-0">
+      <Card className="shadow-lg border-0 hover:shadow-xl transition-all duration-200">
         <CardHeader>
           <div className="flex items-center gap-2">
             <div className="flex size-8 items-center justify-center rounded-lg bg-rose-100 dark:bg-rose-900/30">
@@ -2426,7 +2545,7 @@ function AntiBanTab() {
       </Card>
 
       {/* Tips */}
-      <Card className="shadow-md border-0">
+      <Card className="shadow-lg border-0 hover:shadow-xl transition-all duration-200">
         <CardHeader>
           <div className="flex items-center gap-2">
             <div className="flex size-8 items-center justify-center rounded-lg bg-amber-100 dark:bg-amber-900/30">
@@ -2506,7 +2625,7 @@ function InboxTab() {
       {loading ? (
         <div className="flex items-center justify-center py-20"><RefreshCw className="size-6 animate-spin text-muted-foreground" /></div>
       ) : messages.length === 0 ? (
-        <Card className="shadow-md border-0">
+        <Card className="shadow-lg border-0 hover:shadow-xl transition-all duration-200">
           <CardContent className="flex flex-col items-center justify-center py-16">
             <Inbox className="size-10 text-muted-foreground mb-3" />
             <p className="font-semibold">Nenhuma mensagem recebida</p>
@@ -2514,7 +2633,7 @@ function InboxTab() {
           </CardContent>
         </Card>
       ) : (
-        <Card className="shadow-md border-0">
+        <Card className="shadow-lg border-0 hover:shadow-xl transition-all duration-200">
           <CardContent className="p-0">
             <ScrollArea className="max-h-[600px]">
               <table className="w-full text-sm">
@@ -2663,7 +2782,7 @@ function MensagensTab() {
       {loading ? (
         <div className="flex items-center justify-center py-20"><RefreshCw className="size-6 animate-spin text-muted-foreground" /></div>
       ) : filtered.length === 0 ? (
-        <Card className="shadow-md border-0">
+        <Card className="shadow-lg border-0 hover:shadow-xl transition-all duration-200">
           <CardContent className="flex flex-col items-center justify-center py-16">
             <MessageSquare className="size-10 text-muted-foreground mb-3" />
             <p className="font-semibold">Nenhuma mensagem encontrada</p>
@@ -2671,7 +2790,7 @@ function MensagensTab() {
           </CardContent>
         </Card>
       ) : (
-        <Card className="shadow-md border-0">
+        <Card className="shadow-lg border-0 hover:shadow-xl transition-all duration-200">
           <CardContent className="p-0">
             <ScrollArea className="max-h-[600px]">
               <table className="w-full text-sm">
@@ -2725,6 +2844,8 @@ function ConfiguracoesTab() {
   const [saving, setSaving] = useState(false)
   const [testingConnection, setTestingConnection] = useState(false)
   const [connectionResult, setConnectionResult] = useState<{ success: boolean; message: string } | null>(null)
+  const [passwordForm, setPasswordForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' })
+  const [changingPassword, setChangingPassword] = useState(false)
 
   useEffect(() => {
     const loadSettings = async () => {
@@ -2798,6 +2919,40 @@ function ConfiguracoesTab() {
     }
   }
 
+  const changePassword = async () => {
+    if (!passwordForm.currentPassword || !passwordForm.newPassword || !passwordForm.confirmPassword) {
+      toast.error('Preencha todos os campos de senha')
+      return
+    }
+    if (passwordForm.newPassword !== passwordForm.confirmPassword) {
+      toast.error('A nova senha e a confirmação não coincidem')
+      return
+    }
+    if (passwordForm.newPassword.length < 6) {
+      toast.error('A nova senha deve ter pelo menos 6 caracteres')
+      return
+    }
+    setChangingPassword(true)
+    try {
+      const res = await fetch('/api/auth/change-password', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          currentPassword: passwordForm.currentPassword,
+          newPassword: passwordForm.newPassword,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Erro ao alterar senha')
+      toast.success('Senha alterada com sucesso!')
+      setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' })
+    } catch (err: unknown) {
+      toast.error((err as Error).message || 'Erro ao alterar senha')
+    } finally {
+      setChangingPassword(false)
+    }
+  }
+
   if (loading) return <div className="flex items-center justify-center py-20"><RefreshCw className="size-6 animate-spin text-muted-foreground" /></div>
 
   return (
@@ -2809,7 +2964,7 @@ function ConfiguracoesTab() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Evolution API Card - FULL WIDTH */}
-        <Card className="shadow-md border-0 lg:col-span-2">
+        <Card className="shadow-lg border-0 hover:shadow-xl transition-all duration-200 lg:col-span-2">
           <CardHeader>
             <div className="flex items-center gap-2">
               <div className="flex size-8 items-center justify-center rounded-lg bg-emerald-100 dark:bg-emerald-900/30">
@@ -2856,7 +3011,7 @@ function ConfiguracoesTab() {
           </CardContent>
         </Card>
 
-        <Card className="shadow-md border-0">
+        <Card className="shadow-lg border-0 hover:shadow-xl transition-all duration-200">
           <CardHeader>
             <div className="flex items-center gap-2">
               <div className="flex size-8 items-center justify-center rounded-lg bg-sky-100 dark:bg-sky-900/30">
@@ -2886,7 +3041,7 @@ function ConfiguracoesTab() {
           </CardContent>
         </Card>
 
-        <Card className="shadow-md border-0">
+        <Card className="shadow-lg border-0 hover:shadow-xl transition-all duration-200">
           <CardHeader>
             <div className="flex items-center gap-2">
               <div className="flex size-8 items-center justify-center rounded-lg bg-violet-100 dark:bg-violet-900/30">
@@ -2910,7 +3065,7 @@ function ConfiguracoesTab() {
           </CardContent>
         </Card>
 
-        <Card className="shadow-md border-0">
+        <Card className="shadow-lg border-0 hover:shadow-xl transition-all duration-200">
           <CardHeader>
             <div className="flex items-center gap-2">
               <div className="flex size-8 items-center justify-center rounded-lg bg-amber-100 dark:bg-amber-900/30">
@@ -2930,7 +3085,7 @@ function ConfiguracoesTab() {
           </CardContent>
         </Card>
 
-        <Card className="shadow-md border-0">
+        <Card className="shadow-lg border-0 hover:shadow-xl transition-all duration-200">
           <CardHeader>
             <div className="flex items-center gap-2">
               <div className="flex size-8 items-center justify-center rounded-lg bg-emerald-100 dark:bg-emerald-900/30">
@@ -2957,6 +3112,45 @@ function ConfiguracoesTab() {
           {saving ? <RefreshCw className="size-4 animate-spin" /> : <Check className="size-4" />} Salvar Configurações
         </Button>
       </div>
+
+      {/* Change Password Card */}
+      <Card className="shadow-lg border-0">
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <div className="flex size-8 items-center justify-center rounded-lg bg-rose-100 dark:bg-rose-900/30">
+              <Lock className="size-4 text-rose-600" />
+            </div>
+            <CardTitle className="text-lg">Alterar Senha</CardTitle>
+          </div>
+          <CardDescription>Altere a senha de acesso do administrador</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-2">
+            <Label>Senha Atual</Label>
+            <Input type="password" placeholder="••••••" value={passwordForm.currentPassword}
+              onChange={e => setPasswordForm(p => ({ ...p, currentPassword: e.target.value }))} />
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label>Nova Senha</Label>
+              <Input type="password" placeholder="Mínimo 6 caracteres" value={passwordForm.newPassword}
+                onChange={e => setPasswordForm(p => ({ ...p, newPassword: e.target.value }))} />
+            </div>
+            <div className="space-y-2">
+              <Label>Confirmar Nova Senha</Label>
+              <Input type="password" placeholder="Repita a nova senha" value={passwordForm.confirmPassword}
+                onChange={e => setPasswordForm(p => ({ ...p, confirmPassword: e.target.value }))} />
+            </div>
+          </div>
+          <div className="flex justify-end">
+            <Button className="gap-2" onClick={changePassword}
+              disabled={changingPassword || !passwordForm.currentPassword || !passwordForm.newPassword || !passwordForm.confirmPassword}>
+              {changingPassword ? <RefreshCw className="size-4 animate-spin" /> : <Lock className="size-4" />}
+              {changingPassword ? 'Alterando...' : 'Alterar Senha'}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   )
 }
@@ -2981,6 +3175,10 @@ export default function OctupusZapApp() {
   useEffect(() => {
     if (loggedIn) fetch('/api/stats').then(r => r.json()).then(setStats).catch(() => {})
   }, [loggedIn])
+
+  const refreshStats = () => {
+    fetch('/api/stats').then(r => r.json()).then(setStats).catch(() => {})
+  }
 
   const handleLogin = async () => {
     setLoginLoading(true)
@@ -3009,7 +3207,7 @@ export default function OctupusZapApp() {
 
   const renderContent = () => {
     switch (activeTab) {
-      case 'dashboard': return <DashboardTab stats={stats} />
+      case 'dashboard': return <DashboardTab stats={stats} onRefresh={refreshStats} setActiveTab={setActiveTab} />
       case 'chips': return <ChipsTab />
       case 'inbox': return <InboxTab />
       case 'contatos': return <ContatosTab />
@@ -3018,7 +3216,7 @@ export default function OctupusZapApp() {
       case 'antiban': return <AntiBanTab />
       case 'mensagens': return <MensagensTab />
       case 'config': return <ConfiguracoesTab />
-      default: return <DashboardTab stats={stats} />
+      default: return <DashboardTab stats={stats} onRefresh={refreshStats} setActiveTab={setActiveTab} />
     }
   }
 
@@ -3127,7 +3325,7 @@ export default function OctupusZapApp() {
 
         <div className="p-4 m-3 rounded-xl bg-zinc-800/50">
           <div className="flex items-center gap-3">
-            <div className="flex size-9 items-center justify-center rounded-full bg-emerald-600">
+            <div className="flex size-9 items-center justify-center rounded-full bg-gradient-to-br from-emerald-400 to-teal-500 shadow-md">
               <span className="text-sm font-bold text-white">{username ? username.charAt(0).toUpperCase() : 'O'}</span>
             </div>
             <div className="flex-1 min-w-0">
@@ -3228,9 +3426,9 @@ export default function OctupusZapApp() {
         </main>
 
         {/* Footer */}
-        <footer className="px-4 lg:px-6 py-4 border-t bg-white dark:bg-zinc-900">
+        <footer className="px-4 lg:px-6 py-2.5 border-t bg-white/80 dark:bg-zinc-900/80 backdrop-blur-sm">
           <div className="flex items-center justify-between text-xs text-muted-foreground">
-            <p>OctupusZap © {new Date().getFullYear()} — Todos os direitos reservados</p>
+            <p>OctupusZap © {new Date().getFullYear()}</p>
             <p className="flex items-center gap-1">
               <Zap className="size-3 text-emerald-500" /> Powered by OctupusZap
             </p>
