@@ -3172,8 +3172,27 @@ export default function OctupusZapApp() {
     }).catch(() => {}).finally(() => setAuthLoading(false))
   }, [])
 
+  // Auto-refresh stats every 60 seconds when logged in
   useEffect(() => {
-    if (loggedIn) fetch('/api/stats').then(r => r.json()).then(setStats).catch(() => {})
+    if (!loggedIn) return
+    fetch('/api/stats').then(r => r.json()).then(setStats).catch(() => {})
+    const interval = setInterval(() => {
+      fetch('/api/stats').then(r => r.json()).then(setStats).catch(() => {})
+    }, 60000)
+    return () => clearInterval(interval)
+  }, [loggedIn])
+
+  // Auto-process campaigns every 60 seconds when logged in
+  useEffect(() => {
+    if (!loggedIn) return
+    const processCampaigns = () => {
+      fetch('/api/campaigns/process-all', { method: 'POST' }).catch(() => {})
+    }
+    // First process after 10 seconds (give time for page to load)
+    const timeout = setTimeout(processCampaigns, 10000)
+    // Then every 60 seconds
+    const interval = setInterval(processCampaigns, 60000)
+    return () => { clearTimeout(timeout); clearInterval(interval) }
   }, [loggedIn])
 
   const refreshStats = () => {
@@ -3323,7 +3342,7 @@ export default function OctupusZapApp() {
           ))}
         </nav>
 
-        <div className="p-4 m-3 rounded-xl bg-zinc-800/50">
+        <div className="p-4 m-3 rounded-xl bg-zinc-800/50 space-y-3">
           <div className="flex items-center gap-3">
             <div className="flex size-9 items-center justify-center rounded-full bg-gradient-to-br from-emerald-400 to-teal-500 shadow-md">
               <span className="text-sm font-bold text-white">{username ? username.charAt(0).toUpperCase() : 'O'}</span>
@@ -3342,6 +3361,13 @@ export default function OctupusZapApp() {
                 <TooltipContent>Sair</TooltipContent>
               </Tooltip>
             </TooltipProvider>
+          </div>
+          <div className="flex items-center gap-2 px-1">
+            <span className="relative flex size-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full size-2 bg-emerald-500"></span>
+            </span>
+            <span className="text-[11px] text-zinc-500">Auto-refresh 60s</span>
           </div>
         </div>
       </aside>
