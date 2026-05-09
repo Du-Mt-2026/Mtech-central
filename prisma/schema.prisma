@@ -37,6 +37,11 @@ model Chip {
   socks5Port       Int      @default(0)
   socks5User       String   @default("")
   socks5Pass       String   @default("")
+
+  // Evolution API integration
+  evolutionInstance String?  @unique
+  profileName      String?  
+  profilePicUrl    String?  
 }
 
 model AntiBanSettings {

@@ -22,15 +22,16 @@ export function getServerPrivateKey(): string {
   return process.env.WIREGUARD_SERVER_PRIV_KEY || ''
 }
 
-// Get server endpoint (would be configured via env in production)
+// Get server endpoint (configured via env)
 export function getServerEndpoint(): string {
   const port = process.env.WIREGUARD_SERVER_PORT || '51820'
-  return process.env.WIREGUARD_SERVER_ENDPOINT || `your-server-ip:${port}`
+  return process.env.WIREGUARD_SERVER_ENDPOINT || `187.77.48.22:${port}`
 }
 
 // Generate the next available WireGuard IP
+// Range: 10.0.0.3 to 10.0.0.254 (avoiding .1 server, .2 existing peer)
 export function generateWireGuardIp(usedIps: string[]): string {
-  const baseIp = process.env.WIREGUARD_SUBNET || '10.13.37'
+  const baseIp = process.env.WIREGUARD_SUBNET || '10.0.0'
   for (let i = 2; i <= 254; i++) {
     const ip = `${baseIp}.${i}`
     if (!usedIps.includes(ip)) {

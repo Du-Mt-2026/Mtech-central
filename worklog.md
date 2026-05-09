@@ -209,3 +209,65 @@ Stage Summary:
 - Código no GitHub: https://github.com/Du-Mt-26/Mtech-central
 - Pronto para deploy na Vercel
 - Pendente: Artur precisa conectar o repo na Vercel e configurar DATABASE_URL como env var
+
+---
+Task ID: 3 (current session)
+Agent: Full-Stack Developer
+Task: Create WhatsApp Integration API Routes (Evolution API)
+
+Work Log:
+- Created 6 WhatsApp API route files under /src/app/api/whatsapp/:
+  1. `/connect/route.ts` — POST: Creates/connects Evolution instance for a chip, generates QR code, sets webhook, returns { qrcode, instanceName }
+  2. `/disconnect/route.ts` — POST: Disconnects chip's Evolution instance, updates chip status to "disconnected"
+  3. `/status/route.ts` — GET: Returns connection state for a specific chip (by chipId query param) or all instances; syncs chip status in DB (open → connected, close → disconnected)
+  4. `/send/route.ts` — POST: Sends WhatsApp text message via Evolution API; supports simulateTyping with anti-ban delay settings; creates Message record and increments chip's sentToday counter; auto-creates contact if needed
+  5. `/webhook/route.ts` — POST: Receives Evolution API webhook events; handles CONNECTION_UPDATE (chip status sync), MESSAGES_UPSERT (mark messages as sent), MESSAGES_UPDATE (update deliveredAt/readAt); always returns 200 OK; console.log for debugging
+  6. `/sync-instances/route.ts` — POST: Fetches all Evolution instances, syncs chip statuses and profile info, detects unlinked instances, handles stale chips whose instances no longer exist
+- All routes use proper error handling with try/catch and appropriate HTTP status codes
+- Webhook URL uses SITE_URL env var with fallbacks (NEXT_PUBLIC_SITE_URL, VERCEL_URL, localhost)
+- All imports use the existing evolution-api.ts service layer and db.ts Prisma client
+- Lint passes clean with zero errors
+
+Stage Summary:
+- Complete WhatsApp API integration layer via Evolution API
+- 6 RESTful endpoints: connect, disconnect, status, send, webhook, sync-instances
+- Anti-ban typing simulation integrated into send flow
+- Webhook handler for real-time status updates (connection, message delivery/read receipts)
+
+---
+Task ID: 5
+Agent: Full-Stack Developer
+Task: Update Chips Tab UI to integrate with real WhatsApp QR Code via Evolution API
+
+Work Log:
+- Updated Chip interface in page.tsx with 3 new fields: evolutionInstance, profileName, profilePicUrl
+- Added WhatsApp QR Code integration state variables: whatsappQr, qrLoading, qrConnected, qrError, pollingRef
+- Implemented connectWhatsApp() function that calls POST /api/whatsapp/connect, displays the base64 QR code, and starts polling for connection status every 3 seconds
+- Implemented refreshQrCode() function that re-calls the connect endpoint to get a fresh QR code
+- Implemented disconnectWhatsApp() function that calls POST /api/whatsapp/disconnect
+- Added closeQrDialog() handler that cleans up polling interval and resets all QR state on dialog close
+- Added cleanup effect to clear polling interval on component unmount
+- Replaced static placeholder QR Code Dialog with 5-state dynamic dialog:
+  1. Loading state: spinning RefreshCw icon
+  2. Connected state: animated green checkmark with "Conectado!" text (framer-motion)
+  3. Error state: red error card with AlertCircle + "Tentar Novamente" button
+  4. QR Code state: real base64 image from Evolution API + "Aguardando scan..." badge
+  5. Default/empty state: static QR icon placeholder
+- Added "Conectar WhatsApp" button as primary action on disconnected chip cards (emerald gradient)
+- Added "Desconectar" button on connected chip cards (rose outline)
+- Added profile picture display in chip card header (when connected + profilePicUrl available)
+- Added profile name display as card title (falls back to chip.name)
+- Added evolution instance name display in chip card info section
+- Added WhatsApp status sync on ChipsTab load via GET /api/whatsapp/status
+- QR code base64 handling: auto-prepends "data:image/png;base64," if missing
+- Lint passes clean with zero errors
+
+Stage Summary:
+- Chips Tab fully integrated with Evolution API for WhatsApp connection
+- Real QR code from Evolution API displayed in dialog with polling for scan detection
+- Conectar/Desconectar buttons replace static QR Code button on chip cards
+- Profile picture and name displayed when connected
+- Automatic status sync on page load ensures accurate connection status
+- Complete error handling with retry capability
+- Zero lint errors
+

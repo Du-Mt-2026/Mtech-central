@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Smartphone, Send, Shield, BarChart3, Plus, Trash2,
@@ -61,6 +61,9 @@ interface Chip {
   socks5Port: number
   socks5User: string
   socks5Pass: string
+  evolutionInstance?: string | null
+  profileName?: string | null
+  profilePicUrl?: string | null
 }
 
 interface SequenceStep {
@@ -414,6 +417,13 @@ function ChipsTab() {
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
   const [proxyForm, setProxyForm] = useState({ socks5Host: '', socks5Port: 1080, socks5User: '', socks5Pass: '' })
 
+  // WhatsApp QR Code integration state
+  const [whatsappQr, setWhatsappQr] = useState<string | null>(null)
+  const [qrLoading, setQrLoading] = useState(false)
+  const [qrConnected, setQrConnected] = useState(false)
+  const [qrError, setQrError] = useState<string | null>(null)
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
   const fetchChips = useCallback(async () => {
     try {
       const res = await fetch('/api/chips')
@@ -425,12 +435,180 @@ function ChipsTab() {
 
   useEffect(() => { fetchChips() }, [fetchChips])
 
+  // Sync WhatsApp status on load
+  useEffect(() => {
+    const syncStatuses = async () => {
+      try {
+        const res = await fetch('/api/whatsapp/status')
+        if (res.ok) {
+          const data = await res.json()
+          if (data.chips) {
+            // Re-fetch chips to get updated statuses from DB
+            fetchChips()
+          }
+        }
+      } catch {
+        // Silently fail — status sync is best-effort
+      }
+    }
+    syncStatuses()
+  }, [fetchChips])
+
   useEffect(() => {
     if (selectedChipConfig?.config) {
       QRCode.toDataURL(selectedChipConfig.config, { width: 300, margin: 2, color: { dark: '#000000', light: '#ffffff' } })
         .then(url => setQrCodeUrl(url)).catch(() => setQrCodeUrl(''))
     } else { setQrCodeUrl('') }
   }, [selectedChipConfig?.config])
+
+  // Cleanup polling on unmount
+  useEffect(() => {
+    return () => {
+      if (pollingRef.current) clearInterval(pollingRef.current)
+    }
+  }, [])
+
+  const connectWhatsApp = async (chip: Chip) => {
+    setQrLoading(true)
+    setQrError(null)
+    setWhatsappQr(null)
+    setQrConnected(false)
+    setSelectedChip(chip)
+    setQrDialogOpen(true)
+
+    try {
+      const res = await fetch('/api/whatsapp/connect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chipId: chip.id }),
+      })
+      const data = await res.json()
+
+      if (!res.ok) {
+        throw new Error(data.error || 'Erro ao conectar WhatsApp')
+      }
+
+      // Handle QR code base64 — might come with or without data URI prefix
+      if (data.qrcode) {
+        const qrSrc = data.qrcode.startsWith('data:') ? data.qrcode : `data:image/png;base64,${data.qrcode}`
+        setWhatsappQr(qrSrc)
+      }
+
+      // If already connected
+      if (data.status === 'open' || data.state === 'open') {
+        setQrConnected(true)
+        fetchChips()
+        return
+      }
+
+      // Start polling for connection status
+      if (pollingRef.current) clearInterval(pollingRef.current)
+      pollingRef.current = setInterval(async () => {
+        try {
+          const statusRes = await fetch(`/api/whatsapp/status?chipId=${chip.id}`)
+          const statusData = await statusRes.json()
+
+          if (statusData.state === 'open' || statusData.chipStatus === 'connected') {
+            setQrConnected(true)
+            if (pollingRef.current) clearInterval(pollingRef.current)
+            fetchChips()
+            toast.success(`WhatsApp conectado: ${chip.name}`)
+          }
+        } catch {
+          // Silently continue polling
+        }
+      }, 3000)
+    } catch (err: unknown) {
+      setQrError((err as Error).message || 'Erro ao gerar QR Code')
+      toast.error((err as Error).message || 'Erro ao gerar QR Code')
+    } finally {
+      setQrLoading(false)
+    }
+  }
+
+  const refreshQrCode = async () => {
+    if (!selectedChip) return
+    setQrLoading(true)
+    setQrError(null)
+    setWhatsappQr(null)
+    setQrConnected(false)
+
+    if (pollingRef.current) clearInterval(pollingRef.current)
+
+    try {
+      const res = await fetch('/api/whatsapp/connect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chipId: selectedChip.id }),
+      })
+      const data = await res.json()
+
+      if (!res.ok) {
+        throw new Error(data.error || 'Erro ao atualizar QR Code')
+      }
+
+      if (data.qrcode) {
+        const qrSrc = data.qrcode.startsWith('data:') ? data.qrcode : `data:image/png;base64,${data.qrcode}`
+        setWhatsappQr(qrSrc)
+      }
+
+      if (data.status === 'open' || data.state === 'open') {
+        setQrConnected(true)
+        fetchChips()
+        return
+      }
+
+      // Restart polling
+      pollingRef.current = setInterval(async () => {
+        try {
+          const statusRes = await fetch(`/api/whatsapp/status?chipId=${selectedChip.id}`)
+          const statusData = await statusRes.json()
+
+          if (statusData.state === 'open' || statusData.chipStatus === 'connected') {
+            setQrConnected(true)
+            if (pollingRef.current) clearInterval(pollingRef.current)
+            fetchChips()
+            toast.success(`WhatsApp conectado: ${selectedChip.name}`)
+          }
+        } catch {
+          // Silently continue polling
+        }
+      }, 3000)
+    } catch (err: unknown) {
+      setQrError((err as Error).message || 'Erro ao atualizar QR Code')
+    } finally {
+      setQrLoading(false)
+    }
+  }
+
+  const disconnectWhatsApp = async (chip: Chip) => {
+    try {
+      const res = await fetch('/api/whatsapp/disconnect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chipId: chip.id }),
+      })
+      if (!res.ok) {
+        const data = await res.json()
+        throw new Error(data.error || 'Erro ao desconectar')
+      }
+      toast.success(`WhatsApp desconectado: ${chip.name}`)
+      fetchChips()
+    } catch (err: unknown) {
+      toast.error((err as Error).message || 'Erro ao desconectar WhatsApp')
+    }
+  }
+
+  const closeQrDialog = (open: boolean) => {
+    setQrDialogOpen(open)
+    if (!open) {
+      if (pollingRef.current) clearInterval(pollingRef.current)
+      setWhatsappQr(null)
+      setQrLoading(false)
+      setQrConnected(false)
+      setQrError(null)
+    }
+  }
 
   const createChip = async () => {
     try {
@@ -460,11 +638,6 @@ function ChipsTab() {
       setSelectedChipConfig(data)
       setConfigDialogOpen(true)
     } catch { toast.error('Erro ao buscar configuração') }
-  }
-
-  const openQrDialog = (chip: Chip) => {
-    setSelectedChip(chip)
-    setQrDialogOpen(true)
   }
 
   const openProxyDialog = (chip: Chip) => {
@@ -568,11 +741,15 @@ function ChipsTab() {
                   <div className={`absolute top-0 left-0 right-0 h-1 ${chip.status === 'connected' ? 'bg-gradient-to-r from-emerald-400 to-teal-500' : chip.status === 'error' ? 'bg-gradient-to-r from-rose-400 to-pink-500' : chip.status === 'connecting' ? 'bg-gradient-to-r from-amber-400 to-orange-500' : 'bg-zinc-300'}`} />
                   <CardHeader className="pb-3">
                     <div className="flex items-center gap-3">
-                      <div className="flex size-10 items-center justify-center rounded-xl bg-violet-100 dark:bg-violet-900/30">
-                        <Smartphone className="size-5 text-violet-600 dark:text-violet-400" />
-                      </div>
+                      {chip.status === 'connected' && chip.profilePicUrl ? (
+                        <img src={chip.profilePicUrl} alt={chip.profileName || chip.name} className="size-10 rounded-xl object-cover ring-2 ring-emerald-500/30" />
+                      ) : (
+                        <div className="flex size-10 items-center justify-center rounded-xl bg-violet-100 dark:bg-violet-900/30">
+                          <Smartphone className="size-5 text-violet-600 dark:text-violet-400" />
+                        </div>
+                      )}
                       <div className="flex-1 min-w-0">
-                        <CardTitle className="truncate text-base">{chip.name}</CardTitle>
+                        <CardTitle className="truncate text-base">{chip.profileName || chip.name}</CardTitle>
                         <CardDescription className="truncate">{chip.phoneNumber}</CardDescription>
                       </div>
                       <StatusBadge status={chip.status} />
@@ -601,6 +778,12 @@ function ChipsTab() {
                           </Badge>
                         </div>
                       )}
+                      {chip.evolutionInstance && (
+                        <div className="flex justify-between items-center">
+                          <span className="text-muted-foreground">Instância</span>
+                          <span className="text-xs font-mono truncate max-w-32" title={chip.evolutionInstance}>{chip.evolutionInstance}</span>
+                        </div>
+                      )}
                       <div className="flex justify-between items-center">
                         <span className="text-muted-foreground">Último visto</span>
                         <span className="text-xs">{chip.lastSeen ? new Date(chip.lastSeen).toLocaleString('pt-BR') : 'Nunca'}</span>
@@ -608,9 +791,15 @@ function ChipsTab() {
                     </div>
                     <Separator />
                     <div className="flex gap-2 flex-wrap">
-                      <Button variant="outline" size="sm" className="gap-1.5 text-xs" onClick={() => openQrDialog(chip)}>
-                        <QrCode className="size-3.5" /> QR Code
-                      </Button>
+                      {chip.status === 'connected' ? (
+                        <Button variant="outline" size="sm" className="gap-1.5 text-xs text-rose-500 hover:text-rose-600 border-rose-200 hover:border-rose-300" onClick={() => disconnectWhatsApp(chip)}>
+                          <X className="size-3.5" /> Desconectar
+                        </Button>
+                      ) : (
+                        <Button size="sm" className="gap-1.5 text-xs bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 shadow-md" onClick={() => connectWhatsApp(chip)}>
+                          <QrCode className="size-3.5" /> Conectar WhatsApp
+                        </Button>
+                      )}
                       <Button variant="outline" size="sm" className="gap-1.5 text-xs" onClick={() => openProxyDialog(chip)}>
                         <Globe className="size-3.5" /> Proxy
                       </Button>
@@ -633,25 +822,61 @@ function ChipsTab() {
         title="Remover Chip" description="Tem certeza que deseja remover este chip? Esta ação não pode ser desfeita."
         onConfirm={() => { if (deleteConfirm) deleteChip(deleteConfirm) }} confirmLabel="Remover" variant="destructive" />
 
-      {/* QR Code Dialog */}
-      <Dialog open={qrDialogOpen} onOpenChange={setQrDialogOpen}>
+      {/* WhatsApp QR Code Dialog */}
+      <Dialog open={qrDialogOpen} onOpenChange={closeQrDialog}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <QrCode className="size-5 text-emerald-500" /> Conexão QR Code — {selectedChip?.name}
+              <QrCode className="size-5 text-emerald-500" /> Conectar WhatsApp — {selectedChip?.name}
             </DialogTitle>
             <DialogDescription>Escaneie o QR Code para conectar o WhatsApp Web</DialogDescription>
           </DialogHeader>
           <div className="flex flex-col items-center gap-4 py-4">
-            <div className="bg-white p-4 rounded-2xl shadow-xl">
-              <div className="w-56 h-56 bg-gradient-to-br from-zinc-100 to-zinc-200 rounded-xl flex items-center justify-center">
+            {qrLoading ? (
+              <div className="w-56 h-56 bg-muted rounded-xl flex items-center justify-center">
+                <RefreshCw className="size-10 animate-spin text-muted-foreground" />
+              </div>
+            ) : qrConnected ? (
+              <motion.div initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="flex flex-col items-center gap-4">
+                <div className="w-56 h-56 rounded-xl bg-emerald-50 dark:bg-emerald-900/20 flex items-center justify-center border-2 border-emerald-200 dark:border-emerald-800">
+                  <div className="flex flex-col items-center gap-3">
+                    <div className="flex size-16 items-center justify-center rounded-full bg-emerald-500 shadow-lg">
+                      <Check className="size-8 text-white" />
+                    </div>
+                    <p className="text-lg font-bold text-emerald-600 dark:text-emerald-400">Conectado!</p>
+                  </div>
+                </div>
+                <Badge variant="default" className="gap-1.5 py-1.5 bg-emerald-600">
+                  <Check className="size-3" /> WhatsApp conectado com sucesso
+                </Badge>
+              </motion.div>
+            ) : qrError ? (
+              <div className="flex flex-col items-center gap-4">
+                <div className="w-56 h-56 rounded-xl bg-rose-50 dark:bg-rose-900/20 flex items-center justify-center border-2 border-rose-200 dark:border-rose-800">
+                  <div className="flex flex-col items-center gap-3 p-4 text-center">
+                    <AlertCircle className="size-10 text-rose-500" />
+                    <p className="text-sm text-rose-600 dark:text-rose-400">{qrError}</p>
+                  </div>
+                </div>
+                <Button variant="outline" className="gap-2" onClick={refreshQrCode}>
+                  <RefreshCw className="size-4" /> Tentar Novamente
+                </Button>
+              </div>
+            ) : whatsappQr ? (
+              <div className="flex flex-col items-center gap-4">
+                <div className="bg-white p-4 rounded-2xl shadow-xl">
+                  <img src={whatsappQr} alt="QR Code WhatsApp" className="w-56 h-56 rounded-xl" />
+                </div>
+                <Badge variant="outline" className="gap-1.5 py-1.5">
+                  <span className="size-2 rounded-full bg-amber-500 animate-pulse" />
+                  Aguardando scan...
+                </Badge>
+              </div>
+            ) : (
+              <div className="w-56 h-56 bg-gradient-to-br from-zinc-100 to-zinc-200 dark:from-zinc-800 dark:to-zinc-900 rounded-xl flex items-center justify-center">
                 <QrCode className="size-24 text-zinc-400" />
               </div>
-            </div>
-            <Badge variant="outline" className="gap-1.5 py-1.5">
-              <span className="size-2 rounded-full bg-amber-500 animate-pulse" />
-              Aguardando scan...
-            </Badge>
+            )}
             <div className="w-full p-4 bg-muted/50 rounded-xl space-y-2 text-sm">
               <p className="font-semibold">Como conectar:</p>
               <ol className="list-decimal list-inside space-y-1 text-muted-foreground text-xs">
@@ -660,9 +885,11 @@ function ChipsTab() {
                 <li>Escaneie o QR Code acima</li>
               </ol>
             </div>
-            <Button variant="outline" className="gap-2" onClick={() => toast.info('QR Code atualizado!')}>
-              <RefreshCw className="size-4" /> Atualizar QR Code
-            </Button>
+            {!qrConnected && !qrError && (
+              <Button variant="outline" className="gap-2" onClick={refreshQrCode} disabled={qrLoading}>
+                <RefreshCw className={`size-4 ${qrLoading ? 'animate-spin' : ''}`} /> Atualizar QR Code
+              </Button>
+            )}
           </div>
         </DialogContent>
       </Dialog>
