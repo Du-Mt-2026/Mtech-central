@@ -10,7 +10,7 @@ import {
   Phone, UserPlus, FileSpreadsheet, ChevronRight, Menu,
   TrendingUp, TrendingDown, ShieldCheck, ShieldAlert, Timer,
   MessageCircle, Type, Shuffle, Flame, Snowflake, EyeOff,
-  Download, Filter, ArrowRight, QrCode, Globe, Lock,
+  Download, Filter, ArrowRight, QrCode, Globe, Lock, Server,
   Sparkles, Heart, Star, AlertTriangle, Info, ChevronDown,
   Pencil, LayoutList, Database, WifiOff, ArrowDownToLine,
   Inbox, LogOut, RotateCcw, Film, Music, File, Webhook, ImageIcon
@@ -201,6 +201,7 @@ const NAV_ITEMS = [
   { id: 'templates', label: 'Templates', icon: FileText },
   { id: 'antiban', label: 'Anti-Ban', icon: Shield },
   { id: 'mensagens', label: 'Mensagens', icon: MessageSquare },
+  { id: 'vps', label: 'VPS / Proxy', icon: Server },
   { id: 'config', label: 'Configurações', icon: Settings },
 ]
 
@@ -3265,6 +3266,7 @@ export default function OctupusZapApp() {
       case 'templates': return <TemplatesTab />
       case 'antiban': return <AntiBanTab />
       case 'mensagens': return <MensagensTab />
+      case 'vps': return <VpsSetupTab />
       case 'config': return <ConfiguracoesTab />
       default: return <DashboardTab stats={stats} onRefresh={refreshStats} setActiveTab={setActiveTab} />
     }
