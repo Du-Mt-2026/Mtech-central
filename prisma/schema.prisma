@@ -8,61 +8,106 @@ datasource db {
 }
 
 model Chip {
-  id              String   @id @default(cuid())
-  name            String
-  phoneNumber     String   @unique
-  wireguardIp     String
-  wireguardPrivKey String
-  wireguardPubKey  String
-  socksPort       Int      @default(1080)
-  status          String   @default("disconnected")
-  lastSeen        DateTime?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-  contacts        Contact[]
-  messages        Message[]
-  campaigns       CampaignChip[]
+  id               String   @id @default(cuid())
+  name             String
+  phoneNumber      String   @unique
+  wireguardIp      String   @default("")
+  wireguardPrivKey String   @default("")
+  wireguardPubKey  String   @default("")
+  socksPort        Int      @default(1080)
+  status           String   @default("disconnected")
+  lastSeen         DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  contacts         Contact[]
+  messages         Message[]
+  campaigns        CampaignChip[]
+
+  // Anti-ban fields
+  dailyLimit       Int      @default(200)
+  sentToday        Int      @default(0)
+  lastResetAt      DateTime @default(now())
+  warmingEnabled   Boolean  @default(true)
+  warmingStage     Int      @default(0)
+  isQrPaired       Boolean  @default(false)
+  qrPairingCode    String?
+  proxyMode        String   @default("none")
+  socks5Host       String   @default("")
+  socks5Port       Int      @default(0)
+  socks5User       String   @default("")
+  socks5Pass       String   @default("")
+}
+
+model AntiBanSettings {
+  id                    String   @id @default(cuid())
+  typingMinDelay        Int      @default(500)
+  typingMaxDelay        Int      @default(2000)
+  messageIntervalMin    Int      @default(30)
+  messageIntervalMax    Int      @default(90)
+  randomLineBreaks      Boolean  @default(true)
+  emojiVariation        Boolean  @default(true)
+  dailyLimitPerChip     Int      @default(200)
+  warmingEnabled        Boolean  @default(true)
+  warmingDays           Int      @default(7)
+  cooldownMinutes       Int      @default(30)
+  cooldownAfterMessages Int      @default(50)
+  stopOnWarning         Boolean  @default(true)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+}
+
+model MessageTemplate {
+  id        String   @id @default(cuid())
+  name      String
+  content   String
+  category  String   @default("geral")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model ContactList {
-  id          String   @id @default(cuid())
-  name        String
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  contacts    Contact[]
-  campaigns   Campaign[]
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  contacts  Contact[]
+  campaigns Campaign[]
 }
 
 model Contact {
-  id            String   @id @default(cuid())
+  id            String      @id @default(cuid())
   name          String
   phone         String
   chipId        String?
-  chip          Chip?    @relation(fields: [chipId], references: [id], onDelete: Cascade)
+  chip          Chip?       @relation(fields: [chipId], references: [id], onDelete: Cascade)
   contactListId String?
   contactList   ContactList? @relation(fields: [contactListId], references: [id], onDelete: SetNull)
   messages      Message[]
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
 }
 
 model Campaign {
-  id              String   @id @default(cuid())
-  name            String
-  status          String   @default("draft")
+  id               String   @id @default(cuid())
+  name             String
+  status           String   @default("draft")
   messageVariations String  @default("[]")
-  sendIntervalMin Int      @default(30)
-  sendIntervalMax Int      @default(90)
-  contactListId   String?
-  contactList     ContactList? @relation(fields: [contactListId], references: [id], onDelete: SetNull)
-  scheduledAt     DateTime?
-  startedAt       DateTime?
-  completedAt     DateTime?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-  chips           CampaignChip[]
-  messages        Message[]
-  sequenceSteps   SequenceStep[]
+  sendIntervalMin  Int      @default(30)
+  sendIntervalMax  Int      @default(90)
+  contactListId    String?
+  contactList      ContactList? @relation(fields: [contactListId], references: [id], onDelete: SetNull)
+  scheduledAt      DateTime?
+  startedAt        DateTime?
+  completedAt      DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  chips            CampaignChip[]
+  messages         Message[]
+  sequenceSteps    SequenceStep[]
+
+  // Anti-ban campaign fields
+  antiBanEnabled   Boolean  @default(true)
+  warmingMode      String   @default("normal")
 }
 
 model SequenceStep {
@@ -90,19 +135,19 @@ model CampaignChip {
 }
 
 model Message {
-  id         String   @id @default(cuid())
-  campaignId String?
-  chipId     String
-  contactId  String
-  content    String
-  status     String   @default("pending")
-  sentAt     DateTime?
+  id          String    @id @default(cuid())
+  campaignId  String?
+  chipId      String
+  contactId   String
+  content     String
+  status      String    @default("pending")
+  sentAt      DateTime?
   deliveredAt DateTime?
-  readAt     DateTime?
-  error      String?
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-  campaign   Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
-  chip       Chip     @relation(fields: [chipId], references: [id], onDelete: Cascade)
-  contact    Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  readAt      DateTime?
+  error       String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  campaign    Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  chip        Chip      @relation(fields: [chipId], references: [id], onDelete: Cascade)
+  contact     Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
 }
