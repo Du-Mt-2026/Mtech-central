@@ -2,7 +2,7 @@
 // Serverless-compatible: processes ONE message per invocation
 // Vercel Cron calls /api/campaigns/process-all every minute
 
-import { sendTextMessage, setPresence, formatPhoneNumber } from './evolution-api'
+import { sendTextMessage, sendMediaMessage, setPresence, formatPhoneNumber } from './evolution-api'
 import { db } from './db'
 
 interface AntiBanConfig {
@@ -143,6 +143,8 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
       contactId: contact.id,
       content,
       status: 'pending' as const,
+      mediaUrl: firstStep.mediaUrl || null,
+      mediatype: firstStep.mediatype || null,
     })
   }
 
@@ -170,6 +172,18 @@ export async function processNextMessage(campaignId: string): Promise<{
   remaining: number
   completed: boolean
 }> {
+  // Check if campaign is paused — if so, skip processing
+  const campaignStatus = await db.campaign.findUnique({
+    where: { id: campaignId },
+    select: { status: true },
+  })
+  if (!campaignStatus) {
+    return { processed: false, delayMs: 0, remaining: 0, completed: true }
+  }
+  if (campaignStatus.status === 'paused') {
+    return { processed: false, delayMs: 0, remaining: -1, completed: false }
+  }
+
   const settings = await getAntiBanSettings()
 
   // Find the next pending message
@@ -252,10 +266,27 @@ export async function processNextMessage(campaignId: string): Promise<{
     // Small delay for typing
     await new Promise(resolve => setTimeout(resolve, Math.min(typingDelay, 2000)))
 
-    // Send the message
-    const result = await sendTextMessage(instanceName, formattedPhone, message.content, {
-      delay: 0, // We handle delays ourselves via cron intervals
-    })
+    // Send the message — use media or text depending on message fields
+    let result
+    if (message.mediaUrl && message.mediatype) {
+      const validMediaTypes = ['image', 'document', 'video', 'audio']
+      const mt = message.mediatype as 'image' | 'document' | 'video' | 'audio'
+      if (validMediaTypes.includes(mt)) {
+        result = await sendMediaMessage(instanceName, formattedPhone, message.mediaUrl, mt, {
+          caption: message.content || '',
+          delay: 0,
+        })
+      } else {
+        // Fallback to text if mediatype is invalid
+        result = await sendTextMessage(instanceName, formattedPhone, message.content, {
+          delay: 0,
+        })
+      }
+    } else {
+      result = await sendTextMessage(instanceName, formattedPhone, message.content, {
+        delay: 0, // We handle delays ourselves via cron intervals
+      })
+    }
 
     // Update message status
     await db.message.update({

@@ -12,7 +12,8 @@ import {
   MessageCircle, Type, Shuffle, Flame, Snowflake, EyeOff,
   Download, Filter, ArrowRight, QrCode, Globe, Lock,
   Sparkles, Heart, Star, AlertTriangle, Info, ChevronDown,
-  Pencil, LayoutList, Database, WifiOff, ArrowDownToLine
+  Pencil, LayoutList, Database, WifiOff, ArrowDownToLine,
+  Inbox, LogOut, RotateCcw, Film, Music, File, Webhook, ImageIcon
 } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardAction } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -178,10 +179,23 @@ interface MessageTemplate {
   updatedAt: string
 }
 
+interface InboxMessage {
+  id: string
+  instanceName: string
+  remoteJid: string
+  fromMe: boolean
+  messageContent: string
+  messageType: string
+  pushName: string | null
+  evolutionMsgId: string | null
+  createdAt: string
+}
+
 // ===== Navigation Items =====
 const NAV_ITEMS = [
   { id: 'dashboard', label: 'Dashboard', icon: BarChart3 },
   { id: 'chips', label: 'Chips', icon: Smartphone },
+  { id: 'inbox', label: 'Caixa de Entrada', icon: Inbox },
   { id: 'contatos', label: 'Contatos', icon: Users },
   { id: 'campanhas', label: 'Campanhas', icon: Send },
   { id: 'templates', label: 'Templates', icon: FileText },
@@ -903,6 +917,18 @@ function ChipsTab() {
                       <Button variant="outline" size="sm" className="gap-1.5 text-xs" onClick={() => fetchConfig(chip.id)}>
                         <Lock className="size-3.5" /> WireGuard
                       </Button>
+                      {chip.evolutionInstance && (
+                        <Button variant="outline" size="sm" className="gap-1.5 text-xs" onClick={async () => {
+                          try {
+                            const res = await fetch('/api/whatsapp/setup-webhook', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chipId: chip.id }) })
+                            const data = await res.json()
+                            if (!res.ok) throw new Error(data.error || 'Erro ao configurar webhook')
+                            toast.success('Webhook configurado!')
+                          } catch (err: unknown) { toast.error((err as Error).message || 'Erro ao configurar webhook') }
+                        }}>
+                          <Webhook className="size-3.5" /> Webhook
+                        </Button>
+                      )}
                       <Button variant="outline" size="sm" className="text-rose-500 hover:text-rose-600 gap-1.5 text-xs" onClick={() => setDeleteConfirm(chip.id)}>
                         <Trash2 className="size-3.5" />
                       </Button>
@@ -1194,6 +1220,10 @@ function ContatosTab() {
   const [newContact, setNewContact] = useState({ name: '', phone: '' })
   const [searchQuery, setSearchQuery] = useState('')
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
+  const [editContactDialog, setEditContactDialog] = useState(false)
+  const [editContact, setEditContact] = useState<ContactItem | null>(null)
+  const [editContactForm, setEditContactForm] = useState({ name: '', phone: '' })
+  const [deleteContactConfirm, setDeleteContactConfirm] = useState<string | null>(null)
 
   const fetchLists = useCallback(async () => {
     try {
@@ -1258,6 +1288,34 @@ function ContatosTab() {
       fetchContacts(selectedList.id)
       fetchLists()
     } catch { toast.error('Erro ao importar contatos') }
+  }
+
+  const openEditContact = (contact: ContactItem) => {
+    setEditContact(contact)
+    setEditContactForm({ name: contact.name, phone: contact.phone })
+    setEditContactDialog(true)
+  }
+
+  const saveEditContact = async () => {
+    if (!editContact) return
+    try {
+      const res = await fetch(`/api/contacts/${editContact.id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(editContactForm),
+      })
+      if (!res.ok) throw new Error()
+      toast.success('Contato atualizado!')
+      setEditContactDialog(false)
+      if (selectedList) fetchContacts(selectedList.id)
+    } catch { toast.error('Erro ao atualizar contato') }
+  }
+
+  const deleteContact = async (id: string) => {
+    try {
+      await fetch(`/api/contacts/${id}`, { method: 'DELETE' })
+      toast.success('Contato removido!')
+      if (selectedList) fetchContacts(selectedList.id)
+    } catch { toast.error('Erro ao remover contato') }
   }
 
   return (
@@ -1333,6 +1391,7 @@ function ContatosTab() {
                         <th className="text-left p-3 font-medium">Nome</th>
                         <th className="text-left p-3 font-medium">Telefone</th>
                         <th className="text-left p-3 font-medium">Criado em</th>
+                        <th className="text-left p-3 font-medium">Ações</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1341,6 +1400,16 @@ function ContatosTab() {
                           <td className="p-3 font-medium">{c.name}</td>
                           <td className="p-3 text-muted-foreground">{c.phone}</td>
                           <td className="p-3 text-xs text-muted-foreground">{new Date(c.createdAt).toLocaleDateString('pt-BR')}</td>
+                          <td className="p-3">
+                            <div className="flex gap-1">
+                              <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-emerald-600" onClick={() => openEditContact(c)}>
+                                <Pencil className="size-3.5" />
+                              </Button>
+                              <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-rose-600" onClick={() => setDeleteContactConfirm(c.id)}>
+                                <Trash2 className="size-3.5" />
+                              </Button>
+                            </div>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -1387,6 +1456,25 @@ function ContatosTab() {
       <ConfirmDialog open={!!deleteConfirm} onOpenChange={() => setDeleteConfirm(null)}
         title="Remover Lista" description="Tem certeza? Todos os contatos serão removidos."
         onConfirm={() => { if (deleteConfirm) deleteList(deleteConfirm) }} confirmLabel="Remover" variant="destructive" />
+
+      <ConfirmDialog open={!!deleteContactConfirm} onOpenChange={() => setDeleteContactConfirm(null)}
+        title="Remover Contato" description="Tem certeza que deseja remover este contato?"
+        onConfirm={() => { if (deleteContactConfirm) deleteContact(deleteContactConfirm) }} confirmLabel="Remover" variant="destructive" />
+
+      {/* Edit Contact Dialog */}
+      <Dialog open={editContactDialog} onOpenChange={setEditContactDialog}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Editar Contato</DialogTitle><DialogDescription>Atualize as informações do contato</DialogDescription></DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2"><Label>Nome</Label><Input value={editContactForm.name} onChange={e => setEditContactForm(p => ({ ...p, name: e.target.value }))} /></div>
+            <div className="space-y-2"><Label>Telefone</Label><Input value={editContactForm.phone} onChange={e => setEditContactForm(p => ({ ...p, phone: e.target.value }))} /></div>
+          </div>
+          <DialogFooter>
+            <DialogClose asChild><Button variant="outline">Cancelar</Button></DialogClose>
+            <Button onClick={saveEditContact} disabled={!editContactForm.name || !editContactForm.phone} className="bg-emerald-600 hover:bg-emerald-700">Salvar</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Add Contact Dialog */}
       <Dialog open={addContactDialog} onOpenChange={setAddContactDialog}>
@@ -1440,14 +1528,14 @@ function CampanhasTab() {
   const [newCampaign, setNewCampaign] = useState({
     name: '', sendIntervalMin: 30, sendIntervalMax: 90,
     chipIds: [] as string[], contactListId: '', scheduledAt: '',
-    useSequence: false, sequenceSteps: [{ content: '', delayMinutes: 0 }],
+    useSequence: false, sequenceSteps: [{ content: '', delayMinutes: 0, mediaFile: null as File | null, mediatype: '' }],
     messageVariations: [''], antiBanEnabled: true, warmingMode: 'normal',
   })
 
   const resetNewCampaign = () => setNewCampaign({
     name: '', sendIntervalMin: 30, sendIntervalMax: 90,
     chipIds: [], contactListId: '', scheduledAt: '',
-    useSequence: false, sequenceSteps: [{ content: '', delayMinutes: 0 }],
+    useSequence: false, sequenceSteps: [{ content: '', delayMinutes: 0, mediaFile: null as File | null, mediatype: '' }],
     messageVariations: [''], antiBanEnabled: true, warmingMode: 'normal',
   })
 
@@ -1517,9 +1605,9 @@ function CampanhasTab() {
     }))
   }
 
-  const addSequenceStep = () => setNewCampaign(prev => ({ ...prev, sequenceSteps: [...prev.sequenceSteps, { content: '', delayMinutes: 60 }] }))
+  const addSequenceStep = () => setNewCampaign(prev => ({ ...prev, sequenceSteps: [...prev.sequenceSteps, { content: '', delayMinutes: 60, mediaFile: null, mediatype: '' }] }))
   const removeSequenceStep = (idx: number) => setNewCampaign(prev => ({ ...prev, sequenceSteps: prev.sequenceSteps.filter((_, i) => i !== idx) }))
-  const updateSequenceStep = (idx: number, field: 'content' | 'delayMinutes', value: string | number) => {
+  const updateSequenceStep = (idx: number, field: 'content' | 'delayMinutes' | 'mediaFile' | 'mediatype', value: string | number | File | null) => {
     setNewCampaign(prev => { const steps = [...prev.sequenceSteps]; steps[idx] = { ...steps[idx], [field]: value }; return { ...prev, sequenceSteps: steps } })
   }
 
@@ -1623,6 +1711,30 @@ function CampanhasTab() {
                           <Input type="number" min={0} value={step.delayMinutes} onChange={e => updateSequenceStep(idx, 'delayMinutes', parseInt(e.target.value) || 0)} className="mt-1 w-40" />
                         </div>
                       )}
+                      {/* Media Upload */}
+                      <div className="mt-2 space-y-2">
+                        <Label className="text-xs flex items-center gap-1"><ImageIcon className="size-3" /> Mídia (opcional)</Label>
+                        <div className="flex gap-2">
+                          <Select value={step.mediatype} onValueChange={v => updateSequenceStep(idx, 'mediatype', v)}>
+                            <SelectTrigger className="w-32 h-8 text-xs"><SelectValue placeholder="Tipo" /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="image">Imagem</SelectItem>
+                              <SelectItem value="document">Documento</SelectItem>
+                              <SelectItem value="video">Vídeo</SelectItem>
+                              <SelectItem value="audio">Áudio</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <Input type="file" className="h-8 text-xs" accept={step.mediatype === 'image' ? 'image/*' : step.mediatype === 'video' ? 'video/*' : step.mediatype === 'audio' ? 'audio/*' : undefined} onChange={e => { const f = e.target.files?.[0] || null; updateSequenceStep(idx, 'mediaFile', f) }} />
+                        </div>
+                        {step.mediaFile && (
+                          <div className="flex items-center gap-2 p-2 bg-muted/50 rounded-lg text-xs">
+                            {step.mediatype === 'image' ? <ImageIcon className="size-3.5 text-emerald-500" /> : step.mediatype === 'video' ? <Film className="size-3.5 text-sky-500" /> : step.mediatype === 'audio' ? <Music className="size-3.5 text-amber-500" /> : <File className="size-3.5 text-zinc-500" />}
+                            <span className="truncate">{step.mediaFile.name}</span>
+                            <span className="text-muted-foreground">({(step.mediaFile.size / 1024).toFixed(1)}KB)</span>
+                            <Button variant="ghost" size="sm" className="h-5 w-5 p-0 ml-auto" onClick={() => updateSequenceStep(idx, 'mediaFile', null)}><X className="size-3" /></Button>
+                          </div>
+                        )}
+                      </div>
                       {idx < newCampaign.sequenceSteps.length - 1 && (
                         <div className="flex items-center justify-center py-2"><ArrowRight className="size-4 text-muted-foreground" /></div>
                       )}
@@ -1734,8 +1846,9 @@ function CampanhasTab() {
                         <Button variant="outline" size="sm" onClick={() => openDetail(c)}><Eye className="size-4" /></Button>
                       </TooltipTrigger><TooltipContent>Detalhes</TooltipContent></Tooltip></TooltipProvider>
                       {c.status === 'draft' && <Button size="sm" className="gap-1 bg-emerald-600 hover:bg-emerald-700" onClick={() => startCampaignAction(c.id)}><Play className="size-3.5" /> Iniciar</Button>}
-                      {c.status === 'running' && <Button variant="outline" size="sm" className="gap-1" onClick={() => updateCampaignStatus(c.id, 'paused')}><Pause className="size-3.5" /> Pausar</Button>}
-                      {c.status === 'paused' && <Button size="sm" className="gap-1 bg-emerald-600 hover:bg-emerald-700" onClick={() => updateCampaignStatus(c.id, 'running')}><Play className="size-3.5" /> Retomar</Button>}
+                      {c.status === 'running' && <Button variant="outline" size="sm" className="gap-1" onClick={async () => { try { await fetch(`/api/campaigns/${c.id}/pause`, { method: 'POST' }); toast.success('Campanha pausada!'); fetchCampaigns() } catch { toast.error('Erro ao pausar') } }}><Pause className="size-3.5" /> Pausar</Button>}
+                      {c.status === 'paused' && <Button size="sm" className="gap-1 bg-emerald-600 hover:bg-emerald-700" onClick={async () => { try { await fetch(`/api/campaigns/${c.id}/resume`, { method: 'POST' }); toast.success('Campanha retomada!'); fetchCampaigns() } catch { toast.error('Erro ao retomar') } }}><Play className="size-3.5" /> Retomar</Button>}
+                      {(c.status === 'running' || c.status === 'paused') && <Button variant="outline" size="sm" className="gap-1 text-amber-600 hover:text-amber-700 border-amber-200" onClick={() => updateCampaignStatus(c.id, 'cancelled')}><X className="size-3.5" /> Cancelar</Button>}
                       <Button variant="outline" size="sm" className="text-rose-500 hover:text-rose-600" onClick={() => setDeleteConfirm(c.id)}><Trash2 className="size-3.5" /></Button>
                     </div>
                   </div>
@@ -1799,6 +1912,9 @@ function TemplatesTab() {
   const [newTemplate, setNewTemplate] = useState({ name: '', content: '', category: 'geral' })
   const [searchQuery, setSearchQuery] = useState('')
   const [filterCategory, setFilterCategory] = useState('todas')
+  const [editDialogOpen, setEditDialogOpen] = useState(false)
+  const [editTemplate, setEditTemplate] = useState<MessageTemplate | null>(null)
+  const [editForm, setEditForm] = useState({ name: '', content: '', category: 'geral' })
 
   const fetchTemplates = useCallback(async () => {
     try { const res = await fetch('/api/templates'); setTemplates(await res.json()) }
@@ -1832,6 +1948,26 @@ function TemplatesTab() {
 
   const insertVariable = (v: string) => {
     setNewTemplate(prev => ({ ...prev, content: prev.content + v }))
+  }
+
+  const openEditTemplate = (t: MessageTemplate) => {
+    setEditTemplate(t)
+    setEditForm({ name: t.name, content: t.content, category: t.category })
+    setEditDialogOpen(true)
+  }
+
+  const saveEditTemplate = async () => {
+    if (!editTemplate) return
+    try {
+      const res = await fetch(`/api/templates/${editTemplate.id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(editForm),
+      })
+      if (!res.ok) throw new Error()
+      toast.success('Template atualizado!')
+      setEditDialogOpen(false)
+      fetchTemplates()
+    } catch { toast.error('Erro ao atualizar template') }
   }
 
   const categoryColors: Record<string, string> = {
@@ -1954,10 +2090,14 @@ function TemplatesTab() {
                     <Separator />
                     <div className="flex justify-between items-center">
                       <span className="text-xs text-muted-foreground">{new Date(t.createdAt).toLocaleDateString('pt-BR')}</span>
-                      <Button variant="ghost" size="sm" className="text-rose-500 hover:text-rose-600 h-7 w-7 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
-                        onClick={() => setDeleteConfirm(t.id)}>
-                        <Trash2 className="size-3.5" />
-                      </Button>
+                      <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-emerald-600 h-7 w-7 p-0" onClick={() => openEditTemplate(t)}>
+                          <Pencil className="size-3.5" />
+                        </Button>
+                        <Button variant="ghost" size="sm" className="text-rose-500 hover:text-rose-600 h-7 w-7 p-0" onClick={() => setDeleteConfirm(t.id)}>
+                          <Trash2 className="size-3.5" />
+                        </Button>
+                      </div>
                     </div>
                   </CardContent>
                 </Card>
@@ -1970,6 +2110,41 @@ function TemplatesTab() {
       <ConfirmDialog open={!!deleteConfirm} onOpenChange={() => setDeleteConfirm(null)}
         title="Remover Template" description="Tem certeza que deseja remover este template?"
         onConfirm={() => { if (deleteConfirm) deleteTemplate(deleteConfirm) }} confirmLabel="Remover" variant="destructive" />
+
+      {/* Edit Template Dialog */}
+      <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Editar Template</DialogTitle>
+            <DialogDescription>Atualize as informações do template</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>Nome</Label>
+              <Input value={editForm.name} onChange={e => setEditForm(p => ({ ...p, name: e.target.value }))} />
+            </div>
+            <div className="space-y-2">
+              <Label>Categoria</Label>
+              <Select value={editForm.category} onValueChange={v => setEditForm(p => ({ ...p, category: v }))}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {['geral', 'saudação', 'vendas', 'follow-up', 'pós-venda'].map(c => (
+                    <SelectItem key={c} value={c}>{c.charAt(0).toUpperCase() + c.slice(1)}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Conteúdo</Label>
+              <Textarea value={editForm.content} onChange={e => setEditForm(p => ({ ...p, content: e.target.value }))} rows={4} />
+            </div>
+          </div>
+          <DialogFooter>
+            <DialogClose asChild><Button variant="outline">Cancelar</Button></DialogClose>
+            <Button onClick={saveEditTemplate} disabled={!editForm.name || !editForm.content} className="bg-emerald-600 hover:bg-emerald-700">Salvar</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
@@ -2282,6 +2457,106 @@ function AntiBanTab() {
   )
 }
 
+// ===== Inbox Tab =====
+function InboxTab() {
+  const [messages, setMessages] = useState<InboxMessage[]>([])
+  const [loading, setLoading] = useState(true)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [page, setPage] = useState(1)
+  const [totalPages, setTotalPages] = useState(1)
+  const [total, setTotal] = useState(0)
+
+  const fetchMessages = useCallback(async (p = 1) => {
+    try {
+      const params = new URLSearchParams({ page: String(p), limit: '50' })
+      if (searchQuery) params.set('search', searchQuery)
+      const res = await fetch(`/api/inbox?${params}`)
+      const data = await res.json()
+      setMessages(data.messages || [])
+      setTotal(data.total || 0)
+      setTotalPages(data.totalPages || 1)
+      setPage(data.page || 1)
+    } catch { toast.error('Erro ao carregar mensagens') }
+    finally { setLoading(false) }
+  }, [searchQuery])
+
+  useEffect(() => { fetchMessages(1) }, [fetchMessages])
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h2 className="text-2xl font-bold">Caixa de Entrada</h2>
+          <p className="text-sm text-muted-foreground">Mensagens recebidas via WhatsApp</p>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="outline" className="gap-2" onClick={() => fetchMessages(page)}>
+            <RefreshCw className="size-4" /> Atualizar
+          </Button>
+        </div>
+      </div>
+
+      <div className="flex gap-3 flex-wrap">
+        <div className="relative flex-1 min-w-[200px]">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
+          <Input placeholder="Buscar por nome ou mensagem..." className="pl-9" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="flex items-center justify-center py-20"><RefreshCw className="size-6 animate-spin text-muted-foreground" /></div>
+      ) : messages.length === 0 ? (
+        <Card className="shadow-md border-0">
+          <CardContent className="flex flex-col items-center justify-center py-16">
+            <Inbox className="size-10 text-muted-foreground mb-3" />
+            <p className="font-semibold">Nenhuma mensagem recebida</p>
+            <p className="text-sm text-muted-foreground">Mensagens recebidas aparecerão aqui</p>
+          </CardContent>
+        </Card>
+      ) : (
+        <Card className="shadow-md border-0">
+          <CardContent className="p-0">
+            <ScrollArea className="max-h-[600px]">
+              <table className="w-full text-sm">
+                <thead className="bg-muted/50 sticky top-0 z-10">
+                  <tr>
+                    <th className="text-left p-3 font-medium">Remetente</th>
+                    <th className="text-left p-3 font-medium">Mensagem</th>
+                    <th className="text-left p-3 font-medium">Tipo</th>
+                    <th className="text-left p-3 font-medium">Instância</th>
+                    <th className="text-left p-3 font-medium">Data/Hora</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {messages.map(m => (
+                    <tr key={m.id} className="border-t hover:bg-muted/30 transition-colors">
+                      <td className="p-3 font-medium">{m.pushName || m.remoteJid.split('@')[0]}</td>
+                      <td className="p-3 max-w-[250px] truncate text-muted-foreground">{m.messageContent}</td>
+                      <td className="p-3"><Badge variant="outline" className="text-xs">{m.messageType}</Badge></td>
+                      <td className="p-3 text-xs text-muted-foreground font-mono">{m.instanceName}</td>
+                      <td className="p-3 text-xs text-muted-foreground">{new Date(m.createdAt).toLocaleString('pt-BR')}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </ScrollArea>
+          </CardContent>
+        </Card>
+      )}
+
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between">
+          <p className="text-sm text-muted-foreground">{total} mensagens — Página {page} de {totalPages}</p>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => fetchMessages(page - 1)}>Anterior</Button>
+            <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => fetchMessages(page + 1)}>Próxima</Button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ===== Mensagens Tab =====
 function MensagensTab() {
   const [messages, setMessages] = useState<MessageItem[]>([])
@@ -2328,6 +2603,27 @@ function MensagensTab() {
     toast.success('CSV exportado!')
   }
 
+  const resendMessage = async (id: string) => {
+    try {
+      const res = await fetch(`/api/messages/${id}/resend`, { method: 'POST' })
+      if (!res.ok) throw new Error()
+      toast.success('Mensagem reenviada!')
+      fetchMessages()
+    } catch { toast.error('Erro ao reenviar mensagem') }
+  }
+
+  const resendAllFailed = async () => {
+    try {
+      const res = await fetch('/api/messages/resend-all-failed', { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Erro ao reenviar')
+      toast.success(`${data.count || 0} mensagens reenviadas!`)
+      fetchMessages()
+    } catch (err: unknown) { toast.error((err as Error).message || 'Erro ao reenviar mensagens') }
+  }
+
+  const failedCount = messages.filter(m => m.status === 'failed').length
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -2335,9 +2631,16 @@ function MensagensTab() {
           <h2 className="text-2xl font-bold">Mensagens</h2>
           <p className="text-sm text-muted-foreground">Histórico completo de mensagens enviadas</p>
         </div>
-        <Button variant="outline" className="gap-2" onClick={exportCSV}>
-          <Download className="size-4" /> Exportar CSV
-        </Button>
+        <div className="flex items-center gap-2">
+          {failedCount > 0 && (
+            <Button variant="outline" className="gap-2 text-amber-600 hover:text-amber-700 border-amber-200" onClick={resendAllFailed}>
+              <RotateCcw className="size-4" /> Reenviar Todas Falhas ({failedCount})
+            </Button>
+          )}
+          <Button variant="outline" className="gap-2" onClick={exportCSV}>
+            <Download className="size-4" /> Exportar CSV
+          </Button>
+        </div>
       </div>
 
       <div className="flex gap-3 flex-wrap">
@@ -2380,6 +2683,7 @@ function MensagensTab() {
                     <th className="text-left p-3 font-medium">Mensagem</th>
                     <th className="text-left p-3 font-medium">Status</th>
                     <th className="text-left p-3 font-medium">Data/Hora</th>
+                    <th className="text-left p-3 font-medium">Ações</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -2391,6 +2695,13 @@ function MensagensTab() {
                       <td className="p-3 max-w-[200px] truncate text-muted-foreground">{m.content}</td>
                       <td className="p-3"><StatusBadge status={m.status} /></td>
                       <td className="p-3 text-xs text-muted-foreground">{m.createdAt ? new Date(m.createdAt).toLocaleString('pt-BR') : '—'}</td>
+                      <td className="p-3">
+                        {m.status === 'failed' && (
+                          <Button variant="ghost" size="sm" className="h-7 gap-1 text-amber-600 hover:text-amber-700" onClick={() => resendMessage(m.id)}>
+                            <RotateCcw className="size-3.5" /> Reenviar
+                          </Button>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -2409,6 +2720,45 @@ function ConfiguracoesTab() {
     resetHour: 0, defaultProxyMode: 'none', globalDailyLimit: 1000,
     emailNotifications: true, timezone: 'America/Sao_Paulo',
   })
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    const loadSettings = async () => {
+      try {
+        const res = await fetch('/api/settings')
+        const data = await res.json()
+        if (data.resetHour !== undefined) setConfig(prev => ({ ...prev, resetHour: parseInt(data.resetHour) || 0 }))
+        if (data.defaultProxyMode) setConfig(prev => ({ ...prev, defaultProxyMode: data.defaultProxyMode }))
+        if (data.globalDailyLimit) setConfig(prev => ({ ...prev, globalDailyLimit: parseInt(data.globalDailyLimit) || 1000 }))
+        if (data.emailNotifications !== undefined) setConfig(prev => ({ ...prev, emailNotifications: data.emailNotifications === 'true' }))
+        if (data.timezone) setConfig(prev => ({ ...prev, timezone: data.timezone }))
+      } catch { /* empty */ }
+      finally { setLoading(false) }
+    }
+    loadSettings()
+  }, [])
+
+  const saveSettings = async () => {
+    setSaving(true)
+    try {
+      const res = await fetch('/api/settings', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          resetHour: String(config.resetHour),
+          defaultProxyMode: config.defaultProxyMode,
+          globalDailyLimit: String(config.globalDailyLimit),
+          emailNotifications: String(config.emailNotifications),
+          timezone: config.timezone,
+        }),
+      })
+      if (!res.ok) throw new Error()
+      toast.success('Configurações salvas!')
+    } catch { toast.error('Erro ao salvar configurações') }
+    finally { setSaving(false) }
+  }
+
+  if (loading) return <div className="flex items-center justify-center py-20"><RefreshCw className="size-6 animate-spin text-muted-foreground" /></div>
 
   return (
     <div className="space-y-6">
@@ -2515,8 +2865,8 @@ function ConfiguracoesTab() {
 
       <div className="flex justify-end">
         <Button className="gap-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 shadow-lg"
-          onClick={() => toast.success('Configurações salvas!')}>
-          <Check className="size-4" /> Salvar Configurações
+          onClick={saveSettings} disabled={saving}>
+          {saving ? <RefreshCw className="size-4 animate-spin" /> : <Check className="size-4" />} Salvar Configurações
         </Button>
       </div>
     </div>
@@ -2528,15 +2878,52 @@ export default function OctupusZapApp() {
   const [activeTab, setActiveTab] = useState('dashboard')
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [stats, setStats] = useState<Stats | null>(null)
+  const [loggedIn, setLoggedIn] = useState(false)
+  const [username, setUsername] = useState('')
+  const [authLoading, setAuthLoading] = useState(true)
+  const [loginForm, setLoginForm] = useState({ username: '', password: '' })
+  const [loginLoading, setLoginLoading] = useState(false)
 
   useEffect(() => {
-    fetch('/api/stats').then(r => r.json()).then(setStats).catch(() => {})
+    fetch('/api/auth/session').then(r => r.json()).then(data => {
+      if (data.authenticated) { setLoggedIn(true); setUsername(data.username || '') }
+    }).catch(() => {}).finally(() => setAuthLoading(false))
   }, [])
+
+  useEffect(() => {
+    if (loggedIn) fetch('/api/stats').then(r => r.json()).then(setStats).catch(() => {})
+  }, [loggedIn])
+
+  const handleLogin = async () => {
+    setLoginLoading(true)
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(loginForm),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Erro ao fazer login')
+      setLoggedIn(true)
+      setUsername(loginForm.username)
+      toast.success('Login realizado com sucesso!')
+    } catch (err: unknown) { toast.error((err as Error).message || 'Erro ao fazer login') }
+    finally { setLoginLoading(false) }
+  }
+
+  const handleLogout = async () => {
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' })
+      setLoggedIn(false)
+      setUsername('')
+      toast.success('Logout realizado!')
+    } catch { toast.error('Erro ao fazer logout') }
+  }
 
   const renderContent = () => {
     switch (activeTab) {
       case 'dashboard': return <DashboardTab stats={stats} />
       case 'chips': return <ChipsTab />
+      case 'inbox': return <InboxTab />
       case 'contatos': return <ContatosTab />
       case 'campanhas': return <CampanhasTab />
       case 'templates': return <TemplatesTab />
@@ -2545,6 +2932,50 @@ export default function OctupusZapApp() {
       case 'config': return <ConfiguracoesTab />
       default: return <DashboardTab stats={stats} />
     }
+  }
+
+  // Auth loading state
+  if (authLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-zinc-50 dark:bg-zinc-950">
+        <RefreshCw className="size-8 animate-spin text-emerald-500" />
+      </div>
+    )
+  }
+
+  // Login screen
+  if (!loggedIn) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-zinc-50 dark:bg-zinc-950 p-4">
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-md">
+          <Card className="shadow-2xl border-0">
+            <CardHeader className="text-center pb-2">
+              <div className="flex justify-center mb-4">
+                <div className="flex size-16 items-center justify-center rounded-2xl bg-gradient-to-br from-emerald-400 to-teal-500 shadow-lg">
+                  <Zap className="size-8 text-white" />
+                </div>
+              </div>
+              <CardTitle className="text-2xl">OctupusZap</CardTitle>
+              <CardDescription>Faça login para acessar o painel</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label>Usuário</Label>
+                <Input placeholder="admin" value={loginForm.username} onChange={e => setLoginForm(p => ({ ...p, username: e.target.value }))} />
+              </div>
+              <div className="space-y-2">
+                <Label>Senha</Label>
+                <Input type="password" placeholder="••••••" value={loginForm.password} onChange={e => setLoginForm(p => ({ ...p, password: e.target.value }))} onKeyDown={e => e.key === 'Enter' && handleLogin()} />
+              </div>
+              <Button className="w-full gap-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 shadow-lg" onClick={handleLogin} disabled={loginLoading || !loginForm.username || !loginForm.password}>
+                {loginLoading ? <RefreshCw className="size-4 animate-spin" /> : <Lock className="size-4" />}
+                {loginLoading ? 'Entrando...' : 'Entrar'}
+              </Button>
+            </CardContent>
+          </Card>
+        </motion.div>
+      </div>
+    )
   }
 
   return (
@@ -2581,12 +3012,22 @@ export default function OctupusZapApp() {
         <div className="p-4 m-3 rounded-xl bg-zinc-800/50">
           <div className="flex items-center gap-3">
             <div className="flex size-9 items-center justify-center rounded-full bg-emerald-600">
-              <span className="text-sm font-bold text-white">OZ</span>
+              <span className="text-sm font-bold text-white">{username ? username.charAt(0).toUpperCase() : 'O'}</span>
             </div>
-            <div>
-              <p className="text-sm font-medium text-white">OctupusZap</p>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-white truncate">{username || 'OctupusZap'}</p>
               <p className="text-xs text-zinc-400">Plano Pro</p>
             </div>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button variant="ghost" size="sm" className="text-zinc-400 hover:text-rose-400 h-8 w-8 p-0" onClick={handleLogout}>
+                    <LogOut className="size-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Sair</TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           </div>
         </div>
       </aside>

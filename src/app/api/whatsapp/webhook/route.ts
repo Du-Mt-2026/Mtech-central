@@ -120,9 +120,70 @@ export async function POST(request: Request) {
       }
 
       case 'MESSAGES_UPSERT': {
-        // Incoming messages — log for now (future: inbox feature)
+        // Incoming messages — save to InboxMessage table
         if (data?.key?.remoteJid && !data?.key?.fromMe) {
-          console.log(`Incoming message from ${data.key.remoteJid} on ${instance}`)
+          try {
+            const msgId = data.key.id
+            const remoteJid = data.key.remoteJid
+            const pushName = data.pushName || null
+
+            // Extract text content from the message
+            let messageContent = ''
+            let messageType = 'text'
+
+            if (data.message) {
+              if (data.message.conversation) {
+                messageContent = data.message.conversation
+              } else if (data.message.extendedTextMessage?.text) {
+                messageContent = data.message.extendedTextMessage.text
+              } else if (data.message.imageMessage) {
+                messageContent = data.message.imageMessage.caption || ''
+                messageType = 'image'
+              } else if (data.message.videoMessage) {
+                messageContent = data.message.videoMessage.caption || ''
+                messageType = 'video'
+              } else if (data.message.audioMessage) {
+                messageContent = ''
+                messageType = 'audio'
+              } else if (data.message.documentMessage) {
+                messageContent = data.message.documentMessage.caption || ''
+                messageType = 'document'
+              } else if (data.message.stickerMessage) {
+                messageContent = ''
+                messageType = 'sticker'
+              } else if (data.message.contactMessage) {
+                messageContent = data.message.contactMessage.displayName || ''
+                messageType = 'contact'
+              } else if (data.message.locationMessage) {
+                messageContent = `${data.message.locationMessage.degreesLat}, ${data.message.locationMessage.degreesLong}`
+                messageType = 'location'
+              } else {
+                messageContent = JSON.stringify(data.message).substring(0, 500)
+                messageType = 'unknown'
+              }
+            }
+
+            // Only save if we have content or a media type
+            if (messageContent || messageType !== 'text') {
+              await db.inboxMessage.upsert({
+                where: { evolutionMsgId: msgId },
+                update: {},
+                create: {
+                  instanceName: instance,
+                  remoteJid,
+                  fromMe: false,
+                  messageContent,
+                  messageType,
+                  pushName,
+                  evolutionMsgId: msgId,
+                },
+              })
+            }
+
+            console.log(`[Webhook] Saved incoming message from ${remoteJid} on ${instance}`)
+          } catch (inboxErr) {
+            console.error('[Webhook] Error saving inbox message:', inboxErr)
+          }
         }
         break
       }

@@ -312,3 +312,153 @@ Unresolved / Next Steps:
 - FALTANDO: Caixa de entrada (mensagens recebidas)
 - FALTANDO: Reenviar mensagem falha
 
+---
+Task ID: 2
+Agent: Full-Stack Developer
+Task: Complete frontend UI overhaul — all new features
+
+Work Log:
+- Added InboxMessage interface type definition
+- Added lucide-react imports: Inbox, LogOut, RotateCcw, Film, Music, File, Webhook, ImageIcon
+- Added "Caixa de Entrada" tab to NAV_ITEMS (positioned between Chips and Contatos)
+- Created InboxTab component: fetches /api/inbox with pagination/search, shows sender (pushName), message content, type, instance name, timestamp, empty state, pagination controls
+- Added auth gate to OctupusZapApp: checks /api/auth/session on mount, shows login card (username/password) if not authenticated, calls /api/auth/login, shows loading spinner during auth check
+- Added logout button (LogOut icon) in sidebar footer next to username initial
+- Updated ConfiguracoesTab: loads settings from GET /api/settings on mount, saves to PUT /api/settings, added loading state and saving spinner on button
+- Added edit/delete to ContatosTab contacts table: Pencil icon opens edit dialog (PATCH /api/contacts/[id]), Trash2 icon opens delete confirm (DELETE /api/contacts/[id]), added editContactDialog state, editContactForm, deleteContactConfirm, edit contact dialog UI
+- Added edit to TemplatesTab: Pencil icon on each template card opens edit dialog (PATCH /api/templates/[id]), edit dialog pre-fills name/content/category, added editDialogOpen, editTemplate, editForm states
+- Updated campaign pause/resume to use dedicated endpoints: Pause → POST /api/campaigns/[id]/pause, Resume → POST /api/campaigns/[id]/resume, added Cancelar button for running/paused campaigns that sets status to 'cancelled'
+- Added resend failed messages to MensagensTab: "Reenviar" button next to each failed message (POST /api/messages/[id]/resend), "Reenviar Todas Falhas" button in header when failed messages exist (POST /api/messages/resend-all-failed), added "Ações" column to table
+- Added media upload to campaign creation sequence steps: file input with mediatype selector (image/document/video/audio), file preview with name/size, remove button, mediaFile and mediatype fields in sequenceStep state
+- Added webhook setup button to ChipsTab: "Webhook" button (only shown for chips with evolutionInstance), calls POST /api/whatsapp/setup-webhook with chipId
+- Fixed lint warnings: renamed Image → ImageIcon from lucide-react to avoid jsx-a11y/alt-text false positives
+- Lint passes clean with zero errors and zero warnings
+
+Stage Summary:
+- All 9 frontend features implemented using existing backend API routes
+- Auth login gate with session checking and logout
+- Inbox tab with paginated/searchable incoming messages
+- Settings persistence via database API
+- Contact edit/delete with dialogs
+- Template edit with dialog
+- Campaign pause/resume using dedicated endpoints + cancel button
+- Resend failed messages (single + bulk)
+- Media upload in campaign sequence steps
+- Webhook setup button on chips with Evolution instances
+- Lint passes clean
+
+---
+Task ID: 1-a
+Agent: Full-Stack Developer
+Task: Settings persistence API + Webhook auto-config + SOCKS5 proxy apply
+
+Work Log:
+- Added `Settings` model to Prisma schema (id, key @unique, value, createdAt, updatedAt)
+- Ran `db:push` to create Settings table in Neon PostgreSQL
+- Created `/src/app/api/settings/route.ts` with GET (returns key-value pairs) and PUT (upserts all settings)
+- Modified `/src/app/api/whatsapp/connect/route.ts`:
+  - Updated webhook URL construction to use `VERCEL_URL` → `NEXT_PUBLIC_APP_URL` → `http://localhost:3000` fallback chain
+  - Webhook is now always configured on connect (not just for new instances) — ensures existing instances get webhook too
+  - Added SOCKS5 proxy application after instance creation/connect: if chip has proxyMode='socks5' and socks5Host/socks5Port, calls `setProxy()` on the Evolution instance
+  - Added `setProxy` import from `@/lib/evolution-api`
+- Created `/src/app/api/whatsapp/setup-webhook/route.ts`:
+  - POST endpoint accepting `{ chipId }` — finds chip's evolutionInstance and calls `setWebhook()` to reconfigure webhook
+  - Useful for re-configuring webhooks on existing instances
+  - Validates chipId, chip existence, and evolutionInstance presence
+- Modified `/src/app/api/chips/[chipId]/route.ts` PATCH handler:
+  - Added `setProxy` import from `@/lib/evolution-api`
+  - After updating chip in DB: if proxyMode='socks5' and evolutionInstance exists, calls `setProxy()` with enabled=true and chip's proxy settings
+  - If proxyMode is NOT 'socks5' and evolutionInstance exists, calls `setProxy()` with enabled=false to disable proxy on the instance
+  - Proxy errors are caught and logged but don't fail the PATCH request
+- Lint passes clean with zero errors
+
+Stage Summary:
+- Settings persistence API: GET/PUT /api/settings — key-value storage in database (replaces localStorage-only approach)
+- Webhook auto-configuration: webhook is always set on connect and can be re-configured via /api/whatsapp/setup-webhook
+- SOCKS5 proxy apply: proxy settings are now pushed to Evolution API when saving chip settings or connecting WhatsApp
+- All three backend features fully implemented with proper error handling
+
+---
+Task ID: 1-b
+Agent: Full-Stack Developer
+Task: Authentication + Pause/Resume Campaign + Campaign Scheduling
+
+Work Log:
+- Added `AdminUser` model to Prisma schema (id, username @unique, password bcrypt, createdAt, updatedAt)
+- Ran `db:push` to create AdminUser table in Neon PostgreSQL
+- Installed `jose` (JWT) and `bcryptjs` + `@types/bcryptjs` (password hashing) packages
+- Created `/src/lib/auth.ts` — auth utility library with JWT creation/verification (jose HS256, 7-day expiry), bcrypt password hashing, session cookie management (httpOnly, secure in production), and server-side `getSession()` helper
+- Created `/src/app/api/auth/login/route.ts` — POST: validates credentials, auto-creates admin on first login (ADMIN_USERNAME/ADMIN_PASSWORD env vars, defaults: admin/admin123), sets JWT httpOnly cookie
+- Created `/src/app/api/auth/session/route.ts` — GET: returns current session info (authenticated true/false + user details)
+- Created `/src/app/api/auth/logout/route.ts` — POST: clears session cookie (maxAge: 0)
+- Created `/src/middleware.ts` — protects all `/api/*` routes except `/api/auth/*`, verifies JWT token, returns 401 for unauthenticated/expired sessions
+- Modified `/src/app/api/campaigns/[campaignId]/route.ts` PATCH handler:
+  - Added status transition validation with VALID_TRANSITIONS map
+  - draft → scheduled (requires scheduledAt), draft/scheduled → running (calls startCampaign), running → paused, paused → running, any → cancelled (marks pending messages as failed)
+  - Added ALLOWED_FIELDS whitelist for non-status field updates
+- Created `/src/app/api/campaigns/[campaignId]/pause/route.ts` — POST: pauses a running campaign (validates status)
+- Created `/src/app/api/campaigns/[campaignId]/resume/route.ts` — POST: resumes a paused campaign (validates status)
+- Modified `/src/lib/sending-engine.ts` — added paused campaign check at start of `processNextMessage()`: if campaign status is 'paused', returns immediately without processing
+- Modified `/src/app/api/campaigns/process-all/route.ts`:
+  - Added auto-start logic for scheduled campaigns whose scheduledAt ≤ now
+  - Each scheduled campaign is started via `startCampaign()` with error handling (logs but continues)
+  - Response includes `startedScheduled` count and `startedCampaigns` details
+- Lint passes clean with zero errors
+
+Stage Summary:
+- Complete authentication system: login with JWT, session cookie, middleware protection on all API routes
+- Auto-creates admin user on first login attempt (admin/admin123 defaults)
+- Campaign pause/resume: proper status transitions, dedicated API endpoints, sending engine respects paused state
+- Campaign scheduling auto-start: process-all cron now detects and starts scheduled campaigns whose time has come
+- All features implemented with proper error handling and validation
+
+---
+Task ID: 1-c
+Agent: Full-Stack Developer
+Task: Media sending API + Inbox API + Edit/Delete contacts + Edit templates + Resend failed messages
+
+Work Log:
+- Added `mediaUrl` and `mediatype` fields to SequenceStep Prisma model
+- Added `mediaUrl` and `mediatype` fields to Message Prisma model (for tracking media through pipeline)
+- Added `InboxMessage` model to Prisma schema (id, instanceName, remoteJid, fromMe, messageContent @db.Text, messageType, pushName, evolutionMsgId @unique, createdAt)
+- Ran `db:push` to create all new tables and columns in Neon PostgreSQL
+- Created `/src/app/api/whatsapp/send-media/route.ts`:
+  - POST endpoint accepting FormData: instanceName, number, mediatype, media (File), caption (optional), delay (optional)
+  - Converts uploaded file to base64 data URI (`data:{mimetype};base64,{base64data}`)
+  - Calls `sendMediaMessage()` from evolution-api
+  - Validates mediatype is one of: image, document, video, audio
+- Modified `/src/lib/sending-engine.ts`:
+  - Imported `sendMediaMessage` from evolution-api
+  - `startCampaign()`: copies `mediaUrl` and `mediatype` from first SequenceStep to each created Message
+  - `processNextMessage()`: if message has `mediaUrl` and `mediatype`, uses `sendMediaMessage` with content as caption; otherwise falls back to `sendTextMessage`
+- Modified `/src/app/api/whatsapp/webhook/route.ts`:
+  - `MESSAGES_UPSERT` handler now saves incoming messages to `InboxMessage` table instead of just logging
+  - Extracts content from: conversation, extendedTextMessage, imageMessage (caption), videoMessage (caption), audioMessage, documentMessage (caption), stickerMessage, contactMessage, locationMessage
+  - Uses `upsert` with `evolutionMsgId` as unique key to prevent duplicates
+  - Only saves messages where `fromMe` is false (incoming only)
+- Created `/src/app/api/inbox/route.ts`:
+  - GET: paginated inbox messages ordered by createdAt desc
+  - Query params: page, limit, instanceName (filter), search (insensitive text search on messageContent or pushName)
+  - Returns messages, total, page, limit, totalPages
+- Created `/src/app/api/contacts/[id]/route.ts`:
+  - GET: single contact with contactList and chip relations
+  - PATCH: update name and/or phone (whitelist, unique constraint handling)
+  - DELETE: delete contact with associated messages
+- Created `/src/app/api/templates/[id]/route.ts`:
+  - PATCH: update name, content, and/or category (whitelist validation)
+  - DELETE: delete template
+- Created `/src/app/api/messages/[id]/resend/route.ts`:
+  - POST: resets a single failed message to pending, clears error and sentAt
+- Created `/src/app/api/messages/resend-all-failed/route.ts`:
+  - POST: resets all failed messages to pending, optionally filtered by campaignId
+- Lint passes clean with zero errors
+
+Stage Summary:
+- Media Sending API: POST /api/whatsapp/send-media accepts FormData with file upload, converts to base64 data URI, sends via Evolution API
+- Sending engine supports media: campaigns with SequenceStep mediaUrl/mediatype send as media messages with caption
+- Inbox system: webhook saves incoming WhatsApp messages to InboxMessage table; GET /api/inbox provides paginated/searchable access
+- Contact CRUD: GET/PATCH/DELETE /api/contacts/[id] for individual contact management
+- Template CRUD: PATCH/DELETE /api/templates/[id] for individual template management
+- Resend failed: POST /api/messages/[id]/resend resets single message; POST /api/messages/resend-all-failed resets all (optionally by campaign)
+- 6 new API routes created, 3 existing files modified, 3 Prisma model changes applied
+
