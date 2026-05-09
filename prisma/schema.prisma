@@ -39,9 +39,10 @@ model Chip {
   socks5Pass       String   @default("")
 
   // Evolution API integration
-  evolutionInstance String?  @unique
-  profileName      String?  
-  profilePicUrl    String?  
+  evolutionInstance         String?  @unique
+  profileName              String?  
+  profilePicUrl            String?  
+  disconnectionReasonCode  Int?
 }
 
 model AntiBanSettings {

@@ -32,28 +32,16 @@ export async function POST(request: Request) {
               : 'connecting';
 
         const chip = chips.find((c) => c.evolutionInstance === instance.name);
-        if (chip && chip.status !== newStatus) {
+        if (chip) {
           await db.chip.update({
             where: { id: chip.id },
             data: {
-              status: newStatus,
-              lastSeen: newStatus === 'connected' ? new Date() : chip.lastSeen,
+              ...(chip.status !== newStatus ? { status: newStatus, lastSeen: newStatus === 'connected' ? new Date() : chip.lastSeen } : {}),
               profileName: instance.profileName || chip.profileName,
               profilePicUrl: instance.profilePicUrl || chip.profilePicUrl,
+              disconnectionReasonCode: instance.disconnectionReasonCode ?? null,
             },
           });
-          synced++;
-        } else if (chip) {
-          // Status is already in sync, but update profile info if available
-          if (instance.profileName || instance.profilePicUrl) {
-            await db.chip.update({
-              where: { id: chip.id },
-              data: {
-                profileName: instance.profileName || chip.profileName,
-                profilePicUrl: instance.profilePicUrl || chip.profilePicUrl,
-              },
-            });
-          }
           synced++;
         }
       } else {

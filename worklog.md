@@ -184,3 +184,50 @@ Unresolved / Next Steps:
 - Network namespace setup on VPS for zero IP leak
 - Authentication/login system
 - Test full flow: create chip → connect WhatsApp → create campaign → send messages
+
+---
+Task ID: 8
+Agent: Main
+Task: ChipsTab — Sync/Import Evolution API buttons + improved chip card styling
+
+Work Log:
+- Added `disconnectionReasonCode` field to Chip Prisma model (Int?, nullable)
+- Pushed schema changes to Neon PostgreSQL database
+- Updated sync-instances route to save `disconnectionReasonCode` from Evolution API instances
+- Updated import-instances route to save `disconnectionReasonCode` on both create and link paths
+- Added new Lucide icon imports: Database, WifiOff, ArrowDownToLine
+- Added Checkbox component import from shadcn/ui
+- Added `disconnectionReasonCode` to Chip TypeScript interface
+- Added new state variables to ChipsTab: syncing, importDialogOpen, importLoading, instancesLoading, unlinkedInstances, selectedInstances
+- Added `syncEvolutionApi` function — calls POST /api/whatsapp/sync-instances, shows toast with result, refreshes chip list
+- Added `openImportDialog` function — calls GET /api/whatsapp/instances, compares with existing chips to find unlinked instances
+- Added `importSelectedInstances` function — calls POST /api/whatsapp/import-instances with selected instance names
+- Added `toggleInstanceSelection` function — toggles instance in Set for checkbox selection
+- Added "Sincronizar Evolution API" button in header next to "Novo Chip" with loading spinner
+- Added "Importar Instâncias" button in header that opens import dialog
+- Created full Import Instances Dialog with:
+  - Loading state with spinner while fetching instances
+  - Empty state when all instances are already linked
+  - ScrollArea list of unlinked instances with checkboxes
+  - Profile picture, instance name (monospace), connection status badge per instance
+  - "Dispositivo removido" badge for instances with disconnectionReasonCode 401
+  - "Selecionar todas / Desmarcar todas" toggle button
+  - Import button with count and loading state
+- Improved chip card styling:
+  - Profile picture shown prominently for ALL chips with profilePicUrl (not just connected ones)
+  - Larger avatar (size-12 instead of size-10)
+  - Ring color changes based on connection status (emerald for connected, zinc for others)
+  - "Dispositivo removido" destructive badge shown when disconnectionReasonCode === 401
+  - Instance name shown in header next to phone number using monospace font (text-[10px] font-mono)
+  - Removed redundant "Instância" row from card body (now shown in header)
+- Fixed JSX nesting: added closing `</div>` for button group wrapper
+- Lint passes clean
+
+Stage Summary:
+- "Sincronizar Evolution API" button syncs chip statuses from Evolution API
+- "Importar Instâncias" dialog lets users select and import unlinked Evolution API instances
+- Chip cards show profile pictures prominently for all chips with profilePicUrl
+- "Dispositivo removido" badge for 401 disconnection reason code
+- Instance names displayed in monospace font on chip card headers
+- disconnectionReasonCode stored in database and synced from Evolution API
+

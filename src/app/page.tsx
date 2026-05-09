@@ -12,7 +12,7 @@ import {
   MessageCircle, Type, Shuffle, Flame, Snowflake, EyeOff,
   Download, Filter, ArrowRight, QrCode, Globe, Lock,
   Sparkles, Heart, Star, AlertTriangle, Info, ChevronDown,
-  Pencil, LayoutList
+  Pencil, LayoutList, Database, WifiOff, ArrowDownToLine
 } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardAction } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -29,6 +29,7 @@ import { Slider } from '@/components/ui/slider'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   AlertDialog, AlertDialogTrigger, AlertDialogContent, AlertDialogHeader,
   AlertDialogFooter, AlertDialogTitle, AlertDialogDescription, AlertDialogAction, AlertDialogCancel,
@@ -64,6 +65,7 @@ interface Chip {
   evolutionInstance?: string | null
   profileName?: string | null
   profilePicUrl?: string | null
+  disconnectionReasonCode?: number | null
 }
 
 interface SequenceStep {
@@ -424,6 +426,14 @@ function ChipsTab() {
   const [qrError, setQrError] = useState<string | null>(null)
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
+  // Evolution API sync/import state
+  const [syncing, setSyncing] = useState(false)
+  const [importDialogOpen, setImportDialogOpen] = useState(false)
+  const [importLoading, setImportLoading] = useState(false)
+  const [instancesLoading, setInstancesLoading] = useState(false)
+  const [unlinkedInstances, setUnlinkedInstances] = useState<Array<{ name: string; connectionStatus: string; profileName: string | null; profilePicUrl: string | null; number: string | null; disconnectionReasonCode: number | null }>>([])
+  const [selectedInstances, setSelectedInstances] = useState<Set<string>>(new Set())
+
   const fetchChips = useCallback(async () => {
     try {
       const res = await fetch('/api/chips')
@@ -652,6 +662,77 @@ function ChipsTab() {
     setProxyDialogOpen(false)
   }
 
+  const syncEvolutionApi = async () => {
+    setSyncing(true)
+    try {
+      const res = await fetch('/api/whatsapp/sync-instances', { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Erro ao sincronizar')
+      toast.success(`Sincronização concluída: ${data.synced} chips atualizados${data.unlinked?.length ? ` — ${data.unlinked.length} instâncias não vinculadas` : ''}`)
+      fetchChips()
+    } catch (err: unknown) {
+      toast.error((err as Error).message || 'Erro ao sincronizar Evolution API')
+    } finally {
+      setSyncing(false)
+    }
+  }
+
+  const openImportDialog = async () => {
+    setImportDialogOpen(true)
+    setInstancesLoading(true)
+    setSelectedInstances(new Set())
+    try {
+      // Fetch all instances from Evolution API
+      const instancesRes = await fetch('/api/whatsapp/instances')
+      const instancesData = await instancesRes.json()
+      if (!instancesRes.ok) throw new Error(instancesData.error || 'Erro ao buscar instâncias')
+
+      // Find unlinked instances (not linked to any chip)
+      const linkedInstanceNames = new Set(
+        chips.filter(c => c.evolutionInstance).map(c => c.evolutionInstance!)
+      )
+      const unlinked = (instancesData.instances || []).filter(
+        (inst: { name: string }) => !linkedInstanceNames.has(inst.name)
+      )
+      setUnlinkedInstances(unlinked)
+    } catch (err: unknown) {
+      toast.error((err as Error).message || 'Erro ao buscar instâncias')
+      setUnlinkedInstances([])
+    } finally {
+      setInstancesLoading(false)
+    }
+  }
+
+  const importSelectedInstances = async () => {
+    if (selectedInstances.size === 0) return
+    setImportLoading(true)
+    try {
+      const res = await fetch('/api/whatsapp/import-instances', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ instanceNames: Array.from(selectedInstances) }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Erro ao importar instâncias')
+      toast.success(`${data.newImports} instância(s) importada(s) com sucesso!${data.skipped?.length ? ` — ${data.skipped.length} ignorada(s)` : ''}`)
+      setImportDialogOpen(false)
+      fetchChips()
+    } catch (err: unknown) {
+      toast.error((err as Error).message || 'Erro ao importar instâncias')
+    } finally {
+      setImportLoading(false)
+    }
+  }
+
+  const toggleInstanceSelection = (name: string) => {
+    setSelectedInstances(prev => {
+      const next = new Set(prev)
+      if (next.has(name)) next.delete(name)
+      else next.add(name)
+      return next
+    })
+  }
+
   const copyToClipboard = async (text: string) => {
     try { await navigator.clipboard.writeText(text); setCopied(true); toast.success('Copiado!'); setTimeout(() => setCopied(false), 2000) }
     catch { toast.error('Erro ao copiar') }
@@ -663,17 +744,25 @@ function ChipsTab() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h2 className="text-2xl font-bold">Chips</h2>
           <p className="text-sm text-muted-foreground">Gerencie os números WhatsApp conectados</p>
         </div>
-        <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
-          <DialogTrigger asChild>
-            <Button className="gap-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 shadow-lg">
-              <Plus className="size-4" /> Novo Chip
-            </Button>
-          </DialogTrigger>
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button variant="outline" className="gap-2" onClick={syncEvolutionApi} disabled={syncing}>
+            {syncing ? <RefreshCw className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
+            {syncing ? 'Sincronizando...' : 'Sincronizar Evolution API'}
+          </Button>
+          <Button variant="outline" className="gap-2" onClick={openImportDialog} disabled={importLoading}>
+            <ArrowDownToLine className="size-4" /> Importar Instâncias
+          </Button>
+          <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
+            <DialogTrigger asChild>
+              <Button className="gap-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 shadow-lg">
+                <Plus className="size-4" /> Novo Chip
+              </Button>
+            </DialogTrigger>
           <DialogContent>
             <DialogHeader>
               <DialogTitle>Adicionar Chip</DialogTitle>
@@ -695,6 +784,7 @@ function ChipsTab() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
 
       {/* Stats Row */}
@@ -741,16 +831,28 @@ function ChipsTab() {
                   <div className={`absolute top-0 left-0 right-0 h-1 ${chip.status === 'connected' ? 'bg-gradient-to-r from-emerald-400 to-teal-500' : chip.status === 'error' ? 'bg-gradient-to-r from-rose-400 to-pink-500' : chip.status === 'connecting' ? 'bg-gradient-to-r from-amber-400 to-orange-500' : 'bg-zinc-300'}`} />
                   <CardHeader className="pb-3">
                     <div className="flex items-center gap-3">
-                      {chip.status === 'connected' && chip.profilePicUrl ? (
-                        <img src={chip.profilePicUrl} alt={chip.profileName || chip.name} className="size-10 rounded-xl object-cover ring-2 ring-emerald-500/30" />
+                      {chip.profilePicUrl ? (
+                        <img src={chip.profilePicUrl} alt={chip.profileName || chip.name} className={`size-12 rounded-xl object-cover ring-2 ${chip.status === 'connected' ? 'ring-emerald-500/30' : 'ring-zinc-300'}`} />
                       ) : (
-                        <div className="flex size-10 items-center justify-center rounded-xl bg-violet-100 dark:bg-violet-900/30">
-                          <Smartphone className="size-5 text-violet-600 dark:text-violet-400" />
+                        <div className="flex size-12 items-center justify-center rounded-xl bg-violet-100 dark:bg-violet-900/30">
+                          <Smartphone className="size-6 text-violet-600 dark:text-violet-400" />
                         </div>
                       )}
                       <div className="flex-1 min-w-0">
-                        <CardTitle className="truncate text-base">{chip.profileName || chip.name}</CardTitle>
-                        <CardDescription className="truncate">{chip.phoneNumber}</CardDescription>
+                        <div className="flex items-center gap-2">
+                          <CardTitle className="truncate text-base">{chip.profileName || chip.name}</CardTitle>
+                          {chip.disconnectionReasonCode === 401 && (
+                            <Badge variant="destructive" className="gap-1 text-[10px] px-1.5 py-0 shrink-0">
+                              <WifiOff className="size-3" /> Dispositivo removido
+                            </Badge>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <CardDescription className="truncate">{chip.phoneNumber}</CardDescription>
+                          {chip.evolutionInstance && (
+                            <span className="text-[10px] font-mono text-muted-foreground/70 truncate max-w-28" title={chip.evolutionInstance}>{chip.evolutionInstance}</span>
+                          )}
+                        </div>
                       </div>
                       <StatusBadge status={chip.status} />
                     </div>
@@ -776,12 +878,6 @@ function ChipsTab() {
                           <Badge variant="secondary" className="gap-1 text-xs">
                             <Flame className="size-3" /> Estágio {chip.warmingStage}/4
                           </Badge>
-                        </div>
-                      )}
-                      {chip.evolutionInstance && (
-                        <div className="flex justify-between items-center">
-                          <span className="text-muted-foreground">Instância</span>
-                          <span className="text-xs font-mono truncate max-w-32" title={chip.evolutionInstance}>{chip.evolutionInstance}</span>
                         </div>
                       )}
                       <div className="flex justify-between items-center">
@@ -817,6 +913,88 @@ function ChipsTab() {
           </AnimatePresence>
         </div>
       )}
+
+      {/* Import Instances Dialog */}
+      <Dialog open={importDialogOpen} onOpenChange={setImportDialogOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Database className="size-5 text-emerald-500" /> Importar Instâncias do Evolution API
+            </DialogTitle>
+            <DialogDescription>Selecione as instâncias que deseja importar como chips</DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            {instancesLoading ? (
+              <div className="flex items-center justify-center py-12">
+                <RefreshCw className="size-6 animate-spin text-muted-foreground" />
+                <span className="ml-2 text-sm text-muted-foreground">Buscando instâncias...</span>
+              </div>
+            ) : unlinkedInstances.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-12 text-center">
+                <div className="flex size-12 items-center justify-center rounded-xl bg-emerald-100 dark:bg-emerald-900/30 mb-3">
+                  <Check className="size-6 text-emerald-500" />
+                </div>
+                <p className="text-sm font-medium">Todas as instâncias já estão vinculadas</p>
+                <p className="text-xs text-muted-foreground mt-1">Não há instâncias não vinculadas para importar</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-muted-foreground">{unlinkedInstances.length} instância(s) disponível(is)</span>
+                  <Button variant="ghost" size="sm" className="text-xs h-7" onClick={() => {
+                    if (selectedInstances.size === unlinkedInstances.length) {
+                      setSelectedInstances(new Set())
+                    } else {
+                      setSelectedInstances(new Set(unlinkedInstances.map(i => i.name)))
+                    }
+                  }}>
+                    {selectedInstances.size === unlinkedInstances.length ? 'Desmarcar todas' : 'Selecionar todas'}
+                  </Button>
+                </div>
+                <ScrollArea className="max-h-72">
+                  <div className="space-y-2 pr-3">
+                    {unlinkedInstances.map(inst => (
+                      <label key={inst.name} className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${selectedInstances.has(inst.name) ? 'border-emerald-300 bg-emerald-50 dark:border-emerald-700 dark:bg-emerald-900/20' : 'border-border hover:bg-muted/50'}`}>
+                        <Checkbox
+                          checked={selectedInstances.has(inst.name)}
+                          onCheckedChange={() => toggleInstanceSelection(inst.name)}
+                        />
+                        {inst.profilePicUrl ? (
+                          <img src={inst.profilePicUrl} alt={inst.profileName || inst.name} className="size-9 rounded-lg object-cover" />
+                        ) : (
+                          <div className="flex size-9 items-center justify-center rounded-lg bg-zinc-100 dark:bg-zinc-800">
+                            <Smartphone className="size-4 text-zinc-500" />
+                          </div>
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate">{inst.profileName || inst.name}</p>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-mono text-muted-foreground/70 truncate">{inst.name}</span>
+                            <Badge variant={inst.connectionStatus === 'open' ? 'default' : 'secondary'} className={`text-[10px] px-1.5 py-0 ${inst.connectionStatus === 'open' ? 'bg-emerald-600' : ''}`}>
+                              {inst.connectionStatus === 'open' ? 'Conectada' : inst.connectionStatus === 'connecting' ? 'Conectando' : 'Desconectada'}
+                            </Badge>
+                            {inst.disconnectionReasonCode === 401 && (
+                              <Badge variant="destructive" className="text-[10px] px-1.5 py-0 gap-0.5">
+                                <WifiOff className="size-2.5" /> Removido
+                              </Badge>
+                            )}
+                          </div>
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+                </ScrollArea>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <DialogClose asChild><Button variant="outline">Cancelar</Button></DialogClose>
+            <Button onClick={importSelectedInstances} disabled={selectedInstances.size === 0 || importLoading} className="bg-emerald-600 hover:bg-emerald-700 gap-2">
+              {importLoading ? <><RefreshCw className="size-4 animate-spin" /> Importando...</> : <><ArrowDownToLine className="size-4" /> Importar {selectedInstances.size > 0 ? `(${selectedInstances.size})` : ''}</>}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <ConfirmDialog open={!!deleteConfirm} onOpenChange={() => setDeleteConfirm(null)}
         title="Remover Chip" description="Tem certeza que deseja remover este chip? Esta ação não pode ser desfeita."
