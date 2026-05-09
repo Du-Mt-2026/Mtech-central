@@ -1,18 +1,20 @@
 'use client'
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
-  Smartphone, Radio, Send, Shield, BarChart3, Plus, Trash2,
+  Smartphone, Send, Shield, BarChart3, Plus, Trash2,
   Copy, RefreshCw, Check, X, Clock, Zap, Users, MessageSquare,
-  Activity, AlertCircle, ChevronDown, FileText, Settings, Eye,
-  Pause, Play, Edit, Upload, Search, CalendarDays,
-  Phone, UserPlus, FileSpreadsheet, ArrowRight, ChevronRight,
-  LayoutDashboard, ShieldCheck, Bell, Moon, Sun, Menu,
-  Monitor, Database, TrendingUp, CircleDot, Wifi, WifiOff,
-  Timer, ArrowUpRight, Loader2, QrCode, ChevronLeft
+  Activity, AlertCircle, FileText, Settings, Eye,
+  Pause, Play, Upload, Search, ArrowLeft, CalendarDays,
+  Phone, UserPlus, FileSpreadsheet, ChevronRight, Menu,
+  TrendingUp, TrendingDown, ShieldCheck, ShieldAlert, Timer,
+  MessageCircle, Type, Shuffle, Flame, Snowflake, EyeOff,
+  Download, Filter, ArrowRight, QrCode, Globe, Lock,
+  Sparkles, Heart, Star, AlertTriangle, Info, ChevronDown,
+  Pencil, LayoutList
 } from 'lucide-react'
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
+import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardAction } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -24,491 +26,748 @@ import { Progress } from '@/components/ui/progress'
 import { Separator } from '@/components/ui/separator'
 import { Switch } from '@/components/ui/switch'
 import { Slider } from '@/components/ui/slider'
-import { Skeleton } from '@/components/ui/skeleton'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { Checkbox } from '@/components/ui/checkbox'
 import {
-  AlertDialog, AlertDialogContent, AlertDialogHeader,
+  AlertDialog, AlertDialogTrigger, AlertDialogContent, AlertDialogHeader,
   AlertDialogFooter, AlertDialogTitle, AlertDialogDescription, AlertDialogAction, AlertDialogCancel,
 } from '@/components/ui/alert-dialog'
-import {
-  Table, TableHeader, TableBody, TableHead, TableRow, TableCell,
-} from '@/components/ui/table'
 import { toast } from 'sonner'
 import QRCode from 'qrcode'
 
 // ===== Types =====
 interface Chip {
-  id: string; name: string; phoneNumber: string; wireguardIp: string;
-  wireguardPrivKey: string; wireguardPubKey: string; socksPort: number;
-  status: string; lastSeen: string | null; createdAt: string; updatedAt: string;
+  id: string
+  name: string
+  phoneNumber: string
+  wireguardIp: string
+  wireguardPrivKey: string
+  wireguardPubKey: string
+  socksPort: number
+  status: string
+  lastSeen: string | null
+  createdAt: string
+  updatedAt: string
+  dailyLimit: number
+  sentToday: number
+  lastResetAt: string
+  warmingEnabled: boolean
+  warmingStage: number
+  isQrPaired: boolean
+  qrPairingCode: string | null
+  proxyMode: string
+  socks5Host: string
+  socks5Port: number
+  socks5User: string
+  socks5Pass: string
 }
+
 interface SequenceStep {
-  id: string; campaignId: string; stepOrder: number; content: string;
-  delayMinutes: number; createdAt: string;
+  id: string
+  campaignId: string
+  stepOrder: number
+  content: string
+  delayMinutes: number
+  createdAt: string
 }
+
 interface Campaign {
-  id: string; name: string; status: string; messageVariations: string;
-  sendIntervalMin: number; sendIntervalMax: number; contactListId: string | null;
-  scheduledAt: string | null; startedAt: string | null; completedAt: string | null;
-  createdAt: string; updatedAt: string;
-  chips: { id: string; chipId: string; chip: Chip }[];
-  sequenceSteps: SequenceStep[];
-  contactList: { id: string; name: string } | null;
-  _count?: { messages: number };
+  id: string
+  name: string
+  status: string
+  messageVariations: string
+  sendIntervalMin: number
+  sendIntervalMax: number
+  contactListId: string | null
+  scheduledAt: string | null
+  startedAt: string | null
+  completedAt: string | null
+  createdAt: string
+  updatedAt: string
+  antiBanEnabled: boolean
+  warmingMode: string
+  chips: { id: string; chipId: string; chip: Chip }[]
+  sequenceSteps: SequenceStep[]
+  contactList: { id: string; name: string } | null
+  _count?: { messages: number }
 }
+
 interface ContactItem {
-  id: string; name: string; phone: string; contactListId: string | null;
-  chipId: string | null; createdAt: string;
-  contactList?: { id: string; name: string } | null;
+  id: string
+  name: string
+  phone: string
+  contactListId: string | null
+  chipId: string | null
+  createdAt: string
 }
+
 interface ContactList {
-  id: string; name: string; createdAt: string; updatedAt: string;
-  _count?: { contacts: number; campaigns: number };
+  id: string
+  name: string
+  createdAt: string
+  updatedAt: string
+  _count?: { contacts: number; campaigns: number }
 }
+
 interface MessageItem {
-  id: string; campaignId: string | null; chipId: string; contactId: string;
-  content: string; status: string; sentAt: string | null; deliveredAt: string | null;
-  readAt: string | null; error: string | null; createdAt: string;
-  chip: { name: string; phoneNumber: string };
-  contact: { name: string; phone: string };
-  campaign?: { name: string } | null;
+  id: string
+  campaignId: string | null
+  chipId: string
+  contactId: string
+  content: string
+  status: string
+  sentAt: string | null
+  deliveredAt: string | null
+  readAt: string | null
+  error: string | null
+  createdAt: string
+  chip: { name: string; phoneNumber: string }
+  contact: { name: string; phone: string }
 }
+
 interface Stats {
-  totalChips: number; connectedChips: number; totalCampaigns: number;
-  activeCampaigns: number; totalMessages: number; sentMessages: number;
-  deliveredMessages: number; failedMessages: number; deliveryRate: number; totalContacts: number;
+  totalChips: number
+  connectedChips: number
+  disconnectedChips: number
+  errorChips: number
+  totalCampaigns: number
+  activeCampaigns: number
+  totalMessages: number
+  sentMessages: number
+  deliveredMessages: number
+  readMessages: number
+  failedMessages: number
+  pendingMessages: number
+  deliveryRate: number
+  totalContacts: number
+  totalSent: number
+  recentMessages: MessageItem[]
+  runningCampaigns: Campaign[]
+  chipStatuses: { id: string; name: string; phoneNumber: string; status: string; sentToday: number; dailyLimit: number }[]
 }
 
-type TabId = 'dashboard' | 'dispositivos' | 'campanhas' | 'contatos' | 'mensagens' | 'antiban' | 'configuracoes'
+interface AntiBanSettings {
+  id: string
+  typingMinDelay: number
+  typingMaxDelay: number
+  messageIntervalMin: number
+  messageIntervalMax: number
+  randomLineBreaks: boolean
+  emojiVariation: boolean
+  dailyLimitPerChip: number
+  warmingEnabled: boolean
+  warmingDays: number
+  cooldownMinutes: number
+  cooldownAfterMessages: number
+  stopOnWarning: boolean
+}
 
-// ===== Nav Items =====
-const NAV_ITEMS: { id: TabId; label: string; icon: React.ReactNode }[] = [
-  { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard className="size-4" /> },
-  { id: 'dispositivos', label: 'Dispositivos', icon: <Smartphone className="size-4" /> },
-  { id: 'campanhas', label: 'Campanhas', icon: <Radio className="size-4" /> },
-  { id: 'contatos', label: 'Contatos', icon: <Users className="size-4" /> },
-  { id: 'mensagens', label: 'Mensagens', icon: <MessageSquare className="size-4" /> },
-  { id: 'antiban', label: 'Anti-Ban', icon: <ShieldCheck className="size-4" /> },
-  { id: 'configuracoes', label: 'Configuracoes', icon: <Settings className="size-4" /> },
+interface MessageTemplate {
+  id: string
+  name: string
+  content: string
+  category: string
+  createdAt: string
+  updatedAt: string
+}
+
+// ===== Navigation Items =====
+const NAV_ITEMS = [
+  { id: 'dashboard', label: 'Dashboard', icon: BarChart3 },
+  { id: 'chips', label: 'Chips', icon: Smartphone },
+  { id: 'contatos', label: 'Contatos', icon: Users },
+  { id: 'campanhas', label: 'Campanhas', icon: Send },
+  { id: 'templates', label: 'Templates', icon: FileText },
+  { id: 'antiban', label: 'Anti-Ban', icon: Shield },
+  { id: 'mensagens', label: 'Mensagens', icon: MessageSquare },
+  { id: 'config', label: 'Configurações', icon: Settings },
 ]
 
-const SECTION_TITLES: Record<TabId, string> = {
-  dashboard: 'Dashboard',
-  dispositivos: 'Dispositivos',
-  campanhas: 'Campanhas',
-  contatos: 'Contatos',
-  mensagens: 'Mensagens',
-  antiban: 'Anti-Ban',
-  configuracoes: 'Configuracoes',
-}
-
-// ===== Helper Components =====
-function LoadingScreen() {
-  return (
-    <div className="flex items-center justify-center py-20">
-      <Loader2 className="size-6 animate-spin text-emerald-500" />
-    </div>
-  )
-}
-
-function EmptyState({ icon, title, description }: { icon: React.ReactNode; title: string; description: string }) {
-  return (
-    <Card className="border-dashed">
-      <CardContent className="flex flex-col items-center justify-center py-16">
-        <div className="flex size-14 items-center justify-center rounded-xl bg-zinc-100 dark:bg-zinc-800 mb-4">{icon}</div>
-        <p className="text-sm font-semibold text-zinc-700 dark:text-zinc-200">{title}</p>
-        <p className="text-sm text-muted-foreground mt-1 text-center max-w-sm">{description}</p>
-      </CardContent>
-    </Card>
-  )
-}
-
-function StatusDot({ status }: { status: string }) {
-  const colors: Record<string, string> = {
-    connected: 'bg-emerald-500', connecting: 'bg-amber-500 animate-pulse',
-    error: 'bg-rose-500', disconnected: 'bg-zinc-400',
-    running: 'bg-emerald-500', paused: 'bg-amber-500', completed: 'bg-emerald-600',
-    scheduled: 'bg-blue-500', draft: 'bg-zinc-400', cancelled: 'bg-rose-500',
-    sent: 'bg-blue-400', delivered: 'bg-emerald-500', read: 'bg-emerald-600',
-    pending: 'bg-zinc-400', failed: 'bg-rose-500',
+// ===== Status Helpers =====
+function statusColor(status: string) {
+  const map: Record<string, string> = {
+    connected: 'bg-emerald-500', connecting: 'bg-amber-500', disconnected: 'bg-zinc-400', error: 'bg-rose-500',
+    running: 'bg-emerald-500', draft: 'bg-zinc-400', scheduled: 'bg-amber-500', paused: 'bg-amber-500', completed: 'bg-sky-500',
+    pending: 'bg-zinc-400', sent: 'bg-sky-500', delivered: 'bg-emerald-500', read: 'bg-teal-500', failed: 'bg-rose-500',
   }
-  return <span className={`inline-block size-2 rounded-full ${colors[status] || 'bg-zinc-400'}`} />
+  return map[status] || 'bg-zinc-400'
 }
 
-function DeviceStatusBadge({ status }: { status: string }) {
-  const config: Record<string, { color: string; label: string }> = {
-    connected: { color: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/25', label: 'Conectado' },
-    connecting: { color: 'bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/25', label: 'Conectando' },
-    error: { color: 'bg-rose-500/15 text-rose-700 dark:text-rose-400 border-rose-500/25', label: 'Erro' },
-    disconnected: { color: 'bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/25', label: 'Desconectado' },
+function statusLabel(status: string) {
+  const map: Record<string, string> = {
+    connected: 'Conectado', connecting: 'Conectando', disconnected: 'Desconectado', error: 'Erro',
+    running: 'Executando', draft: 'Rascunho', scheduled: 'Agendada', paused: 'Pausada', completed: 'Concluída',
+    pending: 'Pendente', sent: 'Enviada', delivered: 'Entregue', read: 'Lida', failed: 'Falhou',
   }
-  const c = config[status] || config.disconnected
+  return map[status] || status
+}
+
+function StatusBadge({ status }: { status: string }) {
+  const isDestructive = ['error', 'failed'].includes(status)
+  const isDefault = ['connected', 'running', 'delivered', 'read', 'completed'].includes(status)
   return (
-    <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium ${c.color}`}>
-      <StatusDot status={status} /> {c.label}
-    </span>
+    <Badge variant={isDestructive ? 'destructive' : isDefault ? 'default' : 'secondary'} className="gap-1">
+      <span className={`size-1.5 rounded-full ${statusColor(status)}`} />
+      {statusLabel(status)}
+    </Badge>
   )
 }
 
-function CampaignStatusBadge({ status }: { status: string }) {
-  const config: Record<string, { color: string; label: string }> = {
-    draft: { color: 'bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/25', label: 'Rascunho' },
-    scheduled: { color: 'bg-blue-500/15 text-blue-700 dark:text-blue-400 border-blue-500/25', label: 'Agendada' },
-    running: { color: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/25', label: 'Executando' },
-    paused: { color: 'bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/25', label: 'Pausada' },
-    completed: { color: 'bg-emerald-600/15 text-emerald-700 dark:text-emerald-400 border-emerald-600/25', label: 'Concluida' },
-    cancelled: { color: 'bg-rose-500/15 text-rose-700 dark:text-rose-400 border-rose-500/25', label: 'Cancelada' },
-  }
-  const c = config[status] || config.draft
-  return (
-    <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium ${c.color}`}>
-      <StatusDot status={status} /> {c.label}
-    </span>
-  )
-}
-
-function MessageStatusBadge({ status }: { status: string }) {
-  const config: Record<string, { color: string; label: string }> = {
-    pending: { color: 'bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/25', label: 'Pendente' },
-    sent: { color: 'bg-blue-500/15 text-blue-700 dark:text-blue-400 border-blue-500/25', label: 'Enviada' },
-    delivered: { color: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/25', label: 'Entregue' },
-    read: { color: 'bg-emerald-600/15 text-emerald-700 dark:text-emerald-400 border-emerald-600/25', label: 'Lida' },
-    failed: { color: 'bg-rose-500/15 text-rose-700 dark:text-rose-400 border-rose-500/25', label: 'Falhou' },
-  }
-  const c = config[status] || config.pending
-  return (
-    <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium ${c.color}`}>
-      <StatusDot status={status} /> {c.label}
-    </span>
-  )
-}
-
+// ===== Confirm Dialog =====
 function ConfirmDialog({
   open, onOpenChange, title, description, onConfirm, confirmLabel = 'Confirmar', variant = 'destructive',
 }: {
-  open: boolean; onOpenChange: (v: boolean) => void; title: string; description: string;
-  onConfirm: () => void; confirmLabel?: string; variant?: 'destructive' | 'default';
+  open: boolean; onOpenChange: (open: boolean) => void; title: string; description: string
+  onConfirm: () => void; confirmLabel?: string; variant?: 'destructive' | 'default'
 }) {
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
-      <AlertDialogContent className="bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800">
+      <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>{title}</AlertDialogTitle>
           <AlertDialogDescription>{description}</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>Cancelar</AlertDialogCancel>
-          <AlertDialogAction
-            onClick={() => { onConfirm(); onOpenChange(false) }}
-            className={variant === 'destructive' ? 'bg-rose-600 hover:bg-rose-700 text-white' : 'bg-emerald-600 hover:bg-emerald-700 text-white'}
-          >{confirmLabel}</AlertDialogAction>
+          <AlertDialogAction onClick={() => { onConfirm(); onOpenChange(false) }}
+            className={variant === 'destructive' ? 'bg-rose-600 hover:bg-rose-700' : ''}>
+            {confirmLabel}
+          </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
   )
 }
 
-function StatCard({ icon, value, label, subtitle, progress, delay = 0, accent = 'emerald' }: {
-  icon: React.ReactNode; value: string | number; label: string; subtitle?: string;
-  progress?: number; delay?: number; accent?: string;
-}) {
-  const accentMap: Record<string, string> = {
-    emerald: 'from-emerald-500 to-emerald-600', purple: 'from-purple-500 to-purple-600',
-    orange: 'from-orange-500 to-orange-600', rose: 'from-rose-500 to-rose-600',
-    blue: 'from-blue-500 to-blue-600', amber: 'from-amber-500 to-amber-600',
-  }
-  const iconBg: Record<string, string> = {
-    emerald: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
-    purple: 'bg-purple-500/10 text-purple-600 dark:text-purple-400',
-    orange: 'bg-orange-500/10 text-orange-600 dark:text-orange-400',
-    rose: 'bg-rose-500/10 text-rose-600 dark:text-rose-400',
-    blue: 'bg-blue-500/10 text-blue-600 dark:text-blue-400',
-    amber: 'bg-amber-500/10 text-amber-600 dark:text-amber-400',
-  }
-  return (
-    <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay, duration: 0.3 }}>
-      <Card className="border-zinc-200 dark:border-zinc-800 hover:border-zinc-300 dark:hover:border-zinc-700 transition-colors">
-        <CardContent className="p-5">
-          <div className="flex items-start justify-between">
-            <div className="space-y-1">
-              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{label}</p>
-              <p className="text-2xl font-bold tracking-tight">{value}</p>
-              {subtitle && <p className="text-xs text-muted-foreground">{subtitle}</p>}
-            </div>
-            <div className={`flex size-10 items-center justify-center rounded-lg ${iconBg[accent]}`}>{icon}</div>
-          </div>
-          {progress !== undefined && (
-            <div className="mt-3">
-              <Progress value={progress} className="h-1.5 bg-zinc-100 dark:bg-zinc-800" />
-            </div>
-          )}
-        </CardContent>
-      </Card>
-    </motion.div>
-  )
-}
+// ===== Dashboard Tab =====
+function DashboardTab({ stats }: { stats: Stats | null }) {
+  if (!stats) return <div className="flex items-center justify-center py-20"><RefreshCw className="size-6 animate-spin text-muted-foreground" /></div>
 
-// ===== DASHBOARD TAB =====
-function DashboardTab({ stats, onNavigate }: { stats: Stats | null; onNavigate: (tab: TabId) => void }) {
-  if (!stats) return <LoadingScreen />
   const s = {
     totalChips: stats.totalChips ?? 0, connectedChips: stats.connectedChips ?? 0,
     totalCampaigns: stats.totalCampaigns ?? 0, activeCampaigns: stats.activeCampaigns ?? 0,
     totalMessages: stats.totalMessages ?? 0, sentMessages: stats.sentMessages ?? 0,
     deliveredMessages: stats.deliveredMessages ?? 0, failedMessages: stats.failedMessages ?? 0,
-    totalContacts: stats.totalContacts ?? 0,
+    deliveryRate: stats.deliveryRate ?? 0, totalContacts: stats.totalContacts ?? 0,
+    pendingMessages: stats.pendingMessages ?? 0, readMessages: stats.readMessages ?? 0,
   }
-  const deliveryRate = s.totalMessages > 0 ? Math.round((s.deliveredMessages / s.totalMessages) * 100) : 0
-  const connectionRate = s.totalChips > 0 ? Math.round((s.connectedChips / s.totalChips) * 100) : 0
+
+  const statCards = [
+    { title: 'Chips', value: s.totalChips, sub: `${s.connectedChips} conectados`, icon: Smartphone, gradient: 'from-violet-500 to-purple-600', trend: '+2', trendUp: true },
+    { title: 'Campanhas', value: s.totalCampaigns, sub: `${s.activeCampaigns} ativas`, icon: Send, gradient: 'from-emerald-500 to-teal-600', trend: '+5', trendUp: true },
+    { title: 'Mensagens', value: s.totalMessages, sub: `${s.sentMessages} enviadas`, icon: MessageSquare, gradient: 'from-amber-500 to-orange-600', trend: '+12%', trendUp: true },
+    { title: 'Taxa de Entrega', value: `${s.deliveryRate}%`, sub: `${s.failedMessages} falharam`, icon: Activity, gradient: 'from-rose-500 to-pink-600', trend: s.deliveryRate > 80 ? '+3%' : '-2%', trendUp: s.deliveryRate > 80 },
+  ]
 
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        <StatCard icon={<Smartphone className="size-5" />} value={s.totalChips} label="Total Dispositivos" subtitle={`${s.connectedChips} ativos`} progress={connectionRate} accent="purple" delay={0} />
-        <StatCard icon={<Wifi className="size-5" />} value={s.connectedChips} label="Dispositivos Ativos" subtitle={`${connectionRate}% conectados`} accent="emerald" delay={0.05} />
-        <StatCard icon={<Radio className="size-5" />} value={s.activeCampaigns} label="Campanhas Ativas" subtitle={`${s.totalCampaigns} total`} accent="blue" delay={0.1} />
-        <StatCard icon={<Send className="size-5" />} value={s.totalMessages} label="Mensagens Enviadas" subtitle={`${s.sentMessages} entregues`} accent="orange" delay={0.15} />
-        <StatCard icon={<TrendingUp className="size-5" />} value={`${deliveryRate}%`} label="Taxa de Entrega" subtitle={`${s.deliveredMessages}/${s.totalMessages}`} progress={deliveryRate} accent="emerald" delay={0.2} />
-        <StatCard icon={<Users className="size-5" />} value={s.totalContacts} label="Contatos Total" subtitle="em todas as listas" accent="purple" delay={0.25} />
+      {/* Stat Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {statCards.map((card, i) => (
+          <motion.div key={card.title} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.1 }}>
+            <Card className="relative overflow-hidden border-0 shadow-lg">
+              <div className={`absolute inset-0 bg-gradient-to-br ${card.gradient} opacity-10`} />
+              <CardHeader className="relative pb-2">
+                <CardDescription className="text-sm font-medium">{card.title}</CardDescription>
+                <CardTitle className="text-3xl font-bold">{card.value}</CardTitle>
+                <CardAction>
+                  <div className={`flex size-10 items-center justify-center rounded-xl bg-gradient-to-br ${card.gradient} shadow-lg`}>
+                    <card.icon className="size-5 text-white" />
+                  </div>
+                </CardAction>
+              </CardHeader>
+              <CardContent className="relative">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm text-muted-foreground">{card.sub}</p>
+                  <div className={`flex items-center gap-1 text-xs font-semibold ${card.trendUp ? 'text-emerald-600' : 'text-rose-600'}`}>
+                    {card.trendUp ? <TrendingUp className="size-3" /> : <TrendingDown className="size-3" />}
+                    {card.trend}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </motion.div>
+        ))}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <Card className="lg:col-span-2 border-zinc-200 dark:border-zinc-800">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-semibold">Resumo de Mensagens</CardTitle>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Recent Activity */}
+        <Card className="shadow-md border-0">
+          <CardHeader>
+            <div className="flex items-center gap-2">
+              <div className="flex size-8 items-center justify-center rounded-lg bg-amber-100 dark:bg-amber-900/30">
+                <Clock className="size-4 text-amber-600" />
+              </div>
+              <CardTitle className="text-lg">Atividade Recente</CardTitle>
+            </div>
           </CardHeader>
           <CardContent>
-            <div className="space-y-4">
-              {[
-                { label: 'Pendentes', value: Math.max(0, s.totalMessages - s.sentMessages - s.failedMessages), color: 'text-zinc-500', icon: <Clock className="size-4" /> },
-                { label: 'Enviadas', value: s.sentMessages, color: 'text-blue-500', icon: <Send className="size-4" /> },
-                { label: 'Entregues', value: s.deliveredMessages, color: 'text-emerald-500', icon: <Check className="size-4" /> },
-                { label: 'Falharam', value: s.failedMessages, color: 'text-rose-500', icon: <X className="size-4" /> },
-              ].map(item => (
-                <div key={item.label} className="flex items-center justify-between">
-                  <div className="flex items-center gap-2.5">
-                    <div className={`${item.color}`}>{item.icon}</div>
-                    <span className="text-sm text-muted-foreground">{item.label}</span>
+            {stats.recentMessages && stats.recentMessages.length > 0 ? (
+              <ScrollArea className="h-72">
+                <div className="space-y-3">
+                  {stats.recentMessages.map((msg) => (
+                    <div key={msg.id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-muted/50 transition-colors">
+                      <div className={`size-2 rounded-full ${statusColor(msg.status)}`} />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">{msg.contact?.name || msg.contactId}</p>
+                        <p className="text-xs text-muted-foreground truncate">{msg.content.substring(0, 50)}</p>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <p className="text-xs text-muted-foreground">{msg.chip?.name || '—'}</p>
+                        <p className="text-xs text-muted-foreground">{msg.createdAt ? new Date(msg.createdAt).toLocaleString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : ''}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </ScrollArea>
+            ) : (
+              <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
+                <Activity className="size-8 mb-2 opacity-50" />
+                <p className="text-sm">Nenhuma atividade recente</p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Chip Statuses */}
+        <Card className="shadow-md border-0">
+          <CardHeader>
+            <div className="flex items-center gap-2">
+              <div className="flex size-8 items-center justify-center rounded-lg bg-violet-100 dark:bg-violet-900/30">
+                <Smartphone className="size-4 text-violet-600" />
+              </div>
+              <CardTitle className="text-lg">Status dos Chips</CardTitle>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {stats.chipStatuses && stats.chipStatuses.length > 0 ? (
+              <div className="space-y-3">
+                {stats.chipStatuses.map((chip) => (
+                  <div key={chip.id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-muted/50 transition-colors">
+                    <div className={`size-3 rounded-full ${statusColor(chip.status)} ring-2 ring-offset-2 ring-offset-background ${chip.status === 'connected' ? 'ring-emerald-500/30' : chip.status === 'error' ? 'ring-rose-500/30' : 'ring-zinc-500/30'}`} />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate">{chip.name}</p>
+                      <p className="text-xs text-muted-foreground">{chip.phoneNumber}</p>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className="text-xs font-medium">{chip.sentToday}/{chip.dailyLimit}</p>
+                      <p className="text-xs text-muted-foreground">hoje</p>
+                    </div>
                   </div>
-                  <span className="text-sm font-semibold">{item.value}</span>
+                ))}
+              </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
+                <Smartphone className="size-8 mb-2 opacity-50" />
+                <p className="text-sm">Nenhum chip cadastrado</p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Active Campaigns */}
+      {stats.runningCampaigns && stats.runningCampaigns.length > 0 && (
+        <Card className="shadow-md border-0">
+          <CardHeader>
+            <div className="flex items-center gap-2">
+              <div className="flex size-8 items-center justify-center rounded-lg bg-emerald-100 dark:bg-emerald-900/30">
+                <Send className="size-4 text-emerald-600" />
+              </div>
+              <CardTitle className="text-lg">Campanhas Ativas</CardTitle>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-3">
+              {stats.runningCampaigns.map((c) => (
+                <div key={c.id} className="flex items-center gap-4 p-3 rounded-lg bg-muted/30">
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium truncate">{c.name}</p>
+                    <p className="text-xs text-muted-foreground">{c.chips?.length || 0} chips • {c.sequenceSteps?.length || 0} etapas</p>
+                  </div>
+                  <Progress value={65} className="w-32 h-2" />
+                  <Badge variant="default" className="bg-emerald-600">Executando</Badge>
                 </div>
               ))}
-              {s.totalMessages > 0 && (
-                <div className="pt-2">
-                  <div className="flex h-3 overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
-                    {s.failedMessages > 0 && <div className="bg-rose-500 h-full" style={{ width: `${(s.failedMessages / s.totalMessages) * 100}%` }} />}
-                    {s.sentMessages - s.deliveredMessages > 0 && <div className="bg-blue-400 h-full" style={{ width: `${((s.sentMessages - s.deliveredMessages) / s.totalMessages) * 100}%` }} />}
-                    {s.deliveredMessages > 0 && <div className="bg-emerald-500 h-full" style={{ width: `${(s.deliveredMessages / s.totalMessages) * 100}%` }} />}
-                  </div>
-                </div>
-              )}
             </div>
           </CardContent>
         </Card>
-
-        <Card className="border-zinc-200 dark:border-zinc-800">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-semibold">Acoes Rapidas</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            <Button variant="outline" className="w-full justify-start gap-2.5 h-10 text-sm font-normal" onClick={() => onNavigate('dispositivos')}>
-              <Plus className="size-4 text-emerald-500" /> Novo Dispositivo
-            </Button>
-            <Button variant="outline" className="w-full justify-start gap-2.5 h-10 text-sm font-normal" onClick={() => onNavigate('campanhas')}>
-              <Plus className="size-4 text-blue-500" /> Nova Campanha
-            </Button>
-            <Button variant="outline" className="w-full justify-start gap-2.5 h-10 text-sm font-normal" onClick={() => onNavigate('contatos')}>
-              <UserPlus className="size-4 text-purple-500" /> Importar Contatos
-            </Button>
-            <Button variant="outline" className="w-full justify-start gap-2.5 h-10 text-sm font-normal" onClick={() => onNavigate('mensagens')}>
-              <Eye className="size-4 text-orange-500" /> Ver Mensagens
-            </Button>
-          </CardContent>
-        </Card>
-      </div>
+      )}
     </div>
   )
 }
 
-// ===== DISPOSITIVOS TAB =====
-function DispositivosTab() {
+// ===== Chips Tab =====
+function ChipsTab() {
   const [chips, setChips] = useState<Chip[]>([])
   const [loading, setLoading] = useState(true)
-  const [addOpen, setAddOpen] = useState(false)
-  const [qrOpen, setQrOpen] = useState(false)
-  const [detailOpen, setDetailOpen] = useState(false)
+  const [addDialogOpen, setAddDialogOpen] = useState(false)
+  const [configDialogOpen, setConfigDialogOpen] = useState(false)
+  const [qrDialogOpen, setQrDialogOpen] = useState(false)
+  const [proxyDialogOpen, setProxyDialogOpen] = useState(false)
   const [selectedChip, setSelectedChip] = useState<Chip | null>(null)
-  const [qrUrl, setQrUrl] = useState('')
-  const [qrStatus, setQrStatus] = useState<'idle' | 'generating' | 'ready' | 'scanned'>('idle')
+  const [selectedChipConfig, setSelectedChipConfig] = useState<{ config: string; chip: Partial<Chip> } | null>(null)
+  const [qrCodeUrl, setQrCodeUrl] = useState('')
+  const [copied, setCopied] = useState(false)
   const [newChip, setNewChip] = useState({ name: '', phoneNumber: '' })
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
+  const [proxyForm, setProxyForm] = useState({ socks5Host: '', socks5Port: 1080, socks5User: '', socks5Pass: '' })
 
   const fetchChips = useCallback(async () => {
     try {
       const res = await fetch('/api/chips')
-      setChips(await res.json())
-    } catch { toast.error('Erro ao carregar dispositivos') }
+      const data = await res.json()
+      setChips(data)
+    } catch { toast.error('Erro ao carregar chips') }
     finally { setLoading(false) }
   }, [])
+
   useEffect(() => { fetchChips() }, [fetchChips])
+
+  useEffect(() => {
+    if (selectedChipConfig?.config) {
+      QRCode.toDataURL(selectedChipConfig.config, { width: 300, margin: 2, color: { dark: '#000000', light: '#ffffff' } })
+        .then(url => setQrCodeUrl(url)).catch(() => setQrCodeUrl(''))
+    } else { setQrCodeUrl('') }
+  }, [selectedChipConfig?.config])
 
   const createChip = async () => {
     try {
       const res = await fetch('/api/chips', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newChip) })
-      if (!res.ok) throw new Error((await res.json()).error)
-      toast.success('Dispositivo criado com sucesso')
-      setAddOpen(false); setNewChip({ name: '', phoneNumber: '' }); fetchChips()
-    } catch (e: unknown) { toast.error((e as Error).message || 'Erro ao criar dispositivo') }
+      if (!res.ok) { const data = await res.json(); throw new Error(data.error) }
+      toast.success('Chip criado com sucesso!')
+      setAddDialogOpen(false)
+      setNewChip({ name: '', phoneNumber: '' })
+      fetchChips()
+    } catch (err: unknown) { toast.error((err as Error).message || 'Erro ao criar chip') }
   }
 
   const deleteChip = async (id: string) => {
-    try { await fetch(`/api/chips/${id}`, { method: 'DELETE' }); toast.success('Dispositivo removido'); fetchChips() }
-    catch { toast.error('Erro ao remover dispositivo') }
+    try { await fetch(`/api/chips/${id}`, { method: 'DELETE' }); toast.success('Chip removido!'); fetchChips() }
+    catch { toast.error('Erro ao remover chip') }
   }
 
-  const updateStatus = async (id: string, status: string) => {
-    try { await fetch(`/api/chips/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) }); fetchChips() }
-    catch { toast.error('Erro ao atualizar status') }
+  const updateChip = async (id: string, data: Record<string, unknown>) => {
+    try { await fetch(`/api/chips/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) }); toast.success('Chip atualizado!'); fetchChips() }
+    catch { toast.error('Erro ao atualizar chip') }
   }
 
-  const generateQR = async (chip: Chip) => {
-    setSelectedChip(chip); setQrOpen(true); setQrStatus('generating')
+  const fetchConfig = async (chipId: string) => {
     try {
-      const res = await fetch(`/api/wireguard/${chip.id}`)
+      const res = await fetch(`/api/wireguard/${chipId}`)
       const data = await res.json()
-      const url = await QRCode.toDataURL(data.config, { width: 280, margin: 2, color: { dark: '#000000', light: '#ffffff' } })
-      setQrUrl(url); setQrStatus('ready')
-    } catch { setQrStatus('idle'); toast.error('Erro ao gerar QR Code') }
+      setSelectedChipConfig(data)
+      setConfigDialogOpen(true)
+    } catch { toast.error('Erro ao buscar configuração') }
   }
 
-  const openDetail = (chip: Chip) => { setSelectedChip(chip); setDetailOpen(true) }
+  const openQrDialog = (chip: Chip) => {
+    setSelectedChip(chip)
+    setQrDialogOpen(true)
+  }
 
-  if (loading) return <LoadingScreen />
-  if (chips.length === 0) return <EmptyState icon={<Smartphone className="size-7 text-muted-foreground" />} title="Nenhum dispositivo cadastrado" description="Adicione um dispositivo para comecar a enviar mensagens" />
+  const openProxyDialog = (chip: Chip) => {
+    setSelectedChip(chip)
+    setProxyForm({ socks5Host: chip.socks5Host, socks5Port: chip.socks5Port, socks5User: chip.socks5User, socks5Pass: chip.socks5Pass })
+    setProxyDialogOpen(true)
+  }
+
+  const saveProxy = async () => {
+    if (!selectedChip) return
+    await updateChip(selectedChip.id, { ...proxyForm, proxyMode: 'socks5' })
+    setProxyDialogOpen(false)
+  }
+
+  const copyToClipboard = async (text: string) => {
+    try { await navigator.clipboard.writeText(text); setCopied(true); toast.success('Copiado!'); setTimeout(() => setCopied(false), 2000) }
+    catch { toast.error('Erro ao copiar') }
+  }
+
+  const connected = chips.filter(c => c.status === 'connected').length
+  const disconnected = chips.filter(c => c.status === 'disconnected').length
+  const errorCount = chips.filter(c => c.status === 'error').length
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">{chips.length} dispositivo{chips.length !== 1 ? 's' : ''} cadastrado{chips.length !== 1 ? 's' : ''}</p>
-        <Dialog open={addOpen} onOpenChange={setAddOpen}>
+        <div>
+          <h2 className="text-2xl font-bold">Chips</h2>
+          <p className="text-sm text-muted-foreground">Gerencie os números WhatsApp conectados</p>
+        </div>
+        <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
           <DialogTrigger asChild>
-            <Button className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white"><Plus className="size-4" /> Novo Dispositivo</Button>
+            <Button className="gap-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 shadow-lg">
+              <Plus className="size-4" /> Novo Chip
+            </Button>
           </DialogTrigger>
-          <DialogContent className="bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800">
-            <DialogHeader><DialogTitle>Adicionar Dispositivo</DialogTitle><DialogDescription>Cadastre um novo dispositivo para envio de mensagens</DialogDescription></DialogHeader>
-            <div className="space-y-4 py-2">
-              <div className="space-y-2"><Label>Nome do Dispositivo</Label><Input placeholder="Ex: Claro 01" value={newChip.name} onChange={e => setNewChip(p => ({ ...p, name: e.target.value }))} /></div>
-              <div className="space-y-2"><Label>Numero de Telefone</Label><Input placeholder="Ex: 11999990001" value={newChip.phoneNumber} onChange={e => setNewChip(p => ({ ...p, phoneNumber: e.target.value }))} /></div>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Adicionar Chip</DialogTitle>
+              <DialogDescription>Cadastre um novo número WhatsApp para envio</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label>Nome do Chip</Label>
+                <Input placeholder="Ex: Chip Claro 01" value={newChip.name} onChange={e => setNewChip(prev => ({ ...prev, name: e.target.value }))} />
+              </div>
+              <div className="space-y-2">
+                <Label>Número do Telefone</Label>
+                <Input placeholder="Ex: 11999990001" value={newChip.phoneNumber} onChange={e => setNewChip(prev => ({ ...prev, phoneNumber: e.target.value }))} />
+              </div>
             </div>
             <DialogFooter>
               <DialogClose asChild><Button variant="outline">Cancelar</Button></DialogClose>
-              <Button onClick={createChip} disabled={!newChip.name || !newChip.phoneNumber} className="bg-emerald-600 hover:bg-emerald-700 text-white">Criar Dispositivo</Button>
+              <Button onClick={createChip} disabled={!newChip.name || !newChip.phoneNumber} className="bg-emerald-600 hover:bg-emerald-700">Criar Chip</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
       </div>
 
-      <Card className="border-zinc-200 dark:border-zinc-800 overflow-hidden">
-        <Table>
-          <TableHeader><TableRow className="border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 hover:bg-zinc-50 dark:hover:bg-zinc-900/50">
-            <TableHead className="font-semibold text-xs uppercase tracking-wider">Nome</TableHead>
-            <TableHead className="font-semibold text-xs uppercase tracking-wider">Telefone</TableHead>
-            <TableHead className="font-semibold text-xs uppercase tracking-wider">Status</TableHead>
-            <TableHead className="font-semibold text-xs uppercase tracking-wider">IP / Proxy</TableHead>
-            <TableHead className="font-semibold text-xs uppercase tracking-wider">Ultimo Vista</TableHead>
-            <TableHead className="font-semibold text-xs uppercase tracking-wider text-right">Acoes</TableHead>
-          </TableRow></TableHeader>
-          <TableBody>
-            {chips.map((chip) => (
-              <TableRow key={chip.id} className="border-zinc-100 dark:border-zinc-800/50">
-                <TableCell className="font-medium">{chip.name}</TableCell>
-                <TableCell className="text-muted-foreground font-mono text-xs">{chip.phoneNumber}</TableCell>
-                <TableCell><DeviceStatusBadge status={chip.status} /></TableCell>
-                <TableCell className="text-xs text-muted-foreground font-mono">{chip.wireguardIp}:{chip.socksPort}</TableCell>
-                <TableCell className="text-xs text-muted-foreground">{chip.lastSeen ? new Date(chip.lastSeen).toLocaleString('pt-BR') : 'Nunca'}</TableCell>
-                <TableCell className="text-right">
-                  <div className="flex items-center justify-end gap-1">
-                    <Button variant="ghost" size="sm" className="h-7 text-xs gap-1" onClick={() => generateQR(chip)}><QrCode className="size-3.5" />QR</Button>
-                    <Button variant="ghost" size="sm" className="h-7 text-xs gap-1" onClick={() => openDetail(chip)}><Eye className="size-3.5" /></Button>
-                    {chip.status === 'disconnected' && (
-                      <Button variant="ghost" size="sm" className="h-7 text-xs text-emerald-600" onClick={() => updateStatus(chip.id, 'connected')}>Conectar</Button>
-                    )}
-                    {chip.status === 'connected' && (
-                      <Button variant="ghost" size="sm" className="h-7 text-xs text-rose-600" onClick={() => updateStatus(chip.id, 'disconnected')}>Desconectar</Button>
-                    )}
-                    <Button variant="ghost" size="sm" className="h-7 text-xs text-rose-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-500/10" onClick={() => setDeleteConfirm(chip.id)}><Trash2 className="size-3.5" /></Button>
-                  </div>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </Card>
+      {/* Stats Row */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {[
+          { label: 'Total', value: chips.length, icon: Smartphone, color: 'text-violet-600 bg-violet-100 dark:bg-violet-900/30' },
+          { label: 'Conectados', value: connected, icon: Check, color: 'text-emerald-600 bg-emerald-100 dark:bg-emerald-900/30' },
+          { label: 'Desconectados', value: disconnected, icon: X, color: 'text-zinc-600 bg-zinc-100 dark:bg-zinc-900/30' },
+          { label: 'Erro', value: errorCount, icon: AlertCircle, color: 'text-rose-600 bg-rose-100 dark:bg-rose-900/30' },
+        ].map(s => (
+          <Card key={s.label} className="shadow-sm">
+            <CardContent className="p-4 flex items-center gap-3">
+              <div className={`flex size-10 items-center justify-center rounded-xl ${s.color}`}>
+                <s.icon className="size-5" />
+              </div>
+              <div>
+                <p className="text-2xl font-bold">{s.value}</p>
+                <p className="text-xs text-muted-foreground">{s.label}</p>
+              </div>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
 
-      <ConfirmDialog open={!!deleteConfirm} onOpenChange={() => setDeleteConfirm(null)} title="Remover Dispositivo" description="Tem certeza que deseja remover este dispositivo? Esta acao nao pode ser desfeita." onConfirm={() => { if (deleteConfirm) deleteChip(deleteConfirm) }} confirmLabel="Remover" />
+      {/* Chip Cards */}
+      {loading ? (
+        <div className="flex items-center justify-center py-20"><RefreshCw className="size-6 animate-spin text-muted-foreground" /></div>
+      ) : chips.length === 0 ? (
+        <Card className="shadow-md border-0">
+          <CardContent className="flex flex-col items-center justify-center py-16">
+            <div className="flex size-16 items-center justify-center rounded-2xl bg-violet-100 dark:bg-violet-900/30 mb-4">
+              <Smartphone className="size-8 text-violet-500" />
+            </div>
+            <p className="text-lg font-semibold">Nenhum chip cadastrado</p>
+            <p className="text-sm text-muted-foreground mt-1">Adicione um chip para começar a enviar mensagens</p>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          <AnimatePresence>
+            {chips.map((chip, i) => (
+              <motion.div key={chip.id} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}>
+                <Card className="shadow-md hover:shadow-lg transition-all border-0 relative overflow-hidden">
+                  <div className={`absolute top-0 left-0 right-0 h-1 ${chip.status === 'connected' ? 'bg-gradient-to-r from-emerald-400 to-teal-500' : chip.status === 'error' ? 'bg-gradient-to-r from-rose-400 to-pink-500' : chip.status === 'connecting' ? 'bg-gradient-to-r from-amber-400 to-orange-500' : 'bg-zinc-300'}`} />
+                  <CardHeader className="pb-3">
+                    <div className="flex items-center gap-3">
+                      <div className="flex size-10 items-center justify-center rounded-xl bg-violet-100 dark:bg-violet-900/30">
+                        <Smartphone className="size-5 text-violet-600 dark:text-violet-400" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <CardTitle className="truncate text-base">{chip.name}</CardTitle>
+                        <CardDescription className="truncate">{chip.phoneNumber}</CardDescription>
+                      </div>
+                      <StatusBadge status={chip.status} />
+                    </div>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="space-y-2 text-sm">
+                      <div className="flex justify-between items-center">
+                        <span className="text-muted-foreground">Modo de Conexão</span>
+                        <Badge variant="outline" className="gap-1 text-xs">
+                          {chip.proxyMode === 'socks5' ? <><Globe className="size-3" /> SOCKS5</> :
+                           chip.proxyMode === 'wireguard' ? <><Lock className="size-3" /> WireGuard</> :
+                           <><QrCode className="size-3" /> QR Code</>}
+                        </Badge>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-muted-foreground">Envio hoje</span>
+                        <span className="font-semibold">{chip.sentToday}/{chip.dailyLimit}</span>
+                      </div>
+                      <Progress value={(chip.sentToday / chip.dailyLimit) * 100} className="h-2" />
+                      {chip.warmingEnabled && (
+                        <div className="flex justify-between items-center">
+                          <span className="text-muted-foreground">Aquecimento</span>
+                          <Badge variant="secondary" className="gap-1 text-xs">
+                            <Flame className="size-3" /> Estágio {chip.warmingStage}/4
+                          </Badge>
+                        </div>
+                      )}
+                      <div className="flex justify-between items-center">
+                        <span className="text-muted-foreground">Último visto</span>
+                        <span className="text-xs">{chip.lastSeen ? new Date(chip.lastSeen).toLocaleString('pt-BR') : 'Nunca'}</span>
+                      </div>
+                    </div>
+                    <Separator />
+                    <div className="flex gap-2 flex-wrap">
+                      <Button variant="outline" size="sm" className="gap-1.5 text-xs" onClick={() => openQrDialog(chip)}>
+                        <QrCode className="size-3.5" /> QR Code
+                      </Button>
+                      <Button variant="outline" size="sm" className="gap-1.5 text-xs" onClick={() => openProxyDialog(chip)}>
+                        <Globe className="size-3.5" /> Proxy
+                      </Button>
+                      <Button variant="outline" size="sm" className="gap-1.5 text-xs" onClick={() => fetchConfig(chip.id)}>
+                        <Lock className="size-3.5" /> WireGuard
+                      </Button>
+                      <Button variant="outline" size="sm" className="text-rose-500 hover:text-rose-600 gap-1.5 text-xs" onClick={() => setDeleteConfirm(chip.id)}>
+                        <Trash2 className="size-3.5" />
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              </motion.div>
+            ))}
+          </AnimatePresence>
+        </div>
+      )}
+
+      <ConfirmDialog open={!!deleteConfirm} onOpenChange={() => setDeleteConfirm(null)}
+        title="Remover Chip" description="Tem certeza que deseja remover este chip? Esta ação não pode ser desfeita."
+        onConfirm={() => { if (deleteConfirm) deleteChip(deleteConfirm) }} confirmLabel="Remover" variant="destructive" />
 
       {/* QR Code Dialog */}
-      <Dialog open={qrOpen} onOpenChange={(v) => { setQrOpen(v); if (!v) { setQrUrl(''); setQrStatus('idle'); setSelectedChip(null) } }}>
-        <DialogContent className="bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800 max-w-md">
-          <DialogHeader><DialogTitle className="flex items-center gap-2"><QrCode className="size-5 text-emerald-500" />Conexao WhatsApp</DialogTitle><DialogDescription>Escaneie o QR Code com o WhatsApp do dispositivo</DialogDescription></DialogHeader>
+      <Dialog open={qrDialogOpen} onOpenChange={setQrDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <QrCode className="size-5 text-emerald-500" /> Conexão QR Code — {selectedChip?.name}
+            </DialogTitle>
+            <DialogDescription>Escaneie o QR Code para conectar o WhatsApp Web</DialogDescription>
+          </DialogHeader>
           <div className="flex flex-col items-center gap-4 py-4">
-            <div className="relative">
-              {qrStatus === 'generating' && (
-                <div className="w-64 h-64 bg-zinc-100 dark:bg-zinc-800 rounded-xl flex items-center justify-center">
-                  <Loader2 className="size-8 animate-spin text-emerald-500" />
-                </div>
-              )}
-              {qrStatus === 'ready' && (
-                <div className="bg-white p-3 rounded-xl shadow-lg border border-zinc-200">
-                  <img src={qrUrl} alt="QR Code" className="w-60 h-60" />
-                </div>
-              )}
-              {qrStatus === 'idle' && (
-                <div className="w-64 h-64 bg-zinc-100 dark:bg-zinc-800 rounded-xl flex items-center justify-center">
-                  <div className="text-center"><Eye className="size-8 text-muted-foreground mx-auto mb-2" /><p className="text-xs text-muted-foreground">QR Code</p></div>
-                </div>
-              )}
-            </div>
-            <div className="text-center space-y-1">
-              <p className="text-sm font-medium">Aguardando scan...</p>
-              <p className="text-xs text-muted-foreground">Abra o WhatsApp e escaneie o codigo acima</p>
-              {selectedChip && <p className="text-xs text-muted-foreground mt-2">Dispositivo: {selectedChip.name}</p>}
-            </div>
-            <div className="w-full grid grid-cols-2 gap-3">
-              <div className="bg-zinc-50 dark:bg-zinc-800/50 rounded-lg p-2.5 text-center">
-                <p className="text-xs text-muted-foreground">IP</p>
-                <p className="text-xs font-mono font-medium">{selectedChip?.wireguardIp || '-'}</p>
-              </div>
-              <div className="bg-zinc-50 dark:bg-zinc-800/50 rounded-lg p-2.5 text-center">
-                <p className="text-xs text-muted-foreground">Porta</p>
-                <p className="text-xs font-mono font-medium">{selectedChip?.socksPort || '-'}</p>
+            <div className="bg-white p-4 rounded-2xl shadow-xl">
+              <div className="w-56 h-56 bg-gradient-to-br from-zinc-100 to-zinc-200 rounded-xl flex items-center justify-center">
+                <QrCode className="size-24 text-zinc-400" />
               </div>
             </div>
+            <Badge variant="outline" className="gap-1.5 py-1.5">
+              <span className="size-2 rounded-full bg-amber-500 animate-pulse" />
+              Aguardando scan...
+            </Badge>
+            <div className="w-full p-4 bg-muted/50 rounded-xl space-y-2 text-sm">
+              <p className="font-semibold">Como conectar:</p>
+              <ol className="list-decimal list-inside space-y-1 text-muted-foreground text-xs">
+                <li>Abra o WhatsApp no celular</li>
+                <li>Toque em Menu → Aparelhos conectados</li>
+                <li>Escaneie o QR Code acima</li>
+              </ol>
+            </div>
+            <Button variant="outline" className="gap-2" onClick={() => toast.info('QR Code atualizado!')}>
+              <RefreshCw className="size-4" /> Atualizar QR Code
+            </Button>
           </div>
         </DialogContent>
       </Dialog>
 
-      {/* Detail Dialog */}
-      <Dialog open={detailOpen} onOpenChange={(v) => { setDetailOpen(v); if (!v) setSelectedChip(null) }}>
-        <DialogContent className="bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800 max-w-md">
-          <DialogHeader><DialogTitle>Detalhes do Dispositivo</DialogTitle></DialogHeader>
-          {selectedChip && (
-            <div className="space-y-4 py-2">
-              <div className="flex items-center gap-3 pb-4 border-b border-zinc-200 dark:border-zinc-800">
-                <div className="flex size-12 items-center justify-center rounded-xl bg-purple-500/10"><Smartphone className="size-6 text-purple-500" /></div>
-                <div><p className="font-semibold">{selectedChip.name}</p><p className="text-sm text-muted-foreground font-mono">{selectedChip.phoneNumber}</p></div>
-              </div>
-              {[
-                ['Status', <DeviceStatusBadge key="s" status={selectedChip.status} />],
-                ['IP WireGuard', <span key="ip" className="font-mono text-sm">{selectedChip.wireguardIp}</span>],
-                ['Porta SOCKS', <span key="sp" className="font-mono text-sm">{selectedChip.socksPort}</span>],
-                ['Ultimo Vista', <span key="lv" className="text-sm">{selectedChip.lastSeen ? new Date(selectedChip.lastSeen).toLocaleString('pt-BR') : 'Nunca'}</span>],
-                ['Criado em', <span key="ca" className="text-sm">{new Date(selectedChip.createdAt).toLocaleDateString('pt-BR')}</span>],
-              ].map(([label, value]) => (
-                <div key={label as string} className="flex items-center justify-between"><span className="text-sm text-muted-foreground">{label as string}</span>{value}</div>
-              ))}
+      {/* Proxy Config Dialog */}
+      <Dialog open={proxyDialogOpen} onOpenChange={setProxyDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Globe className="size-5 text-emerald-500" /> Configurar Proxy SOCKS5
+            </DialogTitle>
+            <DialogDescription>Configure o proxy SOCKS5 para rotacionar IPs</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>Host</Label>
+              <Input placeholder="Ex: 192.168.1.100" value={proxyForm.socks5Host} onChange={e => setProxyForm(p => ({ ...p, socks5Host: e.target.value }))} />
             </div>
+            <div className="space-y-2">
+              <Label>Porta</Label>
+              <Input type="number" placeholder="1080" value={proxyForm.socks5Port} onChange={e => setProxyForm(p => ({ ...p, socks5Port: parseInt(e.target.value) || 0 }))} />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label>Usuário</Label>
+                <Input placeholder="Opcional" value={proxyForm.socks5User} onChange={e => setProxyForm(p => ({ ...p, socks5User: e.target.value }))} />
+              </div>
+              <div className="space-y-2">
+                <Label>Senha</Label>
+                <Input type="password" placeholder="Opcional" value={proxyForm.socks5Pass} onChange={e => setProxyForm(p => ({ ...p, socks5Pass: e.target.value }))} />
+              </div>
+            </div>
+            <div className="p-3 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-800">
+              <p className="text-xs text-amber-700 dark:text-amber-400 flex items-start gap-2">
+                <Info className="size-4 shrink-0 mt-0.5" />
+                Modo Avançado: Use proxy SOCKS5 para rotacionar IPs com múltiplos chips e evitar bloqueios.
+              </p>
+            </div>
+          </div>
+          <DialogFooter>
+            <DialogClose asChild><Button variant="outline">Cancelar</Button></DialogClose>
+            <Button onClick={saveProxy} className="bg-emerald-600 hover:bg-emerald-700">Salvar Proxy</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* WireGuard Config Dialog */}
+      <Dialog open={configDialogOpen} onOpenChange={(open) => {
+        setConfigDialogOpen(open)
+        if (!open) { setSelectedChipConfig(null); setQrCodeUrl(''); setCopied(false) }
+      }}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Lock className="size-5 text-emerald-500" /> Configuração WireGuard — {selectedChipConfig?.chip.name}
+            </DialogTitle>
+            <DialogDescription>Use as abas para visualizar o QR Code, copiar a config ou seguir o tutorial.</DialogDescription>
+          </DialogHeader>
+          {selectedChipConfig && (
+            <Tabs defaultValue="qrcode" className="w-full">
+              <TabsList className="w-full">
+                <TabsTrigger value="qrcode" className="flex-1 gap-1.5"><QrCode className="size-3.5" /> QR Code</TabsTrigger>
+                <TabsTrigger value="config" className="flex-1 gap-1.5"><FileText className="size-3.5" /> Configuração</TabsTrigger>
+                <TabsTrigger value="tutorial" className="flex-1 gap-1.5"><Info className="size-3.5" /> Passo a Passo</TabsTrigger>
+              </TabsList>
+              <TabsContent value="qrcode" className="mt-4">
+                <div className="flex flex-col items-center gap-4">
+                  {qrCodeUrl ? (
+                    <div className="bg-white p-4 rounded-xl shadow-lg"><img src={qrCodeUrl} alt="QR Code WireGuard" className="w-64 h-64" /></div>
+                  ) : (
+                    <div className="w-64 h-64 bg-muted rounded-xl flex items-center justify-center"><RefreshCw className="size-8 animate-spin text-muted-foreground" /></div>
+                  )}
+                  <p className="text-sm text-muted-foreground">Escaneie com o app WireGuard no celular</p>
+                </div>
+              </TabsContent>
+              <TabsContent value="config" className="mt-4">
+                <div className="space-y-4">
+                  <pre className="bg-zinc-900 text-zinc-100 p-4 rounded-lg text-xs overflow-x-auto whitespace-pre-wrap break-all font-mono border border-zinc-700">
+                    {selectedChipConfig.config}
+                  </pre>
+                  <Button onClick={() => copyToClipboard(selectedChipConfig.config)} variant="outline" className="w-full">
+                    {copied ? <><Check className="size-4 mr-2 text-emerald-500" /> Copiado!</> : <><Copy className="size-4 mr-2" /> Copiar Config</>}
+                  </Button>
+                </div>
+              </TabsContent>
+              <TabsContent value="tutorial" className="mt-4">
+                <div className="space-y-4 text-sm">
+                  {[
+                    { step: 1, title: 'No Servidor (VPS)', items: ['Instale o WireGuard: apt install wireguard', 'Copie a config do servidor', 'Ative: wg-quick up wg0'] },
+                    { step: 2, title: 'No Celular — WireGuard', items: ['Instale o app WireGuard', 'Toque em "+" → Escanear QR Code', 'Ative o túnel'] },
+                    { step: 3, title: 'No Celular — Every Proxy', items: ['Instale o app Every Proxy', 'Vá na aba SOCKS5', 'Ligue o switch — pronto!'] },
+                  ].map(s => (
+                    <div key={s.step} className="space-y-2">
+                      <h4 className="font-semibold flex items-center gap-2">
+                        <span className="flex items-center justify-center size-6 rounded-full bg-emerald-600 text-white text-xs font-bold">{s.step}</span>
+                        {s.title}
+                      </h4>
+                      <div className="ml-8 space-y-1 text-muted-foreground text-xs">
+                        {s.items.map((item, idx) => <p key={idx}>• {item}</p>)}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </TabsContent>
+            </Tabs>
           )}
         </DialogContent>
       </Dialog>
@@ -516,1080 +775,1494 @@ function DispositivosTab() {
   )
 }
 
-// ===== CAMPANHAS TAB =====
+// ===== Contatos Tab =====
+function ContatosTab() {
+  const [contactLists, setContactLists] = useState<ContactList[]>([])
+  const [contacts, setContacts] = useState<ContactItem[]>([])
+  const [loading, setLoading] = useState(true)
+  const [selectedList, setSelectedList] = useState<ContactList | null>(null)
+  const [addListDialog, setAddListDialog] = useState(false)
+  const [addContactDialog, setAddContactDialog] = useState(false)
+  const [importDialogOpen, setImportDialogOpen] = useState(false)
+  const [newListName, setNewListName] = useState('')
+  const [newContact, setNewContact] = useState({ name: '', phone: '' })
+  const [searchQuery, setSearchQuery] = useState('')
+  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
+
+  const fetchLists = useCallback(async () => {
+    try {
+      const res = await fetch('/api/contact-lists')
+      const data = await res.json()
+      setContactLists(data)
+    } catch { toast.error('Erro ao carregar listas') }
+    finally { setLoading(false) }
+  }, [])
+
+  const fetchContacts = useCallback(async (listId: string) => {
+    try {
+      const res = await fetch(`/api/contact-lists/${listId}/contacts${searchQuery ? `?search=${searchQuery}` : ''}`)
+      const data = await res.json()
+      setContacts(data)
+    } catch { toast.error('Erro ao carregar contatos') }
+  }, [searchQuery])
+
+  useEffect(() => { fetchLists() }, [fetchLists])
+  useEffect(() => { if (selectedList) fetchContacts(selectedList.id) }, [selectedList, fetchContacts])
+
+  const createList = async () => {
+    try {
+      const res = await fetch('/api/contact-lists', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: newListName }) })
+      if (!res.ok) throw new Error()
+      toast.success('Lista criada!')
+      setAddListDialog(false)
+      setNewListName('')
+      fetchLists()
+    } catch { toast.error('Erro ao criar lista') }
+  }
+
+  const deleteList = async (id: string) => {
+    try { await fetch(`/api/contact-lists/${id}`, { method: 'DELETE' }); toast.success('Lista removida!'); setSelectedList(null); fetchLists() }
+    catch { toast.error('Erro ao remover lista') }
+  }
+
+  const addContact = async () => {
+    if (!selectedList) return
+    try {
+      const res = await fetch(`/api/contact-lists/${selectedList.id}/contacts`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newContact),
+      })
+      if (!res.ok) throw new Error()
+      toast.success('Contato adicionado!')
+      setAddContactDialog(false)
+      setNewContact({ name: '', phone: '' })
+      fetchContacts(selectedList.id)
+    } catch { toast.error('Erro ao adicionar contato') }
+  }
+
+  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!selectedList || !e.target.files?.[0]) return
+    const formData = new FormData()
+    formData.append('file', e.target.files[0])
+    try {
+      const res = await fetch(`/api/contact-lists/${selectedList.id}/import`, { method: 'POST', body: formData })
+      if (!res.ok) throw new Error()
+      toast.success('Contatos importados!')
+      setImportDialogOpen(false)
+      fetchContacts(selectedList.id)
+      fetchLists()
+    } catch { toast.error('Erro ao importar contatos') }
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-2xl font-bold">Contatos</h2>
+          <p className="text-sm text-muted-foreground">Gerencie suas listas e contatos</p>
+        </div>
+        <div className="flex gap-2">
+          <Dialog open={addListDialog} onOpenChange={setAddListDialog}>
+            <DialogTrigger asChild>
+              <Button className="gap-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 shadow-lg">
+                <Plus className="size-4" /> Nova Lista
+              </Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader><DialogTitle>Criar Lista de Contatos</DialogTitle><DialogDescription>Dê um nome para sua nova lista</DialogDescription></DialogHeader>
+              <div className="py-4">
+                <Label>Nome da Lista</Label>
+                <Input placeholder="Ex: Leads Black Friday" value={newListName} onChange={e => setNewListName(e.target.value)} className="mt-2" />
+              </div>
+              <DialogFooter>
+                <DialogClose asChild><Button variant="outline">Cancelar</Button></DialogClose>
+                <Button onClick={createList} disabled={!newListName} className="bg-emerald-600 hover:bg-emerald-700">Criar Lista</Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="flex items-center justify-center py-20"><RefreshCw className="size-6 animate-spin text-muted-foreground" /></div>
+      ) : selectedList ? (
+        <div className="space-y-4">
+          <div className="flex items-center gap-3">
+            <Button variant="ghost" size="sm" onClick={() => setSelectedList(null)} className="gap-1.5">
+              <ArrowLeft className="size-4" /> Voltar
+            </Button>
+            <Separator orientation="vertical" className="h-6" />
+            <h3 className="text-lg font-semibold">{selectedList.name}</h3>
+            <Badge variant="secondary">{contacts.length} contatos</Badge>
+          </div>
+
+          <div className="flex gap-2">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
+              <Input placeholder="Buscar contatos..." className="pl-9" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
+            </div>
+            <Button variant="outline" className="gap-1.5" onClick={() => setAddContactDialog(true)}>
+              <UserPlus className="size-4" /> Adicionar
+            </Button>
+            <Button variant="outline" className="gap-1.5" onClick={() => setImportDialogOpen(true)}>
+              <Upload className="size-4" /> Importar CSV
+            </Button>
+          </div>
+
+          {contacts.length === 0 ? (
+            <Card className="shadow-md border-0">
+              <CardContent className="flex flex-col items-center justify-center py-12">
+                <Users className="size-10 text-muted-foreground mb-3" />
+                <p className="font-semibold">Nenhum contato nesta lista</p>
+                <p className="text-sm text-muted-foreground">Importe um CSV ou adicione manualmente</p>
+              </CardContent>
+            </Card>
+          ) : (
+            <Card className="shadow-md border-0">
+              <CardContent className="p-0">
+                <ScrollArea className="max-h-96">
+                  <table className="w-full text-sm">
+                    <thead className="bg-muted/50 sticky top-0">
+                      <tr>
+                        <th className="text-left p-3 font-medium">Nome</th>
+                        <th className="text-left p-3 font-medium">Telefone</th>
+                        <th className="text-left p-3 font-medium">Criado em</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {contacts.map(c => (
+                        <tr key={c.id} className="border-t hover:bg-muted/30 transition-colors">
+                          <td className="p-3 font-medium">{c.name}</td>
+                          <td className="p-3 text-muted-foreground">{c.phone}</td>
+                          <td className="p-3 text-xs text-muted-foreground">{new Date(c.createdAt).toLocaleDateString('pt-BR')}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </ScrollArea>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {contactLists.map((list, i) => (
+            <motion.div key={list.id} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}>
+              <Card className="shadow-md hover:shadow-lg transition-all cursor-pointer border-0" onClick={() => { setSelectedList(list); fetchContacts(list.id) }}>
+                <CardHeader>
+                  <div className="flex items-center gap-3">
+                    <div className="flex size-10 items-center justify-center rounded-xl bg-sky-100 dark:bg-sky-900/30">
+                      <LayoutList className="size-5 text-sky-600" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <CardTitle className="truncate text-base">{list.name}</CardTitle>
+                      <CardDescription>{list._count?.contacts || 0} contatos</CardDescription>
+                    </div>
+                    <Button variant="ghost" size="sm" className="text-rose-500 hover:text-rose-600" onClick={(e) => { e.stopPropagation(); setDeleteConfirm(list.id) }}>
+                      <Trash2 className="size-4" />
+                    </Button>
+                  </div>
+                </CardHeader>
+              </Card>
+            </motion.div>
+          ))}
+          {contactLists.length === 0 && (
+            <Card className="shadow-md border-0 col-span-full">
+              <CardContent className="flex flex-col items-center justify-center py-16">
+                <Users className="size-10 text-muted-foreground mb-3" />
+                <p className="font-semibold">Nenhuma lista criada</p>
+                <p className="text-sm text-muted-foreground">Crie uma lista para organizar seus contatos</p>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      )}
+
+      <ConfirmDialog open={!!deleteConfirm} onOpenChange={() => setDeleteConfirm(null)}
+        title="Remover Lista" description="Tem certeza? Todos os contatos serão removidos."
+        onConfirm={() => { if (deleteConfirm) deleteList(deleteConfirm) }} confirmLabel="Remover" variant="destructive" />
+
+      {/* Add Contact Dialog */}
+      <Dialog open={addContactDialog} onOpenChange={setAddContactDialog}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Adicionar Contato</DialogTitle><DialogDescription>Adicione um contato manualmente</DialogDescription></DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2"><Label>Nome</Label><Input placeholder="Ex: João Silva" value={newContact.name} onChange={e => setNewContact(p => ({ ...p, name: e.target.value }))} /></div>
+            <div className="space-y-2"><Label>Telefone</Label><Input placeholder="Ex: 11999990001" value={newContact.phone} onChange={e => setNewContact(p => ({ ...p, phone: e.target.value }))} /></div>
+          </div>
+          <DialogFooter>
+            <DialogClose asChild><Button variant="outline">Cancelar</Button></DialogClose>
+            <Button onClick={addContact} disabled={!newContact.name || !newContact.phone} className="bg-emerald-600 hover:bg-emerald-700">Adicionar</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Import Dialog */}
+      <Dialog open={importDialogOpen} onOpenChange={setImportDialogOpen}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Importar CSV</DialogTitle><DialogDescription>Importe contatos de um arquivo CSV</DialogDescription></DialogHeader>
+          <div className="py-4 space-y-4">
+            <div className="border-2 border-dashed rounded-xl p-8 text-center hover:border-emerald-400 transition-colors">
+              <Upload className="size-8 mx-auto text-muted-foreground mb-3" />
+              <p className="font-medium">Arraste o arquivo CSV aqui</p>
+              <p className="text-sm text-muted-foreground mb-3">ou clique para selecionar</p>
+              <Input type="file" accept=".csv" onChange={handleImport} className="max-w-xs mx-auto" />
+            </div>
+            <div className="p-3 bg-muted/50 rounded-lg text-xs text-muted-foreground">
+              <p className="font-medium mb-1">Formato esperado:</p>
+              <code className="block bg-muted p-2 rounded">nome,telefone{'\n'}João,11999990001{'\n'}Maria,21988880002</code>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
+}
+
+// ===== Campanhas Tab =====
 function CampanhasTab() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
   const [loading, setLoading] = useState(true)
-  const [createOpen, setCreateOpen] = useState(false)
-  const [detailOpen, setDetailOpen] = useState(false)
+  const [createDialogOpen, setCreateDialogOpen] = useState(false)
+  const [detailDialogOpen, setDetailDialogOpen] = useState(false)
   const [selectedCampaign, setSelectedCampaign] = useState<Campaign | null>(null)
   const [detailMessages, setDetailMessages] = useState<MessageItem[]>([])
   const [availableChips, setAvailableChips] = useState<Chip[]>([])
   const [availableLists, setAvailableLists] = useState<ContactList[]>([])
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
-  const [step, setStep] = useState(0)
 
-  const emptyCampaign = { name: '', sendIntervalMin: 30, sendIntervalMax: 90, chipIds: [] as string[], contactListId: '', scheduledAt: '', useSequence: false, sequenceSteps: [{ content: '', delayMinutes: 0 }], messageVariations: [''], dailyLimit: 200 }
-  const [nc, setNc] = useState(emptyCampaign)
-  const resetNc = () => { setNc(emptyCampaign); setStep(0) }
+  const [newCampaign, setNewCampaign] = useState({
+    name: '', sendIntervalMin: 30, sendIntervalMax: 90,
+    chipIds: [] as string[], contactListId: '', scheduledAt: '',
+    useSequence: false, sequenceSteps: [{ content: '', delayMinutes: 0 }],
+    messageVariations: [''], antiBanEnabled: true, warmingMode: 'normal',
+  })
 
-  const fetchCampaigns = useCallback(async () => { try { setCampaigns(await (await fetch('/api/campaigns')).json()) } catch { toast.error('Erro ao carregar campanhas') } finally { setLoading(false) } }, [])
-  const fetchChips = useCallback(async () => { try { setAvailableChips(await (await fetch('/api/chips')).json()) } catch { /* */ } }, [])
-  const fetchLists = useCallback(async () => { try { setAvailableLists(await (await fetch('/api/contact-lists')).json()) } catch { /* */ } }, [])
+  const resetNewCampaign = () => setNewCampaign({
+    name: '', sendIntervalMin: 30, sendIntervalMax: 90,
+    chipIds: [], contactListId: '', scheduledAt: '',
+    useSequence: false, sequenceSteps: [{ content: '', delayMinutes: 0 }],
+    messageVariations: [''], antiBanEnabled: true, warmingMode: 'normal',
+  })
+
+  const fetchCampaigns = useCallback(async () => {
+    try { const res = await fetch('/api/campaigns'); setCampaigns(await res.json()) }
+    catch { toast.error('Erro ao carregar campanhas') } finally { setLoading(false) }
+  }, [])
+  const fetchChips = useCallback(async () => {
+    try { const res = await fetch('/api/chips'); setAvailableChips(await res.json()) } catch { /* empty */ }
+  }, [])
+  const fetchLists = useCallback(async () => {
+    try { const res = await fetch('/api/contact-lists'); setAvailableLists(await res.json()) } catch { /* empty */ }
+  }, [])
+
   useEffect(() => { fetchCampaigns(); fetchChips(); fetchLists() }, [fetchCampaigns, fetchChips, fetchLists])
 
   const createCampaign = async () => {
-    const steps = nc.useSequence ? nc.sequenceSteps.map((s, i) => ({ stepOrder: i + 1, content: s.content, delayMinutes: s.delayMinutes })) : []
+    const steps = newCampaign.useSequence
+      ? newCampaign.sequenceSteps.map((s, i) => ({ stepOrder: i + 1, content: s.content, delayMinutes: s.delayMinutes }))
+      : []
+    const payload = {
+      name: newCampaign.name, sendIntervalMin: newCampaign.sendIntervalMin, sendIntervalMax: newCampaign.sendIntervalMax,
+      chipIds: newCampaign.chipIds, contactListId: newCampaign.contactListId || null,
+      scheduledAt: newCampaign.scheduledAt ? new Date(newCampaign.scheduledAt).toISOString() : null,
+      steps, antiBanEnabled: newCampaign.antiBanEnabled, warmingMode: newCampaign.warmingMode,
+    }
     try {
-      const res = await fetch('/api/campaigns', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: nc.name, sendIntervalMin: nc.sendIntervalMin, sendIntervalMax: nc.sendIntervalMax, chipIds: nc.chipIds, contactListId: nc.contactListId || null, scheduledAt: nc.scheduledAt ? new Date(nc.scheduledAt).toISOString() : null, steps }) })
-      if (!res.ok) throw new Error((await res.json()).error)
-      toast.success('Campanha criada com sucesso'); setCreateOpen(false); resetNc(); fetchCampaigns()
-    } catch (e: unknown) { toast.error((e as Error).message || 'Erro ao criar campanha') }
+      const res = await fetch('/api/campaigns', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+      if (!res.ok) { const data = await res.json(); throw new Error(data.error) }
+      toast.success('Campanha criada com sucesso!')
+      setCreateDialogOpen(false); resetNewCampaign(); fetchCampaigns()
+    } catch (err: unknown) { toast.error((err as Error).message || 'Erro ao criar campanha') }
   }
 
-  const updateStatus = async (id: string, status: string) => {
-    try { await fetch(`/api/campaigns/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) }); toast.success('Status atualizado'); fetchCampaigns() }
-    catch { toast.error('Erro ao atualizar status') }
+  const updateCampaignStatus = async (id: string, status: string) => {
+    try {
+      await fetch(`/api/campaigns/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) })
+      toast.success('Status atualizado!'); fetchCampaigns()
+    } catch { toast.error('Erro ao atualizar status') }
   }
 
   const deleteCampaign = async (id: string) => {
-    try { await fetch(`/api/campaigns/${id}`, { method: 'DELETE' }); toast.success('Campanha removida'); fetchCampaigns() }
+    try { await fetch(`/api/campaigns/${id}`, { method: 'DELETE' }); toast.success('Campanha removida!'); fetchCampaigns() }
     catch { toast.error('Erro ao remover campanha') }
   }
 
-  const openDetail = async (c: Campaign) => {
-    setSelectedCampaign(c); setDetailOpen(true)
-    try { setDetailMessages(await (await fetch(`/api/messages?campaignId=${c.id}`)).json()) }
+  const openDetail = async (campaign: Campaign) => {
+    setSelectedCampaign(campaign); setDetailDialogOpen(true)
+    try { const res = await fetch(`/api/messages?campaignId=${campaign.id}`); setDetailMessages(await res.json()) }
     catch { setDetailMessages([]) }
   }
 
-  const toggleChip = (id: string) => setNc(p => ({ ...p, chipIds: p.chipIds.includes(id) ? p.chipIds.filter(x => x !== id) : [...p.chipIds, id] }))
-  const canCreate = nc.name.trim() && nc.chipIds.length > 0 && (nc.useSequence ? nc.sequenceSteps.some(s => s.content.trim()) : nc.messageVariations.some(v => v.trim()))
+  const toggleChip = (chipId: string) => {
+    setNewCampaign(prev => ({
+      ...prev,
+      chipIds: prev.chipIds.includes(chipId) ? prev.chipIds.filter(id => id !== chipId) : [...prev.chipIds, chipId],
+    }))
+  }
 
-  const STEPS = ['Info Basica', 'Dispositivos', 'Contatos', 'Mensagem', 'Intervalo']
+  const addSequenceStep = () => setNewCampaign(prev => ({ ...prev, sequenceSteps: [...prev.sequenceSteps, { content: '', delayMinutes: 60 }] }))
+  const removeSequenceStep = (idx: number) => setNewCampaign(prev => ({ ...prev, sequenceSteps: prev.sequenceSteps.filter((_, i) => i !== idx) }))
+  const updateSequenceStep = (idx: number, field: 'content' | 'delayMinutes', value: string | number) => {
+    setNewCampaign(prev => { const steps = [...prev.sequenceSteps]; steps[idx] = { ...steps[idx], [field]: value }; return { ...prev, sequenceSteps: steps } })
+  }
 
-  if (loading) return <LoadingScreen />
-  if (campaigns.length === 0) return (
-    <div className="space-y-4">
-      <div className="flex justify-end">
-        <Dialog open={createOpen} onOpenChange={(v) => { setCreateOpen(v); if (!v) resetNc() }}>
-          <DialogTrigger asChild><Button className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white"><Plus className="size-4" /> Nova Campanha</Button></DialogTrigger>
-          <CreateCampaignDialog nc={nc} setNc={setNc} step={step} setStep={setStep} availableChips={availableChips} availableLists={availableLists} toggleChip={toggleChip} canCreate={canCreate} createCampaign={createCampaign} />
-        </Dialog>
-      </div>
-      <EmptyState icon={<Radio className="size-7 text-muted-foreground" />} title="Nenhuma campanha criada" description="Crie sua primeira campanha para comecar a enviar mensagens em massa" />
-    </div>
+  const canCreate = newCampaign.name.trim() && newCampaign.chipIds.length > 0 && (
+    newCampaign.useSequence ? newCampaign.sequenceSteps.some(s => s.content.trim()) : newCampaign.messageVariations.some(v => v.trim())
   )
-
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">{campaigns.length} campanha{campaigns.length !== 1 ? 's' : ''}</p>
-        <Dialog open={createOpen} onOpenChange={(v) => { setCreateOpen(v); if (!v) resetNc() }}>
-          <DialogTrigger asChild><Button className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white"><Plus className="size-4" /> Nova Campanha</Button></DialogTrigger>
-          <CreateCampaignDialog nc={nc} setNc={setNc} step={step} setStep={setStep} availableChips={availableChips} availableLists={availableLists} toggleChip={toggleChip} canCreate={canCreate} createCampaign={createCampaign} />
-        </Dialog>
-      </div>
-
-      <Card className="border-zinc-200 dark:border-zinc-800 overflow-hidden">
-        <Table>
-          <TableHeader><TableRow className="border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 hover:bg-zinc-50 dark:hover:bg-zinc-900/50">
-            <TableHead className="font-semibold text-xs uppercase tracking-wider">Nome</TableHead>
-            <TableHead className="font-semibold text-xs uppercase tracking-wider">Status</TableHead>
-            <TableHead className="font-semibold text-xs uppercase tracking-wider">Dispositivos</TableHead>
-            <TableHead className="font-semibold text-xs uppercase tracking-wider">Contatos</TableHead>
-            <TableHead className="font-semibold text-xs uppercase tracking-wider">Mensagens</TableHead>
-            <TableHead className="font-semibold text-xs uppercase tracking-wider">Agendamento</TableHead>
-            <TableHead className="font-semibold text-xs uppercase tracking-wider text-right">Acoes</TableHead>
-          </TableRow></TableHeader>
-          <TableBody>
-            {campaigns.map(c => (
-              <TableRow key={c.id} className="border-zinc-100 dark:border-zinc-800/50">
-                <TableCell className="font-medium">{c.name}</TableCell>
-                <TableCell><CampaignStatusBadge status={c.status} /></TableCell>
-                <TableCell className="text-sm text-muted-foreground">{c.chips.length}</TableCell>
-                <TableCell className="text-sm text-muted-foreground">{c.contactList?.name || '-'}</TableCell>
-                <TableCell className="text-sm text-muted-foreground">{c._count?.messages || 0}</TableCell>
-                <TableCell className="text-xs text-muted-foreground">{c.scheduledAt ? new Date(c.scheduledAt).toLocaleString('pt-BR') : (c.startedAt ? new Date(c.startedAt).toLocaleString('pt-BR') : '-')}</TableCell>
-                <TableCell className="text-right">
-                  <div className="flex items-center justify-end gap-1">
-                    <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => openDetail(c)}><Eye className="size-3.5" /></Button>
-                    {c.status === 'draft' && <Button variant="ghost" size="sm" className="h-7 text-xs text-emerald-600" onClick={() => updateStatus(c.id, 'running')}>Iniciar</Button>}
-                    {c.status === 'running' && <Button variant="ghost" size="sm" className="h-7 text-xs text-amber-600" onClick={() => updateStatus(c.id, 'paused')}>Pausar</Button>}
-                    {c.status === 'paused' && <Button variant="ghost" size="sm" className="h-7 text-xs text-emerald-600" onClick={() => updateStatus(c.id, 'running')}>Retomar</Button>}
-                    <Button variant="ghost" size="sm" className="h-7 text-xs text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-500/10" onClick={() => setDeleteConfirm(c.id)}><Trash2 className="size-3.5" /></Button>
-                  </div>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </Card>
-
-      <ConfirmDialog open={!!deleteConfirm} onOpenChange={() => setDeleteConfirm(null)} title="Remover Campanha" description="Tem certeza que deseja remover esta campanha e todas as mensagens associadas?" onConfirm={() => { if (deleteConfirm) deleteCampaign(deleteConfirm) }} />
-
-      <Dialog open={detailOpen} onOpenChange={(v) => { setDetailOpen(v); if (!v) { setSelectedCampaign(null); setDetailMessages([]) } }}>
-        <DialogContent className="bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800 max-w-2xl max-h-[80vh] overflow-y-auto">
-          <DialogHeader><DialogTitle>{selectedCampaign?.name}</DialogTitle><DialogDescription>Detalhes da campanha</DialogDescription></DialogHeader>
-          {selectedCampaign && (
-            <div className="space-y-4 py-2">
-              <div className="flex items-center gap-4 text-sm">
-                <CampaignStatusBadge status={selectedCampaign.status} />
-                <span className="text-muted-foreground">{selectedCampaign.chips.length} dispositivos</span>
-                {selectedCampaign.contactList && <span className="text-muted-foreground">Lista: {selectedCampaign.contactList.name}</span>}
-              </div>
-              {selectedCampaign.sequenceSteps.length > 0 && (
-                <div>
-                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Etapas da Sequencia</p>
-                  <div className="space-y-2">
-                    {selectedCampaign.sequenceSteps.sort((a, b) => a.stepOrder - b.stepOrder).map((s, i, arr) => (
-                      <div key={s.id} className="flex items-center gap-3">
-                        <div className="flex size-7 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-600 text-xs font-bold shrink-0">{i + 1}</div>
-                        <p className="text-sm flex-1 line-clamp-1">{s.content || '(vazio)'}</p>
-                        {i < arr.length - 1 && <div className="flex items-center gap-1 text-xs text-muted-foreground shrink-0"><Timer className="size-3" />{s.delayMinutes}min</div>}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-              <Separator />
-              <div>
-                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Mensagens ({detailMessages.length})</p>
-                {detailMessages.length > 0 ? (
-                  <div className="max-h-48 overflow-y-auto space-y-1">
-                    {detailMessages.slice(0, 20).map(m => (
-                      <div key={m.id} className="flex items-center justify-between py-1.5 px-2 rounded-md hover:bg-zinc-50 dark:hover:bg-zinc-800/50 text-sm">
-                        <span className="truncate max-w-[200px]">{m.contact.name}</span>
-                        <MessageStatusBadge status={m.status} />
-                      </div>
-                    ))}
-                  </div>
-                ) : <p className="text-sm text-muted-foreground">Nenhuma mensagem enviada</p>}
-              </div>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
-    </div>
-  )
-}
-
-function CreateCampaignDialog({ nc, setNc, step, setStep, availableChips, availableLists, toggleChip, canCreate, createCampaign }: {
-  nc: typeof CampanhasTab extends () => JSX.Element ? any : any
-  setNc: React.Dispatch<React.SetStateAction<any>>
-  step: number; setStep: React.Dispatch<React.SetStateAction<number>>
-  availableChips: Chip[]; availableLists: ContactList[]
-  toggleChip: (id: string) => void; canCreate: boolean; createCampaign: () => void
-}) {
-  return (
-    <DialogContent className="bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800 max-w-xl">
-      <DialogHeader>
-        <DialogTitle>Nova Campanha</DialogTitle>
-        <DialogDescription>Configure sua campanha de envio em massa</DialogDescription>
-      </DialogHeader>
-      {/* Step indicators */}
-      <div className="flex items-center gap-1 py-2">
-        {['Info', 'Disp.', 'Contatos', 'Msg', 'Intervalo'].map((label, i) => (
-          <React.Fragment key={label}>
-            {i > 0 && <div className={`flex-1 h-0.5 rounded ${i <= step ? 'bg-emerald-500' : 'bg-zinc-200 dark:bg-zinc-800'}`} />}
-            <button onClick={() => setStep(i)} className={`flex size-8 items-center justify-center rounded-full text-xs font-semibold transition-colors ${i === step ? 'bg-emerald-500 text-white' : i < step ? 'bg-emerald-500/20 text-emerald-600' : 'bg-zinc-100 dark:bg-zinc-800 text-muted-foreground'}`}>{i + 1}</button>
-          </React.Fragment>
-        ))}
-      </div>
-
-      <div className="min-h-[280px]">
-        {/* Step 0: Basic Info */}
-        {step === 0 && (
-          <div className="space-y-4">
-            <div className="space-y-2"><Label>Nome da Campanha</Label><Input placeholder="Ex: Campanha Black Friday" value={nc.name} onChange={e => setNc(p => ({ ...p, name: e.target.value }))} /></div>
-            <div className="space-y-2"><Label>Descricao (opcional)</Label><Textarea placeholder="Descreva o objetivo desta campanha" rows={3} /></div>
-          </div>
-        )}
-        {/* Step 1: Devices */}
-        {step === 1 && (
-          <div className="space-y-3">
-            <Label>Selecione os Dispositivos</Label>
-            {availableChips.length === 0 && <p className="text-sm text-muted-foreground">Nenhum dispositivo disponivel. Cadastre um na aba Dispositivos.</p>}
-            <ScrollArea className="max-h-48">
-              <div className="space-y-1.5">
-                {availableChips.map(chip => (
-                  <label key={chip.id} className="flex items-center gap-3 p-2.5 rounded-lg hover:bg-zinc-50 dark:hover:bg-zinc-800/50 cursor-pointer">
-                    <Checkbox checked={nc.chipIds.includes(chip.id)} onCheckedChange={() => toggleChip(chip.id)} />
-                    <div className="flex-1 min-w-0"><p className="text-sm font-medium">{chip.name}</p><p className="text-xs text-muted-foreground font-mono">{chip.phoneNumber}</p></div>
-                    <DeviceStatusBadge status={chip.status} />
-                  </label>
-                ))}
-              </div>
-            </ScrollArea>
-            {nc.chipIds.length > 0 && <p className="text-xs text-emerald-600">{nc.chipIds.length} dispositivo{nc.chipIds.length !== 1 ? 's' : ''} selecionado{nc.chipIds.length !== 1 ? 's' : ''}</p>}
-          </div>
-        )}
-        {/* Step 2: Contacts */}
-        {step === 2 && (
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label>Lista de Contatos</Label>
-              <Select value={nc.contactListId} onValueChange={v => setNc(p => ({ ...p, contactListId: v }))}>
-                <SelectTrigger><SelectValue placeholder="Selecione uma lista de contatos" /></SelectTrigger>
-                <SelectContent>
-                  {availableLists.map(l => <SelectItem key={l.id} value={l.id}>{l.name} ({l._count?.contacts || 0} contatos)</SelectItem>)}
-                </SelectContent>
-              </Select>
-              {availableLists.length === 0 && <p className="text-xs text-muted-foreground">Nenhuma lista criada. Va para a aba Contatos para criar uma.</p>}
-            </div>
-          </div>
-        )}
-        {/* Step 3: Message Config */}
-        {step === 3 && (
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <Label>Tipo de Mensagem</Label>
-              <div className="flex items-center gap-2">
-                <span className={`text-xs ${!nc.useSequence ? 'font-semibold text-emerald-600' : 'text-muted-foreground'}`}>Variacoes</span>
-                <Switch checked={nc.useSequence} onCheckedChange={v => setNc(p => ({ ...p, useSequence: v }))} />
-                <span className={`text-xs ${nc.useSequence ? 'font-semibold text-emerald-600' : 'text-muted-foreground'}`}>Sequencia</span>
-              </div>
-            </div>
-            {!nc.useSequence ? (
-              <div className="space-y-2">
-                <Label>Variacoes de Mensagem ({nc.messageVariations.length})</Label>
-                <div className="space-y-2 max-h-48 overflow-y-auto">
-                  {nc.messageVariations.map((v, i) => (
-                    <div key={i} className="flex gap-2">
-                      <Textarea placeholder={`Variacao ${i + 1}`} value={v} onChange={e => { const nv = [...nc.messageVariations]; nv[i] = e.target.value; setNc(p => ({ ...p, messageVariations: nv })) }} rows={2} className="flex-1" />
-                      {nc.messageVariations.length > 1 && <Button variant="ghost" size="sm" className="shrink-0 text-rose-500" onClick={() => setNc(p => ({ ...p, messageVariations: p.messageVariations.filter((_, x) => x !== i) }))}><X className="size-4" /></Button>}
-                    </div>
-                  ))}
-                </div>
-                <Button variant="outline" size="sm" className="gap-1" onClick={() => setNc(p => ({ ...p, messageVariations: [...p.messageVariations, ''] }))}><Plus className="size-3.5" /> Adicionar Variacao</Button>
-                <p className="text-xs text-muted-foreground">Uma variacao aleatoria sera selecionada para cada contato. Use {"{nome}"} para personalizar.</p>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                <Label>Etapas da Sequencia</Label>
-                <div className="space-y-3 max-h-56 overflow-y-auto">
-                  {nc.sequenceSteps.map((s, i, arr) => (
-                    <div key={i} className="space-y-2 rounded-lg border border-zinc-200 dark:border-zinc-800 p-3">
-                      <div className="flex items-center gap-2">
-                        <span className="flex size-6 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-600 text-xs font-bold">{i + 1}</span>
-                        <span className="text-xs font-medium">Etapa {i + 1}</span>
-                        {nc.sequenceSteps.length > 1 && <Button variant="ghost" size="sm" className="ml-auto h-6 text-rose-500" onClick={() => setNc(p => ({ ...p, sequenceSteps: p.sequenceSteps.filter((_, x) => x !== i) }))}><X className="size-3" /></Button>}
-                      </div>
-                      <Textarea placeholder="Mensagem desta etapa..." value={s.content} onChange={e => { const ns = [...nc.sequenceSteps]; ns[i] = { ...ns[i], content: e.target.value }; setNc(p => ({ ...p, sequenceSteps: ns })) }} rows={2} />
-                      <div className="flex items-center gap-2">
-                        <Label className="text-xs whitespace-nowrap">Atraso:</Label>
-                        <Input type="number" min={0} value={s.delayMinutes} onChange={e => { const ns = [...nc.sequenceSteps]; ns[i] = { ...ns[i], delayMinutes: parseInt(e.target.value) || 0 }; setNc(p => ({ ...p, sequenceSteps: ns })) }} className="w-20 h-8 text-xs" />
-                        <span className="text-xs text-muted-foreground">minutos</span>
-                      </div>
-                      {/* Timeline */}
-                      {i < arr.length - 1 && (
-                        <div className="flex items-center gap-2 pt-1">
-                          <div className="flex-1 border-t border-dashed border-emerald-500/30" />
-                          <span className="text-xs text-emerald-600 font-medium flex items-center gap-1"><ArrowRight className="size-3" />{s.delayMinutes}min</span>
-                          <div className="flex-1 border-t border-dashed border-emerald-500/30" />
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-                {nc.sequenceSteps.length < 10 && (
-                  <Button variant="outline" size="sm" className="gap-1" onClick={() => setNc(p => ({ ...p, sequenceSteps: [...p.sequenceSteps, { content: '', delayMinutes: 60 }] }))}><Plus className="size-3.5" /> Adicionar Etapa</Button>
-                )}
-              </div>
-            )}
-          </div>
-        )}
-        {/* Step 4: Timing */}
-        {step === 4 && (
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label>Intervalo entre mensagens (segundos)</Label>
-              <div className="flex items-center gap-3">
-                <div className="flex-1 space-y-1"><Label className="text-xs text-muted-foreground">Minimo</Label><Input type="number" min={5} value={nc.sendIntervalMin} onChange={e => setNc(p => ({ ...p, sendIntervalMin: parseInt(e.target.value) || 30 }))} /></div>
-                <span className="text-muted-foreground pt-5">a</span>
-                <div className="flex-1 space-y-1"><Label className="text-xs text-muted-foreground">Maximo</Label><Input type="number" min={5} value={nc.sendIntervalMax} onChange={e => setNc(p => ({ ...p, sendIntervalMax: parseInt(e.target.value) || 90 }))} /></div>
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label>Limite diario (mensagens por dispositivo)</Label>
-              <Input type="number" min={1} value={nc.dailyLimit} onChange={e => setNc(p => ({ ...p, dailyLimit: parseInt(e.target.value) || 200 }))} />
-            </div>
-            <div className="space-y-2">
-              <Label className="flex items-center gap-2"><CalendarDays className="size-4 text-muted-foreground" /> Agendamento (opcional)</Label>
-              <Input type="datetime-local" value={nc.scheduledAt} onChange={e => setNc(p => ({ ...p, scheduledAt: e.target.value }))} />
-              <p className="text-xs text-muted-foreground">Deixe vazio para execucao imediata</p>
-            </div>
-          </div>
-        )}
-      </div>
-
-      <DialogFooter className="gap-2">
-        <DialogClose asChild><Button variant="outline">Cancelar</Button></DialogClose>
-        {step > 0 && <Button variant="outline" onClick={() => setStep(s => s - 1)}>Voltar</Button>}
-        {step < 4 ? (
-          <Button onClick={() => setStep(s => s + 1)} className="bg-emerald-600 hover:bg-emerald-700 text-white">Proximo</Button>
-        ) : (
-          <Button onClick={createCampaign} disabled={!canCreate} className="bg-emerald-600 hover:bg-emerald-700 text-white">Criar Campanha</Button>
-        )}
-      </DialogFooter>
-    </DialogContent>
-  )
-}
-
-// ===== CONTATOS TAB =====
-function ContatosTab() {
-  const [lists, setLists] = useState<ContactList[]>([])
-  const [contacts, setContacts] = useState<ContactItem[]>([])
-  const [contactsTotal, setContactsTotal] = useState(0)
-  const [listsLoading, setListsLoading] = useState(true)
-  const [contactsLoading, setContactsLoading] = useState(false)
-  const [subTab, setSubTab] = useState<'lists' | 'contacts'>('lists')
-  const [createListOpen, setCreateListOpen] = useState(false)
-  const [importOpen, setImportOpen] = useState(false)
-  const [addContactOpen, setAddContactOpen] = useState(false)
-  const [newListName, setNewListName] = useState('')
-  const [newContact, setNewContact] = useState({ name: '', phone: '', contactListId: '' })
-  const [deleteListConfirm, setDeleteListConfirm] = useState<string | null>(null)
-  const [selectedListId, setSelectedListId] = useState('')
-  const [search, setSearch] = useState('')
-  const [csvFile, setCsvFile] = useState<File | null>(null)
-  const [csvPreview, setCsvPreview] = useState<string[][]>([])
-  const [csvMapping, setCsvMapping] = useState({ name: 0, phone: 1 })
-  const [csvTargetList, setCsvTargetList] = useState('')
-  const [importing, setImporting] = useState(false)
-
-  const fetchLists = useCallback(async () => {
-    try { setLists(await (await fetch('/api/contact-lists')).json()) } catch { toast.error('Erro ao carregar listas') }
-    finally { setListsLoading(false) }
-  }, [])
-
-  const fetchContacts = useCallback(async (listId?: string, s?: string) => {
-    setContactsLoading(true)
-    try {
-      const params = new URLSearchParams()
-      if (listId) params.set('contactListId', listId)
-      if (s) params.set('search', s)
-      const data = await (await fetch(`/api/contacts?${params}`)).json()
-      setContacts(data.contacts || data || []); setContactsTotal(data.total || 0)
-    } catch { toast.error('Erro ao carregar contatos') }
-    finally { setContactsLoading(false) }
-  }, [])
-
-  useEffect(() => { fetchLists() }, [fetchLists])
-  useEffect(() => { if (subTab === 'contacts') fetchContacts(selectedListId || undefined, search) }, [subTab, selectedListId, search, fetchContacts])
-
-  const createList = async () => {
-    try { await fetch('/api/contact-lists', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: newListName }) }); toast.success('Lista criada'); setCreateListOpen(false); setNewListName(''); fetchLists() }
-    catch { toast.error('Erro ao criar lista') }
-  }
-
-  const deleteList = async (id: string) => {
-    try { await fetch(`/api/contact-lists?id=${id}`, { method: 'DELETE' }); toast.success('Lista removida'); fetchLists() }
-    catch { toast.error('Erro ao remover lista') }
-  }
-
-  const addContact = async () => {
-    try {
-      const res = await fetch('/api/contacts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contacts: [{ name: newContact.name, phone: newContact.phone }], contactListId: newContact.contactListId || null }) })
-      if (!res.ok) throw new Error()
-      toast.success('Contato adicionado'); setAddContactOpen(false); setNewContact({ name: '', phone: '', contactListId: '' })
-      if (subTab === 'contacts') fetchContacts(selectedListId || undefined, search)
-    } catch { toast.error('Erro ao adicionar contato') }
-  }
-
-  const handleCSVFile = (file: File) => {
-    setCsvFile(file)
-    const reader = new FileReader()
-    reader.onload = (e) => {
-      const text = e.target?.result as string
-      const lines = text.split('\n').filter(l => l.trim()).map(l => l.split(',').map(c => c.trim().replace(/^"|"$/g, '')))
-      setCsvPreview(lines.slice(0, 6))
-      if (lines[0]?.length >= 2) setCsvMapping({ name: 0, phone: 1 })
-    }
-    reader.readAsText(file)
-  }
-
-  const importCSV = async () => {
-    if (!csvFile || !csvTargetList) return
-    setImporting(true)
-    try {
-      const reader = new FileReader()
-      reader.onload = async (e) => {
-        const text = e.target?.result as string
-        const lines = text.split('\n').filter(l => l.trim()).map(l => l.split(',').map(c => c.trim().replace(/^"|"$/g, '')))
-        const contacts = lines.map(l => ({ name: l[csvMapping.name] || '', phone: l[csvMapping.phone] || '' })).filter(c => c.name && c.phone)
-        const res = await fetch('/api/contacts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contacts, contactListId: csvTargetList }) })
-        const data = await res.json()
-        toast.success(`${data.created} contatos importados${data.errors > 0 ? `, ${data.errors} erros` : ''}`)
-        setImportOpen(false); setCsvFile(null); setCsvPreview([]); setImporting(false); fetchLists()
-      }
-      reader.readAsText(csvFile)
-    } catch { setImporting(false); toast.error('Erro ao importar CSV') }
-  }
-
-  return (
-    <div className="space-y-4">
-      {/* Sub tabs */}
-      <div className="flex items-center gap-1 border-b border-zinc-200 dark:border-zinc-800">
-        {(['lists', 'contacts'] as const).map(t => (
-          <button key={t} onClick={() => setSubTab(t)} className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${subTab === t ? 'border-emerald-500 text-emerald-600' : 'border-transparent text-muted-foreground hover:text-foreground'}`}>
-            {t === 'lists' ? 'Listas de Contatos' : 'Contatos Individuais'}
-          </button>
-        ))}
-      </div>
-
-      {subTab === 'lists' && (
-        <>
-          <div className="flex items-center justify-between">
-            <p className="text-sm text-muted-foreground">{lists.length} lista{lists.length !== 1 ? 's' : ''}</p>
-            <div className="flex gap-2">
-              <Dialog open={importOpen} onOpenChange={(v) => { setImportOpen(v); if (!v) { setCsvFile(null); setCsvPreview([]) } }}>
-                <DialogTrigger asChild><Button variant="outline" className="gap-2"><Upload className="size-4" /> Importar CSV</Button></DialogTrigger>
-                <DialogContent className="bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800">
-                  <DialogHeader><DialogTitle>Importar CSV</DialogTitle><DialogDescription>Carregue um arquivo CSV com os contatos</DialogDescription></DialogHeader>
-                  <div className="space-y-4 py-2">
-                    <div className="space-y-2">
-                      <Label>Lista de Destino</Label>
-                      <Select value={csvTargetList} onValueChange={setCsvTargetList}>
-                        <SelectTrigger><SelectValue placeholder="Selecione uma lista" /></SelectTrigger>
-                        <SelectContent>{lists.map(l => <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>)}</SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Arquivo CSV</Label>
-                      <div className="border-2 border-dashed border-zinc-200 dark:border-zinc-800 rounded-lg p-6 text-center hover:border-emerald-500/50 transition-colors cursor-pointer" onClick={() => document.getElementById('csv-input')?.click()}>
-                        {csvFile ? <div className="flex items-center justify-center gap-2"><FileSpreadsheet className="size-5 text-emerald-500" /><span className="text-sm font-medium">{csvFile.name}</span></div> : <div><Upload className="size-6 text-muted-foreground mx-auto mb-2" /><p className="text-sm text-muted-foreground">Clique ou arraste um arquivo CSV</p></div>}
-                        <input id="csv-input" type="file" accept=".csv" className="hidden" onChange={e => e.target.files?.[0] && handleCSVFile(e.target.files[0])} />
-                      </div>
-                    </div>
-                    {csvPreview.length > 0 && (
-                      <div className="space-y-2">
-                        <Label>Preview ({csvPreview.length} linhas)</Label>
-                        <Card className="border-zinc-200 dark:border-zinc-800 overflow-hidden">
-                          <Table>
-                            <TableHeader><TableRow className="border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 hover:bg-zinc-50 dark:hover:bg-zinc-900/50">
-                              {csvPreview[0]?.map((h, i) => <TableHead key={i} className="font-semibold text-xs">{h}</TableHead>)}
-                            </TableRow></TableHeader>
-                            <TableBody>
-                              {csvPreview.slice(1, 5).map((row, ri) => <TableRow key={ri} className="border-zinc-100 dark:border-zinc-800/50">{row.map((cell, ci) => <TableCell key={ci} className="text-xs">{cell}</TableCell>)}</TableRow>)}
-                            </TableBody>
-                          </Table>
-                        </Card>
-                      </div>
-                    )}
-                  </div>
-                  <DialogFooter>
-                    <DialogClose asChild><Button variant="outline">Cancelar</Button></DialogClose>
-                    <Button onClick={importCSV} disabled={!csvFile || !csvTargetList || importing} className="bg-emerald-600 hover:bg-emerald-700 text-white">{importing ? <Loader2 className="size-4 animate-spin" /> : 'Importar'}</Button>
-                  </DialogFooter>
-                </DialogContent>
-              </Dialog>
-              <Dialog open={createListOpen} onOpenChange={setCreateListOpen}>
-                <DialogTrigger asChild><Button className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white"><Plus className="size-4" /> Nova Lista</Button></DialogTrigger>
-                <DialogContent className="bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800">
-                  <DialogHeader><DialogTitle>Criar Lista de Contatos</DialogTitle></DialogHeader>
-                  <div className="space-y-4 py-2">
-                    <div className="space-y-2"><Label>Nome da Lista</Label><Input placeholder="Ex: Clientes VIP" value={newListName} onChange={e => setNewListName(e.target.value)} /></div>
-                  </div>
-                  <DialogFooter>
-                    <DialogClose asChild><Button variant="outline">Cancelar</Button></DialogClose>
-                    <Button onClick={createList} disabled={!newListName.trim()} className="bg-emerald-600 hover:bg-emerald-700 text-white">Criar Lista</Button>
-                  </DialogFooter>
-                </DialogContent>
-              </Dialog>
-            </div>
-          </div>
-
-          {listsLoading ? <LoadingScreen /> : lists.length === 0 ? (
-            <EmptyState icon={<Users className="size-7 text-muted-foreground" />} title="Nenhuma lista criada" description="Crie uma lista para organizar seus contatos" />
-          ) : (
-            <Card className="border-zinc-200 dark:border-zinc-800 overflow-hidden">
-              <Table>
-                <TableHeader><TableRow className="border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 hover:bg-zinc-50 dark:hover:bg-zinc-900/50">
-                  <TableHead className="font-semibold text-xs uppercase tracking-wider">Nome</TableHead>
-                  <TableHead className="font-semibold text-xs uppercase tracking-wider">Total Contatos</TableHead>
-                  <TableHead className="font-semibold text-xs uppercase tracking-wider">Campanhas</TableHead>
-                  <TableHead className="font-semibold text-xs uppercase tracking-wider">Criado em</TableHead>
-                  <TableHead className="font-semibold text-xs uppercase tracking-wider text-right">Acoes</TableHead>
-                </TableRow></TableHeader>
-                <TableBody>
-                  {lists.map(l => (
-                    <TableRow key={l.id} className="border-zinc-100 dark:border-zinc-800/50">
-                      <TableCell className="font-medium">{l.name}</TableCell>
-                      <TableCell className="text-sm text-muted-foreground">{l._count?.contacts || 0}</TableCell>
-                      <TableCell className="text-sm text-muted-foreground">{l._count?.campaigns || 0}</TableCell>
-                      <TableCell className="text-xs text-muted-foreground">{new Date(l.createdAt).toLocaleDateString('pt-BR')}</TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex items-center justify-end gap-1">
-                          <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => { setSelectedListId(l.id); setSubTab('contacts') }}>Ver Contatos</Button>
-                          <Button variant="ghost" size="sm" className="h-7 text-xs text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-500/10" onClick={() => setDeleteListConfirm(l.id)}><Trash2 className="size-3.5" /></Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </Card>
-          )}
-          <ConfirmDialog open={!!deleteListConfirm} onOpenChange={() => setDeleteListConfirm(null)} title="Remover Lista" description="Tem certeza? Todos os contatos desta lista serao removidos." onConfirm={() => { if (deleteListConfirm) deleteList(deleteListConfirm) }} />
-        </>
-      )}
-
-      {subTab === 'contacts' && (
-        <>
-          <div className="flex items-center gap-3">
-            <div className="relative flex-1 max-w-sm">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
-              <Input placeholder="Buscar por nome ou telefone..." value={search} onChange={e => setSearch(e.target.value)} className="pl-9 h-9" />
-            </div>
-            <Select value={selectedListId} onValueChange={setSelectedListId}>
-              <SelectTrigger className="w-48 h-9"><SelectValue placeholder="Todas as listas" /></SelectTrigger>
-              <SelectContent><SelectItem value="">Todas as listas</SelectItem>{lists.map(l => <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>)}</SelectContent>
-            </Select>
-            <Dialog open={addContactOpen} onOpenChange={setAddContactOpen}>
-              <DialogTrigger asChild><Button className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white"><UserPlus className="size-4" /> Adicionar</Button></DialogTrigger>
-              <DialogContent className="bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800">
-                <DialogHeader><DialogTitle>Adicionar Contato</DialogTitle></DialogHeader>
-                <div className="space-y-4 py-2">
-                  <div className="space-y-2"><Label>Nome</Label><Input placeholder="Nome do contato" value={newContact.name} onChange={e => setNewContact(p => ({ ...p, name: e.target.value }))} /></div>
-                  <div className="space-y-2"><Label>Telefone</Label><Input placeholder="11999990001" value={newContact.phone} onChange={e => setNewContact(p => ({ ...p, phone: e.target.value }))} /></div>
-                  <div className="space-y-2">
-                    <Label>Lista (opcional)</Label>
-                    <Select value={newContact.contactListId} onValueChange={v => setNewContact(p => ({ ...p, contactListId: v }))}>
-                      <SelectTrigger><SelectValue placeholder="Sem lista" /></SelectTrigger>
-                      <SelectContent>{lists.map(l => <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>)}</SelectContent>
-                    </Select>
-                  </div>
-                </div>
-                <DialogFooter>
-                  <DialogClose asChild><Button variant="outline">Cancelar</Button></DialogClose>
-                  <Button onClick={addContact} disabled={!newContact.name || !newContact.phone} className="bg-emerald-600 hover:bg-emerald-700 text-white">Adicionar</Button>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
-          </div>
-
-          {contactsLoading ? <LoadingScreen /> : contacts.length === 0 ? (
-            <EmptyState icon={<Users className="size-7 text-muted-foreground" />} title="Nenhum contato encontrado" description="Adicione contatos manualmente ou importe via CSV" />
-          ) : (
-            <Card className="border-zinc-200 dark:border-zinc-800 overflow-hidden">
-              <Table>
-                <TableHeader><TableRow className="border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 hover:bg-zinc-50 dark:hover:bg-zinc-900/50">
-                  <TableHead className="font-semibold text-xs uppercase tracking-wider">Nome</TableHead>
-                  <TableHead className="font-semibold text-xs uppercase tracking-wider">Telefone</TableHead>
-                  <TableHead className="font-semibold text-xs uppercase tracking-wider">Lista</TableHead>
-                  <TableHead className="font-semibold text-xs uppercase tracking-wider">Criado em</TableHead>
-                </TableRow></TableHeader>
-                <TableBody>
-                  {contacts.slice(0, 50).map(c => (
-                    <TableRow key={c.id} className="border-zinc-100 dark:border-zinc-800/50">
-                      <TableCell className="font-medium">{c.name}</TableCell>
-                      <TableCell className="font-mono text-xs text-muted-foreground">{c.phone}</TableCell>
-                      <TableCell className="text-sm text-muted-foreground">{c.contactList?.name || '-'}</TableCell>
-                      <TableCell className="text-xs text-muted-foreground">{new Date(c.createdAt).toLocaleDateString('pt-BR')}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-              {contactsTotal > 50 && <div className="px-4 py-3 border-t border-zinc-200 dark:border-zinc-800"><p className="text-xs text-muted-foreground">Mostrando 50 de {contactsTotal} contatos</p></div>}
-            </Card>
-          )}
-        </>
-      )}
-    </div>
-  )
-}
-
-// ===== MENSAGENS TAB =====
-function MensagensTab() {
-  const [messages, setMessages] = useState<MessageItem[]>([])
-  const [loading, setLoading] = useState(true)
-  const [statusFilter, setStatusFilter] = useState<string>('all')
-  const [search, setSearch] = useState('')
-  const [detailMsg, setDetailMsg] = useState<MessageItem | null>(null)
-  const [detailOpen, setDetailOpen] = useState(false)
-
-  const fetchMessages = useCallback(async () => {
-    setLoading(true)
-    try {
-      const params = new URLSearchParams()
-      if (statusFilter !== 'all') params.set('status', statusFilter)
-      const data = await (await fetch(`/api/messages?${params}`)).json()
-      setMessages(data)
-    } catch { toast.error('Erro ao carregar mensagens') }
-    finally { setLoading(false) }
-  }, [statusFilter])
-
-  useEffect(() => { fetchMessages() }, [fetchMessages])
-
-  const filteredMessages = useMemo(() => {
-    if (!search) return messages
-    const s = search.toLowerCase()
-    return messages.filter(m => m.contact.name.toLowerCase().includes(s) || m.contact.phone.includes(s))
-  }, [messages, search])
-
-  const statusCounts = useMemo(() => {
-    const counts: Record<string, number> = { all: messages.length }
-    messages.forEach(m => { counts[m.status] = (counts[m.status] || 0) + 1 })
-    return counts
-  }, [messages])
-
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-3 flex-wrap">
-        <div className="relative flex-1 min-w-[200px] max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
-          <Input placeholder="Buscar por nome ou telefone..." value={search} onChange={e => setSearch(e.target.value)} className="pl-9 h-9" />
-        </div>
-        <div className="flex items-center gap-1">
-          {[
-            { key: 'all', label: 'Todas' }, { key: 'pending', label: 'Pendente' }, { key: 'sent', label: 'Enviada' },
-            { key: 'delivered', label: 'Entregue' }, { key: 'read', label: 'Lida' }, { key: 'failed', label: 'Falhou' },
-          ].map(f => (
-            <button key={f.key} onClick={() => setStatusFilter(f.key)}
-              className={`px-3 py-1.5 text-xs rounded-md font-medium transition-colors ${statusFilter === f.key ? 'bg-emerald-500/10 text-emerald-600' : 'text-muted-foreground hover:text-foreground hover:bg-zinc-100 dark:hover:bg-zinc-800'}`}>
-              {f.label} {(statusCounts[f.key] || 0) > 0 ? `(${statusCounts[f.key] || 0})` : ''}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {loading ? <LoadingScreen /> : filteredMessages.length === 0 ? (
-        <EmptyState icon={<MessageSquare className="size-7 text-muted-foreground" />} title="Nenhuma mensagem encontrada" description="As mensagens enviadas aparecerão aqui" />
-      ) : (
-        <Card className="border-zinc-200 dark:border-zinc-800 overflow-hidden">
-          <Table>
-            <TableHeader><TableRow className="border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/50 hover:bg-zinc-50 dark:hover:bg-zinc-900/50">
-              <TableHead className="font-semibold text-xs uppercase tracking-wider">Destinatario</TableHead>
-              <TableHead className="font-semibold text-xs uppercase tracking-wider">Dispositivo</TableHead>
-              <TableHead className="font-semibold text-xs uppercase tracking-wider">Conteudo</TableHead>
-              <TableHead className="font-semibold text-xs uppercase tracking-wider">Status</TableHead>
-              <TableHead className="font-semibold text-xs uppercase tracking-wider">Enviado em</TableHead>
-              <TableHead className="font-semibold text-xs uppercase tracking-wider text-right">Acoes</TableHead>
-            </TableRow></TableHeader>
-            <TableBody>
-              {filteredMessages.slice(0, 100).map(m => (
-                <TableRow key={m.id} className="border-zinc-100 dark:border-zinc-800/50">
-                  <TableCell><div><p className="text-sm font-medium">{m.contact.name}</p><p className="text-xs text-muted-foreground font-mono">{m.contact.phone}</p></div></TableCell>
-                  <TableCell className="text-sm text-muted-foreground">{m.chip.name}</TableCell>
-                  <TableCell className="max-w-[200px]"><p className="text-sm truncate">{m.content}</p></TableCell>
-                  <TableCell><MessageStatusBadge status={m.status} /></TableCell>
-                  <TableCell className="text-xs text-muted-foreground">{m.sentAt ? new Date(m.sentAt).toLocaleString('pt-BR') : '-'}</TableCell>
-                  <TableCell className="text-right">
-                    <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => { setDetailMsg(m); setDetailOpen(true) }}><Eye className="size-3.5" /></Button>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </Card>
-      )}
-
-      <Dialog open={detailOpen} onOpenChange={(v) => { setDetailOpen(v); if (!v) setDetailMsg(null) }}>
-        <DialogContent className="bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800 max-w-md">
-          <DialogHeader><DialogTitle>Detalhes da Mensagem</DialogTitle></DialogHeader>
-          {detailMsg && (
-            <div className="space-y-4 py-2">
-              <div className="space-y-3">
-                {[
-                  ['Destinatario', `${detailMsg.contact.name} (${detailMsg.contact.phone})`],
-                  ['Dispositivo', detailMsg.chip.name],
-                  ['Campanha', detailMsg.campaign?.name || '-'],
-                  ['Status', <MessageStatusBadge key="s" status={detailMsg.status} />],
-                  ['Enviado em', detailMsg.sentAt ? new Date(detailMsg.sentAt).toLocaleString('pt-BR') : '-'],
-                  ['Entregue em', detailMsg.deliveredAt ? new Date(detailMsg.deliveredAt).toLocaleString('pt-BR') : '-'],
-                  ['Lida em', detailMsg.readAt ? new Date(detailMsg.readAt).toLocaleString('pt-BR') : '-'],
-                ].map(([label, value]) => (
-                  <div key={label} className="flex items-center justify-between"><span className="text-sm text-muted-foreground">{label}</span>{typeof value === 'string' ? <span className="text-sm">{value}</span> : value}</div>
-                ))}
-              </div>
-              <Separator />
-              <div>
-                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Conteudo</p>
-                <div className="bg-zinc-50 dark:bg-zinc-800/50 rounded-lg p-3 text-sm whitespace-pre-wrap">{detailMsg.content}</div>
-              </div>
-              {detailMsg.error && (
-                <div className="bg-rose-50 dark:bg-rose-500/10 rounded-lg p-3">
-                  <p className="text-xs font-semibold text-rose-600 mb-1">Erro</p>
-                  <p className="text-sm text-rose-600">{detailMsg.error}</p>
-                </div>
-              )}
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
-    </div>
-  )
-}
-
-// ===== ANTI-BAN TAB =====
-function AntiBanTab() {
-  const [settings, setSettings] = useState(() => {
-    if (typeof window === 'undefined') return { maxPerHour: 30, maxPerDay: 200, minInterval: 30, maxInterval: 90, autoPause: true, rotateDevices: true, spamProtection: true, maxPerNumber: 3, randomVariation: true, longPauses: true, longPauseMin: 10, longPauseMax: 30, respectSchedule: true, startHour: '08:00', endHour: '20:00', pauseWeekends: true }
-    try { const saved = localStorage.getItem('octupuszap-antiban'); return saved ? JSON.parse(saved) : { maxPerHour: 30, maxPerDay: 200, minInterval: 30, maxInterval: 90, autoPause: true, rotateDevices: true, spamProtection: true, maxPerNumber: 3, randomVariation: true, longPauses: true, longPauseMin: 10, longPauseMax: 30, respectSchedule: true, startHour: '08:00', endHour: '20:00', pauseWeekends: true } }
-    catch { return { maxPerHour: 30, maxPerDay: 200, minInterval: 30, maxInterval: 90, autoPause: true, rotateDevices: true, spamProtection: true, maxPerNumber: 3, randomVariation: true, longPauses: true, longPauseMin: 10, longPauseMax: 30, respectSchedule: true, startHour: '08:00', endHour: '20:00', pauseWeekends: true } }
-  })
-
-  const save = () => {
-    localStorage.setItem('octupuszap-antiban', JSON.stringify(settings))
-    toast.success('Configuracoes salvas com sucesso')
-  }
-
-  const calcRisk = () => {
-    let risk = 10
-    if (settings.maxPerHour > 50) risk += 15
-    if (settings.maxPerDay > 500) risk += 15
-    if (!settings.autoPause) risk += 20
-    if (!settings.rotateDevices) risk += 10
-    if (!settings.randomVariation) risk += 15
-    if (!settings.respectSchedule) risk += 15
-    if (!settings.pauseWeekends) risk += 5
-    return Math.min(risk, 100)
-  }
-
-  const risk = calcRisk()
-  const riskColor = risk < 30 ? 'text-emerald-500' : risk < 60 ? 'text-amber-500' : 'text-rose-500'
-  const riskBg = risk < 30 ? 'bg-emerald-500' : risk < 60 ? 'bg-amber-500' : 'bg-rose-500'
 
   return (
     <div className="space-y-6">
-      {/* Risk Meter */}
-      <Card className="border-zinc-200 dark:border-zinc-800">
-        <CardHeader className="pb-3"><CardTitle className="text-sm font-semibold flex items-center gap-2"><AlertCircle className="size-4 text-amber-500" />Nivel de Risco</CardTitle></CardHeader>
-        <CardContent>
-          <div className="flex items-center gap-6">
-            <div className="relative flex size-24 items-center justify-center">
-              <svg className="size-24 -rotate-90" viewBox="0 0 100 100">
-                <circle cx="50" cy="50" r="40" fill="none" stroke="currentColor" className="text-zinc-100 dark:text-zinc-800" strokeWidth="8" />
-                <circle cx="50" cy="50" r="40" fill="none" className={riskColor} strokeWidth="8" strokeLinecap="round"
-                  strokeDasharray={`${(risk / 100) * 251.2} 251.2`} />
-              </svg>
-              <span className={`absolute text-xl font-bold ${riskColor}`}>{risk}%</span>
-            </div>
-            <div className="flex-1 space-y-2">
-              <p className={`text-sm font-semibold ${riskColor}`}>
-                {risk < 30 ? 'Risco Baixo' : risk < 60 ? 'Risco Moderado' : 'Risco Alto'}
-              </p>
-              <p className="text-xs text-muted-foreground">
-                {risk < 30 ? 'Suas configuracoes estao seguras para envio em massa.' : risk < 60 ? 'Considere reduzir os limites e ativar mais protecoes.' : 'Alto risco de banimento. Revise suas configuracoes imediatamente.'}
-              </p>
-              <div className="flex gap-4 text-xs text-muted-foreground">
-                <div className="flex items-center gap-1"><span className={`size-2 rounded-full ${riskBg}`} />Nivel atual</div>
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-2xl font-bold">Campanhas</h2>
+          <p className="text-sm text-muted-foreground">Gerencie suas campanhas de envio em massa</p>
+        </div>
+        <Dialog open={createDialogOpen} onOpenChange={(o) => { setCreateDialogOpen(o); if (!o) resetNewCampaign() }}>
+          <DialogTrigger asChild>
+            <Button className="gap-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 shadow-lg">
+              <Plus className="size-4" /> Nova Campanha
+            </Button>
+          </DialogTrigger>
+          <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Criar Campanha</DialogTitle>
+              <DialogDescription>Configure uma nova campanha de envio</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-5 py-4">
+              <div className="space-y-2">
+                <Label>Nome da Campanha</Label>
+                <Input placeholder="Ex: Campanha Black Friday" value={newCampaign.name} onChange={e => setNewCampaign(prev => ({ ...prev, name: e.target.value }))} />
               </div>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Sending Limits */}
-        <Card className="border-zinc-200 dark:border-zinc-800">
-          <CardHeader className="pb-3"><CardTitle className="text-sm font-semibold">Limites de Envio</CardTitle><CardDescription>Controle a velocidade de envio</CardDescription></CardHeader>
-          <CardContent className="space-y-5">
-            <div className="space-y-2">
-              <div className="flex items-center justify-between"><Label className="text-sm">Max por hora / dispositivo</Label><span className="text-sm font-semibold">{settings.maxPerHour}</span></div>
-              <Slider min={10} max={100} step={5} value={[settings.maxPerHour]} onValueChange={v => setSettings(p => ({ ...p, maxPerHour: v[0] }))} className="[&_[data-slot=slider-range]]:bg-emerald-500 [&_[data-slot=slider-thumb]]:border-emerald-500" />
-            </div>
-            <div className="space-y-2">
-              <div className="flex items-center justify-between"><Label className="text-sm">Max por dia / dispositivo</Label><span className="text-sm font-semibold">{settings.maxPerDay}</span></div>
-              <Slider min={50} max={1000} step={50} value={[settings.maxPerDay]} onValueChange={v => setSettings(p => ({ ...p, maxPerDay: v[0] }))} className="[&_[data-slot=slider-range]]:bg-emerald-500 [&_[data-slot=slider-thumb]]:border-emerald-500" />
-            </div>
-            <div className="space-y-2">
-              <Label className="text-sm">Intervalo entre mensagens (seg)</Label>
-              <div className="flex items-center gap-3">
-                <Input type="number" min={5} value={settings.minInterval} onChange={e => setSettings(p => ({ ...p, minInterval: parseInt(e.target.value) || 30 }))} className="w-24 h-8 text-sm" />
-                <span className="text-xs text-muted-foreground">a</span>
-                <Input type="number" min={5} value={settings.maxInterval} onChange={e => setSettings(p => ({ ...p, maxInterval: parseInt(e.target.value) || 90 }))} className="w-24 h-8 text-sm" />
+              <div className="space-y-2">
+                <Label>Lista de Contatos</Label>
+                <Select value={newCampaign.contactListId} onValueChange={v => setNewCampaign(prev => ({ ...prev, contactListId: v }))}>
+                  <SelectTrigger><SelectValue placeholder="Selecione uma lista de contatos" /></SelectTrigger>
+                  <SelectContent>
+                    {availableLists.map(l => (
+                      <SelectItem key={l.id} value={l.id}>
+                        <div className="flex items-center gap-2"><Users className="size-3.5" />{l.name}<span className="text-xs text-muted-foreground">({l._count?.contacts || 0})</span></div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
-            </div>
-          </CardContent>
-        </Card>
 
-        {/* Active Protection */}
-        <Card className="border-zinc-200 dark:border-zinc-800">
-          <CardHeader className="pb-3"><CardTitle className="text-sm font-semibold">Protecao Ativa</CardTitle><CardDescription>Regras automaticas de seguranca</CardDescription></CardHeader>
-          <CardContent className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div><p className="text-sm font-medium">Pausa automatica ao detectar resposta</p><p className="text-xs text-muted-foreground">Interrompe o envio ao receber resposta</p></div>
-              <Switch checked={settings.autoPause} onCheckedChange={v => setSettings(p => ({ ...p, autoPause: v }))} />
-            </div>
-            <Separator />
-            <div className="flex items-center justify-between">
-              <div><p className="text-sm font-medium">Rotacao de dispositivos</p><p className="text-xs text-muted-foreground">Alterna entre dispositivos automaticamente</p></div>
-              <Switch checked={settings.rotateDevices} onCheckedChange={v => setSettings(p => ({ ...p, rotateDevices: v }))} />
-            </div>
-            <Separator />
-            <div className="flex items-center justify-between">
-              <div><p className="text-sm font-medium">Limitar mensagens por numero</p><p className="text-xs text-muted-foreground">Protecao contra marcacao de spam</p></div>
-              <Switch checked={settings.spamProtection} onCheckedChange={v => setSettings(p => ({ ...p, spamProtection: v }))} />
-            </div>
-            {settings.spamProtection && (
-              <div className="ml-4 pl-4 border-l-2 border-emerald-500/30">
-                <Label className="text-xs text-muted-foreground">Max mensagens para mesmo numero / dia</Label>
-                <Input type="number" min={1} max={10} value={settings.maxPerNumber} onChange={e => setSettings(p => ({ ...p, maxPerNumber: parseInt(e.target.value) || 3 }))} className="w-24 h-8 text-sm mt-1" />
+              <div className="space-y-2">
+                <Label className="flex items-center gap-2"><CalendarDays className="size-4 text-muted-foreground" /> Agendamento (opcional)</Label>
+                <Input type="datetime-local" value={newCampaign.scheduledAt} onChange={e => setNewCampaign(prev => ({ ...prev, scheduledAt: e.target.value }))} />
+                <p className="text-xs text-muted-foreground">Deixe vazio para executar imediatamente</p>
               </div>
-            )}
-          </CardContent>
-        </Card>
 
-        {/* Human Behavior */}
-        <Card className="border-zinc-200 dark:border-zinc-800">
-          <CardHeader className="pb-3"><CardTitle className="text-sm font-semibold">Comportamento Humano</CardTitle><CardDescription>Simule padroes humanos de envio</CardDescription></CardHeader>
-          <CardContent className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div><p className="text-sm font-medium">Variacao aleatoria nos intervalos</p><p className="text-xs text-muted-foreground">Adiciona imprevisibilidade ao intervalo</p></div>
-              <Switch checked={settings.randomVariation} onCheckedChange={v => setSettings(p => ({ ...p, randomVariation: v }))} />
-            </div>
-            <Separator />
-            <div className="flex items-center justify-between">
-              <div><p className="text-sm font-medium">Pausas periodicas longas</p><p className="text-xs text-muted-foreground">Simula comportamento humano natural</p></div>
-              <Switch checked={settings.longPauses} onCheckedChange={v => setSettings(p => ({ ...p, longPauses: v }))} />
-            </div>
-            {settings.longPauses && (
-              <div className="ml-4 pl-4 border-l-2 border-emerald-500/30 space-y-2">
-                <Label className="text-xs text-muted-foreground">Duracao da pausa longa (min)</Label>
-                <div className="flex items-center gap-3">
-                  <Input type="number" min={5} value={settings.longPauseMin} onChange={e => setSettings(p => ({ ...p, longPauseMin: parseInt(e.target.value) || 10 }))} className="w-20 h-8 text-sm" />
-                  <span className="text-xs text-muted-foreground">a</span>
-                  <Input type="number" min={5} value={settings.longPauseMax} onChange={e => setSettings(p => ({ ...p, longPauseMax: parseInt(e.target.value) || 30 }))} className="w-20 h-8 text-sm" />
+              <div className="space-y-2">
+                <Label>Chips para envio</Label>
+                <div className="grid grid-cols-2 gap-2">
+                  {availableChips.map(chip => (
+                    <label key={chip.id} className={`flex items-center gap-2 p-2.5 rounded-lg border cursor-pointer transition-all ${newCampaign.chipIds.includes(chip.id) ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20' : 'hover:bg-muted/50'}`}>
+                      <input type="checkbox" checked={newCampaign.chipIds.includes(chip.id)} onChange={() => toggleChip(chip.id)} className="sr-only" />
+                      <div className={`size-4 rounded border-2 flex items-center justify-center ${newCampaign.chipIds.includes(chip.id) ? 'bg-emerald-500 border-emerald-500' : 'border-muted-foreground'}`}>
+                        {newCampaign.chipIds.includes(chip.id) && <Check className="size-3 text-white" />}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium truncate">{chip.name}</p>
+                        <p className="text-xs text-muted-foreground">{chip.phoneNumber}</p>
+                      </div>
+                    </label>
+                  ))}
                 </div>
               </div>
-            )}
-          </CardContent>
-        </Card>
 
-        {/* Schedule */}
-        <Card className="border-zinc-200 dark:border-zinc-800">
-          <CardHeader className="pb-3"><CardTitle className="text-sm font-semibold">Horarios de Envio</CardTitle><CardDescription>Defina quando as mensagens podem ser enviadas</CardDescription></CardHeader>
-          <CardContent className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div><p className="text-sm font-medium">Respeitar horario de envio</p><p className="text-xs text-muted-foreground">Envia apenas no horario definido</p></div>
-              <Switch checked={settings.respectSchedule} onCheckedChange={v => setSettings(p => ({ ...p, respectSchedule: v }))} />
-            </div>
-            {settings.respectSchedule && (
-              <div className="flex items-center gap-3">
-                <div className="flex-1 space-y-1"><Label className="text-xs text-muted-foreground">Inicio</Label><Input type="time" value={settings.startHour} onChange={e => setSettings(p => ({ ...p, startHour: e.target.value }))} className="h-9" /></div>
-                <span className="text-muted-foreground pt-5">ate</span>
-                <div className="flex-1 space-y-1"><Label className="text-xs text-muted-foreground">Fim</Label><Input type="time" value={settings.endHour} onChange={e => setSettings(p => ({ ...p, endHour: e.target.value }))} className="h-9" /></div>
+              <div className="flex items-center justify-between">
+                <Label>Tipo de Mensagem</Label>
+                <div className="flex items-center gap-2">
+                  <span className={`text-sm ${!newCampaign.useSequence ? 'font-semibold' : 'text-muted-foreground'}`}>Variações</span>
+                  <Switch checked={newCampaign.useSequence} onCheckedChange={v => setNewCampaign(prev => ({ ...prev, useSequence: v }))} />
+                  <span className={`text-sm ${newCampaign.useSequence ? 'font-semibold' : 'text-muted-foreground'}`}>Sequência</span>
+                </div>
               </div>
-            )}
-            <Separator />
-            <div className="flex items-center justify-between">
-              <div><p className="text-sm font-medium">Pausar nos finais de semana</p><p className="text-xs text-muted-foreground">Nao envia sabados e domingos</p></div>
-              <Switch checked={settings.pauseWeekends} onCheckedChange={v => setSettings(p => ({ ...p, pauseWeekends: v }))} />
+
+              {newCampaign.useSequence ? (
+                <div className="space-y-3">
+                  {newCampaign.sequenceSteps.map((step, idx) => (
+                    <div key={idx} className="relative">
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="flex items-center justify-center size-7 rounded-full bg-emerald-600 text-white text-xs font-bold">{idx + 1}</span>
+                        <span className="text-sm font-medium">Etapa {idx + 1}</span>
+                        {idx > 0 && (
+                          <div className="flex items-center gap-1 text-xs text-muted-foreground ml-2">
+                            <Clock className="size-3" /> {step.delayMinutes}min após etapa anterior
+                          </div>
+                        )}
+                        {newCampaign.sequenceSteps.length > 1 && (
+                          <Button variant="ghost" size="sm" className="ml-auto text-rose-500 h-6 w-6 p-0" onClick={() => removeSequenceStep(idx)}>
+                            <X className="size-3" />
+                          </Button>
+                        )}
+                      </div>
+                      <Textarea placeholder="Mensagem da etapa..." value={step.content} onChange={e => updateSequenceStep(idx, 'content', e.target.value)} rows={2} />
+                      {idx > 0 && (
+                        <div className="mt-2">
+                          <Label className="text-xs">Atraso antes desta etapa (minutos)</Label>
+                          <Input type="number" min={0} value={step.delayMinutes} onChange={e => updateSequenceStep(idx, 'delayMinutes', parseInt(e.target.value) || 0)} className="mt-1 w-40" />
+                        </div>
+                      )}
+                      {idx < newCampaign.sequenceSteps.length - 1 && (
+                        <div className="flex items-center justify-center py-2"><ArrowRight className="size-4 text-muted-foreground" /></div>
+                      )}
+                    </div>
+                  ))}
+                  <Button variant="outline" size="sm" onClick={addSequenceStep} className="gap-1.5 w-full">
+                    <Plus className="size-3.5" /> Adicionar Etapa
+                  </Button>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {newCampaign.messageVariations.map((v, idx) => (
+                    <div key={idx} className="flex gap-2">
+                      <Textarea placeholder={`Variação ${idx + 1}...`} value={v} onChange={e => {
+                        const vars = [...newCampaign.messageVariations]; vars[idx] = e.target.value
+                        setNewCampaign(prev => ({ ...prev, messageVariations: vars }))
+                      }} rows={2} className="flex-1" />
+                      {newCampaign.messageVariations.length > 1 && (
+                        <Button variant="ghost" size="sm" className="text-rose-500" onClick={() => setNewCampaign(prev => ({ ...prev, messageVariations: prev.messageVariations.filter((_, i) => i !== idx) }))}>
+                          <X className="size-4" />
+                        </Button>
+                      )}
+                    </div>
+                  ))}
+                  <Button variant="outline" size="sm" onClick={() => setNewCampaign(prev => ({ ...prev, messageVariations: [...prev.messageVariations, ''] }))} className="gap-1.5 w-full">
+                    <Plus className="size-3.5" /> Adicionar Variação
+                  </Button>
+                </div>
+              )}
+
+              {/* Anti-Ban Section in Campaign */}
+              <Separator />
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Shield className="size-5 text-emerald-500" />
+                    <Label className="text-base font-semibold">Proteção Anti-Ban</Label>
+                  </div>
+                  <Switch checked={newCampaign.antiBanEnabled} onCheckedChange={v => setNewCampaign(prev => ({ ...prev, antiBanEnabled: v }))} />
+                </div>
+                {newCampaign.antiBanEnabled && (
+                  <div className="space-y-3 p-4 bg-muted/50 rounded-xl">
+                    <Label className="text-sm">Modo de Aquecimento</Label>
+                    <div className="grid grid-cols-3 gap-2">
+                      {[
+                        { value: 'normal', label: 'Normal', icon: Shield, desc: 'Equilibrado' },
+                        { value: 'agressive', label: 'Agressivo', icon: Flame, desc: 'Mais rápido' },
+                        { value: 'stealth', label: 'Furtivo', icon: Snowflake, desc: 'Máx. segurança' },
+                      ].map(m => (
+                        <button key={m.value} type="button" onClick={() => setNewCampaign(prev => ({ ...prev, warmingMode: m.value }))}
+                          className={`p-3 rounded-lg border text-center transition-all ${newCampaign.warmingMode === m.value ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20' : 'hover:bg-muted/50'}`}>
+                          <m.icon className={`size-5 mx-auto mb-1 ${newCampaign.warmingMode === m.value ? 'text-emerald-600' : 'text-muted-foreground'}`} />
+                          <p className="text-sm font-medium">{m.label}</p>
+                          <p className="text-xs text-muted-foreground">{m.desc}</p>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
+            <DialogFooter>
+              <DialogClose asChild><Button variant="outline">Cancelar</Button></DialogClose>
+              <Button onClick={createCampaign} disabled={!canCreate} className="bg-emerald-600 hover:bg-emerald-700">Criar Campanha</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </div>
+
+      {loading ? (
+        <div className="flex items-center justify-center py-20"><RefreshCw className="size-6 animate-spin text-muted-foreground" /></div>
+      ) : campaigns.length === 0 ? (
+        <Card className="shadow-md border-0">
+          <CardContent className="flex flex-col items-center justify-center py-16">
+            <Send className="size-10 text-muted-foreground mb-3" />
+            <p className="font-semibold">Nenhuma campanha criada</p>
+            <p className="text-sm text-muted-foreground">Crie sua primeira campanha para começar</p>
           </CardContent>
         </Card>
-      </div>
+      ) : (
+        <div className="space-y-3">
+          {campaigns.map((c, i) => (
+            <motion.div key={c.id} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}>
+              <Card className="shadow-md hover:shadow-lg transition-all border-0">
+                <CardContent className="p-5">
+                  <div className="flex items-center gap-4">
+                    <div className="flex size-12 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-400 to-teal-500 shadow-lg">
+                      <Send className="size-6 text-white" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <h3 className="font-semibold truncate">{c.name}</h3>
+                        <StatusBadge status={c.status} />
+                        {c.antiBanEnabled && (
+                          <Badge variant="outline" className="gap-1 text-xs text-emerald-600 border-emerald-300">
+                            <Shield className="size-3" /> Anti-Ban
+                          </Badge>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
+                        <span className="flex items-center gap-1"><Smartphone className="size-3" /> {c.chips?.length || 0} chips</span>
+                        {c.contactList && <span className="flex items-center gap-1"><Users className="size-3" /> {c.contactList.name}</span>}
+                        {c.scheduledAt && <span className="flex items-center gap-1"><CalendarDays className="size-3" /> {new Date(c.scheduledAt).toLocaleDateString('pt-BR')}</span>}
+                        {c.sequenceSteps?.length > 0 && <span className="flex items-center gap-1"><ArrowRight className="size-3" /> {c.sequenceSteps.length} etapas</span>}
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <TooltipProvider><Tooltip><TooltipTrigger asChild>
+                        <Button variant="outline" size="sm" onClick={() => openDetail(c)}><Eye className="size-4" /></Button>
+                      </TooltipTrigger><TooltipContent>Detalhes</TooltipContent></Tooltip></TooltipProvider>
+                      {c.status === 'draft' && <Button size="sm" className="gap-1 bg-emerald-600 hover:bg-emerald-700" onClick={() => updateCampaignStatus(c.id, 'running')}><Play className="size-3.5" /> Iniciar</Button>}
+                      {c.status === 'running' && <Button variant="outline" size="sm" className="gap-1" onClick={() => updateCampaignStatus(c.id, 'paused')}><Pause className="size-3.5" /> Pausar</Button>}
+                      {c.status === 'paused' && <Button size="sm" className="gap-1 bg-emerald-600 hover:bg-emerald-700" onClick={() => updateCampaignStatus(c.id, 'running')}><Play className="size-3.5" /> Retomar</Button>}
+                      <Button variant="outline" size="sm" className="text-rose-500 hover:text-rose-600" onClick={() => setDeleteConfirm(c.id)}><Trash2 className="size-3.5" /></Button>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </motion.div>
+          ))}
+        </div>
+      )}
 
-      {/* Risk Detection */}
-      <Card className="border-zinc-200 dark:border-zinc-800">
-        <CardHeader className="pb-3"><CardTitle className="text-sm font-semibold">Deteccao de Risco</CardTitle></CardHeader>
-        <CardContent>
-          <div className="space-y-2">
-            <div className="flex items-center gap-3 p-3 rounded-lg bg-zinc-50 dark:bg-zinc-800/50">
-              <ShieldCheck className="size-5 text-emerald-500 shrink-0" />
-              <div><p className="text-sm font-medium">Nenhum alerta ativo</p><p className="text-xs text-muted-foreground">Seus dispositivos estao operando dentro dos limites seguros</p></div>
-            </div>
-            <div className="flex items-center gap-3 p-3 rounded-lg bg-zinc-50 dark:bg-zinc-800/50">
-              <Activity className="size-5 text-blue-500 shrink-0" />
-              <div><p className="text-sm font-medium">Monitoramento ativo</p><p className="text-xs text-muted-foreground">Todas as campanhas estao sendo monitoradas em tempo real</p></div>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+      <ConfirmDialog open={!!deleteConfirm} onOpenChange={() => setDeleteConfirm(null)}
+        title="Remover Campanha" description="Tem certeza? Esta ação não pode ser desfeita."
+        onConfirm={() => { if (deleteConfirm) deleteCampaign(deleteConfirm) }} confirmLabel="Remover" variant="destructive" />
 
-      <div className="flex justify-end">
-        <Button onClick={save} className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white min-w-[160px]">
-          <Check className="size-4" /> Salvar Configuracoes
-        </Button>
-      </div>
+      {/* Detail Dialog */}
+      <Dialog open={detailDialogOpen} onOpenChange={setDetailDialogOpen}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">{selectedCampaign?.name}</DialogTitle>
+            <DialogDescription>Detalhes da campanha</DialogDescription>
+          </DialogHeader>
+          {selectedCampaign && (
+            <div className="space-y-4">
+              <div className="flex flex-wrap gap-2">
+                <StatusBadge status={selectedCampaign.status} />
+                {selectedCampaign.antiBanEnabled && <Badge variant="outline" className="gap-1 text-emerald-600"><Shield className="size-3" /> Anti-Ban</Badge>}
+                <Badge variant="outline" className="gap-1">{selectedCampaign.warmingMode === 'stealth' ? <><Snowflake className="size-3" /> Furtivo</> : selectedCampaign.warmingMode === 'agressive' ? <><Flame className="size-3" /> Agressivo</> : <><Shield className="size-3" /> Normal</>}</Badge>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <Card className="shadow-sm"><CardContent className="p-3 text-center"><p className="text-xs text-muted-foreground">Pendentes</p><p className="text-xl font-bold">{detailMessages.filter(m => m.status === 'pending').length}</p></CardContent></Card>
+                <Card className="shadow-sm"><CardContent className="p-3 text-center"><p className="text-xs text-muted-foreground">Enviadas</p><p className="text-xl font-bold text-sky-600">{detailMessages.filter(m => m.status === 'sent').length}</p></CardContent></Card>
+                <Card className="shadow-sm"><CardContent className="p-3 text-center"><p className="text-xs text-muted-foreground">Entregues</p><p className="text-xl font-bold text-emerald-600">{detailMessages.filter(m => m.status === 'delivered' || m.status === 'read').length}</p></CardContent></Card>
+                <Card className="shadow-sm"><CardContent className="p-3 text-center"><p className="text-xs text-muted-foreground">Falharam</p><p className="text-xl font-bold text-rose-600">{detailMessages.filter(m => m.status === 'failed').length}</p></CardContent></Card>
+              </div>
+              {selectedCampaign.sequenceSteps?.length > 0 && (
+                <div className="space-y-2">
+                  <Label className="text-sm font-semibold">Sequência de Mensagens</Label>
+                  {selectedCampaign.sequenceSteps.sort((a, b) => a.stepOrder - b.stepOrder).map((step, idx) => (
+                    <div key={step.id} className="flex items-center gap-3 p-3 rounded-lg bg-muted/50">
+                      <span className="flex items-center justify-center size-7 rounded-full bg-emerald-600 text-white text-xs font-bold">{step.stepOrder}</span>
+                      <p className="flex-1 text-sm truncate">{step.content}</p>
+                      {step.delayMinutes > 0 && <Badge variant="secondary" className="text-xs gap-1"><Clock className="size-3" />{step.delayMinutes}min</Badge>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
 
-// ===== CONFIGURACOES TAB =====
-function ConfiguracoesTab() {
-  const [profile, setProfile] = useState(() => {
-    if (typeof window === 'undefined') return { businessName: '', phone: '' }
-    try { const saved = localStorage.getItem('octupuszap-config'); if (saved) return JSON.parse(saved).profile || { businessName: '', phone: '' }; return { businessName: '', phone: '' } }
-    catch { return { businessName: '', phone: '' } }
-  })
-  const [notifications, setNotifications] = useState(() => {
-    if (typeof window === 'undefined') return { campaignComplete: true, deviceDisconnected: true, dailyReport: false }
-    try { const saved = localStorage.getItem('octupuszap-config'); if (saved) return JSON.parse(saved).notifications || { campaignComplete: true, deviceDisconnected: true, dailyReport: false }; return { campaignComplete: true, deviceDisconnected: true, dailyReport: false } }
-    catch { return { campaignComplete: true, deviceDisconnected: true, dailyReport: false } }
+// ===== Templates Tab =====
+function TemplatesTab() {
+  const [templates, setTemplates] = useState<MessageTemplate[]>([])
+  const [loading, setLoading] = useState(true)
+  const [createDialogOpen, setCreateDialogOpen] = useState(false)
+  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
+  const [newTemplate, setNewTemplate] = useState({ name: '', content: '', category: 'geral' })
+  const [searchQuery, setSearchQuery] = useState('')
+  const [filterCategory, setFilterCategory] = useState('todas')
+
+  const fetchTemplates = useCallback(async () => {
+    try { const res = await fetch('/api/templates'); setTemplates(await res.json()) }
+    catch { toast.error('Erro ao carregar templates') } finally { setLoading(false) }
+  }, [])
+
+  useEffect(() => { fetchTemplates() }, [fetchTemplates])
+
+  const createTemplate = async () => {
+    try {
+      const res = await fetch('/api/templates', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newTemplate) })
+      if (!res.ok) throw new Error()
+      toast.success('Template criado!')
+      setCreateDialogOpen(false)
+      setNewTemplate({ name: '', content: '', category: 'geral' })
+      fetchTemplates()
+    } catch { toast.error('Erro ao criar template') }
+  }
+
+  const deleteTemplate = async (id: string) => {
+    try { await fetch(`/api/templates?id=${id}`, { method: 'DELETE' }); toast.success('Template removido!'); fetchTemplates() }
+    catch { toast.error('Erro ao remover template') }
+  }
+
+  const categories = ['todas', ...new Set(templates.map(t => t.category))]
+  const filtered = templates.filter(t => {
+    const matchSearch = !searchQuery || t.name.toLowerCase().includes(searchQuery.toLowerCase()) || t.content.toLowerCase().includes(searchQuery.toLowerCase())
+    const matchCategory = filterCategory === 'todas' || t.category === filterCategory
+    return matchSearch && matchCategory
   })
 
-  const save = () => {
-    localStorage.setItem('octupuszap-config', JSON.stringify({ profile, notifications }))
-    toast.success('Configuracoes salvas')
+  const insertVariable = (v: string) => {
+    setNewTemplate(prev => ({ ...prev, content: prev.content + v }))
+  }
+
+  const categoryColors: Record<string, string> = {
+    'saudação': 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400',
+    'vendas': 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
+    'follow-up': 'bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-400',
+    'pós-venda': 'bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400',
+    'geral': 'bg-zinc-100 text-zinc-700 dark:bg-zinc-900/30 dark:text-zinc-400',
   }
 
   return (
-    <div className="space-y-6 max-w-2xl">
-      {/* Profile */}
-      <Card className="border-zinc-200 dark:border-zinc-800">
-        <CardHeader className="pb-3"><CardTitle className="text-sm font-semibold">Perfil</CardTitle><CardDescription>Informacoes da sua empresa</CardDescription></CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-2"><Label>Nome da Empresa</Label><Input placeholder="Sua empresa" value={profile.businessName} onChange={e => setProfile(p => ({ ...p, businessName: e.target.value }))} /></div>
-          <div className="space-y-2"><Label>Telefone de Contato</Label><Input placeholder="11999990000" value={profile.phone} onChange={e => setProfile(p => ({ ...p, phone: e.target.value }))} /></div>
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-2xl font-bold">Templates</h2>
+          <p className="text-sm text-muted-foreground">Biblioteca de mensagens prontas</p>
+        </div>
+        <Dialog open={createDialogOpen} onOpenChange={setCreateDialogOpen}>
+          <DialogTrigger asChild>
+            <Button className="gap-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 shadow-lg">
+              <Plus className="size-4" /> Novo Template
+            </Button>
+          </DialogTrigger>
+          <DialogContent className="max-w-lg">
+            <DialogHeader>
+              <DialogTitle>Criar Template</DialogTitle>
+              <DialogDescription>Crie um template de mensagem reutilizável</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label>Nome</Label>
+                <Input placeholder="Ex: Boas-vindas" value={newTemplate.name} onChange={e => setNewTemplate(p => ({ ...p, name: e.target.value }))} />
+              </div>
+              <div className="space-y-2">
+                <Label>Categoria</Label>
+                <Select value={newTemplate.category} onValueChange={v => setNewTemplate(p => ({ ...p, category: v }))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {['geral', 'saudação', 'vendas', 'follow-up', 'pós-venda'].map(c => (
+                      <SelectItem key={c} value={c}>{c.charAt(0).toUpperCase() + c.slice(1)}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Conteúdo</Label>
+                <Textarea placeholder="Ex: Olá {nome}! Tudo bem?" value={newTemplate.content} onChange={e => setNewTemplate(p => ({ ...p, content: e.target.value }))} rows={4} />
+                <div className="flex flex-wrap gap-1.5">
+                  {['{nome}', '{empresa}', '{telefone}', '{cidade}'].map(v => (
+                    <Button key={v} variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={() => insertVariable(v)}>
+                      <Sparkles className="size-3" />{v}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <DialogFooter>
+              <DialogClose asChild><Button variant="outline">Cancelar</Button></DialogClose>
+              <Button onClick={createTemplate} disabled={!newTemplate.name || !newTemplate.content} className="bg-emerald-600 hover:bg-emerald-700">Criar Template</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </div>
+
+      {/* Filters */}
+      <div className="flex gap-3 flex-wrap">
+        <div className="relative flex-1 min-w-[200px]">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
+          <Input placeholder="Buscar templates..." className="pl-9" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
+        </div>
+        <Select value={filterCategory} onValueChange={setFilterCategory}>
+          <SelectTrigger className="w-44"><Filter className="size-4 mr-2" /><SelectValue /></SelectTrigger>
+          <SelectContent>
+            {categories.map(c => <SelectItem key={c} value={c}>{c.charAt(0).toUpperCase() + c.slice(1)}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </div>
+
+      {loading ? (
+        <div className="flex items-center justify-center py-20"><RefreshCw className="size-6 animate-spin text-muted-foreground" /></div>
+      ) : filtered.length === 0 ? (
+        <Card className="shadow-md border-0">
+          <CardContent className="flex flex-col items-center justify-center py-16">
+            <FileText className="size-10 text-muted-foreground mb-3" />
+            <p className="font-semibold">Nenhum template encontrado</p>
+            <p className="text-sm text-muted-foreground">Crie seu primeiro template de mensagem</p>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {filtered.map((t, i) => {
+            const vars = t.content.match(/\{[^}]+\}/g) || []
+            return (
+              <motion.div key={t.id} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}>
+                <Card className="shadow-md hover:shadow-lg transition-all border-0 group">
+                  <CardHeader className="pb-3">
+                    <div className="flex items-center gap-3">
+                      <div className="flex size-10 items-center justify-center rounded-xl bg-teal-100 dark:bg-teal-900/30">
+                        <MessageCircle className="size-5 text-teal-600" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <CardTitle className="truncate text-base">{t.name}</CardTitle>
+                        <Badge className={`mt-1 text-xs ${categoryColors[t.category] || categoryColors['geral']}`}>
+                          {t.category}
+                        </Badge>
+                      </div>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <p className="text-sm text-muted-foreground line-clamp-3">{t.content}</p>
+                    {vars.length > 0 && (
+                      <div className="flex flex-wrap gap-1">
+                        {vars.map((v, idx) => (
+                          <Badge key={idx} variant="outline" className="text-xs gap-1">
+                            <Sparkles className="size-2.5" />{v}
+                          </Badge>
+                        ))}
+                      </div>
+                    )}
+                    <Separator />
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs text-muted-foreground">{new Date(t.createdAt).toLocaleDateString('pt-BR')}</span>
+                      <Button variant="ghost" size="sm" className="text-rose-500 hover:text-rose-600 h-7 w-7 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                        onClick={() => setDeleteConfirm(t.id)}>
+                        <Trash2 className="size-3.5" />
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              </motion.div>
+            )
+          })}
+        </div>
+      )}
+
+      <ConfirmDialog open={!!deleteConfirm} onOpenChange={() => setDeleteConfirm(null)}
+        title="Remover Template" description="Tem certeza que deseja remover este template?"
+        onConfirm={() => { if (deleteConfirm) deleteTemplate(deleteConfirm) }} confirmLabel="Remover" variant="destructive" />
+    </div>
+  )
+}
+
+// ===== Anti-Ban Tab =====
+function AntiBanTab() {
+  const [settings, setSettings] = useState<AntiBanSettings | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+
+  const fetchSettings = useCallback(async () => {
+    try {
+      const res = await fetch('/api/antiban')
+      setSettings(await res.json())
+    } catch { toast.error('Erro ao carregar configurações') }
+    finally { setLoading(false) }
+  }, [])
+
+  useEffect(() => { fetchSettings() }, [fetchSettings])
+
+  const updateSetting = async (key: string, value: unknown) => {
+    if (!settings) return
+    setSaving(true)
+    try {
+      const res = await fetch('/api/antiban', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [key]: value }) })
+      setSettings(await res.json())
+      toast.success('Configuração atualizada!')
+    } catch { toast.error('Erro ao atualizar') }
+    finally { setSaving(false) }
+  }
+
+  if (loading) return <div className="flex items-center justify-center py-20"><RefreshCw className="size-6 animate-spin text-muted-foreground" /></div>
+  if (!settings) return null
+
+  const protectionItems = [
+    { key: 'randomLineBreaks', label: 'Quebra de Linha Aleatória', desc: 'Insere quebras de linha aleatórias nas mensagens', icon: Shuffle, enabled: settings.randomLineBreaks },
+    { key: 'emojiVariation', label: 'Variação de Emoji', desc: 'Varia emojis para evitar detecção de padrão', icon: Sparkles, enabled: settings.emojiVariation },
+    { key: 'warmingEnabled', label: 'Aquecimento Progressivo', desc: 'Aumenta o volume gradualmente', icon: Flame, enabled: settings.warmingEnabled },
+    { key: 'stopOnWarning', label: 'Parada em Aviso', desc: 'Para automaticamente se detectar aviso do WhatsApp', icon: AlertTriangle, enabled: settings.stopOnWarning },
+  ]
+
+  const warmingStages = [
+    { day: '1-2', msgs: 20, pct: 10 },
+    { day: '3-4', msgs: 50, pct: 25 },
+    { day: '5-7', msgs: 100, pct: 50 },
+    { day: '8+', msgs: settings.dailyLimitPerChip, pct: 100 },
+  ]
+
+  const tips = [
+    { icon: Clock, title: 'Varie os horários de envio', desc: 'Não envie sempre no mesmo horário' },
+    { icon: AlertCircle, title: 'Não envie links no primeiro dia', desc: 'Espere o chip aquecer antes' },
+    { icon: UserPlus, title: 'Use mensagens personalizadas com {nome}', desc: 'Mensagens genéricas são mais detectáveis' },
+    { icon: Flame, title: 'Aqueça chips novos gradualmente', desc: 'Comece com poucas mensagens' },
+    { icon: RefreshCw, title: 'Alterne entre chips a cada 50 mensagens', desc: 'Distribua o envio entre múltiplos chips' },
+    { icon: EyeOff, title: 'Evite mensagens idênticas para muitos contatos', desc: 'Use variações de texto' },
+  ]
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-2xl font-bold">Anti-Ban</h2>
+        <p className="text-sm text-muted-foreground">Proteja seus chips contra bloqueios do WhatsApp</p>
+      </div>
+
+      {/* Active Protection Banner */}
+      <Card className="shadow-lg border-0 overflow-hidden">
+        <div className={`p-6 ${settings.warmingEnabled ? 'bg-gradient-to-r from-emerald-500 to-teal-600' : 'bg-gradient-to-r from-zinc-500 to-zinc-600'}`}>
+          <div className="flex items-center justify-between text-white">
+            <div className="flex items-center gap-4">
+              <div className="flex size-14 items-center justify-center rounded-2xl bg-white/20 backdrop-blur">
+                {settings.warmingEnabled ? <ShieldCheck className="size-7" /> : <ShieldAlert className="size-7" />}
+              </div>
+              <div>
+                <h3 className="text-xl font-bold">{settings.warmingEnabled ? 'Proteção Ativada' : 'Proteção Desativada'}</h3>
+                <p className="text-sm opacity-90">{settings.warmingEnabled ? 'Seus chips estão protegidos contra bloqueios' : 'Ative a proteção para evitar bloqueios'}</p>
+              </div>
+            </div>
+            <Switch checked={settings.warmingEnabled} onCheckedChange={v => updateSetting('warmingEnabled', v)} />
+          </div>
+        </div>
+      </Card>
+
+      {/* Protection Features Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {protectionItems.map((item, i) => (
+          <motion.div key={item.key} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.1 }}>
+            <Card className="shadow-md hover:shadow-lg transition-all border-0">
+              <CardContent className="p-4">
+                <div className="flex items-center gap-3">
+                  <div className={`flex size-10 items-center justify-center rounded-xl ${item.enabled ? 'bg-emerald-100 dark:bg-emerald-900/30' : 'bg-zinc-100 dark:bg-zinc-900/30'}`}>
+                    <item.icon className={`size-5 ${item.enabled ? 'text-emerald-600' : 'text-zinc-400'}`} />
+                  </div>
+                  <div className="flex-1">
+                    <p className="font-medium text-sm">{item.label}</p>
+                    <p className="text-xs text-muted-foreground">{item.desc}</p>
+                  </div>
+                  <Switch checked={item.enabled} onCheckedChange={v => updateSetting(item.key, v)} />
+                </div>
+              </CardContent>
+            </Card>
+          </motion.div>
+        ))}
+      </div>
+
+      {/* Typing Simulation */}
+      <Card className="shadow-md border-0">
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <div className="flex size-8 items-center justify-center rounded-lg bg-amber-100 dark:bg-amber-900/30">
+              <Type className="size-4 text-amber-600" />
+            </div>
+            <CardTitle className="text-lg">Simulação de Digitação</CardTitle>
+          </div>
+          <CardDescription>Simule o comportamento humano de digitação</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <div className="flex justify-between">
+                <Label className="text-sm">Atraso mínimo (ms)</Label>
+                <span className="text-sm font-semibold">{settings.typingMinDelay}ms</span>
+              </div>
+              <Slider value={[settings.typingMinDelay]} onValueChange={([v]) => updateSetting('typingMinDelay', v)} min={200} max={3000} step={100} />
+            </div>
+            <div className="space-y-2">
+              <div className="flex justify-between">
+                <Label className="text-sm">Atraso máximo (ms)</Label>
+                <span className="text-sm font-semibold">{settings.typingMaxDelay}ms</span>
+              </div>
+              <Slider value={[settings.typingMaxDelay]} onValueChange={([v]) => updateSetting('typingMaxDelay', v)} min={500} max={5000} step={100} />
+            </div>
+          </div>
+          <div className="p-4 bg-muted/50 rounded-xl">
+            <p className="text-sm text-muted-foreground mb-2">Visualização:</p>
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1 text-emerald-600">
+                <MessageCircle className="size-4" />
+                <span className="text-sm">Digitando</span>
+                <span className="animate-pulse">...</span>
+              </div>
+              <span className="text-xs text-muted-foreground">({settings.typingMinDelay}–{settings.typingMaxDelay}ms)</span>
+              <span className="text-sm">→ Olá, tudo bem? 😊</span>
+            </div>
+          </div>
         </CardContent>
       </Card>
 
-      {/* Notifications */}
-      <Card className="border-zinc-200 dark:border-zinc-800">
-        <CardHeader className="pb-3"><CardTitle className="text-sm font-semibold">Notificacoes</CardTitle><CardDescription>Configure suas preferencias de notificacao</CardDescription></CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div><p className="text-sm font-medium">Campanha concluida</p><p className="text-xs text-muted-foreground">Receber alerta quando uma campanha terminar</p></div>
-            <Switch checked={notifications.campaignComplete} onCheckedChange={v => setNotifications(p => ({ ...p, campaignComplete: v }))} />
+      {/* Message Interval */}
+      <Card className="shadow-md border-0">
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <div className="flex size-8 items-center justify-center rounded-lg bg-sky-100 dark:bg-sky-900/30">
+              <Timer className="size-4 text-sky-600" />
+            </div>
+            <CardTitle className="text-lg">Intervalo entre Mensagens</CardTitle>
           </div>
-          <Separator />
-          <div className="flex items-center justify-between">
-            <div><p className="text-sm font-medium">Dispositivo desconectado</p><p className="text-xs text-muted-foreground">Alerta quando um dispositivo perder conexao</p></div>
-            <Switch checked={notifications.deviceDisconnected} onCheckedChange={v => setNotifications(p => ({ ...p, deviceDisconnected: v }))} />
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <div className="flex justify-between">
+                <Label className="text-sm">Intervalo mínimo (segundos)</Label>
+                <span className="text-sm font-semibold">{settings.messageIntervalMin}s</span>
+              </div>
+              <Slider value={[settings.messageIntervalMin]} onValueChange={([v]) => updateSetting('messageIntervalMin', v)} min={5} max={120} step={5} />
+            </div>
+            <div className="space-y-2">
+              <div className="flex justify-between">
+                <Label className="text-sm">Intervalo máximo (segundos)</Label>
+                <span className="text-sm font-semibold">{settings.messageIntervalMax}s</span>
+              </div>
+              <Slider value={[settings.messageIntervalMax]} onValueChange={([v]) => updateSetting('messageIntervalMax', v)} min={10} max={300} step={5} />
+            </div>
           </div>
-          <Separator />
-          <div className="flex items-center justify-between">
-            <div><p className="text-sm font-medium">Relatorio diario</p><p className="text-xs text-muted-foreground">Resumo diario de atividades</p></div>
-            <Switch checked={notifications.dailyReport} onCheckedChange={v => setNotifications(p => ({ ...p, dailyReport: v }))} />
+          <div className="p-4 bg-muted/50 rounded-xl">
+            <p className="text-sm text-muted-foreground mb-3">Distribuição de envio:</p>
+            <div className="flex items-center gap-2">
+              {[0, 1, 2, 3, 4, 5].map(i => (
+                <React.Fragment key={i}>
+                  <div className="size-3 rounded-full bg-emerald-500" />
+                  {i < 5 && <div className="flex-1 h-0.5 bg-gradient-to-r from-emerald-300 to-teal-300" style={{ width: `${20 + Math.random() * 30}px` }} />}
+                </React.Fragment>
+              ))}
+            </div>
+            <p className="text-xs text-muted-foreground mt-2">Cada ponto = 1 mensagem. Espaçamento aleatório entre {settings.messageIntervalMin}–{settings.messageIntervalMax}s</p>
           </div>
         </CardContent>
       </Card>
 
-      {/* API Config */}
-      <Card className="border-zinc-200 dark:border-zinc-800">
-        <CardHeader className="pb-3"><CardTitle className="text-sm font-semibold">API e Webhooks</CardTitle><CardDescription>Integre com servicos externos (em breve)</CardDescription></CardHeader>
+      {/* Progressive Warming */}
+      <Card className="shadow-md border-0">
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <div className="flex size-8 items-center justify-center rounded-lg bg-orange-100 dark:bg-orange-900/30">
+              <Flame className="size-4 text-orange-600" />
+            </div>
+            <CardTitle className="text-lg">Aquecimento Progressivo</CardTitle>
+          </div>
+          <CardDescription>Aumente o volume gradualmente para evitar detecção</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <div className="space-y-2">
+            <Label className="text-sm">Período de aquecimento</Label>
+            <div className="flex gap-2">
+              {[3, 5, 7, 14, 30].map(d => (
+                <Button key={d} variant={settings.warmingDays === d ? 'default' : 'outline'} size="sm"
+                  className={settings.warmingDays === d ? 'bg-emerald-600 hover:bg-emerald-700' : ''}
+                  onClick={() => updateSetting('warmingDays', d)}>
+                  {d} dias
+                </Button>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            {warmingStages.map((stage, i) => (
+              <div key={i} className="flex items-center gap-4">
+                <span className="text-xs text-muted-foreground w-12">Dia {stage.day}</span>
+                <div className="flex-1">
+                  <div className="h-6 bg-muted rounded-full overflow-hidden">
+                    <motion.div
+                      className="h-full bg-gradient-to-r from-emerald-400 to-teal-500 rounded-full flex items-center justify-end pr-2"
+                      initial={{ width: 0 }}
+                      animate={{ width: `${stage.pct}%` }}
+                      transition={{ duration: 0.8, delay: i * 0.2 }}
+                    >
+                      <span className="text-xs font-semibold text-white">{stage.msgs} msgs/dia</span>
+                    </motion.div>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Cooldown & Limits */}
+      <Card className="shadow-md border-0">
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <div className="flex size-8 items-center justify-center rounded-lg bg-rose-100 dark:bg-rose-900/30">
+              <ShieldAlert className="size-4 text-rose-600" />
+            </div>
+            <CardTitle className="text-lg">Cooldown & Limites</CardTitle>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="space-y-2">
+              <div className="flex justify-between">
+                <Label className="text-sm">Limite diário por chip</Label>
+                <span className="text-sm font-semibold">{settings.dailyLimitPerChip} mensagens</span>
+              </div>
+              <Slider value={[settings.dailyLimitPerChip]} onValueChange={([v]) => updateSetting('dailyLimitPerChip', v)} min={50} max={500} step={10} />
+            </div>
+            <div className="space-y-2">
+              <div className="flex justify-between">
+                <Label className="text-sm">Cooldown após</Label>
+                <span className="text-sm font-semibold">{settings.cooldownAfterMessages} mensagens</span>
+              </div>
+              <Slider value={[settings.cooldownAfterMessages]} onValueChange={([v]) => updateSetting('cooldownAfterMessages', v)} min={10} max={100} step={5} />
+            </div>
+            <div className="space-y-2">
+              <div className="flex justify-between">
+                <Label className="text-sm">Duração do cooldown</Label>
+                <span className="text-sm font-semibold">{settings.cooldownMinutes} minutos</span>
+              </div>
+              <Slider value={[settings.cooldownMinutes]} onValueChange={([v]) => updateSetting('cooldownMinutes', v)} min={5} max={120} step={5} />
+            </div>
+            <div className="flex items-center justify-between p-4 bg-muted/50 rounded-xl">
+              <div>
+                <p className="font-medium text-sm">Parada em Aviso</p>
+                <p className="text-xs text-muted-foreground">Para se detectar aviso do WhatsApp</p>
+              </div>
+              <Switch checked={settings.stopOnWarning} onCheckedChange={v => updateSetting('stopOnWarning', v)} />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Tips */}
+      <Card className="shadow-md border-0">
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <div className="flex size-8 items-center justify-center rounded-lg bg-amber-100 dark:bg-amber-900/30">
+              <Star className="size-4 text-amber-600" />
+            </div>
+            <CardTitle className="text-lg">Dicas Anti-Ban</CardTitle>
+          </div>
+          <CardDescription>Boas práticas para evitar bloqueios</CardDescription>
+        </CardHeader>
         <CardContent>
-          <div className="text-center py-4">
-            <div className="flex size-12 items-center justify-center rounded-xl bg-zinc-100 dark:bg-zinc-800 mx-auto mb-3"><Database className="size-6 text-muted-foreground" /></div>
-            <p className="text-sm font-medium text-muted-foreground">Configuracao de API disponivel em breve</p>
-            <p className="text-xs text-muted-foreground mt-1">Webhooks, integracoes e automacoes</p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {tips.map((tip, i) => (
+              <motion.div key={i} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.1 }}
+                className="flex items-start gap-3 p-3 rounded-lg hover:bg-muted/30 transition-colors">
+                <div className="flex size-8 items-center justify-center rounded-lg bg-amber-100 dark:bg-amber-900/20 shrink-0">
+                  <tip.icon className="size-4 text-amber-600" />
+                </div>
+                <div>
+                  <p className="text-sm font-medium">{tip.title}</p>
+                  <p className="text-xs text-muted-foreground">{tip.desc}</p>
+                </div>
+              </motion.div>
+            ))}
           </div>
         </CardContent>
       </Card>
+    </div>
+  )
+}
 
-      {/* About */}
-      <Card className="border-zinc-200 dark:border-zinc-800">
-        <CardHeader className="pb-3"><CardTitle className="text-sm font-semibold">Sobre</CardTitle></CardHeader>
-        <CardContent className="space-y-3">
-          <div className="flex items-center justify-between"><span className="text-sm text-muted-foreground">Versao</span><span className="text-sm font-mono">1.0.0</span></div>
-          <div className="flex items-center justify-between"><span className="text-sm text-muted-foreground">Plataforma</span><span className="text-sm">OctupusZap</span></div>
-        </CardContent>
-      </Card>
+// ===== Mensagens Tab =====
+function MensagensTab() {
+  const [messages, setMessages] = useState<MessageItem[]>([])
+  const [loading, setLoading] = useState(true)
+  const [statusFilter, setStatusFilter] = useState('all')
+  const [searchQuery, setSearchQuery] = useState('')
+
+  const fetchMessages = useCallback(async () => {
+    try {
+      const res = await fetch('/api/messages')
+      setMessages(await res.json())
+    } catch { toast.error('Erro ao carregar mensagens') }
+    finally { setLoading(false) }
+  }, [])
+
+  useEffect(() => { fetchMessages() }, [fetchMessages])
+
+  const filtered = messages.filter(m => {
+    const matchStatus = statusFilter === 'all' || m.status === statusFilter
+    const matchSearch = !searchQuery ||
+      m.contact?.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      m.contact?.phone?.includes(searchQuery)
+    return matchStatus && matchSearch
+  })
+
+  const statusTabs = [
+    { value: 'all', label: 'Todas', count: messages.length },
+    { value: 'pending', label: 'Pendentes', count: messages.filter(m => m.status === 'pending').length },
+    { value: 'sent', label: 'Enviadas', count: messages.filter(m => m.status === 'sent').length },
+    { value: 'delivered', label: 'Entregues', count: messages.filter(m => m.status === 'delivered').length },
+    { value: 'read', label: 'Lidas', count: messages.filter(m => m.status === 'read').length },
+    { value: 'failed', label: 'Falharam', count: messages.filter(m => m.status === 'failed').length },
+  ]
+
+  const exportCSV = () => {
+    const headers = 'Contato,Telefone,Chip,Mensagem,Status,Data'
+    const rows = filtered.map(m => `"${m.contact?.name || ''}","${m.contact?.phone || ''}","${m.chip?.name || ''}","${m.content.substring(0, 50)}","${statusLabel(m.status)}","${m.createdAt ? new Date(m.createdAt).toLocaleString('pt-BR') : ''}"`)
+    const csv = [headers, ...rows].join('\n')
+    const blob = new Blob([csv], { type: 'text/csv' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = 'mensagens.csv'; a.click()
+    URL.revokeObjectURL(url)
+    toast.success('CSV exportado!')
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-2xl font-bold">Mensagens</h2>
+          <p className="text-sm text-muted-foreground">Histórico completo de mensagens enviadas</p>
+        </div>
+        <Button variant="outline" className="gap-2" onClick={exportCSV}>
+          <Download className="size-4" /> Exportar CSV
+        </Button>
+      </div>
+
+      <div className="flex gap-3 flex-wrap">
+        <div className="relative flex-1 min-w-[200px]">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
+          <Input placeholder="Buscar por contato ou telefone..." className="pl-9" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
+        </div>
+      </div>
+
+      <div className="flex gap-2 overflow-x-auto pb-2">
+        {statusTabs.map(tab => (
+          <Button key={tab.value} variant={statusFilter === tab.value ? 'default' : 'outline'} size="sm"
+            className={statusFilter === tab.value ? 'bg-emerald-600 hover:bg-emerald-700' : ''}
+            onClick={() => setStatusFilter(tab.value)}>
+            {tab.label} <Badge variant="secondary" className="ml-1.5 h-5 min-w-[20px]">{tab.count}</Badge>
+          </Button>
+        ))}
+      </div>
+
+      {loading ? (
+        <div className="flex items-center justify-center py-20"><RefreshCw className="size-6 animate-spin text-muted-foreground" /></div>
+      ) : filtered.length === 0 ? (
+        <Card className="shadow-md border-0">
+          <CardContent className="flex flex-col items-center justify-center py-16">
+            <MessageSquare className="size-10 text-muted-foreground mb-3" />
+            <p className="font-semibold">Nenhuma mensagem encontrada</p>
+            <p className="text-sm text-muted-foreground">As mensagens aparecerão aqui após o envio</p>
+          </CardContent>
+        </Card>
+      ) : (
+        <Card className="shadow-md border-0">
+          <CardContent className="p-0">
+            <ScrollArea className="max-h-[600px]">
+              <table className="w-full text-sm">
+                <thead className="bg-muted/50 sticky top-0 z-10">
+                  <tr>
+                    <th className="text-left p-3 font-medium">Contato</th>
+                    <th className="text-left p-3 font-medium">Telefone</th>
+                    <th className="text-left p-3 font-medium">Chip</th>
+                    <th className="text-left p-3 font-medium">Mensagem</th>
+                    <th className="text-left p-3 font-medium">Status</th>
+                    <th className="text-left p-3 font-medium">Data/Hora</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map(m => (
+                    <tr key={m.id} className="border-t hover:bg-muted/30 transition-colors">
+                      <td className="p-3 font-medium">{m.contact?.name || '—'}</td>
+                      <td className="p-3 text-muted-foreground">{m.contact?.phone || '—'}</td>
+                      <td className="p-3 text-muted-foreground">{m.chip?.name || '—'}</td>
+                      <td className="p-3 max-w-[200px] truncate text-muted-foreground">{m.content}</td>
+                      <td className="p-3"><StatusBadge status={m.status} /></td>
+                      <td className="p-3 text-xs text-muted-foreground">{m.createdAt ? new Date(m.createdAt).toLocaleString('pt-BR') : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </ScrollArea>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  )
+}
+
+// ===== Configurações Tab =====
+function ConfiguracoesTab() {
+  const [config, setConfig] = useState({
+    resetHour: 0, defaultProxyMode: 'none', globalDailyLimit: 1000,
+    emailNotifications: true, timezone: 'America/Sao_Paulo',
+  })
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-2xl font-bold">Configurações</h2>
+        <p className="text-sm text-muted-foreground">Configurações gerais do sistema</p>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <Card className="shadow-md border-0">
+          <CardHeader>
+            <div className="flex items-center gap-2">
+              <div className="flex size-8 items-center justify-center rounded-lg bg-sky-100 dark:bg-sky-900/30">
+                <Clock className="size-4 text-sky-600" />
+              </div>
+              <CardTitle className="text-lg">Reset Diário</CardTitle>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Label>Hora do reset diário</Label>
+              <Input type="number" min={0} max={23} value={config.resetHour}
+                onChange={e => setConfig(p => ({ ...p, resetHour: parseInt(e.target.value) || 0 }))} />
+              <p className="text-xs text-muted-foreground">Os contadores de mensagem serão zerados neste horário</p>
+            </div>
+            <div className="space-y-2">
+              <Label>Zona horária</Label>
+              <Select value={config.timezone} onValueChange={v => setConfig(p => ({ ...p, timezone: v }))}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="America/Sao_Paulo">Brasília (GMT-3)</SelectItem>
+                  <SelectItem value="America/Manaus">Manaus (GMT-4)</SelectItem>
+                  <SelectItem value="America/Belem">Belém (GMT-3)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="shadow-md border-0">
+          <CardHeader>
+            <div className="flex items-center gap-2">
+              <div className="flex size-8 items-center justify-center rounded-lg bg-violet-100 dark:bg-violet-900/30">
+                <Smartphone className="size-4 text-violet-600" />
+              </div>
+              <CardTitle className="text-lg">Conexão Padrão</CardTitle>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Label>Modo de conexão padrão</Label>
+              <Select value={config.defaultProxyMode} onValueChange={v => setConfig(p => ({ ...p, defaultProxyMode: v }))}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">QR Code (WhatsApp Web)</SelectItem>
+                  <SelectItem value="socks5">Proxy SOCKS5</SelectItem>
+                  <SelectItem value="wireguard">WireGuard</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="shadow-md border-0">
+          <CardHeader>
+            <div className="flex items-center gap-2">
+              <div className="flex size-8 items-center justify-center rounded-lg bg-amber-100 dark:bg-amber-900/30">
+                <Zap className="size-4 text-amber-600" />
+              </div>
+              <CardTitle className="text-lg">Limites</CardTitle>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <div className="flex justify-between">
+                <Label>Limite global de mensagens por dia</Label>
+                <span className="text-sm font-semibold">{config.globalDailyLimit}</span>
+              </div>
+              <Slider value={[config.globalDailyLimit]} onValueChange={([v]) => setConfig(p => ({ ...p, globalDailyLimit: v }))} min={100} max={5000} step={100} />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="shadow-md border-0">
+          <CardHeader>
+            <div className="flex items-center gap-2">
+              <div className="flex size-8 items-center justify-center rounded-lg bg-emerald-100 dark:bg-emerald-900/30">
+                <MessageSquare className="size-4 text-emerald-600" />
+              </div>
+              <CardTitle className="text-lg">Notificações</CardTitle>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex items-center justify-between p-3 bg-muted/50 rounded-xl">
+              <div>
+                <p className="font-medium text-sm">Notificações por email</p>
+                <p className="text-xs text-muted-foreground">Receba alertas sobre campanhas e chips</p>
+              </div>
+              <Switch checked={config.emailNotifications} onCheckedChange={v => setConfig(p => ({ ...p, emailNotifications: v }))} />
+            </div>
+          </CardContent>
+        </Card>
+      </div>
 
       <div className="flex justify-end">
-        <Button onClick={save} className="gap-2 bg-emerald-600 hover:bg-emerald-700 text-white min-w-[160px]">
-          <Check className="size-4" /> Salvar Configuracoes
+        <Button className="gap-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 shadow-lg"
+          onClick={() => toast.success('Configurações salvas!')}>
+          <Check className="size-4" /> Salvar Configurações
         </Button>
       </div>
     </div>
   )
 }
 
-// ===== MAIN HOME =====
-export default function Home() {
-  const [activeTab, setActiveTab] = useState<TabId>('dashboard')
+// ===== Main App =====
+export default function OctupusZapApp() {
+  const [activeTab, setActiveTab] = useState('dashboard')
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [stats, setStats] = useState<Stats | null>(null)
 
   useEffect(() => {
-    fetch('/api/stats').then(r => r.json()).then(setStats).catch(() => setStats(null))
+    fetch('/api/stats').then(r => r.json()).then(setStats).catch(() => {})
   }, [])
 
-  const navigate = (tab: TabId) => { setActiveTab(tab); setSidebarOpen(false) }
+  const renderContent = () => {
+    switch (activeTab) {
+      case 'dashboard': return <DashboardTab stats={stats} />
+      case 'chips': return <ChipsTab />
+      case 'contatos': return <ContatosTab />
+      case 'campanhas': return <CampanhasTab />
+      case 'templates': return <TemplatesTab />
+      case 'antiban': return <AntiBanTab />
+      case 'mensagens': return <MensagensTab />
+      case 'config': return <ConfiguracoesTab />
+      default: return <DashboardTab stats={stats} />
+    }
+  }
 
   return (
-    <div className="flex h-screen bg-background overflow-hidden">
-      {/* Mobile overlay */}
-      <AnimatePresence>
-        {sidebarOpen && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-black/50 z-40 lg:hidden" onClick={() => setSidebarOpen(false)} />
-        )}
-      </AnimatePresence>
-
-      {/* Sidebar */}
-      <aside className={`
-        fixed lg:static inset-y-0 left-0 z-50 w-64 flex-shrink-0
-        bg-gradient-to-b from-zinc-950 to-zinc-900 border-r border-zinc-800/50
-        transform transition-transform duration-200 ease-in-out
-        ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0
-      `}>
-        <div className="flex flex-col h-full">
-          {/* Logo */}
-          <div className="flex items-center gap-3 px-5 h-16 border-b border-zinc-800/50 shrink-0">
-            <div className="flex size-8 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-500 to-emerald-600">
-              <Zap className="size-4 text-white" />
+    <div className="min-h-screen flex bg-zinc-50 dark:bg-zinc-950">
+      {/* Sidebar - Desktop */}
+      <aside className="hidden lg:flex w-64 flex-col bg-zinc-900 dark:bg-zinc-950 border-r border-zinc-800">
+        <div className="p-6">
+          <div className="flex items-center gap-3">
+            <div className="flex size-10 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-400 to-teal-500 shadow-lg">
+              <Zap className="size-5 text-white" />
             </div>
-            <span className="font-bold text-lg text-white tracking-tight">OctupusZap</span>
-            <button onClick={() => setSidebarOpen(false)} className="lg:hidden ml-auto text-zinc-400 hover:text-white"><X className="size-5" /></button>
+            <div>
+              <h1 className="text-lg font-bold text-white">OctupusZap</h1>
+              <p className="text-xs text-zinc-400">Mass Messaging SaaS</p>
+            </div>
           </div>
+        </div>
 
-          {/* Nav */}
-          <ScrollArea className="flex-1 py-4">
-            <nav className="space-y-1 px-3">
-              {NAV_ITEMS.map(item => {
-                const isActive = activeTab === item.id
-                return (
-                  <button key={item.id} onClick={() => navigate(item.id)}
-                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                      isActive
-                        ? 'bg-emerald-500/10 text-emerald-400'
-                        : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50'
-                    }`}>
-                    <span className={isActive ? 'text-emerald-400' : 'text-zinc-500'}>{item.icon}</span>
-                    {item.label}
-                    {isActive && <div className="ml-auto size-1.5 rounded-full bg-emerald-400" />}
-                  </button>
-                )
-              })}
-            </nav>
-          </ScrollArea>
+        <nav className="flex-1 px-3 space-y-1">
+          {NAV_ITEMS.map(item => (
+            <button key={item.id}
+              onClick={() => setActiveTab(item.id)}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                activeTab === item.id
+                  ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/25'
+                  : 'text-zinc-400 hover:text-white hover:bg-zinc-800'
+              }`}>
+              <item.icon className="size-4" />
+              {item.label}
+            </button>
+          ))}
+        </nav>
 
-          {/* Footer */}
-          <div className="px-5 py-4 border-t border-zinc-800/50 shrink-0">
-            <div className="flex items-center gap-2 text-xs text-zinc-500">
-              <CircleDot className="size-3.5 text-emerald-500" />
-              <span>Sistema Operacional</span>
+        <div className="p-4 m-3 rounded-xl bg-zinc-800/50">
+          <div className="flex items-center gap-3">
+            <div className="flex size-9 items-center justify-center rounded-full bg-emerald-600">
+              <span className="text-sm font-bold text-white">OZ</span>
+            </div>
+            <div>
+              <p className="text-sm font-medium text-white">OctupusZap</p>
+              <p className="text-xs text-zinc-400">Plano Pro</p>
             </div>
           </div>
         </div>
       </aside>
 
-      {/* Main content */}
-      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-        {/* Top bar */}
-        <header className="flex items-center justify-between h-16 px-4 lg:px-6 border-b border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 shrink-0">
-          <div className="flex items-center gap-3">
-            <button onClick={() => setSidebarOpen(true)} className="lg:hidden p-2 -ml-2 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-800">
-              <Menu className="size-5" />
-            </button>
-            <h1 className="text-lg font-semibold">{SECTION_TITLES[activeTab]}</h1>
+      {/* Mobile sidebar overlay */}
+      <AnimatePresence>
+        {sidebarOpen && (
+          <>
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/50 z-40 lg:hidden" onClick={() => setSidebarOpen(false)} />
+            <motion.aside initial={{ x: -280 }} animate={{ x: 0 }} exit={{ x: -280 }}
+              className="fixed left-0 top-0 bottom-0 w-64 bg-zinc-900 z-50 lg:hidden flex flex-col">
+              <div className="p-6">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="flex size-10 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-400 to-teal-500 shadow-lg">
+                      <Zap className="size-5 text-white" />
+                    </div>
+                    <h1 className="text-lg font-bold text-white">OctupusZap</h1>
+                  </div>
+                  <Button variant="ghost" size="sm" className="text-white" onClick={() => setSidebarOpen(false)}>
+                    <X className="size-5" />
+                  </Button>
+                </div>
+              </div>
+              <nav className="flex-1 px-3 space-y-1">
+                {NAV_ITEMS.map(item => (
+                  <button key={item.id}
+                    onClick={() => { setActiveTab(item.id); setSidebarOpen(false) }}
+                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                      activeTab === item.id
+                        ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/25'
+                        : 'text-zinc-400 hover:text-white hover:bg-zinc-800'
+                    }`}>
+                    <item.icon className="size-4" />
+                    {item.label}
+                  </button>
+                ))}
+              </nav>
+            </motion.aside>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* Main Content */}
+      <div className="flex-1 flex flex-col min-w-0">
+        {/* Top Bar */}
+        <header className="sticky top-0 z-30 flex items-center gap-4 px-4 lg:px-6 h-14 bg-white/80 dark:bg-zinc-900/80 backdrop-blur-md border-b">
+          <Button variant="ghost" size="sm" className="lg:hidden" onClick={() => setSidebarOpen(true)}>
+            <Menu className="size-5" />
+          </Button>
+
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Zap className="size-4 text-emerald-500 lg:hidden" />
+            <span className="font-medium text-foreground">{NAV_ITEMS.find(n => n.id === activeTab)?.label || 'Dashboard'}</span>
           </div>
-          <div className="flex items-center gap-2">
-            <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
-              <Bell className="size-4 text-muted-foreground" />
-            </Button>
+
+          <div className="flex-1" />
+
+          <div className="flex items-center gap-3">
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-100 dark:bg-emerald-900/30">
+                    <Shield className="size-3.5 text-emerald-600" />
+                    <span className="text-xs font-semibold text-emerald-600">Anti-Ban Ativo</span>
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent>Proteção anti-ban está ativada</TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           </div>
         </header>
 
-        {/* Page content */}
-        <main className="flex-1 overflow-y-auto">
-          <div className="p-4 lg:p-6">
-            <AnimatePresence mode="wait">
-              <motion.div key={activeTab} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.15 }}>
-                {activeTab === 'dashboard' && <DashboardTab stats={stats} onNavigate={navigate} />}
-                {activeTab === 'dispositivos' && <DispositivosTab />}
-                {activeTab === 'campanhas' && <CampanhasTab />}
-                {activeTab === 'contatos' && <ContatosTab />}
-                {activeTab === 'mensagens' && <MensagensTab />}
-                {activeTab === 'antiban' && <AntiBanTab />}
-                {activeTab === 'configuracoes' && <ConfiguracoesTab />}
-              </motion.div>
-            </AnimatePresence>
-          </div>
+        {/* Page Content */}
+        <main className="flex-1 p-4 lg:p-6">
+          <AnimatePresence mode="wait">
+            <motion.div key={activeTab} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} transition={{ duration: 0.2 }}>
+              {renderContent()}
+            </motion.div>
+          </AnimatePresence>
         </main>
+
+        {/* Footer */}
+        <footer className="px-4 lg:px-6 py-4 border-t bg-white dark:bg-zinc-900">
+          <div className="flex items-center justify-between text-xs text-muted-foreground">
+            <p>OctupusZap © {new Date().getFullYear()} — Todos os direitos reservados</p>
+            <p className="flex items-center gap-1">
+              <Zap className="size-3 text-emerald-500" /> Powered by OctupusZap
+            </p>
+          </div>
+        </footer>
       </div>
     </div>
   )
