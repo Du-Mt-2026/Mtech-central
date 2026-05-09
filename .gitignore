@@ -30,8 +30,9 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
+# env files
 .env*
+!.env.example
 
 # vercel
 .vercel
@@ -50,5 +51,20 @@ test
 prompt
 
 server.log
+
+# SQLite local database
+/db/
+*.db
+*.db-journal
+
 # Skills directory
 /skills/
+
+# Mini services
+/mini-services/
+
+# Worklog
+worklog.md
+
+# Examples
+/examples/
