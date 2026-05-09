@@ -3034,31 +3034,59 @@ export default function OctupusZapApp() {
   // Login screen
   if (!loggedIn) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-zinc-50 dark:bg-zinc-950 p-4">
-        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-md">
-          <Card className="shadow-2xl border-0">
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-zinc-900 via-zinc-800 to-zinc-900 p-4">
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }} className="w-full max-w-md">
+          <Card className="shadow-2xl border-zinc-700/50 bg-zinc-900/80 backdrop-blur-xl">
             <CardHeader className="text-center pb-2">
               <div className="flex justify-center mb-4">
-                <div className="flex size-16 items-center justify-center rounded-2xl bg-gradient-to-br from-emerald-400 to-teal-500 shadow-lg">
-                  <Zap className="size-8 text-white" />
-                </div>
+                <motion.div
+                  initial={{ scale: 0.8, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  transition={{ delay: 0.2, duration: 0.4 }}
+                  className="flex size-20 items-center justify-center rounded-2xl bg-gradient-to-br from-emerald-400 to-teal-500 shadow-xl shadow-emerald-500/25"
+                >
+                  <Zap className="size-10 text-white" />
+                </motion.div>
               </div>
-              <CardTitle className="text-2xl">OctupusZap</CardTitle>
-              <CardDescription>Faça login para acessar o painel</CardDescription>
+              <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }}>
+                <CardTitle className="text-2xl text-white">OctupusZap</CardTitle>
+                <CardDescription className="text-zinc-400">Faça login para acessar o painel</CardDescription>
+              </motion.div>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label>Usuário</Label>
-                <Input placeholder="admin" value={loginForm.username} onChange={e => setLoginForm(p => ({ ...p, username: e.target.value }))} />
-              </div>
-              <div className="space-y-2">
-                <Label>Senha</Label>
-                <Input type="password" placeholder="••••••" value={loginForm.password} onChange={e => setLoginForm(p => ({ ...p, password: e.target.value }))} onKeyDown={e => e.key === 'Enter' && handleLogin()} />
-              </div>
-              <Button className="w-full gap-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 shadow-lg" onClick={handleLogin} disabled={loginLoading || !loginForm.username || !loginForm.password}>
-                {loginLoading ? <RefreshCw className="size-4 animate-spin" /> : <Lock className="size-4" />}
-                {loginLoading ? 'Entrando...' : 'Entrar'}
-              </Button>
+              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.4 }} className="space-y-4">
+                <div className="space-y-2">
+                  <Label className="text-zinc-300">Usuário</Label>
+                  <Input
+                    placeholder="admin"
+                    value={loginForm.username}
+                    onChange={e => setLoginForm(p => ({ ...p, username: e.target.value }))}
+                    className="bg-zinc-800/50 border-zinc-700 text-white placeholder:text-zinc-500 focus:border-emerald-500 focus:ring-emerald-500/20"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-zinc-300">Senha</Label>
+                  <Input
+                    type="password"
+                    placeholder="••••••"
+                    value={loginForm.password}
+                    onChange={e => setLoginForm(p => ({ ...p, password: e.target.value }))}
+                    onKeyDown={e => e.key === 'Enter' && handleLogin()}
+                    className="bg-zinc-800/50 border-zinc-700 text-white placeholder:text-zinc-500 focus:border-emerald-500 focus:ring-emerald-500/20"
+                  />
+                </div>
+                <Button
+                  className="w-full gap-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 shadow-lg shadow-emerald-500/25 text-white font-semibold h-11"
+                  onClick={handleLogin}
+                  disabled={loginLoading || !loginForm.username || !loginForm.password}
+                >
+                  {loginLoading ? <RefreshCw className="size-4 animate-spin" /> : <Lock className="size-4" />}
+                  {loginLoading ? 'Entrando...' : 'Entrar'}
+                </Button>
+                <p className="text-center text-xs text-zinc-500 mt-4">
+                  Padrão: admin / admin123
+                </p>
+              </motion.div>
             </CardContent>
           </Card>
         </motion.div>
