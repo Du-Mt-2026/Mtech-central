@@ -8,7 +8,7 @@ const AUTH_SECRET = new TextEncoder().encode(
 
 // Routes that don't require authentication (external services call these)
 const PUBLIC_API_ROUTES = [
-  '/api/auth/',                // Login/logout/session
+  '/api/auth/',                // Login/logout/session/reset-password
   '/api/whatsapp/webhook',     // Evolution API webhook callbacks
   '/api/campaigns/process-all', // Vercel Cron job (has its own CRON_SECRET check)
 ]

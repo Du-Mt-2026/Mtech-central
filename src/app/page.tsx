@@ -3165,6 +3165,9 @@ export default function OctupusZapApp() {
   const [authLoading, setAuthLoading] = useState(true)
   const [loginForm, setLoginForm] = useState({ username: '', password: '' })
   const [loginLoading, setLoginLoading] = useState(false)
+  const [forgotDialogOpen, setForgotDialogOpen] = useState(false)
+  const [forgotForm, setForgotForm] = useState({ newPassword: '', confirmPassword: '', verificationKey: '' })
+  const [forgotLoading, setForgotLoading] = useState(false)
 
   useEffect(() => {
     fetch('/api/auth/session').then(r => r.json()).then(data => {
@@ -3222,6 +3225,34 @@ export default function OctupusZapApp() {
       setUsername('')
       toast.success('Logout realizado!')
     } catch { toast.error('Erro ao fazer logout') }
+  }
+
+  const handleForgotPassword = async () => {
+    if (!forgotForm.newPassword || forgotForm.newPassword.length < 6) {
+      toast.error('A nova senha deve ter pelo menos 6 caracteres')
+      return
+    }
+    if (forgotForm.newPassword !== forgotForm.confirmPassword) {
+      toast.error('As senhas não conferem')
+      return
+    }
+    setForgotLoading(true)
+    try {
+      const res = await fetch('/api/auth/reset-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ newPassword: forgotForm.newPassword, verificationKey: forgotForm.verificationKey }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Erro ao redefinir senha')
+      toast.success('Senha redefinida com sucesso! Faça login com a nova senha.')
+      setForgotDialogOpen(false)
+      setForgotForm({ newPassword: '', confirmPassword: '', verificationKey: '' })
+    } catch (err: unknown) {
+      toast.error((err as Error).message || 'Erro ao redefinir senha')
+    } finally {
+      setForgotLoading(false)
+    }
   }
 
   const renderContent = () => {
@@ -3300,12 +3331,81 @@ export default function OctupusZapApp() {
                   {loginLoading ? <RefreshCw className="size-4 animate-spin" /> : <Lock className="size-4" />}
                   {loginLoading ? 'Entrando...' : 'Entrar'}
                 </Button>
-                <p className="text-center text-xs text-zinc-500 mt-4">
-                  Padrão: admin / admin123
-                </p>
+                <div className="flex items-center justify-center">
+                  <button
+                    type="button"
+                    className="text-xs text-zinc-500 hover:text-emerald-400 transition-colors underline underline-offset-2"
+                    onClick={() => setForgotDialogOpen(true)}
+                  >
+                    Esqueceu a senha?
+                  </button>
+                </div>
               </motion.div>
             </CardContent>
           </Card>
+
+          {/* Forgot Password Dialog */}
+          <Dialog open={forgotDialogOpen} onOpenChange={setForgotDialogOpen}>
+            <DialogContent className="bg-zinc-900 border-zinc-700 text-white">
+              <DialogHeader>
+                <DialogTitle className="text-white">Redefinir Senha</DialogTitle>
+                <DialogDescription className="text-zinc-400">
+                  Crie uma nova senha para acessar o painel. A recuperação é protegida pela Evolution API Key.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4 py-4">
+                <div className="space-y-2">
+                  <Label className="text-zinc-300">Evolution API Key (verificação)</Label>
+                  <Input
+                    type="password"
+                    placeholder="Cole a API Key da Evolution API"
+                    value={forgotForm.verificationKey}
+                    onChange={e => setForgotForm(p => ({ ...p, verificationKey: e.target.value }))}
+                    className="bg-zinc-800/50 border-zinc-700 text-white placeholder:text-zinc-500 focus:border-emerald-500"
+                  />
+                  <p className="text-xs text-zinc-500">Encontre em: Configurações → Evolution API → API Key</p>
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-zinc-300">Nova Senha</Label>
+                  <Input
+                    type="password"
+                    placeholder="Mínimo 6 caracteres"
+                    value={forgotForm.newPassword}
+                    onChange={e => setForgotForm(p => ({ ...p, newPassword: e.target.value }))}
+                    className="bg-zinc-800/50 border-zinc-700 text-white placeholder:text-zinc-500 focus:border-emerald-500"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-zinc-300">Confirmar Nova Senha</Label>
+                  <Input
+                    type="password"
+                    placeholder="Repita a nova senha"
+                    value={forgotForm.confirmPassword}
+                    onChange={e => setForgotForm(p => ({ ...p, confirmPassword: e.target.value }))}
+                    onKeyDown={e => e.key === 'Enter' && handleForgotPassword()}
+                    className="bg-zinc-800/50 border-zinc-700 text-white placeholder:text-zinc-500 focus:border-emerald-500"
+                  />
+                </div>
+                <div className="rounded-lg bg-amber-500/10 border border-amber-500/20 p-3 flex items-start gap-2">
+                  <AlertTriangle className="size-4 text-amber-500 mt-0.5 shrink-0" />
+                  <p className="text-xs text-amber-400">Por segurança, é necessário informar a Evolution API Key para redefinir a senha. Isso garante que apenas administradores com acesso à API possam alterar a senha.</p>
+                </div>
+              </div>
+              <DialogFooter>
+                <DialogClose asChild>
+                  <Button variant="outline" className="border-zinc-700 text-zinc-300 hover:bg-zinc-800">Cancelar</Button>
+                </DialogClose>
+                <Button
+                  className="gap-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white"
+                  onClick={handleForgotPassword}
+                  disabled={forgotLoading || !forgotForm.newPassword || !forgotForm.confirmPassword || !forgotForm.verificationKey}
+                >
+                  {forgotLoading ? <RefreshCw className="size-4 animate-spin" /> : <ShieldCheck className="size-4" />}
+                  {forgotLoading ? 'Redefinindo...' : 'Redefinir Senha'}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </motion.div>
       </div>
     )
