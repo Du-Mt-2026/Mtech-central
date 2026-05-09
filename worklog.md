@@ -187,3 +187,25 @@ Stage Summary:
 - Complete dashboard with live activity feed and chip status monitoring
 - All APIs tested and working
 - Zero lint errors
+
+---
+Task ID: 6
+Agent: Main
+Task: Migrar para Neon PostgreSQL + Push para GitHub
+
+Work Log:
+- Schema Prisma já estava migrado para PostgreSQL com relationMode prisma
+- Removido channel_binding=require da DATABASE_URL (incompatível com Prisma)
+- Conexão Neon testada com sucesso (prisma db push + prisma generate)
+- Removido output: standalone do next.config.ts (incompatível com Vercel serverless)
+- Removido banco SQLite local (db/custom.db)
+- Criado .env.example para referência no repo
+- Adicionado remote GitHub: Du-Mt-26/Mtech-central
+- Commit + push para GitHub (branch main)
+- postinstall: prisma generate já estava configurado no package.json
+
+Stage Summary:
+- Banco Neon SQL (sa-east-1) conectado e tabelas criadas
+- Código no GitHub: https://github.com/Du-Mt-26/Mtech-central
+- Pronto para deploy na Vercel
+- Pendente: Artur precisa conectar o repo na Vercel e configurar DATABASE_URL como env var
