@@ -552,6 +552,28 @@ Stage Summary:
 
 ---
 Task ID: 14
+Agent: Full-Stack Developer + Main
+Task: Add manual campaign processing + webhooks setup + change password + UI improvements
+
+Work Log:
+- Added "Processar Campanhas" button in CampanhasTab header — calls POST /api/campaigns/process-all with loading spinner and toast result
+- Added "Configurar Webhooks" button in ChipsTab — iterates all chips with evolutionInstance, calls setup-webhook for each, shows progress
+- Improved DashboardTab: "Atualizar" refresh button, better gradient stat cards with hover effects, "Ações Rápidas" section with quick navigation buttons
+- Added "Alterar Senha" section in ConfiguracoesTab: current/new/confirm password fields, validation, loading state
+- Created /api/auth/change-password route: PUT, requires auth, verifies current password with bcrypt, hashes and saves new password
+- Fixed process-all route: removed CRON_SECRET block so authenticated users can trigger from UI (cron still works via public middleware route)
+- Styling: consistent card shadows, hover scale effects, sidebar avatar gradient, compact footer with backdrop blur
+- All deployed to https://mtech-sistemas.vercel.app
+
+Stage Summary:
+- Manual campaign processing now works from the UI
+- Webhook setup for all chips at once
+- Change password functionality added
+- Dashboard has refresh button and quick actions
+- All features tested and working on production
+
+---
+Task ID: 14
 Agent: Main
 Task: Manual campaign processing + webhooks setup + change password + UI improvements
 
