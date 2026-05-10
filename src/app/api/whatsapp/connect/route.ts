@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { createInstance, fetchInstances, connectInstance, setWebhook, setProxy, findInstanceByName, getInstanceName } from '@/lib/evolution-api'
+import { createInstance, connectInstance, setWebhook, setProxy, findInstanceByName, getInstanceName } from '@/lib/evolution-api'
 
 export async function POST(request: Request) {
   try {
@@ -17,19 +17,24 @@ export async function POST(request: Request) {
 
     const instanceName = getInstanceName(chip.id, chip.name)
 
-    // Check if instance already exists
+    // Check if instance already exists in Evolution API
     let existing = await findInstanceByName(instanceName)
 
     if (!existing) {
-      // Create new instance
+      // Create new instance in Evolution API
+      // Note: createInstance now normalizes the response so .name works correctly
       const newInstance = await createInstance(instanceName)
       existing = newInstance
     }
 
+    // Use the instance name consistently — prefer existing.name (from fetchInstances) 
+    // or fall back to our generated instanceName
+    const effectiveInstanceName = existing.name || instanceName
+
     // Always ensure webhook is configured (for both new and existing instances)
     const webhookUrl = `${process.env.VERCEL_URL ? 'https://' + process.env.VERCEL_URL : process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/whatsapp/webhook`
     try {
-      await setWebhook(existing.name, webhookUrl, [
+      await setWebhook(effectiveInstanceName, webhookUrl, [
         'MESSAGES_UPSERT',
         'MESSAGES_UPDATE',
         'SEND_MESSAGE',
@@ -42,7 +47,7 @@ export async function POST(request: Request) {
     // Apply SOCKS5 proxy if configured on the chip
     if (chip.proxyMode === 'socks5' && chip.socks5Host && chip.socks5Port) {
       try {
-        await setProxy(existing.name, {
+        await setProxy(effectiveInstanceName, {
           enabled: true,
           host: chip.socks5Host,
           port: String(chip.socks5Port),
@@ -54,23 +59,31 @@ export async function POST(request: Request) {
       }
     }
 
-    // Connect to get QR Code
-    const connectResult = await connectInstance(existing.name)
+    // Connect to get QR Code (or detect already connected)
+    const connectResult = await connectInstance(effectiveInstanceName)
 
-    // Update chip in database
+    // If already connected, update status and return
+    const isConnected = connectResult.state === 'open'
+    const newStatus = isConnected ? 'connected' : 'connecting'
+
+    // Update chip in database — including the evolutionInstance link
     await db.chip.update({
       where: { id: chipId },
       data: {
-        status: 'connecting',
-        qrPairingCode: connectResult.code || null,
+        status: newStatus,
+        evolutionInstance: effectiveInstanceName,
+        qrPairingCode: connectResult.code || connectResult.pairingCode || null,
+        lastSeen: isConnected ? new Date() : chip.lastSeen,
+        ...(isConnected ? { isQrPaired: true } : {}),
       },
     })
 
     return NextResponse.json({
-      instanceName: existing.name,
-      qrcode: connectResult.base64 || null,
+      instanceName: effectiveInstanceName,
+      qrcode: connectResult.qrcode || null,
       code: connectResult.code || null,
-      status: existing.connectionStatus,
+      state: connectResult.state,
+      status: isConnected ? 'open' : existing.connectionStatus,
     })
   } catch (error: any) {
     console.error('WhatsApp connect error:', error)

@@ -19,19 +19,21 @@ export async function GET() {
     // Update chip statuses based on Evolution API
     const updatedChips = []
     for (const chip of chips) {
-      const instanceName = getInstanceName(chip.id, chip.name)
+      const instanceName = chip.evolutionInstance || getInstanceName(chip.id, chip.name)
       const evoInstance = instanceMap.get(instanceName)
 
       const evoStatus = evoInstance?.connectionStatus || 'close'
       const newStatus = evoStatus === 'open' ? 'connected' : evoStatus === 'connecting' ? 'connecting' : 'disconnected'
 
       // Update chip in database if status changed
-      if (chip.status !== newStatus) {
+      if (chip.status !== newStatus || !chip.evolutionInstance) {
         await db.chip.update({
           where: { id: chip.id },
           data: {
             status: newStatus,
             lastSeen: newStatus === 'connected' ? new Date() : chip.lastSeen,
+            evolutionInstance: instanceName,
+            ...(newStatus === 'connected' ? { isQrPaired: true } : {}),
           },
         })
       }

@@ -123,16 +123,20 @@ interface EvolutionInstance {
   } | null;
 }
 
-interface QRCodeResponse {
-  code: string;
-  base64: string;
-}
-
 interface ConnectionState {
   instance: {
     instanceName: string;
     state: 'open' | 'close' | 'connecting';
   };
+}
+
+/** Result from connectInstance — handles both QR code and already-connected responses */
+export interface ConnectResult {
+  qrcode?: string | null;   // base64 QR code image (data URI or raw base64)
+  code?: string | null;     // pairing code
+  pairingCode?: string | null;
+  state?: string;           // connection state ("open" if already connected)
+  instanceName?: string;
 }
 
 interface SendMessageResponse {
@@ -177,7 +181,31 @@ export async function createInstance(instanceName: string): Promise<EvolutionIns
       integration: 'WHATSAPP-BAILEYS',
     }),
   });
-  return response.json();
+  const data = await response.json();
+
+  // Evolution API v2.x returns: { instance: { instanceName, instanceId, status, ... }, hash: "...", ... }
+  // Normalize to our flat EvolutionInstance format so .name and .connectionStatus work correctly
+  if (data.instance) {
+    const inst = data.instance;
+    return {
+      id: inst.instanceId || '',
+      name: inst.instanceName || instanceName,
+      connectionStatus: inst.status === 'open' ? 'open' : inst.status === 'connecting' ? 'connecting' : 'close',
+      ownerJid: null,
+      profileName: null,
+      profilePicUrl: null,
+      integration: inst.integration || 'WHATSAPP-BAILEYS',
+      number: null,
+      token: data.hash || '',
+      disconnectionReasonCode: null,
+      disconnectionAt: null,
+      createdAt: inst.createdAt || new Date().toISOString(),
+      updatedAt: inst.updatedAt || new Date().toISOString(),
+    };
+  }
+
+  // Fallback: response might already be flat format
+  return data as EvolutionInstance;
 }
 
 export async function fetchInstances(): Promise<EvolutionInstance[]> {
@@ -202,10 +230,32 @@ export async function deleteInstance(instanceName: string): Promise<void> {
 
 // ============ Connection ============
 
-export async function connectInstance(instanceName: string): Promise<{ qrcode?: QRCodeResponse; base64?: string; code?: string }> {
-  // Evolution API v2.x uses GET for connect (returns QR code)
+export async function connectInstance(instanceName: string): Promise<ConnectResult> {
+  // Evolution API v2.x: GET /instance/connect/{instanceName}
+  // - If already connected: returns { instance: { instanceName, state: "open" } }
+  // - If disconnected/connecting: returns { pairingCode, code, base64 }
   const response = await evolutionFetch(`/instance/connect/${instanceName}`);
-  return response.json();
+  const data = await response.json();
+
+  // Case 1: Already connected — { instance: { instanceName, state: "open" } }
+  if (data.instance?.state) {
+    return {
+      state: data.instance.state,
+      instanceName: data.instance.instanceName || instanceName,
+      qrcode: null,
+      code: null,
+      pairingCode: null,
+    };
+  }
+
+  // Case 2: Disconnected — returns QR code { pairingCode, code, base64 }
+  return {
+    qrcode: data.base64 || null,
+    code: data.code || null,
+    pairingCode: data.pairingCode || null,
+    state: 'close',
+    instanceName,
+  };
 }
 
 export async function disconnectInstance(instanceName: string): Promise<void> {

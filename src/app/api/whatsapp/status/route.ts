@@ -13,11 +13,12 @@ export async function GET(request: Request) {
         return NextResponse.json({ error: 'Chip não encontrado' }, { status: 404 })
       }
 
-      const instanceName = getInstanceName(chip.id, chip.name)
+      // Use the linked instance name from chip, or generate from chip ID/name
+      const instanceName = chip.evolutionInstance || getInstanceName(chip.id, chip.name)
 
       try {
         const connectionState = await getConnectionState(instanceName)
-        const state = connectionState.instance.state
+        const state = connectionState.instance?.state || 'close'
 
         const newStatus = state === 'open' ? 'connected' : state === 'connecting' ? 'connecting' : 'disconnected'
         if (chip.status !== newStatus) {
@@ -26,6 +27,8 @@ export async function GET(request: Request) {
             data: {
               status: newStatus,
               lastSeen: newStatus === 'connected' ? new Date() : chip.lastSeen,
+              evolutionInstance: instanceName,
+              ...(newStatus === 'connected' ? { isQrPaired: true } : {}),
             },
           })
         }
@@ -61,7 +64,7 @@ export async function GET(request: Request) {
       if (chip.evolutionInstance && !chip.evolutionInstance.startsWith(INSTANCE_PREFIX)) {
         continue
       }
-      const instanceName = getInstanceName(chip.id, chip.name)
+      const instanceName = chip.evolutionInstance || getInstanceName(chip.id, chip.name)
       const instanceState = instanceMap.get(instanceName)
       if (instanceState) {
         const newStatus = instanceState === 'open' ? 'connected' : 'disconnected'
@@ -71,6 +74,8 @@ export async function GET(request: Request) {
             data: {
               status: newStatus,
               lastSeen: newStatus === 'connected' ? new Date() : chip.lastSeen,
+              evolutionInstance: instanceName,
+              ...(newStatus === 'connected' ? { isQrPaired: true } : {}),
             },
           })
         }

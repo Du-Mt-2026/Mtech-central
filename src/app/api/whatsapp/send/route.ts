@@ -34,7 +34,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Limite diário atingido' }, { status: 400 })
     }
 
-    const instanceName = getInstanceName(chip.id, chip.name)
+    const instanceName = chip.evolutionInstance || getInstanceName(chip.id, chip.name)
     const formattedPhone = formatPhoneNumber(contactPhone)
 
     // Simulate typing before sending (anti-ban)

@@ -602,8 +602,19 @@ function ChipsTab() {
         }
       }, 3000)
     } catch (err: unknown) {
-      setQrError((err as Error).message || 'Erro ao gerar QR Code')
-      toast.error((err as Error).message || 'Erro ao gerar QR Code')
+      const rawMessage = (err as Error).message || 'Erro ao gerar QR Code'
+      // Show a user-friendly message instead of raw Evolution API error
+      let friendlyMessage = 'Não foi possível conectar o dispositivo. Tente novamente mais tarde.'
+      if (rawMessage.includes('URL ou API Key')) {
+        friendlyMessage = 'Evolution API não configurada. Vá em Configurações e defina a URL e API Key.'
+      } else if (rawMessage.includes('Chip não encontrado')) {
+        friendlyMessage = 'Chip não encontrado. Atualize a página e tente novamente.'
+      } else {
+        // Include original error for debugging but in a cleaner format
+        console.error('QR Code error:', rawMessage)
+      }
+      setQrError(friendlyMessage)
+      toast.error(friendlyMessage)
     } finally {
       setQrLoading(false)
     }
@@ -658,7 +669,14 @@ function ChipsTab() {
         }
       }, 3000)
     } catch (err: unknown) {
-      setQrError((err as Error).message || 'Erro ao atualizar QR Code')
+      const rawMessage = (err as Error).message || 'Erro ao atualizar QR Code'
+      let friendlyMessage = 'Não foi possível gerar o QR Code. Tente novamente.'
+      if (rawMessage.includes('URL ou API Key')) {
+        friendlyMessage = 'Evolution API não configurada. Vá em Configurações e defina a URL e API Key.'
+      } else {
+        console.error('QR refresh error:', rawMessage)
+      }
+      setQrError(friendlyMessage)
     } finally {
       setQrLoading(false)
     }

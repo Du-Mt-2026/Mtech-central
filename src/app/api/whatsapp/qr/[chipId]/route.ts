@@ -11,23 +11,29 @@ export async function GET(request: Request, { params }: { params: Promise<{ chip
       return NextResponse.json({ error: 'Chip não encontrado' }, { status: 404 })
     }
 
-    const instanceName = getInstanceName(chip.id, chip.name)
+    // Use the linked instance name from chip, or generate from chip ID/name
+    const instanceName = chip.evolutionInstance || getInstanceName(chip.id, chip.name)
 
     // Fetch QR code by connecting/reconnecting
     const connectResult = await connectInstance(instanceName)
+
+    const isConnected = connectResult.state === 'open'
 
     // Update chip status
     await db.chip.update({
       where: { id: chipId },
       data: {
-        status: 'connecting',
-        qrPairingCode: connectResult.code || null,
+        status: isConnected ? 'connected' : 'connecting',
+        evolutionInstance: instanceName,
+        qrPairingCode: connectResult.code || connectResult.pairingCode || null,
+        ...(isConnected ? { isQrPaired: true } : {}),
       },
     })
 
     return NextResponse.json({
-      qrcode: connectResult.base64 || null,
+      qrcode: connectResult.qrcode || null,
       code: connectResult.code || null,
+      state: connectResult.state,
     })
   } catch (error: any) {
     console.error('QR fetch error:', error)
