@@ -498,6 +498,14 @@ function ChipsTab() {
   const [qrError, setQrError] = useState<string | null>(null)
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
+  // Anti-ban: cooldown between connection attempts
+  const COOLDOWN_SECONDS = 60
+  const MAX_ATTEMPTS = 3
+  const [lastConnectAttempt, setLastConnectAttempt] = useState<number>(0)
+  const [connectAttempts, setConnectAttempts] = useState<number>(0)
+  const [cooldownRemaining, setCooldownRemaining] = useState<number>(0)
+  const cooldownRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
   // Evolution API sync/import state
   const [syncing, setSyncing] = useState(false)
   const [importDialogOpen, setImportDialogOpen] = useState(false)
@@ -544,20 +552,52 @@ function ChipsTab() {
     } else { setQrCodeUrl('') }
   }, [selectedChipConfig?.config])
 
-  // Cleanup polling on unmount
+  // Cleanup polling and cooldown on unmount
   useEffect(() => {
     return () => {
       if (pollingRef.current) clearInterval(pollingRef.current)
+      if (cooldownRef.current) clearInterval(cooldownRef.current)
     }
   }, [])
 
+  const startCooldown = () => {
+    setLastConnectAttempt(Date.now())
+    setCooldownRemaining(COOLDOWN_SECONDS)
+    if (cooldownRef.current) clearInterval(cooldownRef.current)
+    cooldownRef.current = setInterval(() => {
+      setCooldownRemaining(prev => {
+        if (prev <= 1) {
+          if (cooldownRef.current) clearInterval(cooldownRef.current)
+          return 0
+        }
+        return prev - 1
+      })
+    }, 1000)
+  }
+
   const connectWhatsApp = async (chip: Chip) => {
+    // Check cooldown
+    const elapsed = (Date.now() - lastConnectAttempt) / 1000
+    if (elapsed < COOLDOWN_SECONDS && connectAttempts > 0) {
+      const remaining = Math.ceil(COOLDOWN_SECONDS - elapsed)
+      toast.error(`Aguarde ${remaining}s antes de tentar novamente. Reconexões rápidas podem causar banimento!`)
+      return
+    }
+
+    // Check max attempts
+    if (connectAttempts >= MAX_ATTEMPTS) {
+      toast.error(`Limite de ${MAX_ATTEMPTS} tentativas atingido. Feche o diálogo e aguarde alguns minutos antes de tentar novamente para evitar banimento.`)
+      return
+    }
+
     setQrLoading(true)
     setQrError(null)
     setWhatsappQr(null)
     setQrConnected(false)
     setSelectedChip(chip)
     setQrDialogOpen(true)
+    setConnectAttempts(prev => prev + 1)
+    startCooldown()
 
     try {
       const res = await fetch('/api/whatsapp/connect', {
@@ -580,6 +620,7 @@ function ChipsTab() {
       // If already connected
       if (data.status === 'open' || data.state === 'open') {
         setQrConnected(true)
+        setConnectAttempts(0)
         fetchChips()
         return
       }
@@ -593,6 +634,7 @@ function ChipsTab() {
 
           if (statusData.state === 'open' || statusData.chipStatus === 'connected') {
             setQrConnected(true)
+            setConnectAttempts(0)
             if (pollingRef.current) clearInterval(pollingRef.current)
             fetchChips()
             toast.success(`WhatsApp conectado: ${chip.name}`)
@@ -609,6 +651,8 @@ function ChipsTab() {
         friendlyMessage = 'Evolution API não configurada. Vá em Configurações e defina a URL e API Key.'
       } else if (rawMessage.includes('Chip não encontrado')) {
         friendlyMessage = 'Chip não encontrado. Atualize a página e tente novamente.'
+      } else if (rawMessage.includes('404')) {
+        friendlyMessage = 'Instância não encontrada na Evolution API. Tente sincronizar primeiro.'
       } else {
         // Include original error for debugging but in a cleaner format
         console.error('QR Code error:', rawMessage)
@@ -622,10 +666,27 @@ function ChipsTab() {
 
   const refreshQrCode = async () => {
     if (!selectedChip) return
+
+    // Check cooldown — refresh also creates a new session, so enforce cooldown
+    const elapsed = (Date.now() - lastConnectAttempt) / 1000
+    if (elapsed < COOLDOWN_SECONDS && connectAttempts > 0) {
+      const remaining = Math.ceil(COOLDOWN_SECONDS - elapsed)
+      toast.error(`Aguarde ${remaining}s antes de atualizar. Reconexões rápidas causam banimento!`)
+      return
+    }
+
+    // Check max attempts
+    if (connectAttempts >= MAX_ATTEMPTS) {
+      toast.error(`Limite de ${MAX_ATTEMPTS} tentativas atingido. Feche o diálogo e aguarde alguns minutos.`)
+      return
+    }
+
     setQrLoading(true)
     setQrError(null)
     setWhatsappQr(null)
     setQrConnected(false)
+    setConnectAttempts(prev => prev + 1)
+    startCooldown()
 
     if (pollingRef.current) clearInterval(pollingRef.current)
 
@@ -648,6 +709,7 @@ function ChipsTab() {
 
       if (data.status === 'open' || data.state === 'open') {
         setQrConnected(true)
+        setConnectAttempts(0)
         fetchChips()
         return
       }
@@ -660,6 +722,7 @@ function ChipsTab() {
 
           if (statusData.state === 'open' || statusData.chipStatus === 'connected') {
             setQrConnected(true)
+            setConnectAttempts(0)
             if (pollingRef.current) clearInterval(pollingRef.current)
             fetchChips()
             toast.success(`WhatsApp conectado: ${selectedChip.name}`)
@@ -673,6 +736,8 @@ function ChipsTab() {
       let friendlyMessage = 'Não foi possível gerar o QR Code. Tente novamente.'
       if (rawMessage.includes('URL ou API Key')) {
         friendlyMessage = 'Evolution API não configurada. Vá em Configurações e defina a URL e API Key.'
+      } else if (rawMessage.includes('404')) {
+        friendlyMessage = 'Instância não encontrada na Evolution API. Tente sincronizar primeiro.'
       } else {
         console.error('QR refresh error:', rawMessage)
       }
@@ -704,10 +769,13 @@ function ChipsTab() {
     setQrDialogOpen(open)
     if (!open) {
       if (pollingRef.current) clearInterval(pollingRef.current)
+      if (cooldownRef.current) clearInterval(cooldownRef.current)
       setWhatsappQr(null)
       setQrLoading(false)
       setQrConnected(false)
       setQrError(null)
+      setConnectAttempts(0)
+      setCooldownRemaining(0)
     }
   }
 
@@ -1178,8 +1246,9 @@ function ChipsTab() {
                     <p className="text-sm text-rose-600 dark:text-rose-400">{qrError}</p>
                   </div>
                 </div>
-                <Button variant="outline" className="gap-2" onClick={refreshQrCode}>
-                  <RefreshCw className="size-4" /> Tentar Novamente
+                <Button variant="outline" className="gap-2" onClick={refreshQrCode} disabled={cooldownRemaining > 0 || connectAttempts >= MAX_ATTEMPTS}>
+                  <RefreshCw className="size-4" />
+                  {cooldownRemaining > 0 ? `Aguarde ${cooldownRemaining}s` : connectAttempts >= MAX_ATTEMPTS ? 'Limite atingido' : 'Tentar Novamente'}
                 </Button>
               </div>
             ) : whatsappQr ? (
@@ -1197,6 +1266,24 @@ function ChipsTab() {
                 <QrCode className="size-24 text-zinc-400" />
               </div>
             )}
+
+            {/* Anti-ban warning banner */}
+            {!qrConnected && (
+              <div className="w-full p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-xl">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="size-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <p className="text-xs font-semibold text-amber-800 dark:text-amber-300">⚠️ Risco de Banimento</p>
+                    <p className="text-[11px] text-amber-700 dark:text-amber-400">
+                      Reconexões rápidas podem fazer o WhatsApp banir seu número. 
+                      Limite: {MAX_ATTEMPTS} tentativas por sessão com intervalo de {COOLDOWN_SECONDS}s.
+                      {connectAttempts > 0 && <span className="font-bold"> Tentativa {connectAttempts}/{MAX_ATTEMPTS}.</span>}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div className="w-full p-4 bg-muted/50 rounded-xl space-y-2 text-sm">
               <p className="font-semibold">Como conectar:</p>
               <ol className="list-decimal list-inside space-y-1 text-muted-foreground text-xs">
@@ -1206,8 +1293,9 @@ function ChipsTab() {
               </ol>
             </div>
             {!qrConnected && !qrError && (
-              <Button variant="outline" className="gap-2" onClick={refreshQrCode} disabled={qrLoading}>
-                <RefreshCw className={`size-4 ${qrLoading ? 'animate-spin' : ''}`} /> Atualizar QR Code
+              <Button variant="outline" className="gap-2" onClick={refreshQrCode} disabled={qrLoading || cooldownRemaining > 0 || connectAttempts >= MAX_ATTEMPTS}>
+                <RefreshCw className={`size-4 ${qrLoading ? 'animate-spin' : ''}`} />
+                {cooldownRemaining > 0 ? `Aguarde ${cooldownRemaining}s` : connectAttempts >= MAX_ATTEMPTS ? 'Limite atingido' : 'Atualizar QR Code'}
               </Button>
             )}
           </div>

@@ -678,3 +678,39 @@ Stage Summary:
 - User-friendly error messages in Portuguese
 - Production URL: https://mtech-sistemas.vercel.app
 - Login: admin / admin123
+
+---
+Task ID: 17
+Agent: Main
+Task: Fix WhatsApp number ban issue — add anti-ban connection protection
+
+Work Log:
+- Diagnosed why the user's WhatsApp number got banned after 3-4 connection attempts
+- ROOT CAUSE: Each call to `connectInstance()` (GET /instance/connect) creates a new WebSocket session to WhatsApp, invalidating the previous one. Rapid reconnections (3-4 times in quick succession) trigger WhatsApp's anti-abuse detection, especially from VPS IP addresses.
+- Added COOLDOWN_SECONDS = 60 and MAX_ATTEMPTS = 3 constants to ChipsTab
+- Added state variables: lastConnectAttempt, connectAttempts, cooldownRemaining, cooldownRef
+- Created `startCooldown()` function that tracks time between connection attempts with visual countdown
+- Modified `connectWhatsApp()`: checks cooldown and max attempts before connecting, shows error toast if violated
+- Modified `refreshQrCode()`: enforces same cooldown and attempt limits (refresh also creates new sessions)
+- Modified `closeQrDialog()`: resets attempts and cooldown on dialog close
+- Added anti-ban warning banner in QR Code dialog with AlertTriangle icon showing:
+  - "⚠️ Risco de Banimento" heading
+  - Explanation about rapid reconnections causing bans
+  - Current attempt count (e.g., "Tentativa 2/3")
+  - Cooldown period info (60s between attempts)
+- Updated "Atualizar QR Code" and "Tentar Novamente" buttons: disabled during cooldown, shows countdown timer
+- Added 404 error handling with friendly message about syncing instances
+- Reset connectAttempts to 0 on successful connection
+- Lint passes clean
+
+Stage Summary:
+- WhatsApp connection now has anti-ban protection:
+  - 60-second cooldown between attempts
+  - Maximum 3 attempts per dialog session
+  - Visual countdown timer on buttons
+  - Warning banner about ban risk
+  - Attempt counter visible to user
+- These protections prevent rapid session creation which triggers WhatsApp bans
+- User must close dialog and wait several minutes before trying again after hitting the limit
+- This explains why the previous number was banned: repeated connectInstance() calls without any delay
+
