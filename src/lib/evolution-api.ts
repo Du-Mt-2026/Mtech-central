@@ -203,14 +203,16 @@ export async function deleteInstance(instanceName: string): Promise<void> {
 // ============ Connection ============
 
 export async function connectInstance(instanceName: string): Promise<{ qrcode?: QRCodeResponse; base64?: string; code?: string }> {
-  const response = await evolutionFetch(`/instance/connect/${instanceName}`, {
-    method: 'POST',
-  });
+  // Evolution API v2.x uses GET for connect (returns QR code)
+  const response = await evolutionFetch(`/instance/connect/${instanceName}`);
   return response.json();
 }
 
 export async function disconnectInstance(instanceName: string): Promise<void> {
-  await evolutionFetch(`/instance/disconnect/${instanceName}`, {
+  // Evolution API v2.x: restart instance to disconnect (generates new QR code)
+  // The /instance/disconnect endpoint doesn't exist in v2.3.7
+  // Instead, use /instance/restart which disconnects and returns a new QR code
+  await evolutionFetch(`/instance/restart/${instanceName}`, {
     method: 'POST',
   });
 }
@@ -284,14 +286,20 @@ export async function setPresence(
   presence: 'composing' | 'available' | 'unavailable' | 'recording',
   delay: number = 2000
 ): Promise<void> {
-  await evolutionFetch(`/chat/setPresence/${instanceName}`, {
-    method: 'POST',
-    body: JSON.stringify({
-      number,
-      presence,
-      delay,
-    }),
-  });
+  // Evolution API v2.x: may not support /chat/setPresence
+  // This is best-effort — if it fails, the sending engine still works
+  try {
+    await evolutionFetch(`/chat/setPresence/${instanceName}`, {
+      method: 'POST',
+      body: JSON.stringify({
+        number,
+        presence,
+        delay,
+      }),
+    });
+  } catch {
+    // Silently ignore — presence is not critical for sending
+  }
 }
 
 // ============ Proxy Configuration ============
@@ -306,9 +314,13 @@ export async function setProxy(
     password: string;
   }
 ): Promise<void> {
+  // Evolution API v2.x: requires "protocol" field
   await evolutionFetch(`/proxy/set/${instanceName}`, {
     method: 'POST',
-    body: JSON.stringify(proxy),
+    body: JSON.stringify({
+      ...proxy,
+      protocol: 'socks5',
+    }),
   });
 }
 
@@ -324,13 +336,16 @@ export async function setWebhook(
     'CONNECTION_UPDATE',
   ]
 ): Promise<void> {
+  // Evolution API v2.x: webhook config must be wrapped in "webhook" object
   await evolutionFetch(`/webhook/set/${instanceName}`, {
     method: 'POST',
     body: JSON.stringify({
-      enabled: true,
-      url: webhookUrl,
-      webhookByEvents: true,
-      events,
+      webhook: {
+        url: webhookUrl,
+        enabled: true,
+        byEvents: true,
+        events,
+      },
     }),
   });
 }
