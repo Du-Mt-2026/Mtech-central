@@ -648,3 +648,33 @@ Stage Summary:
 - Auto-configure proxies button sets SOCKS5 on all chips in one click
 - The Dudinha instance QR code was successfully generated (user can now connect WhatsApp)
 - Known: WireGuard proxy requires physical cellphones with 4G chips — not yet deployed on VPS
+
+---
+Task ID: 16
+Agent: Main
+Task: Fix WhatsApp QR Code connection bug — "Não foi possível conectar o dispositivo"
+
+Work Log:
+- Investigated the QR code connection flow by testing Evolution API endpoints directly
+- Discovered the ROOT CAUSE: `createInstance()` response is wrapped in `{ instance: { instanceName, instanceId, status }, hash: "..." }` format, but the code expected a flat `EvolutionInstance` with `name` and `connectionStatus` fields at top level
+- This meant `existing.name` was `undefined` after creating a new instance, causing subsequent `setWebhook(undefined)`, `setProxy(undefined)`, and `connectInstance(undefined)` calls to fail
+- On SECOND attempt, `findInstanceByName()` would find the previously created instance (from fetchInstances, which returns flat format), so the name would be correct, but the connect would still sometimes fail
+- Fixed `createInstance()` in evolution-api.ts: now normalizes the wrapped response to flat EvolutionInstance format with proper `name` and `connectionStatus` fields
+- Fixed `connectInstance()` in evolution-api.ts: now handles both response formats correctly:
+  - Connected: `{ instance: { instanceName, state: "open" } }` 
+  - Disconnected: `{ pairingCode, code, base64 }` (QR code data)
+- Fixed all API routes to use `chip.evolutionInstance || getInstanceName(chip.id, chip.name)` as fallback
+- Added `evolutionInstance` field update in connect route — chip is now linked to its Evolution API instance after connecting
+- Added `isQrPaired` and `lastSeen` updates when connection is detected
+- Improved frontend error messages: user-friendly Portuguese messages instead of raw Evolution API errors
+- Tested with agent-browser: QR code dialog opens successfully, base64 QR code image is displayed
+- Cleaned up stale test instances from Evolution API
+- Lint passes clean
+- Committed and pushed to GitHub (auto-deploys to Vercel)
+
+Stage Summary:
+- QR Code connection bug FIXED — the core issue was response format mismatch in createInstance()
+- All WhatsApp API routes now properly handle the evolutionInstance field on chips
+- User-friendly error messages in Portuguese
+- Production URL: https://mtech-sistemas.vercel.app
+- Login: admin / admin123
