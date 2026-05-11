@@ -37,6 +37,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { toast } from 'sonner'
 import QRCode from 'qrcode'
+import { VerificarSection } from '@/components/verificar-section'
 
 // ===== Types =====
 interface Chip {
@@ -197,6 +198,7 @@ const NAV_ITEMS = [
   { id: 'chips', label: 'Chips', icon: Smartphone },
   { id: 'inbox', label: 'Caixa de Entrada', icon: Inbox },
   { id: 'contatos', label: 'Contatos', icon: Users },
+  { id: 'verificar', label: 'Verificar Números', icon: ShieldCheck },
   { id: 'campanhas', label: 'Campanhas', icon: Send },
   { id: 'templates', label: 'Templates', icon: FileText },
   { id: 'antiban', label: 'Anti-Ban', icon: Shield },
@@ -3620,6 +3622,7 @@ export default function OctupusZapApp() {
       case 'chips': return <ChipsTab />
       case 'inbox': return <InboxTab />
       case 'contatos': return <ContatosTab />
+      case 'verificar': return <VerificarSection />
       case 'campanhas': return <CampanhasTab />
       case 'templates': return <TemplatesTab />
       case 'antiban': return <AntiBanTab />
