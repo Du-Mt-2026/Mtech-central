@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 
-const GO_SERVICE_URL = 'http://localhost:3002'
+const GO_SERVICE_URL = process.env.VERIFIER_SERVICE_URL || 'http://localhost:3002'
 
 export async function POST(request: NextRequest) {
   try {

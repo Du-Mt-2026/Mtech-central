@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 
-const GO_SERVICE_URL = 'http://localhost:3002'
+const GO_SERVICE_URL = process.env.VERIFIER_SERVICE_URL || 'http://localhost:3002'
 
 export async function POST() {
   try {
