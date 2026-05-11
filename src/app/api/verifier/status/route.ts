@@ -6,7 +6,7 @@ export async function GET() {
   try {
     const [healthRes, connectionRes] = await Promise.allSettled([
       fetch(`${GO_SERVICE_URL}/api/health`),
-      fetch(`${GO_SERVICE_URL}/api/connection`),
+      fetch(`${GO_SERVICE_URL}/api/status`),
     ])
 
     const health = healthRes.status === 'fulfilled' && healthRes.value.ok
@@ -15,11 +15,20 @@ export async function GET() {
 
     const connection = connectionRes.status === 'fulfilled' && connectionRes.value.ok
       ? await connectionRes.value.json()
-      : { connected: false }
+      : { connected: false, status: 'unreachable' }
+
+    // Normalize the connection status from Go service format
+    const isConnected = connection.connected === true || connection.status === 'connected'
 
     return NextResponse.json({
       goService: health,
-      connection,
+      connection: {
+        connected: isConnected,
+        status: connection.status || 'unknown',
+        phoneNumber: connection.phoneNumber || '',
+        pairingCode: connection.pairingCode || '',
+        qrExpired: connection.qrExpired || false,
+      },
       serviceAvailable: healthRes.status === 'fulfilled' && healthRes.value.ok,
     })
   } catch (error) {

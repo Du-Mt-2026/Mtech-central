@@ -4,7 +4,7 @@ const GO_SERVICE_URL = process.env.VERIFIER_SERVICE_URL || 'http://localhost:300
 
 export async function GET() {
   try {
-    const res = await fetch(`${GO_SERVICE_URL}/api/qr`)
+    const res = await fetch(`${GO_SERVICE_URL}/api/qr-code`)
 
     if (!res.ok) {
       const data = await res.json().catch(() => ({}))

@@ -185,23 +185,27 @@ export function VerificarSection() {
         throw new Error(data.error || 'Erro ao conectar WhatsApp')
       }
 
-      // If QR code is returned
-      if (data.qrcode) {
-        const qrSrc = data.qrcode.startsWith('data:')
-          ? data.qrcode
-          : `data:image/png;base64,${data.qrcode}`
-        setQrCode(qrSrc)
-      }
-
       // If already connected
-      if (data.connected || data.state === 'open') {
+      if (data.connected || data.status === 'connected') {
         setQrConnected(true)
         setWhatsappConnected(true)
         toast.success('WhatsApp conectado com sucesso!')
         return
       }
 
-      // Start polling for connection status
+      // Fetch QR code from the Go service's qr-code endpoint
+      const qrRes = await fetch('/api/verifier/qr')
+      if (qrRes.ok) {
+        const qrData = await qrRes.json()
+        if (qrData.qrCode) {
+          const qrSrc = qrData.qrCode.startsWith('data:')
+            ? qrData.qrCode
+            : `data:image/png;base64,${qrData.qrCode}`
+          setQrCode(qrSrc)
+        }
+      }
+
+      // Start polling for connection status and QR code refresh
       if (pollingRef.current) clearInterval(pollingRef.current)
       pollingRef.current = setInterval(async () => {
         try {
@@ -212,6 +216,20 @@ export function VerificarSection() {
             setWhatsappConnected(true)
             if (pollingRef.current) clearInterval(pollingRef.current)
             toast.success('WhatsApp conectado com sucesso!')
+            return
+          }
+          // Refresh QR code if it expired
+          if (statusData.connection?.qrExpired && !qrConnected) {
+            const qrRefresh = await fetch('/api/verifier/qr')
+            if (qrRefresh.ok) {
+              const qrRefreshData = await qrRefresh.json()
+              if (qrRefreshData.qrCode) {
+                const qrSrc = qrRefreshData.qrCode.startsWith('data:')
+                  ? qrRefreshData.qrCode
+                  : `data:image/png;base64,${qrRefreshData.qrCode}`
+                setQrCode(qrSrc)
+              }
+            }
           }
         } catch {
           // continue polling
@@ -380,11 +398,11 @@ export function VerificarSection() {
 
         const data = await res.json()
 
-        // Process results — Go service returns an array of results
+        // Process results — Go service returns { results: [{ number, exists, jid, error }] }
         if (Array.isArray(data.results)) {
           const batchResults: VerificationResult[] = data.results.map(
-            (r: { phone?: string; exists?: boolean; name?: string; jid?: string }, idx: number) => ({
-              phone: r.phone || formatPhoneForApi(batch[idx] || ''),
+            (r: { number?: string; phone?: string; exists?: boolean; name?: string; jid?: string; error?: string }, idx: number) => ({
+              phone: r.number || r.phone || formatPhoneForApi(batch[idx] || ''),
               originalInput: batch[idx] || '',
               exists: r.exists || false,
               name: r.name || '',
@@ -396,8 +414,8 @@ export function VerificarSection() {
         } else if (Array.isArray(data)) {
           // Handle case where Go service returns array directly
           const batchResults: VerificationResult[] = data.map(
-            (r: { phone?: string; exists?: boolean; name?: string; jid?: string }, idx: number) => ({
-              phone: r.phone || formatPhoneForApi(batch[idx] || ''),
+            (r: { number?: string; phone?: string; exists?: boolean; name?: string; jid?: string; error?: string }, idx: number) => ({
+              phone: r.number || r.phone || formatPhoneForApi(batch[idx] || ''),
               originalInput: batch[idx] || '',
               exists: r.exists || false,
               name: r.name || '',

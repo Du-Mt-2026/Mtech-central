@@ -52,11 +52,24 @@ export async function POST(request: NextRequest) {
       proxy = `socks5://${auth}${chip.socks5Host}:${port}`
     }
 
-    // Call Go service check endpoint
-    const res = await fetch(`${GO_SERVICE_URL}/api/check`, {
+    // First, set the proxy on the Go service if available
+    if (proxy) {
+      try {
+        await fetch(`${GO_SERVICE_URL}/api/proxy`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ proxyAddr: proxy }),
+        })
+      } catch {
+        // Proxy setup failed, continue anyway
+      }
+    }
+
+    // Call Go service check-numbers endpoint
+    const res = await fetch(`${GO_SERVICE_URL}/api/check-numbers`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ phones: formattedPhones, proxy }),
+      body: JSON.stringify({ numbers: formattedPhones }),
     })
 
     const data = await res.json()

@@ -28,11 +28,23 @@ export async function POST(request: NextRequest) {
       proxy = `socks5://${auth}${chip.socks5Host}:${port}`
     }
 
-    // Call Go service connect endpoint
-    const res = await fetch(`${GO_SERVICE_URL}/api/connect`, {
+    // First, set the proxy on the Go service if available
+    if (proxy) {
+      try {
+        await fetch(`${GO_SERVICE_URL}/api/proxy`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ proxyAddr: proxy }),
+        })
+      } catch {
+        // Proxy setup failed, continue anyway
+      }
+    }
+
+    // Call Go service force-reconnect to generate QR code
+    const res = await fetch(`${GO_SERVICE_URL}/api/force-reconnect`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ proxy }),
     })
 
     const data = await res.json()
