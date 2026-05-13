@@ -354,6 +354,50 @@ export async function setPresence(
 
 // ============ Proxy Configuration ============
 
+/**
+ * Resolve automatic proxy config from a chip record.
+ * If the chip has proxyMode='socks5' with explicit host/port, use those.
+ * Otherwise, if the chip has a wireguardIp, auto-use it as SOCKS5 proxy
+ * (Every Proxy runs on the phone via WireGuard at the chip's WG IP).
+ * The default Every Proxy SOCKS5 port is 1080, but can be overridden
+ * by the chip's socksPort field.
+ */
+export function resolveChipProxy(chip: {
+  proxyMode: string;
+  socks5Host: string;
+  socks5Port: number;
+  socks5User: string;
+  socks5Pass: string;
+  wireguardIp: string;
+  socksPort: number;
+}): { enabled: boolean; host: string; port: string; username: string; password: string } | null {
+  // 1) Explicit SOCKS5 configuration on the chip
+  if (chip.proxyMode === 'socks5' && chip.socks5Host && chip.socks5Port) {
+    return {
+      enabled: true,
+      host: chip.socks5Host,
+      port: String(chip.socks5Port),
+      username: chip.socks5User || '',
+      password: chip.socks5Pass || '',
+    }
+  }
+
+  // 2) Auto-detect: chip has WireGuard IP → Every Proxy on the phone
+  //    Every Proxy on Android defaults to port 8080 for SOCKS5
+  if (chip.wireguardIp) {
+    return {
+      enabled: true,
+      host: chip.wireguardIp,
+      port: String(chip.socksPort || 8080),
+      username: chip.socks5User || '',
+      password: chip.socks5Pass || '',
+    }
+  }
+
+  // 3) No proxy available
+  return null
+}
+
 export async function setProxy(
   instanceName: string,
   proxy: {

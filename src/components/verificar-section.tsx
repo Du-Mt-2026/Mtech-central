@@ -40,6 +40,8 @@ interface Chip {
   socks5Port: number
   socks5User: string
   socks5Pass: string
+  wireguardIp: string
+  socksPort: number
 }
 
 interface VerificationResult {
@@ -788,7 +790,7 @@ export function VerificarSection() {
               </Select>
               {selectedChip && (
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <span>Proxy: {selectedChip.proxyMode === 'socks5' ? `SOCKS5 ${selectedChip.socks5Host}:${selectedChip.socks5Port}` : 'Nenhum'}</span>
+                  <span>Proxy: {selectedChip.proxyMode === 'socks5' && selectedChip.socks5Host ? `SOCKS5 ${selectedChip.socks5Host}:${selectedChip.socks5Port}` : selectedChip.wireguardIp ? `SOCKS5 ${selectedChip.wireguardIp}:${selectedChip.socksPort || 8080} (auto)` : 'Nenhum'}</span>
                 </div>
               )}
             </div>

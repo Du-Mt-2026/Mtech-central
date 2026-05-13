@@ -7,6 +7,7 @@ import {
   setProxy,
   findInstanceByName,
   getInstanceName,
+  resolveChipProxy,
 } from '@/lib/evolution-api'
 
 export async function POST(request: NextRequest) {
@@ -48,16 +49,11 @@ export async function POST(request: NextRequest) {
       console.error('Verifier: Failed to set webhook:', webhookErr)
     }
 
-    // Apply SOCKS5 proxy if configured on the chip
-    if (chip.proxyMode === 'socks5' && chip.socks5Host && chip.socks5Port) {
+    // Apply SOCKS5 proxy — auto-detect from WireGuard IP or explicit config
+    const proxyConfig = resolveChipProxy(chip)
+    if (proxyConfig) {
       try {
-        await setProxy(effectiveInstanceName, {
-          enabled: true,
-          host: chip.socks5Host,
-          port: String(chip.socks5Port),
-          username: chip.socks5User || '',
-          password: chip.socks5Pass || '',
-        })
+        await setProxy(effectiveInstanceName, proxyConfig)
       } catch (proxyErr) {
         console.error('Verifier: Failed to set proxy:', proxyErr)
       }
