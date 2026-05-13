@@ -2948,6 +2948,7 @@ function ConfiguracoesTab() {
     resetHour: 0, defaultProxyMode: 'none', globalDailyLimit: 1000,
     emailNotifications: true, timezone: 'America/Sao_Paulo',
     evolutionApiUrl: '', evolutionApiKey: '',
+    socks5Host: '', socks5Port: '8080', socks5User: '', socks5Pass: '',
   })
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -2968,6 +2969,10 @@ function ConfiguracoesTab() {
         if (data.timezone) setConfig(prev => ({ ...prev, timezone: data.timezone }))
         if (data.evolution_api_url) setConfig(prev => ({ ...prev, evolutionApiUrl: data.evolution_api_url }))
         if (data.evolution_api_key) setConfig(prev => ({ ...prev, evolutionApiKey: data.evolution_api_key }))
+        if (data.default_socks5_host) setConfig(prev => ({ ...prev, socks5Host: data.default_socks5_host }))
+        if (data.default_socks5_port) setConfig(prev => ({ ...prev, socks5Port: data.default_socks5_port }))
+        if (data.default_socks5_user) setConfig(prev => ({ ...prev, socks5User: data.default_socks5_user }))
+        if (data.default_socks5_pass) setConfig(prev => ({ ...prev, socks5Pass: data.default_socks5_pass }))
       } catch { /* empty */ }
       finally { setLoading(false) }
     }
@@ -2987,6 +2992,10 @@ function ConfiguracoesTab() {
           timezone: config.timezone,
           evolution_api_url: config.evolutionApiUrl,
           evolution_api_key: config.evolutionApiKey,
+          default_socks5_host: config.socks5Host,
+          default_socks5_port: config.socks5Port,
+          default_socks5_user: config.socks5User,
+          default_socks5_pass: config.socks5Pass,
         }),
       })
       if (!res.ok) throw new Error()
@@ -3117,6 +3126,59 @@ function ConfiguracoesTab() {
                 </div>
               )}
             </div>
+          </CardContent>
+        </Card>
+
+        {/* Proxy SOCKS5 Global Card - FULL WIDTH */}
+        <Card className="shadow-lg border-0 hover:shadow-xl transition-all duration-200 lg:col-span-2">
+          <CardHeader>
+            <div className="flex items-center gap-2">
+              <div className="flex size-8 items-center justify-center rounded-lg bg-violet-100 dark:bg-violet-900/30">
+                <Globe className="size-4 text-violet-600" />
+              </div>
+              <CardTitle className="text-lg">Proxy SOCKS5 Global</CardTitle>
+              <Badge variant="outline" className="gap-1 text-xs ml-auto">
+                <Shield className="size-3" /> Roteamento de IP
+              </Badge>
+            </div>
+            <CardDescription>
+              Configure o proxy SOCKS5 uma vez e todos os chips usarão automaticamente.
+              Ideal para usar com WireGuard + Every Proxy no celular — não precisa configurar cada chip individualmente.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Host do Proxy</Label>
+                <Input placeholder="Ex: 10.0.0.100 (IP do WireGuard)" value={config.socks5Host}
+                  onChange={e => setConfig(p => ({ ...p, socks5Host: e.target.value }))} />
+                <p className="text-xs text-muted-foreground">IP do celular na rede WireGuard (Every Proxy)</p>
+              </div>
+              <div className="space-y-2">
+                <Label>Porta do Proxy</Label>
+                <Input placeholder="8080" value={config.socks5Port}
+                  onChange={e => setConfig(p => ({ ...p, socks5Port: e.target.value }))} />
+                <p className="text-xs text-muted-foreground">Porta SOCKS5 do Every Proxy (padrão: 8080)</p>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Usuário (opcional)</Label>
+                <Input placeholder="Deixe vazio se não houver autenticação" value={config.socks5User}
+                  onChange={e => setConfig(p => ({ ...p, socks5User: e.target.value }))} />
+              </div>
+              <div className="space-y-2">
+                <Label>Senha (opcional)</Label>
+                <Input type="password" placeholder="Deixe vazio se não houver autenticação" value={config.socks5Pass}
+                  onChange={e => setConfig(p => ({ ...p, socks5Pass: e.target.value }))} />
+              </div>
+            </div>
+            {config.socks5Host && config.socks5Port && (
+              <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400 text-sm">
+                <Check className="size-4" />
+                Proxy SOCKS5 ativo: {config.socks5Host}:{config.socks5Port} — será aplicado automaticamente a todos os chips
+              </div>
+            )}
           </CardContent>
         </Card>
 

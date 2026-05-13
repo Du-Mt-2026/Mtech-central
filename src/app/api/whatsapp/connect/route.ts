@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { createInstance, connectInstance, setWebhook, setProxy, findInstanceByName, getInstanceName, resolveChipProxy } from '@/lib/evolution-api'
+import { createInstance, connectInstance, setWebhook, setProxy, findInstanceByName, getInstanceName, resolveChipProxy, getGlobalProxy } from '@/lib/evolution-api'
 
 export async function POST(request: Request) {
   try {
@@ -44,11 +44,13 @@ export async function POST(request: Request) {
       console.error('Failed to set webhook:', webhookErr)
     }
 
-    // Apply SOCKS5 proxy — auto-detect from WireGuard IP or explicit config
-    const proxyConfig = resolveChipProxy(chip)
+    // Apply SOCKS5 proxy — priority: chip config > WireGuard auto-detect > global proxy
+    const globalProxy = await getGlobalProxy()
+    const proxyConfig = resolveChipProxy(chip, globalProxy)
     if (proxyConfig) {
       try {
         await setProxy(effectiveInstanceName, proxyConfig)
+        console.log(`Proxy applied to ${effectiveInstanceName}: ${proxyConfig.host}:${proxyConfig.port}`)
       } catch (proxyErr) {
         console.error('Failed to set proxy on instance:', proxyErr)
       }

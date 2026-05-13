@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { setProxy, resolveChipProxy } from '@/lib/evolution-api'
+import { setProxy, resolveChipProxy, getGlobalProxy } from '@/lib/evolution-api'
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ chipId: string }> }) {
   const { chipId } = await params
@@ -36,9 +36,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ ch
       data,
     })
 
-    // Apply proxy to Evolution API instance — auto-detect from WireGuard IP
+    // Apply proxy to Evolution API instance — auto-detect from WireGuard IP or global proxy
     if (chip.evolutionInstance) {
-      const proxyConfig = resolveChipProxy(chip)
+      const globalProxy = await getGlobalProxy()
+      const proxyConfig = resolveChipProxy(chip, globalProxy)
       if (proxyConfig) {
         try {
           await setProxy(chip.evolutionInstance, proxyConfig)

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { clearCredentialsCache } from '@/lib/evolution-api'
+import { clearCredentialsCache, clearGlobalProxyCache } from '@/lib/evolution-api'
 
 // GET /api/settings — Returns all settings as key-value pairs
 export async function GET() {
@@ -51,6 +51,11 @@ export async function PUT(request: Request) {
     const updatedKeys = entries.map(([k]) => k)
     if (updatedKeys.includes('evolution_api_url') || updatedKeys.includes('evolution_api_key')) {
       clearCredentialsCache()
+    }
+
+    // Clear global proxy cache if proxy keys were updated
+    if (updatedKeys.some(k => k.startsWith('default_socks5_'))) {
+      clearGlobalProxyCache()
     }
 
     return NextResponse.json({ updated: results.length, settings: results })

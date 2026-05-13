@@ -8,6 +8,7 @@ import {
   findInstanceByName,
   getInstanceName,
   resolveChipProxy,
+  getGlobalProxy,
 } from '@/lib/evolution-api'
 
 export async function POST(request: NextRequest) {
@@ -49,11 +50,15 @@ export async function POST(request: NextRequest) {
       console.error('Verifier: Failed to set webhook:', webhookErr)
     }
 
-    // Apply SOCKS5 proxy — auto-detect from WireGuard IP or explicit config
-    const proxyConfig = resolveChipProxy(chip)
+    // Apply SOCKS5 proxy — priority: chip config > WireGuard auto-detect > global proxy
+    // The global proxy comes from Settings, so the user configures it ONCE
+    // and ALL chips use it automatically — no per-chip configuration needed
+    const globalProxy = await getGlobalProxy()
+    const proxyConfig = resolveChipProxy(chip, globalProxy)
     if (proxyConfig) {
       try {
         await setProxy(effectiveInstanceName, proxyConfig)
+        console.log(`Verifier: Proxy applied to ${effectiveInstanceName}: ${proxyConfig.host}:${proxyConfig.port}`)
       } catch (proxyErr) {
         console.error('Verifier: Failed to set proxy:', proxyErr)
       }

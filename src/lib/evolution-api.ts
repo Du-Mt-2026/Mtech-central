@@ -201,6 +201,7 @@ export async function createInstance(instanceName: string): Promise<EvolutionIns
       disconnectionAt: null,
       createdAt: inst.createdAt || new Date().toISOString(),
       updatedAt: inst.updatedAt || new Date().toISOString(),
+      Proxy: null,
     };
   }
 
@@ -354,13 +355,72 @@ export async function setPresence(
 
 // ============ Proxy Configuration ============
 
+// Cache for global proxy settings (avoids DB query on every call)
+let cachedGlobalProxy: { enabled: boolean; host: string; port: string; username: string; password: string } | null | undefined = undefined
+let globalProxyCacheTimestamp = 0
+const GLOBAL_PROXY_CACHE_TTL_MS = 30_000 // 30 seconds
+
+/**
+ * Get the global SOCKS5 proxy from Settings table.
+ * This is the proxy that applies to ALL chips automatically,
+ * so the user doesn't need to configure proxy on each chip.
+ * Settings keys: default_socks5_host, default_socks5_port, default_socks5_user, default_socks5_pass
+ */
+export async function getGlobalProxy(): Promise<{ enabled: boolean; host: string; port: string; username: string; password: string } | null> {
+  const now = Date.now()
+  if (cachedGlobalProxy !== undefined && (now - globalProxyCacheTimestamp) < GLOBAL_PROXY_CACHE_TTL_MS) {
+    return cachedGlobalProxy
+  }
+
+  try {
+    const settings = await db.settings.findMany({
+      where: {
+        key: { in: ['default_socks5_host', 'default_socks5_port', 'default_socks5_user', 'default_socks5_pass'] }
+      }
+    })
+    const settingsMap = new Map(settings.map(s => [s.key, s.value]))
+
+    const host = settingsMap.get('default_socks5_host') || ''
+    const port = settingsMap.get('default_socks5_port') || ''
+
+    if (host && port) {
+      cachedGlobalProxy = {
+        enabled: true,
+        host,
+        port,
+        username: settingsMap.get('default_socks5_user') || '',
+        password: settingsMap.get('default_socks5_pass') || '',
+      }
+      globalProxyCacheTimestamp = now
+      return cachedGlobalProxy
+    }
+  } catch {
+    // DB not available, return null
+  }
+
+  cachedGlobalProxy = null
+  globalProxyCacheTimestamp = now
+  return null
+}
+
+/**
+ * Clear the global proxy cache — call after saving proxy settings
+ */
+export function clearGlobalProxyCache(): void {
+  cachedGlobalProxy = undefined
+  globalProxyCacheTimestamp = 0
+}
+
 /**
  * Resolve automatic proxy config from a chip record.
- * If the chip has proxyMode='socks5' with explicit host/port, use those.
- * Otherwise, if the chip has a wireguardIp, auto-use it as SOCKS5 proxy
- * (Every Proxy runs on the phone via WireGuard at the chip's WG IP).
- * The default Every Proxy SOCKS5 port is 1080, but can be overridden
- * by the chip's socksPort field.
+ * Priority:
+ *   1) Explicit SOCKS5 configuration on the chip (proxyMode='socks5' + host/port)
+ *   2) Auto-detect from WireGuard IP (Every Proxy on the phone)
+ *   3) Global SOCKS5 proxy from Settings (applies to ALL chips automatically)
+ *   4) No proxy
+ *
+ * This means the user can configure the proxy ONCE in Settings and
+ * ALL chips will automatically use it — no per-chip configuration needed.
  */
 export function resolveChipProxy(chip: {
   proxyMode: string;
@@ -370,7 +430,7 @@ export function resolveChipProxy(chip: {
   socks5Pass: string;
   wireguardIp: string;
   socksPort: number;
-}): { enabled: boolean; host: string; port: string; username: string; password: string } | null {
+}, globalProxy?: { enabled: boolean; host: string; port: string; username: string; password: string } | null): { enabled: boolean; host: string; port: string; username: string; password: string } | null {
   // 1) Explicit SOCKS5 configuration on the chip
   if (chip.proxyMode === 'socks5' && chip.socks5Host && chip.socks5Port) {
     return {
@@ -394,7 +454,12 @@ export function resolveChipProxy(chip: {
     }
   }
 
-  // 3) No proxy available
+  // 3) Global SOCKS5 proxy from Settings (auto-applies to all chips)
+  if (globalProxy && globalProxy.enabled && globalProxy.host && globalProxy.port) {
+    return globalProxy
+  }
+
+  // 4) No proxy available
   return null
 }
 
