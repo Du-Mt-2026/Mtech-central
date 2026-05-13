@@ -7,17 +7,16 @@ export async function POST(
 ) {
   const { campaignId } = await params
   try {
-    // Start the campaign: creates pending messages and sets status to running
+    console.log(`[Campaign Start] Starting campaign ${campaignId}`)
     const { messageCount } = await startCampaign(campaignId)
+    console.log(`[Campaign Start] Campaign ${campaignId} started with ${messageCount} messages`)
 
-    // Note: actual message processing is handled separately via
-    // /api/campaigns/process-all or a cron job, to avoid serverless timeouts
     return NextResponse.json({
       success: true,
       messageCount,
     })
   } catch (error: any) {
-    console.error('Campaign start error:', error)
+    console.error(`[Campaign Start] Error for campaign ${campaignId}:`, error)
     return NextResponse.json(
       { error: error.message || 'Erro ao iniciar campanha' },
       { status: 500 }
