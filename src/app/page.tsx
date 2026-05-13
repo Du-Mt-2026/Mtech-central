@@ -1443,7 +1443,8 @@ function ContatosTab() {
     try {
       const res = await fetch(`/api/contact-lists/${listId}/contacts${searchQuery ? `?search=${searchQuery}` : ''}`)
       const data = await res.json()
-      setContacts(data)
+      if (!res.ok) throw new Error(data.error || 'Erro ao carregar contatos')
+      setContacts(Array.isArray(data) ? data : data.contacts || [])
     } catch { toast.error('Erro ao carregar contatos') }
   }, [searchQuery])
 
