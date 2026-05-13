@@ -1747,7 +1747,11 @@ function CampanhasTab() {
   })
 
   const fetchCampaigns = useCallback(async () => {
-    try { const res = await fetch('/api/campaigns'); setCampaigns(await res.json()) }
+    try {
+      const res = await fetch('/api/campaigns')
+      const data = await res.json()
+      setCampaigns(Array.isArray(data) ? data : [])
+    }
     catch { toast.error('Erro ao carregar campanhas') } finally { setLoading(false) }
   }, [])
   const fetchChips = useCallback(async () => {
@@ -1781,11 +1785,16 @@ function CampanhasTab() {
   const startCampaignAction = async (id: string) => {
     try {
       const res = await fetch(`/api/campaigns/${id}/start`, { method: 'POST' })
-      const data = await res.json()
+      let data
+      try { data = await res.json() } catch { data = {} }
       if (!res.ok) throw new Error(data.error || 'Erro ao iniciar campanha')
       toast.success(`Campanha iniciada! ${data.messageCount || 0} mensagens criadas.`)
       fetchCampaigns()
-    } catch (err: unknown) { toast.error((err as Error).message || 'Erro ao iniciar campanha') }
+    } catch (err: unknown) {
+      const msg = (err as Error).message || 'Erro ao iniciar campanha'
+      toast.error(msg)
+      console.error('Campaign start error:', err)
+    }
   }
 
   const updateCampaignStatus = async (id: string, status: string) => {
@@ -1818,7 +1827,7 @@ function CampanhasTab() {
 
   const openDetail = async (campaign: Campaign) => {
     setSelectedCampaign(campaign); setDetailDialogOpen(true)
-    try { const res = await fetch(`/api/messages?campaignId=${campaign.id}`); setDetailMessages(await res.json()) }
+    try { const res = await fetch(`/api/messages?campaignId=${campaign.id}`); const data = await res.json(); setDetailMessages(Array.isArray(data) ? data : []) }
     catch { setDetailMessages([]) }
   }
 
