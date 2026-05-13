@@ -151,7 +151,7 @@ interface SendMessageResponse {
 
 // ============ Core API Client ============
 
-async function evolutionFetch(endpoint: string, options: RequestInit = {}) {
+export async function evolutionFetch(endpoint: string, options: RequestInit = {}) {
   const creds = await getCredentials()
   const url = `${creds.apiUrl}${endpoint}`;
   const response = await fetch(url, {

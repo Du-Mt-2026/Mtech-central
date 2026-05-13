@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-
-const GO_SERVICE_URL = process.env.VERIFIER_SERVICE_URL || 'http://localhost:3002'
+import {
+  createInstance,
+  connectInstance,
+  setWebhook,
+  setProxy,
+  findInstanceByName,
+  getInstanceName,
+} from '@/lib/evolution-api'
 
 export async function POST(request: NextRequest) {
   try {
@@ -12,55 +18,89 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'chipId é obrigatório' }, { status: 400 })
     }
 
-    // Look up the chip's proxy settings from DB
     const chip = await db.chip.findUnique({ where: { id: chipId } })
     if (!chip) {
       return NextResponse.json({ error: 'Chip não encontrado' }, { status: 404 })
     }
 
-    // Build the SOCKS5 proxy URL from chip settings
-    let proxy = ''
-    if (chip.proxyMode === 'socks5' && chip.socks5Host) {
-      const auth = chip.socks5User
-        ? `${encodeURIComponent(chip.socks5User)}:${encodeURIComponent(chip.socks5Pass)}@`
-        : ''
-      const port = chip.socks5Port || 1080
-      proxy = `socks5://${auth}${chip.socks5Host}:${port}`
+    const instanceName = chip.evolutionInstance || getInstanceName(chip.id, chip.name)
+
+    // Check if instance already exists
+    let existing = await findInstanceByName(instanceName)
+
+    if (!existing) {
+      const newInstance = await createInstance(instanceName)
+      existing = newInstance
     }
 
-    // First, set the proxy on the Go service if available
-    if (proxy) {
+    const effectiveInstanceName = existing.name || instanceName
+
+    // Configure webhook
+    const webhookUrl = `${process.env.VERCEL_URL ? 'https://' + process.env.VERCEL_URL : process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/whatsapp/webhook`
+    try {
+      await setWebhook(effectiveInstanceName, webhookUrl, [
+        'MESSAGES_UPSERT',
+        'MESSAGES_UPDATE',
+        'SEND_MESSAGE',
+        'CONNECTION_UPDATE',
+      ])
+    } catch (webhookErr) {
+      console.error('Verifier: Failed to set webhook:', webhookErr)
+    }
+
+    // Apply SOCKS5 proxy if configured on the chip
+    if (chip.proxyMode === 'socks5' && chip.socks5Host && chip.socks5Port) {
       try {
-        await fetch(`${GO_SERVICE_URL}/api/proxy`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ proxyAddr: proxy }),
+        await setProxy(effectiveInstanceName, {
+          enabled: true,
+          host: chip.socks5Host,
+          port: String(chip.socks5Port),
+          username: chip.socks5User || '',
+          password: chip.socks5Pass || '',
         })
-      } catch {
-        // Proxy setup failed, continue anyway
+      } catch (proxyErr) {
+        console.error('Verifier: Failed to set proxy:', proxyErr)
       }
     }
 
-    // Call Go service force-reconnect to generate QR code
-    const res = await fetch(`${GO_SERVICE_URL}/api/force-reconnect`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+    // Connect to get QR Code (or detect already connected)
+    const connectResult = await connectInstance(effectiveInstanceName)
+
+    const isConnected = connectResult.state === 'open'
+    const newStatus = isConnected ? 'connected' : 'connecting'
+
+    // Update chip in DB
+    await db.chip.update({
+      where: { id: chipId },
+      data: {
+        status: newStatus,
+        evolutionInstance: effectiveInstanceName,
+        qrPairingCode: connectResult.code || connectResult.pairingCode || null,
+        lastSeen: isConnected ? new Date() : chip.lastSeen,
+        ...(isConnected ? { isQrPaired: true } : {}),
+      },
     })
 
-    const data = await res.json()
-
-    if (!res.ok) {
-      return NextResponse.json(
-        { error: data.error || 'Erro ao conectar ao serviço WhatsApp' },
-        { status: res.status }
-      )
+    // Return in the format the frontend expects
+    if (isConnected) {
+      return NextResponse.json({
+        connected: true,
+        status: 'connected',
+        instanceName: effectiveInstanceName,
+      })
     }
 
-    return NextResponse.json(data)
-  } catch (error) {
+    return NextResponse.json({
+      connected: false,
+      status: 'connecting',
+      instanceName: effectiveInstanceName,
+      qrcode: connectResult.qrcode || null,
+      code: connectResult.code || connectResult.pairingCode || null,
+    })
+  } catch (error: any) {
     console.error('Verifier connect error:', error)
     return NextResponse.json(
-      { error: 'Erro interno ao conectar ao WhatsApp' },
+      { error: error.message || 'Erro interno ao conectar ao WhatsApp' },
       { status: 500 }
     )
   }

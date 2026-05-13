@@ -128,7 +128,7 @@ export function VerificarSection() {
     }
   }, [])
 
-  // ===== Check Go Service & WhatsApp Connection =====
+  // ===== Check Evolution API & WhatsApp Connection =====
   const checkServiceStatus = useCallback(async () => {
     setCheckingConnection(true)
     try {
@@ -193,15 +193,23 @@ export function VerificarSection() {
         return
       }
 
-      // Fetch QR code from the Go service's qr-code endpoint
-      const qrRes = await fetch('/api/verifier/qr')
-      if (qrRes.ok) {
-        const qrData = await qrRes.json()
-        if (qrData.qrCode) {
-          const qrSrc = qrData.qrCode.startsWith('data:')
-            ? qrData.qrCode
-            : `data:image/png;base64,${qrData.qrCode}`
-          setQrCode(qrSrc)
+      // If connect already returned a QR code, use it directly
+      if (data.qrcode) {
+        const qrSrc = data.qrcode.startsWith('data:')
+          ? data.qrcode
+          : `data:image/png;base64,${data.qrcode}`
+        setQrCode(qrSrc)
+      } else {
+        // Otherwise fetch QR code from the verifier endpoint
+        const qrRes = await fetch(`/api/verifier/qr?chipId=${selectedChipId}`)
+        if (qrRes.ok) {
+          const qrData = await qrRes.json()
+          if (qrData.qrCode) {
+            const qrSrc = qrData.qrCode.startsWith('data:')
+              ? qrData.qrCode
+              : `data:image/png;base64,${qrData.qrCode}`
+            setQrCode(qrSrc)
+          }
         }
       }
 
@@ -218,9 +226,9 @@ export function VerificarSection() {
             toast.success('WhatsApp conectado com sucesso!')
             return
           }
-          // Refresh QR code if it expired
-          if (statusData.connection?.qrExpired && !qrConnected) {
-            const qrRefresh = await fetch('/api/verifier/qr')
+          // Refresh QR code periodically (QR codes expire after ~20s)
+          if (!qrConnected && selectedChipId) {
+            const qrRefresh = await fetch(`/api/verifier/qr?chipId=${selectedChipId}`)
             if (qrRefresh.ok) {
               const qrRefreshData = await qrRefresh.json()
               if (qrRefreshData.qrCode) {
@@ -904,7 +912,7 @@ export function VerificarSection() {
               {!serviceAvailable && (
                 <p className="text-xs text-rose-600 flex items-center gap-1">
                   <AlertTriangle className="size-3" />
-                  Serviço de verificação indisponível. Verifique se o serviço Go está rodando na porta 3002.
+                  Evolution API indisponível. Verifique se a Evolution API está rodando e as credenciais estão configuradas.
                 </p>
               )}
             </div>

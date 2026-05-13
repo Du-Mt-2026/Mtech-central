@@ -1,35 +1,85 @@
 import { NextResponse } from 'next/server'
-
-const GO_SERVICE_URL = process.env.VERIFIER_SERVICE_URL || 'http://localhost:3002'
+import { db } from '@/lib/db'
+import { testConnection, getConnectionState, getInstanceName, fetchOctupusZapInstances } from '@/lib/evolution-api'
 
 export async function GET() {
   try {
-    const [healthRes, connectionRes] = await Promise.allSettled([
-      fetch(`${GO_SERVICE_URL}/api/health`),
-      fetch(`${GO_SERVICE_URL}/api/status`),
-    ])
+    // 1) Test if Evolution API is reachable at all
+    const evolutionTest = await testConnection()
 
-    const health = healthRes.status === 'fulfilled' && healthRes.value.ok
-      ? await healthRes.value.json()
-      : { status: 'unreachable' }
+    if (!evolutionTest.success) {
+      return NextResponse.json({
+        goService: { status: 'unreachable', error: evolutionTest.error },
+        connection: { connected: false, status: 'unreachable' },
+        serviceAvailable: false,
+      }, { status: 503 })
+    }
 
-    const connection = connectionRes.status === 'fulfilled' && connectionRes.value.ok
-      ? await connectionRes.value.json()
-      : { connected: false, status: 'unreachable' }
+    // 2) Find the first connected OctupusZap instance to use as verifier
+    const instances = await fetchOctupusZapInstances()
+    const connectedInstance = instances.find(
+      (inst: any) => inst.connectionStatus === 'open'
+    )
 
-    // Normalize the connection status from Go service format
-    const isConnected = connection.connected === true || connection.status === 'connected'
+    if (!connectedInstance) {
+      return NextResponse.json({
+        goService: { status: 'ok', source: 'evolution-api' },
+        connection: {
+          connected: false,
+          status: 'no_connected_instance',
+          phoneNumber: '',
+          pairingCode: '',
+          qrExpired: false,
+        },
+        serviceAvailable: true,
+        instanceCount: instances.length,
+      })
+    }
+
+    // 3) Get detailed connection state of the connected instance
+    let detailedState = 'open'
+    let phoneNumber = ''
+    try {
+      const stateRes = await getConnectionState(connectedInstance.name)
+      detailedState = stateRes.instance?.state || 'open'
+      phoneNumber = connectedInstance.ownerJid?.replace('@s.whatsapp.net', '') || ''
+    } catch {
+      // state check failed, but we know from fetchInstances it's open
+    }
+
+    // 4) Also update the chip status in DB
+    try {
+      const chip = await db.chip.findFirst({
+        where: { evolutionInstance: connectedInstance.name },
+      })
+      if (chip && chip.status !== 'connected') {
+        await db.chip.update({
+          where: { id: chip.id },
+          data: {
+            status: 'connected',
+            lastSeen: new Date(),
+            isQrPaired: true,
+          },
+        })
+      }
+    } catch {
+      // DB update not critical
+    }
+
+    const isConnected = detailedState === 'open'
 
     return NextResponse.json({
-      goService: health,
+      goService: { status: 'ok', source: 'evolution-api' },
       connection: {
         connected: isConnected,
-        status: connection.status || 'unknown',
-        phoneNumber: connection.phoneNumber || '',
-        pairingCode: connection.pairingCode || '',
-        qrExpired: connection.qrExpired || false,
+        status: isConnected ? 'connected' : 'disconnected',
+        phoneNumber,
+        instanceName: connectedInstance.name,
+        pairingCode: '',
+        qrExpired: false,
       },
-      serviceAvailable: healthRes.status === 'fulfilled' && healthRes.value.ok,
+      serviceAvailable: true,
+      instanceCount: instances.length,
     })
   } catch (error) {
     console.error('Verifier status error:', error)

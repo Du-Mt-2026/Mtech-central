@@ -1,28 +1,52 @@
 import { NextResponse } from 'next/server'
-
-const GO_SERVICE_URL = process.env.VERIFIER_SERVICE_URL || 'http://localhost:3002'
+import { db } from '@/lib/db'
+import { disconnectInstance, getInstanceName, deleteInstance } from '@/lib/evolution-api'
 
 export async function POST() {
   try {
-    const res = await fetch(`${GO_SERVICE_URL}/api/disconnect`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+    // Find the currently connected chip used for verification
+    const chip = await db.chip.findFirst({
+      where: {
+        status: 'connected',
+        evolutionInstance: { not: '' },
+      },
+      orderBy: { updatedAt: 'desc' },
     })
 
-    const data = await res.json()
-
-    if (!res.ok) {
-      return NextResponse.json(
-        { error: data.error || 'Erro ao desconectar' },
-        { status: res.status }
-      )
+    if (!chip) {
+      // No connected chip, nothing to disconnect
+      return NextResponse.json({ success: true, message: 'Nenhum chip conectado para desconectar' })
     }
 
-    return NextResponse.json(data)
-  } catch (error) {
+    const instanceName = chip.evolutionInstance || getInstanceName(chip.id, chip.name)
+
+    // Try to disconnect via Evolution API
+    try {
+      await disconnectInstance(instanceName)
+    } catch (err) {
+      console.log('Verifier disconnect failed, trying delete:', err)
+      try {
+        await deleteInstance(instanceName)
+      } catch (deleteErr) {
+        console.log('Verifier delete also failed:', deleteErr)
+      }
+    }
+
+    // Update chip status in DB
+    await db.chip.update({
+      where: { id: chip.id },
+      data: {
+        status: 'disconnected',
+        isQrPaired: false,
+        qrPairingCode: null,
+      },
+    })
+
+    return NextResponse.json({ success: true, message: 'WhatsApp desconectado' })
+  } catch (error: any) {
     console.error('Verifier disconnect error:', error)
     return NextResponse.json(
-      { error: 'Erro interno ao desconectar' },
+      { error: error.message || 'Erro interno ao desconectar' },
       { status: 500 }
     )
   }
