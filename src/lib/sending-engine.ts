@@ -117,7 +117,22 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
   if (!campaign) throw new Error('Campanha não encontrada')
   if (!campaign.contactList) throw new Error('Campanha não tem lista de contatos')
   if (campaign.chips.length === 0) throw new Error('Campanha não tem chips atribuídos')
-  if (campaign.sequenceSteps.length === 0) throw new Error('Campanha não tem etapas de mensagem')
+
+  // Derive message content from either sequence steps or message variations
+  const hasSteps = campaign.sequenceSteps.length > 0
+  let parsedVariations: string[] = []
+  if (!hasSteps) {
+    try {
+      parsedVariations = JSON.parse(campaign.messageVariations || '[]')
+    } catch {
+      parsedVariations = []
+    }
+    parsedVariations = parsedVariations.filter((v: string) => v && v.trim())
+  }
+
+  if (!hasSteps && parsedVariations.length === 0) {
+    throw new Error('Campanha não tem mensagens configuradas. Adicione variações de mensagem ou etapas de sequência.')
+  }
 
   const contacts = campaign.contactList.contacts
   const chips = campaign.chips.map(cc => cc.chip).filter(c => c.evolutionInstance)
@@ -125,15 +140,23 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
   if (chips.length === 0) throw new Error('Nenhum chip com instância WhatsApp conectada')
   if (contacts.length === 0) throw new Error('Lista de contatos vazia')
 
-  // Create messages: each contact gets the first step from a rotating chip
+  // Build message items from either steps or variations
+  type MessageItem = { content: string; mediaUrl: string | null; mediatype: string | null }
+  const messageItems: MessageItem[] = hasSteps
+    ? campaign.sequenceSteps.map(s => ({ content: s.content, mediaUrl: (s as any).mediaUrl || null, mediatype: (s as any).mediatype || null }))
+    : parsedVariations.map(content => ({ content, mediaUrl: null, mediatype: null }))
+
+  // Create messages: each contact gets a random message variation (or first step from sequence)
   const messagesToCreate = []
   for (let i = 0; i < contacts.length; i++) {
     const contact = contacts[i]
     const chip = chips[i % chips.length] // Round-robin assignment
-    const firstStep = campaign.sequenceSteps[0]
+    const messageItem = hasSteps
+      ? messageItems[0] // First step for sequence mode
+      : messageItems[Math.floor(Math.random() * messageItems.length)] // Random variation for variations mode
 
     // Replace template variables
-    const content = firstStep.content
+    const content = messageItem.content
       .replace(/\{nome\}/g, contact.name)
       .replace(/\{telefone\}/g, contact.phone)
 
@@ -143,8 +166,8 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
       contactId: contact.id,
       content,
       status: 'pending' as const,
-      mediaUrl: firstStep.mediaUrl || null,
-      mediatype: firstStep.mediatype || null,
+      mediaUrl: messageItem.mediaUrl,
+      mediatype: messageItem.mediatype,
     })
   }
 

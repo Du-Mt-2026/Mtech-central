@@ -32,7 +32,7 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const body = await request.json()
-    const { name, sendIntervalMin, sendIntervalMax, chipIds, contactListId, steps, antiBanEnabled, warmingMode, scheduledAt } = body
+    const { name, sendIntervalMin, sendIntervalMax, chipIds, contactListId, steps, antiBanEnabled, warmingMode, scheduledAt, messageVariations } = body
 
     if (!name) {
       return NextResponse.json({ error: 'Name is required' }, { status: 400 })
@@ -41,7 +41,7 @@ export async function POST(request: Request) {
     const campaign = await db.campaign.create({
       data: {
         name,
-        messageVariations: '[]',
+        messageVariations: messageVariations || '[]',
         sendIntervalMin: sendIntervalMin || 30,
         sendIntervalMax: sendIntervalMax || 90,
         contactListId: contactListId || null,

@@ -1768,6 +1768,7 @@ function CampanhasTab() {
       chipIds: newCampaign.chipIds, contactListId: newCampaign.contactListId || null,
       scheduledAt: newCampaign.scheduledAt ? new Date(newCampaign.scheduledAt).toISOString() : null,
       steps, antiBanEnabled: newCampaign.antiBanEnabled, warmingMode: newCampaign.warmingMode,
+      messageVariations: !newCampaign.useSequence ? JSON.stringify(newCampaign.messageVariations.filter((v: string) => v.trim())) : '[]',
     }
     try {
       const res = await fetch('/api/campaigns', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
