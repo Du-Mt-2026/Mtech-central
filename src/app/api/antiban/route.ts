@@ -17,6 +17,22 @@ const ALLOWED_FIELDS = [
   'stopOnWarning',
 ] as const
 
+// Default values matching Prisma schema @default() annotations
+export const ANTI_BAN_DEFAULTS = {
+  typingMinDelay: 500,
+  typingMaxDelay: 2000,
+  messageIntervalMin: 30,
+  messageIntervalMax: 90,
+  randomLineBreaks: true,
+  emojiVariation: true,
+  dailyLimitPerChip: 200,
+  warmingEnabled: true,
+  warmingDays: 7,
+  cooldownMinutes: 30,
+  cooldownAfterMessages: 50,
+  stopOnWarning: true,
+} as const
+
 type AllowedField = typeof ALLOWED_FIELDS[number]
 
 export async function GET() {
@@ -40,6 +56,15 @@ export async function PATCH(request: Request) {
     }
 
     const body = await request.json()
+
+    // Handle reset to defaults
+    if (body._resetToDefaults) {
+      const reset = await db.antiBanSettings.update({
+        where: { id: settings.id },
+        data: { ...ANTI_BAN_DEFAULTS },
+      })
+      return NextResponse.json(reset)
+    }
 
     // Only allow whitelisted fields — prevent arbitrary field injection
     const sanitizedData: Record<string, unknown> = {}

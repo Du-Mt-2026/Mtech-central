@@ -2470,6 +2470,8 @@ function AntiBanTab() {
   const [settings, setSettings] = useState<AntiBanSettings | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [resetDialogOpen, setResetDialogOpen] = useState(false)
+  const [resetting, setResetting] = useState(false)
 
   const fetchSettings = useCallback(async () => {
     try {
@@ -2490,6 +2492,17 @@ function AntiBanTab() {
       toast.success('Configuração atualizada!')
     } catch { toast.error('Erro ao atualizar') }
     finally { setSaving(false) }
+  }
+
+  const resetToDefaults = async () => {
+    setResetting(true)
+    try {
+      const res = await fetch('/api/antiban', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ _resetToDefaults: true }) })
+      setSettings(await res.json())
+      toast.success('Configurações restauradas para o padrão!')
+      setResetDialogOpen(false)
+    } catch { toast.error('Erro ao restaurar padrões') }
+    finally { setResetting(false) }
   }
 
   if (loading) return <div className="flex items-center justify-center py-20"><RefreshCw className="size-6 animate-spin text-muted-foreground" /></div>
@@ -2520,10 +2533,44 @@ function AntiBanTab() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-bold">Anti-Ban</h2>
-        <p className="text-sm text-muted-foreground">Proteja seus chips contra bloqueios do WhatsApp</p>
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h2 className="text-2xl font-bold">Anti-Ban</h2>
+          <p className="text-sm text-muted-foreground">Proteja seus chips contra bloqueios do WhatsApp</p>
+        </div>
+        <Button
+          variant="outline"
+          className="gap-2 border-amber-500/30 text-amber-600 hover:bg-amber-500/10"
+          onClick={() => setResetDialogOpen(true)}
+          disabled={saving}
+        >
+          <RotateCcw className="size-4" />
+          Restaurar Padrões
+        </Button>
       </div>
+
+      {/* Reset Confirmation Dialog */}
+      <AlertDialog open={resetDialogOpen} onOpenChange={setResetDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Restaurar configurações padrão?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Isso vai redefinir todas as configurações anti-ban para os valores originais de fábrica. Suas personalizações serão perdidas.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={resetToDefaults}
+              disabled={resetting}
+              className="bg-amber-600 hover:bg-amber-700"
+            >
+              {resetting ? <RefreshCw className="size-4 animate-spin mr-2" /> : <RotateCcw className="size-4 mr-2" />}
+              {resetting ? 'Restaurando...' : 'Restaurar Padrões'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Active Protection Banner */}
       <Card className="shadow-lg border-0 overflow-hidden">
