@@ -1019,10 +1019,10 @@ export function VerificarSection() {
                       Todos ({results.length})
                     </TabsTrigger>
                     <TabsTrigger value="valid" className="text-xs px-3">
-                      ✅ No WhatsApp ({validCount})
+                      No WhatsApp ({validCount})
                     </TabsTrigger>
                     <TabsTrigger value="invalid" className="text-xs px-3">
-                      ❌ Fora ({invalidCount})
+                      Fora ({invalidCount})
                     </TabsTrigger>
                   </TabsList>
                 </Tabs>
@@ -1046,7 +1046,7 @@ export function VerificarSection() {
                     disabled={validCount === 0}
                   >
                     <Copy className="size-3" />
-                    Copiar Válidos
+                    Copiar No WhatsApp
                   </Button>
                   <Button
                     variant="outline"
@@ -1117,7 +1117,7 @@ export function VerificarSection() {
                               : 'bg-rose-500/10 text-rose-500 border-rose-500/30'
                           }`}
                         >
-                          {result.exists ? '✅ No WhatsApp' : '❌ Não registrado'}
+                          {result.exists ? 'No WhatsApp' : 'Fora'}
                         </Badge>
                       </motion.div>
                     ))}
