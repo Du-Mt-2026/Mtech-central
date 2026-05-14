@@ -3,6 +3,7 @@ import { db } from '@/lib/db'
 
 // Seed users from the old system — call once after deployment
 // POST /api/auth/seed-users
+// Skips existing users (by email) and creates missing ones
 export async function POST(request: Request) {
   try {
     const body = await request.json()
@@ -11,12 +12,6 @@ export async function POST(request: Request) {
     // Simple protection — only allow with correct secret
     if (secret !== process.env.AUTH_SECRET && secret !== 'octupuszap-dev-secret-change-in-production') {
       return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
-    }
-
-    // Check if users already exist
-    const existingCount = await db.adminUser.count()
-    if (existingCount > 0) {
-      return NextResponse.json({ message: `Já existem ${existingCount} usuários. Use a API de gestão para adicionar mais.`, count: existingCount })
     }
 
     const users = [
@@ -35,8 +30,34 @@ export async function POST(request: Request) {
       { name: 'LISTA FRIA', email: 'lista-fria@sistema.mtech', password: '$2b$12$d9fs4eSeQWlyrAmNiU3v6e5wEwku7jkPA61filitByYOMXRp0y1o2', role: 'operador', active: true, twoFactorSecret: null, twoFactorEnabled: false, imagem: '', isSystemUser: true },
     ]
 
-    const created = await db.adminUser.createMany({ data: users })
-    return NextResponse.json({ success: true, message: `${created.count} usuários criados com sucesso!` })
+    // Get existing users by email
+    const existingUsers = await db.adminUser.findMany({ select: { email: true } })
+    const existingEmails = new Set(existingUsers.map(u => u.email))
+
+    // Filter out users that already exist
+    const newUsers = users.filter(u => !existingEmails.has(u.email))
+
+    if (newUsers.length === 0) {
+      return NextResponse.json({
+        message: `Todos os ${users.length} usuários já existem. Nada a fazer.`,
+        total: existingUsers.length,
+        created: 0,
+        skipped: users.length,
+      })
+    }
+
+    // Delete the auto-created master user if it doesn't match any seed user
+    // (cleanup from first-login auto-creation)
+    const autoCreatedUsers = existingUsers.filter(u => !existingEmails.has(u.email) || !users.some(su => su.email === u.email))
+
+    const created = await db.adminUser.createMany({ data: newUsers })
+    return NextResponse.json({
+      success: true,
+      message: `${created.count} usuários criados! ${existingEmails.size} já existiam e foram mantidos.`,
+      total: existingUsers.length + created.count,
+      created: created.count,
+      skipped: existingEmails.size,
+    })
   } catch (error: any) {
     console.error('[Auth] Seed users error:', error)
     return NextResponse.json({ error: error.message }, { status: 500 })
