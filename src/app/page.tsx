@@ -1577,7 +1577,7 @@ function ContatosTab() {
               <UserPlus className="size-4" /> Adicionar
             </Button>
             <Button variant="outline" className="gap-1.5" onClick={() => setImportDialogOpen(true)}>
-              <Upload className="size-4" /> Importar CSV
+              <Upload className="size-4" /> Importar Planilha
             </Button>
           </div>
 
@@ -1702,16 +1702,16 @@ function ContatosTab() {
       {/* Import Dialog */}
       <Dialog open={importDialogOpen} onOpenChange={setImportDialogOpen}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Importar CSV</DialogTitle><DialogDescription>Importe contatos de um arquivo CSV</DialogDescription></DialogHeader>
+          <DialogHeader><DialogTitle>Importar Planilha</DialogTitle><DialogDescription>Importe contatos de um arquivo CSV, Excel ou ODS</DialogDescription></DialogHeader>
           <div className="py-4 space-y-4">
             <div className="border-2 border-dashed rounded-xl p-8 text-center hover:border-emerald-400 transition-colors">
               <Upload className="size-8 mx-auto text-muted-foreground mb-3" />
-              <p className="font-medium">Arraste o arquivo CSV aqui</p>
-              <p className="text-sm text-muted-foreground mb-3">ou clique para selecionar</p>
-              <Input type="file" accept=".csv" onChange={handleImport} className="max-w-xs mx-auto" />
+              <p className="font-medium">Arraste o arquivo aqui</p>
+              <p className="text-sm text-muted-foreground mb-3">CSV, Excel (.xlsx, .xls) ou LibreOffice (.ods)</p>
+              <Input type="file" accept=".csv,.xlsx,.xls,.ods" onChange={handleImport} className="max-w-xs mx-auto" />
             </div>
             <div className="p-3 bg-muted/50 rounded-lg text-xs text-muted-foreground">
-              <p className="font-medium mb-1">Formato esperado:</p>
+              <p className="font-medium mb-1">Formato esperado (colunas):</p>
               <code className="block bg-muted p-2 rounded">nome,telefone{'\n'}João,11999990001{'\n'}Maria,21988880002</code>
             </div>
           </div>

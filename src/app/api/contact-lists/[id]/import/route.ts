@@ -1,5 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import * as XLSX from 'xlsx'
+
+const ACCEPTED_EXTENSIONS = ['.csv', '.xlsx', '.xls', '.ods']
+const ACCEPTED_MIMES = [
+  'text/csv',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
+  'application/vnd.ms-excel', // .xls
+  'application/vnd.oasis.opendocument.spreadsheet', // .ods
+]
+
+function getFileExtension(filename: string): string {
+  const idx = filename.lastIndexOf('.')
+  return idx >= 0 ? filename.substring(idx).toLowerCase() : ''
+}
 
 export async function POST(
   req: NextRequest,
@@ -11,11 +25,16 @@ export async function POST(
     const file = formData.get('file') as File | null
 
     if (!file) {
-      return NextResponse.json({ error: 'Arquivo CSV é obrigatório' }, { status: 400 })
+      return NextResponse.json({ error: 'Arquivo é obrigatório' }, { status: 400 })
     }
 
-    if (!file.name.endsWith('.csv') && file.type !== 'text/csv') {
-      return NextResponse.json({ error: 'Apenas arquivos CSV são aceitos' }, { status: 400 })
+    const ext = getFileExtension(file.name)
+
+    if (!ACCEPTED_EXTENSIONS.includes(ext) && !ACCEPTED_MIMES.includes(file.type)) {
+      return NextResponse.json(
+        { error: `Formato não suportado. Aceitos: ${ACCEPTED_EXTENSIONS.join(', ')}` },
+        { status: 400 }
+      )
     }
 
     // Verify list exists
@@ -24,38 +43,56 @@ export async function POST(
       return NextResponse.json({ error: 'Lista não encontrada' }, { status: 404 })
     }
 
-    const text = await file.text()
-    const lines = text.split(/\r?\n/).filter(line => line.trim())
+    // Parse the file using SheetJS (handles CSV, XLSX, XLS, ODS)
+    const buffer = Buffer.from(await file.arrayBuffer())
+    const workbook = XLSX.read(buffer, { type: 'buffer' })
+    const sheetName = workbook.SheetNames[0]
+    const sheet = workbook.Sheets[sheetName]
 
-    if (lines.length === 0) {
-      return NextResponse.json({ error: 'Arquivo CSV vazio' }, { status: 400 })
+    if (!sheet) {
+      return NextResponse.json({ error: 'Arquivo vazio ou sem planilha válida' }, { status: 400 })
     }
 
-    // Parse CSV: first line is header, expect "nome" and "telefone" columns
-    const header = lines[0].toLowerCase().split(',').map(h => h.trim().replace(/"/g, ''))
+    // Convert sheet to array of objects
+    const rows: Record<string, string>[] = XLSX.utils.sheet_to_json(sheet, { defval: '' })
 
-    const nameIdx = header.findIndex(h => h === 'nome' || h === 'name')
-    const phoneIdx = header.findIndex(h => h === 'telefone' || h === 'phone' || h === 'tel')
+    if (rows.length === 0) {
+      return NextResponse.json({ error: 'Nenhum dado encontrado no arquivo' }, { status: 400 })
+    }
 
-    if (nameIdx === -1 || phoneIdx === -1) {
+    // Find name and phone columns (case-insensitive)
+    const headers = Object.keys(rows[0]).map(h => h.toLowerCase().trim())
+    const nameIdx = headers.findIndex(h =>
+      h === 'nome' || h === 'name' || h === 'nombre' || h === 'cliente'
+    )
+    const phoneIdx = headers.findIndex(h =>
+      h === 'telefone' || h === 'phone' || h === 'tel' || h === 'numero' || h === 'número' || h === 'celular' || h === 'whatsapp'
+    )
+
+    if (phoneIdx === -1) {
       return NextResponse.json(
-        { error: 'CSV deve ter colunas "nome" e "telefone" no cabeçalho' },
+        { error: 'Arquivo deve ter uma coluna de telefone. Nomes aceitos: telefone, phone, tel, numero, celular, whatsapp' },
         { status: 400 }
       )
     }
 
+    const nameHeader = nameIdx >= 0 ? Object.keys(rows[0])[nameIdx] : null
+    const phoneHeader = Object.keys(rows[0])[phoneIdx]
+
     const contacts: { name: string; phone: string }[] = []
-    for (let i = 1; i < lines.length; i++) {
-      const cols = lines[i].split(',').map(c => c.trim().replace(/"/g, ''))
-      const name = cols[nameIdx]
-      const phone = cols[phoneIdx]
-      if (name && phone) {
-        contacts.push({ name, phone })
+    for (const row of rows) {
+      const name = nameHeader ? String(row[nameHeader] || '').trim() : ''
+      const phone = String(row[phoneHeader] || '').trim()
+      if (phone && /\d/.test(phone)) {
+        contacts.push({
+          name: name || phone,
+          phone,
+        })
       }
     }
 
     if (contacts.length === 0) {
-      return NextResponse.json({ error: 'Nenhum contato válido encontrado no CSV' }, { status: 400 })
+      return NextResponse.json({ error: 'Nenhum contato válido encontrado no arquivo' }, { status: 400 })
     }
 
     // Bulk create contacts
@@ -74,7 +111,7 @@ export async function POST(
       total: contacts.length,
     })
   } catch (error) {
-    console.error('CSV Import error:', error)
-    return NextResponse.json({ error: 'Erro ao importar CSV' }, { status: 500 })
+    console.error('Import error:', error)
+    return NextResponse.json({ error: 'Erro ao importar arquivo' }, { status: 500 })
   }
 }

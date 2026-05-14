@@ -296,58 +296,127 @@ export function VerificarSection() {
     toast.success(`${lines.length} número(s) carregado(s) para verificação`)
   }
 
-  // ===== CSV Upload =====
-  const handleCsvUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // ===== File Upload (CSV, XLSX, XLS, ODS) =====
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
 
-    if (!file.name.endsWith('.csv') && file.type !== 'text/csv') {
-      toast.error('Apenas arquivos CSV são aceitos')
+    const ext = file.name.substring(file.name.lastIndexOf('.')).toLowerCase()
+    const acceptedExtensions = ['.csv', '.xlsx', '.xls', '.ods']
+
+    if (!acceptedExtensions.includes(ext)) {
+      toast.error(`Formato não suportado. Aceitos: ${acceptedExtensions.join(', ')}`)
       return
     }
 
-    const reader = new FileReader()
-    reader.onload = (event) => {
-      const text = event.target?.result as string
-      const lines = text.split(/\r?\n/).filter(l => l.trim())
+    // CSV: parse directly as text (lighter, no need for SheetJS on client)
+    if (ext === '.csv') {
+      const reader = new FileReader()
+      reader.onload = (event) => {
+        const text = event.target?.result as string
+        const lines = text.split(/\r?\n/).filter(l => l.trim())
 
-      if (lines.length === 0) {
-        toast.error('Arquivo CSV vazio')
-        return
-      }
-
-      // Try to find phone column
-      const header = lines[0].toLowerCase().split(/[,;\t]/).map(h => h.trim().replace(/"/g, ''))
-      const phoneIdx = header.findIndex(h =>
-        h === 'telefone' || h === 'phone' || h === 'tel' || h === 'numero' || h === 'número' || h === 'celular'
-      )
-
-      const phones: string[] = []
-      const startLine = phoneIdx >= 0 ? 1 : 0
-
-      for (let i = startLine; i < lines.length; i++) {
-        if (phoneIdx >= 0) {
-          const cols = lines[i].split(/[,;\t]/).map(c => c.trim().replace(/"/g, ''))
-          if (cols[phoneIdx]) phones.push(cols[phoneIdx])
-        } else {
-          // No header match — treat each line as a phone number
-          const trimmed = lines[i].trim().replace(/"/g, '')
-          if (trimmed && /\d/.test(trimmed)) phones.push(trimmed)
+        if (lines.length === 0) {
+          toast.error('Arquivo vazio')
+          return
         }
-      }
 
-      if (phones.length === 0) {
-        toast.error('Nenhum telefone encontrado no CSV')
-        return
-      }
+        // Try to find phone column
+        const header = lines[0].toLowerCase().split(/[,;\t]/).map(h => h.trim().replace(/"/g, ''))
+        const phoneIdx = header.findIndex(h =>
+          h === 'telefone' || h === 'phone' || h === 'tel' || h === 'numero' || h === 'número' || h === 'celular' || h === 'whatsapp'
+        )
 
-      setPhoneInput(phones.join('\n'))
-      setPhoneNumbers(phones)
-      setResults([])
-      setProgress({ current: 0, total: phones.length })
-      toast.success(`${phones.length} número(s) importado(s) do CSV`)
+        const phones: string[] = []
+        const startLine = phoneIdx >= 0 ? 1 : 0
+
+        for (let i = startLine; i < lines.length; i++) {
+          if (phoneIdx >= 0) {
+            const cols = lines[i].split(/[,;\t]/).map(c => c.trim().replace(/"/g, ''))
+            if (cols[phoneIdx]) phones.push(cols[phoneIdx])
+          } else {
+            const trimmed = lines[i].trim().replace(/"/g, '')
+            if (trimmed && /\d/.test(trimmed)) phones.push(trimmed)
+          }
+        }
+
+        if (phones.length === 0) {
+          toast.error('Nenhum telefone encontrado no arquivo')
+          return
+        }
+
+        setPhoneInput(phones.join('\n'))
+        setPhoneNumbers(phones)
+        setResults([])
+        setProgress({ current: 0, total: phones.length })
+        toast.success(`${phones.length} número(s) importado(s) do CSV`)
+      }
+      reader.readAsText(file)
+    } else {
+      // XLSX, XLS, ODS: parse via SheetJS on client
+      import('xlsx').then(XLSX => {
+        const reader = new FileReader()
+        reader.onload = (event) => {
+          try {
+            const data = new Uint8Array(event.target?.result as ArrayBuffer)
+            const workbook = XLSX.read(data, { type: 'array' })
+            const sheetName = workbook.SheetNames[0]
+            const sheet = workbook.Sheets[sheetName]
+
+            if (!sheet) {
+              toast.error('Arquivo vazio ou sem planilha válida')
+              return
+            }
+
+            const rows: Record<string, string>[] = XLSX.utils.sheet_to_json(sheet, { defval: '' })
+
+            if (rows.length === 0) {
+              toast.error('Nenhum dado encontrado no arquivo')
+              return
+            }
+
+            // Find phone column
+            const headers = Object.keys(rows[0]).map(h => h.toLowerCase().trim())
+            const phoneIdx = headers.findIndex(h =>
+              h === 'telefone' || h === 'phone' || h === 'tel' || h === 'numero' || h === 'número' || h === 'celular' || h === 'whatsapp'
+            )
+
+            const phones: string[] = []
+
+            if (phoneIdx >= 0) {
+              const phoneHeader = Object.keys(rows[0])[phoneIdx]
+              for (const row of rows) {
+                const phone = String(row[phoneHeader] || '').trim()
+                if (phone && /\d/.test(phone)) phones.push(phone)
+              }
+            } else {
+              // No header match — try first column as phone numbers
+              const firstHeader = Object.keys(rows[0])[0]
+              for (const row of rows) {
+                const val = String(row[firstHeader] || '').trim()
+                if (val && /\d/.test(val)) phones.push(val)
+              }
+            }
+
+            if (phones.length === 0) {
+              toast.error('Nenhum telefone encontrado no arquivo')
+              return
+            }
+
+            setPhoneInput(phones.join('\n'))
+            setPhoneNumbers(phones)
+            setResults([])
+            setProgress({ current: 0, total: phones.length })
+            toast.success(`${phones.length} número(s) importado(s) da planilha`)
+          } catch {
+            toast.error('Erro ao ler a planilha')
+          }
+        }
+        reader.readAsArrayBuffer(file)
+      }).catch(() => {
+        toast.error('Erro ao carregar o processador de planilha')
+      })
     }
-    reader.readAsText(file)
 
     // Reset input so same file can be uploaded again
     e.target.value = ''
@@ -830,12 +899,12 @@ export function VerificarSection() {
 
               <label className="inline-flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-sm font-medium ring-offset-background cursor-pointer hover:bg-accent hover:text-accent-foreground transition-colors">
                 <Upload className="size-4" />
-                Importar CSV
+                Importar Planilha
                 <input
                   type="file"
-                  accept=".csv"
+                  accept=".csv,.xlsx,.xls,.ods"
                   className="hidden"
-                  onChange={handleCsvUpload}
+                  onChange={handleFileUpload}
                 />
               </label>
 
