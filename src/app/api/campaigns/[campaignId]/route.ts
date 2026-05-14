@@ -6,7 +6,6 @@ import { startCampaign } from '@/lib/sending-engine'
 const ALLOWED_FIELDS = [
   'name', 'status', 'sendIntervalMin', 'sendIntervalMax',
   'contactListId', 'scheduledAt', 'antiBanEnabled', 'warmingMode',
-  'messageVariations',
 ] as const
 
 // Valid status transitions
@@ -64,13 +63,14 @@ export async function PATCH(
       await db.sequenceStep.deleteMany({ where: { campaignId } })
       if (body.steps.length > 0) {
         await db.sequenceStep.createMany({
-          data: body.steps.map((step: { stepOrder: number; content: string; delayMinutes: number; mediaUrl?: string; mediatype?: string }) => ({
+          data: body.steps.map((step: { stepOrder: number; content: string; delayMinutes: number; mediaUrl?: string; mediatype?: string; variations?: string }) => ({
             campaignId,
             stepOrder: step.stepOrder,
             content: step.content,
             delayMinutes: step.delayMinutes ?? 0,
             mediaUrl: step.mediaUrl || null,
             mediatype: step.mediatype || null,
+            variations: step.variations || '[]',
           })),
         })
       }

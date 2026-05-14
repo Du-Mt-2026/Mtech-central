@@ -78,6 +78,7 @@ interface SequenceStep {
   delayMinutes: number
   mediaUrl?: string | null
   mediatype?: string | null
+  variations?: string  // JSON: [{content, mediaUrl?, mediatype?}]
   createdAt: string
 }
 
@@ -85,7 +86,6 @@ interface Campaign {
   id: string
   name: string
   status: string
-  messageVariations: string
   sendIntervalMin: number
   sendIntervalMax: number
   contactListId: string | null
@@ -1722,6 +1722,16 @@ function ContatosTab() {
 }
 
 // ===== Campanhas Tab =====
+// Step form type for campaign creation
+type StepForm = {
+  content: string
+  delayMinutes: number
+  mediaFile: File | null
+  mediaUrl: string
+  mediatype: string
+  variations: { content: string; mediaFile: File | null; mediaUrl: string; mediatype: string }[]
+}
+
 function CampanhasTab() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
   const [loading, setLoading] = useState(true)
@@ -1737,15 +1747,15 @@ function CampanhasTab() {
   const [newCampaign, setNewCampaign] = useState({
     name: '', sendIntervalMin: 30, sendIntervalMax: 90,
     chipIds: [] as string[], contactListId: '', scheduledAt: '',
-    useSequence: false, sequenceSteps: [{ content: '', delayMinutes: 0, mediaFile: null as File | null, mediaUrl: '', mediatype: '' }],
-    messageVariations: [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '' }], antiBanEnabled: true, warmingMode: 'normal',
+    steps: [{ content: '', delayMinutes: 0, mediaFile: null as File | null, mediaUrl: '', mediatype: '', variations: [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '' }] }] as StepForm[],
+    antiBanEnabled: true, warmingMode: 'normal',
   })
 
   const resetNewCampaign = () => setNewCampaign({
     name: '', sendIntervalMin: 30, sendIntervalMax: 90,
     chipIds: [], contactListId: '', scheduledAt: '',
-    useSequence: false, sequenceSteps: [{ content: '', delayMinutes: 0, mediaFile: null as File | null, mediaUrl: '', mediatype: '' }],
-    messageVariations: [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '' }], antiBanEnabled: true, warmingMode: 'normal',
+    steps: [{ content: '', delayMinutes: 0, mediaFile: null, mediaUrl: '', mediatype: '', variations: [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '' }] }] as StepForm[],
+    antiBanEnabled: true, warmingMode: 'normal',
   })
 
   const fetchCampaigns = useCallback(async () => {
@@ -1767,58 +1777,60 @@ function CampanhasTab() {
 
   const createCampaign = async () => {
     try {
-      // Upload media files first (if any)
-      const stepsWithMedia: Array<{ stepOrder: number; content: string; delayMinutes: number; mediaUrl?: string; mediatype?: string }> = []
+      // Upload media and build steps payload
+      const stepsPayload: Array<{ stepOrder: number; content: string; delayMinutes: number; mediaUrl?: string; mediatype?: string; variations: string }> = []
 
-      if (newCampaign.useSequence) {
-        for (let i = 0; i < newCampaign.sequenceSteps.length; i++) {
-          const s = newCampaign.sequenceSteps[i]
-          let mediaUrl = s.mediaUrl || ''
-          let mediatype = s.mediatype || ''
+      for (let i = 0; i < newCampaign.steps.length; i++) {
+        const s = newCampaign.steps[i]
+        let mediaUrl = s.mediaUrl || ''
+        let mediatype = s.mediatype || ''
 
-          // If there's a file to upload, upload it first
-          if (s.mediaFile && mediatype) {
-            const uploadForm = new FormData()
-            uploadForm.append('file', s.mediaFile)
-            const uploadRes = await fetch('/api/upload', { method: 'POST', body: uploadForm })
-            const uploadData = await uploadRes.json()
-            if (!uploadRes.ok) throw new Error(uploadData.error || 'Erro ao fazer upload da mídia')
-            mediaUrl = uploadData.mediaUrl
-            mediatype = uploadData.mediatype
-          }
-
-          stepsWithMedia.push({ stepOrder: i + 1, content: s.content, delayMinutes: s.delayMinutes, mediaUrl, mediatype })
+        // Upload step media if present
+        if (s.mediaFile && mediatype) {
+          const uploadForm = new FormData()
+          uploadForm.append('file', s.mediaFile)
+          const uploadRes = await fetch('/api/upload', { method: 'POST', body: uploadForm })
+          const uploadData = await uploadRes.json()
+          if (!uploadRes.ok) throw new Error(uploadData.error || 'Erro ao fazer upload da mídia')
+          mediaUrl = uploadData.mediaUrl
+          mediatype = uploadData.mediatype
         }
-      }
 
-      // Upload media for variations
-      const variationsWithMedia: Array<{ content: string; mediaUrl?: string; mediatype?: string }> = []
-      if (!newCampaign.useSequence) {
-        for (const v of newCampaign.messageVariations) {
+        // Upload media for each variation
+        const variationsWithMedia: Array<{ content: string; mediaUrl?: string; mediatype?: string }> = []
+        for (const v of s.variations) {
           if (!v.content.trim()) continue
-          let mediaUrl = v.mediaUrl || ''
-          let mediatype = v.mediatype || ''
+          let vMediaUrl = v.mediaUrl || ''
+          let vMediatype = v.mediatype || ''
 
-          if (v.mediaFile && mediatype) {
+          if (v.mediaFile && vMediatype) {
             const uploadForm = new FormData()
             uploadForm.append('file', v.mediaFile)
             const uploadRes = await fetch('/api/upload', { method: 'POST', body: uploadForm })
             const uploadData = await uploadRes.json()
             if (!uploadRes.ok) throw new Error(uploadData.error || 'Erro ao fazer upload da mídia')
-            mediaUrl = uploadData.mediaUrl
-            mediatype = uploadData.mediatype
+            vMediaUrl = uploadData.mediaUrl
+            vMediatype = uploadData.mediatype
           }
 
-          variationsWithMedia.push({ content: v.content, mediaUrl: mediaUrl || undefined, mediatype: mediatype || undefined })
+          variationsWithMedia.push({ content: v.content, mediaUrl: vMediaUrl || undefined, mediatype: vMediatype || undefined })
         }
+
+        stepsPayload.push({
+          stepOrder: i + 1,
+          content: s.content,
+          delayMinutes: s.delayMinutes,
+          mediaUrl: mediaUrl || undefined,
+          mediatype: mediatype || undefined,
+          variations: JSON.stringify(variationsWithMedia),
+        })
       }
 
       const payload = {
         name: newCampaign.name, sendIntervalMin: newCampaign.sendIntervalMin, sendIntervalMax: newCampaign.sendIntervalMax,
         chipIds: newCampaign.chipIds, contactListId: newCampaign.contactListId || null,
         scheduledAt: newCampaign.scheduledAt ? new Date(newCampaign.scheduledAt).toISOString() : null,
-        steps: stepsWithMedia, antiBanEnabled: newCampaign.antiBanEnabled, warmingMode: newCampaign.warmingMode,
-        messageVariations: !newCampaign.useSequence ? JSON.stringify(variationsWithMedia) : '[]',
+        steps: stepsPayload, antiBanEnabled: newCampaign.antiBanEnabled, warmingMode: newCampaign.warmingMode,
       }
       const res = await fetch('/api/campaigns', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
       if (!res.ok) { const data = await res.json(); throw new Error(data.error) }
@@ -1883,22 +1895,35 @@ function CampanhasTab() {
     }))
   }
 
-  const addSequenceStep = () => setNewCampaign(prev => ({ ...prev, sequenceSteps: [...prev.sequenceSteps, { content: '', delayMinutes: 60, mediaFile: null, mediaUrl: '', mediatype: '' }] }))
-  const removeSequenceStep = (idx: number) => setNewCampaign(prev => ({ ...prev, sequenceSteps: prev.sequenceSteps.filter((_, i) => i !== idx) }))
-  const updateSequenceStep = (idx: number, field: 'content' | 'delayMinutes' | 'mediaFile' | 'mediaUrl' | 'mediatype', value: string | number | File | null) => {
-    setNewCampaign(prev => { const steps = [...prev.sequenceSteps]; steps[idx] = { ...steps[idx], [field]: value }; return { ...prev, sequenceSteps: steps } })
+  const addStep = () => setNewCampaign(prev => ({ ...prev, steps: [...prev.steps, { content: '', delayMinutes: 60, mediaFile: null, mediaUrl: '', mediatype: '', variations: [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '' }] }] }))
+  const removeStep = (idx: number) => setNewCampaign(prev => ({ ...prev, steps: prev.steps.filter((_, i) => i !== idx) }))
+  const updateStep = (idx: number, field: 'content' | 'delayMinutes' | 'mediaFile' | 'mediaUrl' | 'mediatype', value: string | number | File | null) => {
+    setNewCampaign(prev => { const steps = [...prev.steps]; steps[idx] = { ...steps[idx], [field]: value }; return { ...prev, steps } })
   }
 
-  // Variation helpers
-  const addVariation = () => setNewCampaign(prev => ({ ...prev, messageVariations: [...prev.messageVariations, { content: '', mediaFile: null, mediaUrl: '', mediatype: '' }] }))
-  const removeVariation = (idx: number) => setNewCampaign(prev => ({ ...prev, messageVariations: prev.messageVariations.filter((_, i) => i !== idx) }))
-  const updateVariation = (idx: number, field: 'content' | 'mediaFile' | 'mediaUrl' | 'mediatype', value: string | File | null) => {
-    setNewCampaign(prev => { const vars = [...prev.messageVariations]; vars[idx] = { ...vars[idx], [field]: value }; return { ...prev, messageVariations: vars } })
+  // Variation helpers (within a step)
+  const addVariation = (stepIdx: number) => setNewCampaign(prev => {
+    const steps = [...prev.steps]
+    steps[stepIdx] = { ...steps[stepIdx], variations: [...steps[stepIdx].variations, { content: '', mediaFile: null, mediaUrl: '', mediatype: '' }] }
+    return { ...prev, steps }
+  })
+  const removeVariation = (stepIdx: number, varIdx: number) => setNewCampaign(prev => {
+    const steps = [...prev.steps]
+    steps[stepIdx] = { ...steps[stepIdx], variations: steps[stepIdx].variations.filter((_, i) => i !== varIdx) }
+    return { ...prev, steps }
+  })
+  const updateVariation = (stepIdx: number, varIdx: number, field: 'content' | 'mediaFile' | 'mediaUrl' | 'mediatype', value: string | File | null) => {
+    setNewCampaign(prev => {
+      const steps = [...prev.steps]
+      const vars = [...steps[stepIdx].variations]
+      vars[varIdx] = { ...vars[varIdx], [field]: value }
+      steps[stepIdx] = { ...steps[stepIdx], variations: vars }
+      return { ...prev, steps }
+    })
   }
 
-  const canCreate = newCampaign.name.trim() && newCampaign.chipIds.length > 0 && (
-    newCampaign.useSequence ? newCampaign.sequenceSteps.some(s => s.content.trim()) : newCampaign.messageVariations.some(v => v.content.trim())
-  )
+  const canCreate = newCampaign.name.trim() && newCampaign.chipIds.length > 0 &&
+    newCampaign.steps.some(s => s.content.trim() || s.variations.some(v => v.content.trim()))
 
   return (
     <div className="space-y-6">
@@ -1967,45 +1992,35 @@ function CampanhasTab() {
                 </div>
               </div>
 
-              <div className="flex items-center justify-between">
-                <Label>Tipo de Mensagem</Label>
-                <div className="flex items-center gap-2">
-                  <span className={`text-sm ${!newCampaign.useSequence ? 'font-semibold' : 'text-muted-foreground'}`}>Variações</span>
-                  <Switch checked={newCampaign.useSequence} onCheckedChange={v => setNewCampaign(prev => ({ ...prev, useSequence: v }))} />
-                  <span className={`text-sm ${newCampaign.useSequence ? 'font-semibold' : 'text-muted-foreground'}`}>Sequência</span>
-                </div>
-              </div>
-
-              {newCampaign.useSequence ? (
-                <div className="space-y-3">
-                  {newCampaign.sequenceSteps.map((step, idx) => (
-                    <div key={idx} className="relative">
-                      <div className="flex items-center gap-2 mb-2">
+              <div className="space-y-3">
+                  {newCampaign.steps.map((step, idx) => (
+                    <div key={idx} className="relative border rounded-xl p-4 space-y-3 bg-muted/20">
+                      <div className="flex items-center gap-2">
                         <span className="flex items-center justify-center size-7 rounded-full bg-emerald-600 text-white text-xs font-bold">{idx + 1}</span>
-                        <span className="text-sm font-medium">Etapa {idx + 1}</span>
+                        <span className="text-sm font-semibold">Etapa {idx + 1}</span>
                         {idx > 0 && (
                           <div className="flex items-center gap-1 text-xs text-muted-foreground ml-2">
                             <Clock className="size-3" /> {step.delayMinutes}min após etapa anterior
                           </div>
                         )}
-                        {newCampaign.sequenceSteps.length > 1 && (
-                          <Button variant="ghost" size="sm" className="ml-auto text-rose-500 h-6 w-6 p-0" onClick={() => removeSequenceStep(idx)}>
+                        {newCampaign.steps.length > 1 && (
+                          <Button variant="ghost" size="sm" className="ml-auto text-rose-500 h-6 w-6 p-0" onClick={() => removeStep(idx)}>
                             <X className="size-3" />
                           </Button>
                         )}
                       </div>
-                      <Textarea placeholder="Mensagem da etapa..." value={step.content} onChange={e => updateSequenceStep(idx, 'content', e.target.value)} rows={2} />
+                      <Textarea placeholder="Mensagem principal da etapa..." value={step.content} onChange={e => updateStep(idx, 'content', e.target.value)} rows={2} />
                       {idx > 0 && (
                         <div className="mt-2">
                           <Label className="text-xs">Atraso antes desta etapa (minutos)</Label>
-                          <Input type="number" min={0} value={step.delayMinutes} onChange={e => updateSequenceStep(idx, 'delayMinutes', parseInt(e.target.value) || 0)} className="mt-1 w-40" />
+                          <Input type="number" min={0} value={step.delayMinutes} onChange={e => updateStep(idx, 'delayMinutes', parseInt(e.target.value) || 0)} className="mt-1 w-40" />
                         </div>
                       )}
-                      {/* Media Upload */}
-                      <div className="mt-2 space-y-2">
-                        <Label className="text-xs flex items-center gap-1"><ImageIcon className="size-3" /> Mídia (opcional)</Label>
+                      {/* Media Upload for step */}
+                      <div className="space-y-2">
+                        <Label className="text-xs flex items-center gap-1"><ImageIcon className="size-3" /> Mídia da etapa (opcional)</Label>
                         <div className="flex gap-2">
-                          <Select value={step.mediatype} onValueChange={v => updateSequenceStep(idx, 'mediatype', v)}>
+                          <Select value={step.mediatype} onValueChange={v => updateStep(idx, 'mediatype', v)}>
                             <SelectTrigger className="w-32 h-8 text-xs"><SelectValue placeholder="Tipo" /></SelectTrigger>
                             <SelectContent>
                               <SelectItem value="image">Imagem</SelectItem>
@@ -2014,71 +2029,76 @@ function CampanhasTab() {
                               <SelectItem value="audio">Áudio</SelectItem>
                             </SelectContent>
                           </Select>
-                          <Input type="file" className="h-8 text-xs" accept={step.mediatype === 'image' ? 'image/*' : step.mediatype === 'video' ? 'video/*' : step.mediatype === 'audio' ? 'audio/*' : undefined} onChange={e => { const f = e.target.files?.[0] || null; updateSequenceStep(idx, 'mediaFile', f) }} />
+                          <Input type="file" className="h-8 text-xs" accept={step.mediatype === 'image' ? 'image/*' : step.mediatype === 'video' ? 'video/*' : step.mediatype === 'audio' ? 'audio/*' : undefined} onChange={e => { const f = e.target.files?.[0] || null; updateStep(idx, 'mediaFile', f) }} />
                         </div>
                         {step.mediaFile && (
                           <div className="flex items-center gap-2 p-2 bg-muted/50 rounded-lg text-xs">
                             {step.mediatype === 'image' ? <ImageIcon className="size-3.5 text-emerald-500" /> : step.mediatype === 'video' ? <Film className="size-3.5 text-sky-500" /> : step.mediatype === 'audio' ? <Music className="size-3.5 text-amber-500" /> : <File className="size-3.5 text-zinc-500" />}
                             <span className="truncate">{step.mediaFile.name}</span>
                             <span className="text-muted-foreground">({(step.mediaFile.size / 1024).toFixed(1)}KB)</span>
-                            <Button variant="ghost" size="sm" className="h-5 w-5 p-0 ml-auto" onClick={() => updateSequenceStep(idx, 'mediaFile', null)}><X className="size-3" /></Button>
+                            <Button variant="ghost" size="sm" className="h-5 w-5 p-0 ml-auto" onClick={() => updateStep(idx, 'mediaFile', null)}><X className="size-3" /></Button>
                           </div>
                         )}
                       </div>
-                      {idx < newCampaign.sequenceSteps.length - 1 && (
+
+                      {/* Variations for this step */}
+                      <div className="space-y-2 pt-2 border-t">
+                        <div className="flex items-center justify-between">
+                          <Label className="text-xs font-semibold flex items-center gap-1">
+                            <Shuffle className="size-3" /> Variações da Etapa {idx + 1}
+                          </Label>
+                          <Button variant="ghost" size="sm" className="h-6 text-xs text-emerald-600 gap-1" onClick={() => addVariation(idx)}>
+                            <Plus className="size-3" /> Variação
+                          </Button>
+                        </div>
+                        <p className="text-xs text-muted-foreground">Uma variação aleatória será escolhida para cada contato (anti-ban)</p>
+                        {step.variations.map((v, vIdx) => (
+                          <div key={vIdx} className="relative p-3 border rounded-lg space-y-2 bg-background/50">
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className="text-xs font-medium text-muted-foreground">Variação {vIdx + 1}</span>
+                              {step.variations.length > 1 && (
+                                <Button variant="ghost" size="sm" className="ml-auto text-rose-500 h-5 w-5 p-0" onClick={() => removeVariation(idx, vIdx)}>
+                                  <X className="size-3" />
+                                </Button>
+                              )}
+                            </div>
+                            <Textarea placeholder={`Texto da variação ${vIdx + 1}...`} value={v.content} onChange={e => updateVariation(idx, vIdx, 'content', e.target.value)} rows={2} />
+                            <p className="text-xs text-muted-foreground">Se tiver mídia, o texto será a legenda/descrição</p>
+                            {/* Media Upload for variation */}
+                            <div className="space-y-2">
+                              <div className="flex gap-2">
+                                <Select value={v.mediatype} onValueChange={mt => updateVariation(idx, vIdx, 'mediatype', mt)}>
+                                  <SelectTrigger className="w-28 h-7 text-xs"><SelectValue placeholder="Tipo" /></SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="image">Imagem</SelectItem>
+                                    <SelectItem value="document">Documento</SelectItem>
+                                    <SelectItem value="video">Vídeo</SelectItem>
+                                    <SelectItem value="audio">Áudio</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                                <Input type="file" className="h-7 text-xs" accept={v.mediatype === 'image' ? 'image/*' : v.mediatype === 'video' ? 'video/*' : v.mediatype === 'audio' ? 'audio/*' : undefined} onChange={e => { const f = e.target.files?.[0] || null; updateVariation(idx, vIdx, 'mediaFile', f) }} />
+                              </div>
+                              {v.mediaFile && (
+                                <div className="flex items-center gap-2 p-1.5 bg-muted/50 rounded-lg text-xs">
+                                  {v.mediatype === 'image' ? <ImageIcon className="size-3 text-emerald-500" /> : v.mediatype === 'video' ? <Film className="size-3 text-sky-500" /> : v.mediatype === 'audio' ? <Music className="size-3 text-amber-500" /> : <File className="size-3 text-zinc-500" />}
+                                  <span className="truncate">{v.mediaFile.name}</span>
+                                  <Button variant="ghost" size="sm" className="h-4 w-4 p-0 ml-auto" onClick={() => updateVariation(idx, vIdx, 'mediaFile', null)}><X className="size-2.5" /></Button>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+
+                      {idx < newCampaign.steps.length - 1 && (
                         <div className="flex items-center justify-center py-2"><ArrowRight className="size-4 text-muted-foreground" /></div>
                       )}
                     </div>
                   ))}
-                  <Button variant="outline" size="sm" onClick={addSequenceStep} className="gap-1.5 w-full">
+                  <Button variant="outline" size="sm" onClick={addStep} className="gap-1.5 w-full">
                     <Plus className="size-3.5" /> Adicionar Etapa
                   </Button>
                 </div>
-              ) : (
-                <div className="space-y-3">
-                  {newCampaign.messageVariations.map((v, idx) => (
-                    <div key={idx} className="relative p-3 border rounded-lg space-y-2">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="text-sm font-medium text-muted-foreground">Variação {idx + 1}</span>
-                        {newCampaign.messageVariations.length > 1 && (
-                          <Button variant="ghost" size="sm" className="ml-auto text-rose-500 h-6 w-6 p-0" onClick={() => removeVariation(idx)}>
-                            <X className="size-3" />
-                          </Button>
-                        )}
-                      </div>
-                      <Textarea placeholder={`Texto da variação ${idx + 1}...`} value={v.content} onChange={e => updateVariation(idx, 'content', e.target.value)} rows={2} />
-                      <p className="text-xs text-muted-foreground">Se tiver mídia, o texto acima será a legenda/descrição da mídia</p>
-                      {/* Media Upload for variation */}
-                      <div className="space-y-2">
-                        <Label className="text-xs flex items-center gap-1"><ImageIcon className="size-3" /> Mídia (opcional)</Label>
-                        <div className="flex gap-2">
-                          <Select value={v.mediatype} onValueChange={mt => updateVariation(idx, 'mediatype', mt)}>
-                            <SelectTrigger className="w-32 h-8 text-xs"><SelectValue placeholder="Tipo" /></SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="image">Imagem</SelectItem>
-                              <SelectItem value="document">Documento</SelectItem>
-                              <SelectItem value="video">Vídeo</SelectItem>
-                              <SelectItem value="audio">Áudio</SelectItem>
-                            </SelectContent>
-                          </Select>
-                          <Input type="file" className="h-8 text-xs" accept={v.mediatype === 'image' ? 'image/*' : v.mediatype === 'video' ? 'video/*' : v.mediatype === 'audio' ? 'audio/*' : undefined} onChange={e => { const f = e.target.files?.[0] || null; updateVariation(idx, 'mediaFile', f) }} />
-                        </div>
-                        {v.mediaFile && (
-                          <div className="flex items-center gap-2 p-2 bg-muted/50 rounded-lg text-xs">
-                            {v.mediatype === 'image' ? <ImageIcon className="size-3.5 text-emerald-500" /> : v.mediatype === 'video' ? <Film className="size-3.5 text-sky-500" /> : v.mediatype === 'audio' ? <Music className="size-3.5 text-amber-500" /> : <File className="size-3.5 text-zinc-500" />}
-                            <span className="truncate">{v.mediaFile.name}</span>
-                            <span className="text-muted-foreground">({(v.mediaFile.size / 1024).toFixed(1)}KB)</span>
-                            <Button variant="ghost" size="sm" className="h-5 w-5 p-0 ml-auto" onClick={() => updateVariation(idx, 'mediaFile', null)}><X className="size-3" /></Button>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                  <Button variant="outline" size="sm" onClick={addVariation} className="gap-1.5 w-full">
-                    <Plus className="size-3.5" /> Adicionar Variação
-                  </Button>
-                </div>
-              )}
 
               {/* Anti-Ban Section in Campaign */}
               <Separator />
@@ -2201,14 +2221,32 @@ function CampanhasTab() {
               </div>
               {selectedCampaign.sequenceSteps?.length > 0 && (
                 <div className="space-y-2">
-                  <Label className="text-sm font-semibold">Sequência de Mensagens</Label>
-                  {selectedCampaign.sequenceSteps.sort((a, b) => a.stepOrder - b.stepOrder).map((step, idx) => (
-                    <div key={step.id} className="flex items-center gap-3 p-3 rounded-lg bg-muted/50">
-                      <span className="flex items-center justify-center size-7 rounded-full bg-emerald-600 text-white text-xs font-bold">{step.stepOrder}</span>
-                      <p className="flex-1 text-sm truncate">{step.content}</p>
-                      {step.delayMinutes > 0 && <Badge variant="secondary" className="text-xs gap-1"><Clock className="size-3" />{step.delayMinutes}min</Badge>}
-                    </div>
-                  ))}
+                  <Label className="text-sm font-semibold">Etapas & Variações</Label>
+                  {selectedCampaign.sequenceSteps.sort((a, b) => a.stepOrder - b.stepOrder).map((step, idx) => {
+                    let parsedVars: Array<{content: string; mediaUrl?: string; mediatype?: string}> = []
+                    try { parsedVars = JSON.parse(step.variations || '[]') } catch { /* ignore */ }
+                    return (
+                      <div key={step.id} className="p-3 rounded-lg bg-muted/50 space-y-2">
+                        <div className="flex items-center gap-3">
+                          <span className="flex items-center justify-center size-7 rounded-full bg-emerald-600 text-white text-xs font-bold">{step.stepOrder}</span>
+                          <p className="flex-1 text-sm truncate">{step.content}</p>
+                          {step.delayMinutes > 0 && <Badge variant="secondary" className="text-xs gap-1"><Clock className="size-3" />{step.delayMinutes}min</Badge>}
+                        </div>
+                        {parsedVars.length > 0 && (
+                          <div className="ml-10 space-y-1">
+                            <p className="text-xs text-muted-foreground font-medium">Variações ({parsedVars.length}):</p>
+                            {parsedVars.map((v, vi) => (
+                              <div key={vi} className="flex items-center gap-2 text-xs">
+                                <Shuffle className="size-3 text-emerald-500" />
+                                <span className="truncate">{v.content}</span>
+                                {v.mediatype && <Badge variant="outline" className="text-[10px] px-1 py-0">{v.mediatype}</Badge>}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
                 </div>
               )}
             </div>

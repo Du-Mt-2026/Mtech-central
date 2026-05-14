@@ -27,7 +27,6 @@ interface Campaign {
   status: string
   sendIntervalMin: number
   sendIntervalMax: number
-  messageVariations: string
   _count?: { messages: number; chips: number }
 }
 
@@ -76,7 +75,7 @@ export function CampaignsSection() {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [creating, setCreating] = useState(false)
   const [name, setName] = useState('')
-  const [messageVariations, setMessageVariations] = useState('')
+  const [stepContent, setStepContent] = useState('')
   const [intervalMin, setIntervalMin] = useState(30)
   const [intervalMax, setIntervalMax] = useState(90)
   const [selectedChips, setSelectedChips] = useState<string[]>([])
@@ -117,8 +116,8 @@ export function CampaignsSection() {
       toast({ title: 'Informe o nome da campanha', variant: 'destructive' })
       return
     }
-    if (!messageVariations.trim()) {
-      toast({ title: 'Adicione pelo menos uma variação de mensagem', variant: 'destructive' })
+    if (!stepContent.trim()) {
+      toast({ title: 'Adicione pelo menos uma mensagem', variant: 'destructive' })
       return
     }
     if (selectedChips.length === 0) {
@@ -133,7 +132,7 @@ export function CampaignsSection() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: name.trim(),
-          messageVariations: messageVariations.trim(),
+          steps: [{ stepOrder: 1, content: stepContent.trim(), delayMinutes: 0, variations: '[]' }],
           sendIntervalMin: intervalMin,
           sendIntervalMax: intervalMax,
           chipIds: selectedChips,
@@ -147,7 +146,7 @@ export function CampaignsSection() {
 
       toast({ title: 'Campanha criada com sucesso!' })
       setName('')
-      setMessageVariations('')
+      setStepContent('')
       setIntervalMin(30)
       setIntervalMax(90)
       setSelectedChips([])
@@ -233,16 +232,16 @@ export function CampaignsSection() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="campaign-messages">Variações de Mensagem</Label>
+                <Label htmlFor="campaign-messages">Mensagem da Etapa 1</Label>
                 <Textarea
                   id="campaign-messages"
-                  placeholder="Uma variação por linha&#10;Ex: Olá {nome}, temos uma promoção especial!&#10;Ex: Hey {nome}, confira nossa oferta!"
-                  value={messageVariations}
-                  onChange={(e) => setMessageVariations(e.target.value)}
+                  placeholder="Ex: Olá {nome}, temos uma promoção especial!"
+                  value={stepContent}
+                  onChange={(e) => setStepContent(e.target.value)}
                   rows={4}
                 />
                 <p className="text-xs text-muted-foreground">
-                  Uma variação por linha. Use {'{nome}'} para personalização.
+                  Use {'{nome}'} para personalização. Você pode adicionar mais etapas e variações após criar a campanha.
                 </p>
               </div>
               <div className="grid grid-cols-2 gap-4">

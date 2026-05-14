@@ -35,13 +35,14 @@ export async function POST(
     await db.sequenceStep.deleteMany({ where: { campaignId } })
 
     const created = await db.sequenceStep.createMany({
-      data: steps.map((step: { stepOrder: number; content: string; delayMinutes: number; mediaUrl?: string; mediatype?: string }, index: number) => ({
+      data: steps.map((step: { stepOrder: number; content: string; delayMinutes: number; mediaUrl?: string; mediatype?: string; variations?: string }, index: number) => ({
         campaignId,
         stepOrder: step.stepOrder ?? index + 1,
         content: step.content,
         delayMinutes: step.delayMinutes ?? 0,
         mediaUrl: step.mediaUrl || null,
         mediatype: step.mediatype || null,
+        variations: step.variations || '[]',
       })),
     })
 

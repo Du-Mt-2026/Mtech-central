@@ -118,34 +118,66 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
   if (!campaign.contactList) throw new Error('Campanha não tem lista de contatos')
   if (campaign.chips.length === 0) throw new Error('Campanha não tem chips atribuídos')
 
-  // Derive message content from either sequence steps or message variations
+  // Derive message content from sequence steps (each step may have variations)
   const hasSteps = campaign.sequenceSteps.length > 0
 
-  // Variation format: can be string[] (legacy) or {content, mediaUrl?, mediatype?}[] (new)
+  // Parse steps and their variations
   type VariationObj = { content: string; mediaUrl?: string; mediatype?: string }
-  let parsedVariations: VariationObj[] = []
-  if (!hasSteps) {
-    try {
-      const raw = JSON.parse(campaign.messageVariations || '[]')
-      if (Array.isArray(raw) && raw.length > 0) {
-        if (typeof raw[0] === 'string') {
-          // Legacy format: ["text1", "text2"] → convert to objects
-          parsedVariations = (raw as string[])
-            .filter((v: string) => v && v.trim())
-            .map((content: string) => ({ content }))
-        } else if (typeof raw[0] === 'object') {
-          // New format: [{content, mediaUrl, mediatype}, ...]
-          parsedVariations = (raw as VariationObj[])
-            .filter((v: VariationObj) => v.content && v.content.trim())
-        }
-      }
-    } catch {
-      parsedVariations = []
-    }
+  type StepWithVariations = {
+    stepOrder: number
+    content: string
+    mediaUrl: string | null
+    mediatype: string | null
+    delayMinutes: number
+    variations: VariationObj[]
   }
 
-  if (!hasSteps && parsedVariations.length === 0) {
-    throw new Error('Campanha não tem mensagens configuradas. Adicione variações de mensagem ou etapas de sequência.')
+  const parsedSteps: StepWithVariations[] = campaign.sequenceSteps.map(s => {
+    let stepVariations: VariationObj[] = []
+    try {
+      const raw = JSON.parse(s.variations || '[]')
+      if (Array.isArray(raw) && raw.length > 0) {
+        stepVariations = raw.filter((v: VariationObj) => v.content && v.content.trim())
+      }
+    } catch { /* ignore */ }
+    return {
+      stepOrder: s.stepOrder,
+      content: s.content,
+      mediaUrl: s.mediaUrl || null,
+      mediatype: s.mediatype || null,
+      delayMinutes: s.delayMinutes,
+      variations: stepVariations,
+    }
+  })
+
+  if (!hasSteps || parsedSteps.length === 0) {
+    throw new Error('Campanha não tem mensagens configuradas. Adicione etapas com mensagens.')
+  }
+
+  // Build all possible message items grouped by step
+  type MessageItem = { content: string; mediaUrl: string | null; mediatype: string | null; stepOrder: number }
+  const stepsMap = new Map<number, MessageItem[]>()
+  for (const step of parsedSteps) {
+    if (!stepsMap.has(step.stepOrder)) stepsMap.set(step.stepOrder, [])
+    const items = stepsMap.get(step.stepOrder)!
+
+    if (step.variations.length > 0) {
+      for (const v of step.variations) {
+        items.push({
+          content: v.content,
+          mediaUrl: v.mediaUrl || step.mediaUrl || null,
+          mediatype: v.mediatype || step.mediatype || null,
+          stepOrder: step.stepOrder,
+        })
+      }
+    } else {
+      items.push({
+        content: step.content,
+        mediaUrl: step.mediaUrl || null,
+        mediatype: step.mediatype || null,
+        stepOrder: step.stepOrder,
+      })
+    }
   }
 
   const contacts = campaign.contactList.contacts
@@ -154,20 +186,18 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
   if (chips.length === 0) throw new Error('Nenhum chip com instância WhatsApp conectada')
   if (contacts.length === 0) throw new Error('Lista de contatos vazia')
 
-  // Build message items from either steps or variations
-  type MessageItem = { content: string; mediaUrl: string | null; mediatype: string | null }
-  const messageItems: MessageItem[] = hasSteps
-    ? campaign.sequenceSteps.map(s => ({ content: s.content, mediaUrl: s.mediaUrl || null, mediatype: s.mediatype || null }))
-    : parsedVariations.map(v => ({ content: v.content, mediaUrl: v.mediaUrl || null, mediatype: v.mediatype || null }))
+  // Create messages: for single-step campaigns, random variation selection
+  // For multi-step campaigns, start with step 1 only
+  const isMultiStep = stepsMap.size > 1
+  const step1Items = stepsMap.get(1) || []
+  const singleStepItems = Array.from(stepsMap.values()).flat()
 
-  // Create messages: each contact gets a random message variation (or first step from sequence)
   const messagesToCreate = []
   for (let i = 0; i < contacts.length; i++) {
     const contact = contacts[i]
-    const chip = chips[i % chips.length] // Round-robin assignment
-    const messageItem = hasSteps
-      ? messageItems[0] // First step for sequence mode
-      : messageItems[Math.floor(Math.random() * messageItems.length)] // Random variation for variations mode
+    const chip = chips[i % chips.length]
+    const itemsPool = isMultiStep ? step1Items : singleStepItems
+    const messageItem = itemsPool[Math.floor(Math.random() * itemsPool.length)]
 
     // Replace template variables
     const content = messageItem.content

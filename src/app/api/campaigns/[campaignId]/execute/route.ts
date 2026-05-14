@@ -26,33 +26,70 @@ export async function POST(
 
     const antiBan = await db.antiBanSettings.findFirst()
 
-    // Build message items with media support
-    type MsgItem = { content: string; mediaUrl: string | null; mediatype: string | null }
-    let messageItems: MsgItem[] = []
-    if (campaign.sequenceSteps.length > 0) {
-      messageItems = campaign.sequenceSteps.map(s => ({ content: s.content, mediaUrl: s.mediaUrl || null, mediatype: s.mediatype || null }))
-    } else {
+    // Build message items from sequence steps with their variations
+    type MsgItem = { content: string; mediaUrl: string | null; mediatype: string | null; delayMinutes: number; stepOrder: number }
+    type VariationObj = { content: string; mediaUrl?: string; mediatype?: string }
+
+    const messageItems: MsgItem[] = []
+    for (const step of campaign.sequenceSteps) {
+      // Parse variations for this step
+      let stepVariations: VariationObj[] = []
       try {
-        const raw = JSON.parse(campaign.messageVariations || '[]')
+        const raw = JSON.parse(step.variations || '[]')
         if (Array.isArray(raw) && raw.length > 0) {
-          if (typeof raw[0] === 'string') {
-            messageItems = raw.filter((v: string) => v && v.trim()).map((content: string) => ({ content, mediaUrl: null, mediatype: null }))
-          } else {
-            messageItems = raw.filter((v: any) => v.content && v.content.trim()).map((v: any) => ({ content: v.content, mediaUrl: v.mediaUrl || null, mediatype: v.mediatype || null }))
-          }
+          stepVariations = raw.filter((v: any) => v.content && v.content.trim())
         }
-      } catch {
-        messageItems = []
+      } catch { /* ignore parse errors */ }
+
+      // If step has variations, each variation becomes a possible message for this step
+      // The main content + mediaUrl/mediatype is the "default" variation (index 0)
+      if (stepVariations.length > 0) {
+        for (const v of stepVariations) {
+          messageItems.push({
+            content: v.content,
+            mediaUrl: v.mediaUrl || step.mediaUrl || null,
+            mediatype: v.mediatype || step.mediatype || null,
+            delayMinutes: step.delayMinutes,
+            stepOrder: step.stepOrder,
+          })
+        }
+      } else {
+        // No variations — use the step's main content
+        messageItems.push({
+          content: step.content,
+          mediaUrl: step.mediaUrl || null,
+          mediatype: step.mediatype || null,
+          delayMinutes: step.delayMinutes,
+          stepOrder: step.stepOrder,
+        })
       }
     }
 
-    // Create pending messages
+    if (messageItems.length === 0) {
+      return NextResponse.json({ error: 'Campanha sem mensagens configuradas' }, { status: 400 })
+    }
+
+    // Group message items by stepOrder for random variation selection
+    const stepsMap = new Map<number, MsgItem[]>()
+    for (const item of messageItems) {
+      if (!stepsMap.has(item.stepOrder)) stepsMap.set(item.stepOrder, [])
+      stepsMap.get(item.stepOrder)!.push(item)
+    }
+
+    // Create pending messages: each contact gets a random variation from step 1
+    // (Subsequent steps will be created after step 1 is delivered)
+    const step1Items = stepsMap.get(1) || messageItems
+
+    // Create pending messages — for single-step campaigns, use random variation from all items
+    // For multi-step campaigns, start with step 1 (subsequent steps sent after delays)
+    const isFirstStepOnly = stepsMap.size > 1
+    const itemsToUse = isFirstStepOnly ? step1Items : messageItems
+
     for (let i = 0; i < contacts.length; i++) {
       const contact = contacts[i]
       const chipAssignment = campaign.chips[i % campaign.chips.length]
-      const msgItem = messageItems.length > 0
-        ? messageItems[Math.floor(Math.random() * messageItems.length)]
-        : { content: '', mediaUrl: null, mediatype: null }
+      // Pick a random variation for this contact
+      const msgItem = itemsToUse[Math.floor(Math.random() * itemsToUse.length)]
       await db.message.create({
         data: {
           campaignId: campaign.id,

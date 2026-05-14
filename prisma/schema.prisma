@@ -98,7 +98,6 @@ model Campaign {
   id               String   @id @default(cuid())
   name             String
   status           String   @default("draft")
-  messageVariations String  @default("[]")
   sendIntervalMin  Int      @default(30)
   sendIntervalMax  Int      @default(90)
   contactListId    String?
@@ -126,6 +125,7 @@ model SequenceStep {
   delayMinutes Int      @default(0)
   mediaUrl     String?
   mediatype    String?   // 'image' | 'document' | 'video' | 'audio'
+  variations   String   @default("[]")  // JSON: [{content, mediaUrl?, mediatype?}]
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
