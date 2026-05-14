@@ -55,10 +55,12 @@ export async function POST(request: Request) {
           })),
         },
         sequenceSteps: {
-          create: (steps || []).map((step: { stepOrder: number; content: string; delayMinutes: number }) => ({
+          create: (steps || []).map((step: { stepOrder: number; content: string; delayMinutes: number; mediaUrl?: string; mediatype?: string }) => ({
             stepOrder: step.stepOrder,
             content: step.content,
             delayMinutes: step.delayMinutes ?? 0,
+            mediaUrl: step.mediaUrl || null,
+            mediatype: step.mediatype || null,
           })),
         },
       },

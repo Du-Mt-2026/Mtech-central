@@ -143,7 +143,7 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
   // Build message items from either steps or variations
   type MessageItem = { content: string; mediaUrl: string | null; mediatype: string | null }
   const messageItems: MessageItem[] = hasSteps
-    ? campaign.sequenceSteps.map(s => ({ content: s.content, mediaUrl: (s as any).mediaUrl || null, mediatype: (s as any).mediatype || null }))
+    ? campaign.sequenceSteps.map(s => ({ content: s.content, mediaUrl: s.mediaUrl || null, mediatype: s.mediatype || null }))
     : parsedVariations.map(content => ({ content, mediaUrl: null, mediatype: null }))
 
   // Create messages: each contact gets a random message variation (or first step from sequence)

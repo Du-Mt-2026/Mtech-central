@@ -76,6 +76,8 @@ interface SequenceStep {
   stepOrder: number
   content: string
   delayMinutes: number
+  mediaUrl?: string | null
+  mediatype?: string | null
   createdAt: string
 }
 
@@ -1735,14 +1737,14 @@ function CampanhasTab() {
   const [newCampaign, setNewCampaign] = useState({
     name: '', sendIntervalMin: 30, sendIntervalMax: 90,
     chipIds: [] as string[], contactListId: '', scheduledAt: '',
-    useSequence: false, sequenceSteps: [{ content: '', delayMinutes: 0, mediaFile: null as File | null, mediatype: '' }],
+    useSequence: false, sequenceSteps: [{ content: '', delayMinutes: 0, mediaFile: null as File | null, mediaUrl: '', mediatype: '' }],
     messageVariations: [''], antiBanEnabled: true, warmingMode: 'normal',
   })
 
   const resetNewCampaign = () => setNewCampaign({
     name: '', sendIntervalMin: 30, sendIntervalMax: 90,
     chipIds: [], contactListId: '', scheduledAt: '',
-    useSequence: false, sequenceSteps: [{ content: '', delayMinutes: 0, mediaFile: null as File | null, mediatype: '' }],
+    useSequence: false, sequenceSteps: [{ content: '', delayMinutes: 0, mediaFile: null as File | null, mediaUrl: '', mediatype: '' }],
     messageVariations: [''], antiBanEnabled: true, warmingMode: 'normal',
   })
 
@@ -1764,17 +1766,38 @@ function CampanhasTab() {
   useEffect(() => { fetchCampaigns(); fetchChips(); fetchLists() }, [fetchCampaigns, fetchChips, fetchLists])
 
   const createCampaign = async () => {
-    const steps = newCampaign.useSequence
-      ? newCampaign.sequenceSteps.map((s, i) => ({ stepOrder: i + 1, content: s.content, delayMinutes: s.delayMinutes }))
-      : []
-    const payload = {
-      name: newCampaign.name, sendIntervalMin: newCampaign.sendIntervalMin, sendIntervalMax: newCampaign.sendIntervalMax,
-      chipIds: newCampaign.chipIds, contactListId: newCampaign.contactListId || null,
-      scheduledAt: newCampaign.scheduledAt ? new Date(newCampaign.scheduledAt).toISOString() : null,
-      steps, antiBanEnabled: newCampaign.antiBanEnabled, warmingMode: newCampaign.warmingMode,
-      messageVariations: !newCampaign.useSequence ? JSON.stringify(newCampaign.messageVariations.filter((v: string) => v.trim())) : '[]',
-    }
     try {
+      // Upload media files first (if any)
+      const stepsWithMedia: Array<{ stepOrder: number; content: string; delayMinutes: number; mediaUrl?: string; mediatype?: string }> = []
+
+      if (newCampaign.useSequence) {
+        for (let i = 0; i < newCampaign.sequenceSteps.length; i++) {
+          const s = newCampaign.sequenceSteps[i]
+          let mediaUrl = s.mediaUrl || ''
+          let mediatype = s.mediatype || ''
+
+          // If there's a file to upload, upload it first
+          if (s.mediaFile && mediatype) {
+            const uploadForm = new FormData()
+            uploadForm.append('file', s.mediaFile)
+            const uploadRes = await fetch('/api/upload', { method: 'POST', body: uploadForm })
+            const uploadData = await uploadRes.json()
+            if (!uploadRes.ok) throw new Error(uploadData.error || 'Erro ao fazer upload da mídia')
+            mediaUrl = uploadData.mediaUrl
+            mediatype = uploadData.mediatype
+          }
+
+          stepsWithMedia.push({ stepOrder: i + 1, content: s.content, delayMinutes: s.delayMinutes, mediaUrl, mediatype })
+        }
+      }
+
+      const payload = {
+        name: newCampaign.name, sendIntervalMin: newCampaign.sendIntervalMin, sendIntervalMax: newCampaign.sendIntervalMax,
+        chipIds: newCampaign.chipIds, contactListId: newCampaign.contactListId || null,
+        scheduledAt: newCampaign.scheduledAt ? new Date(newCampaign.scheduledAt).toISOString() : null,
+        steps: stepsWithMedia, antiBanEnabled: newCampaign.antiBanEnabled, warmingMode: newCampaign.warmingMode,
+        messageVariations: !newCampaign.useSequence ? JSON.stringify(newCampaign.messageVariations.filter((v: string) => v.trim())) : '[]',
+      }
       const res = await fetch('/api/campaigns', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
       if (!res.ok) { const data = await res.json(); throw new Error(data.error) }
       toast.success('Campanha criada com sucesso!')
@@ -1838,9 +1861,9 @@ function CampanhasTab() {
     }))
   }
 
-  const addSequenceStep = () => setNewCampaign(prev => ({ ...prev, sequenceSteps: [...prev.sequenceSteps, { content: '', delayMinutes: 60, mediaFile: null, mediatype: '' }] }))
+  const addSequenceStep = () => setNewCampaign(prev => ({ ...prev, sequenceSteps: [...prev.sequenceSteps, { content: '', delayMinutes: 60, mediaFile: null, mediaUrl: '', mediatype: '' }] }))
   const removeSequenceStep = (idx: number) => setNewCampaign(prev => ({ ...prev, sequenceSteps: prev.sequenceSteps.filter((_, i) => i !== idx) }))
-  const updateSequenceStep = (idx: number, field: 'content' | 'delayMinutes' | 'mediaFile' | 'mediatype', value: string | number | File | null) => {
+  const updateSequenceStep = (idx: number, field: 'content' | 'delayMinutes' | 'mediaFile' | 'mediaUrl' | 'mediatype', value: string | number | File | null) => {
     setNewCampaign(prev => { const steps = [...prev.sequenceSteps]; steps[idx] = { ...steps[idx], [field]: value }; return { ...prev, sequenceSteps: steps } })
   }
 
