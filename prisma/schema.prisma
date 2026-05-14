@@ -173,11 +173,18 @@ model Settings {
 }
 
 model AdminUser {
-  id        String   @id @default(cuid())
-  username  String   @unique
-  password  String   // bcrypt hashed
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id               String   @id @default(cuid())
+  name             String
+  email            String   @unique
+  password         String   // bcrypt hashed
+  role             String   @default("operador") // 'master' | 'admin' | 'operador'
+  active           Boolean  @default(true)
+  twoFactorSecret  String?
+  twoFactorEnabled Boolean  @default(false)
+  imagem           String   @default("")
+  isSystemUser     Boolean  @default(false)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 }
 
 model InboxMessage {

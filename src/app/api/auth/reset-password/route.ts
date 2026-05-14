@@ -45,12 +45,15 @@ export async function POST(request: NextRequest) {
     const adminUser = await db.adminUser.findFirst()
 
     if (!adminUser) {
-      // Create admin with the new password
+      // Create master user with the new password
       const hashedPassword = await hashPassword(newPassword)
       await db.adminUser.create({
         data: {
-          username: 'admin',
+          name: 'Master',
+          email: 'admin@mtech.com',
           password: hashedPassword,
+          role: 'master',
+          active: true,
         },
       })
     } else {

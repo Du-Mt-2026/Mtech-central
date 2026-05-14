@@ -8,9 +8,21 @@ const AUTH_SECRET = new TextEncoder().encode(
 
 // Routes that don't require authentication (external services call these)
 const PUBLIC_API_ROUTES = [
-  '/api/auth/',                // Login/logout/session/reset-password
+  '/api/auth/',                // Login/logout/session/reset-password/seed-users
   '/api/whatsapp/webhook',     // Evolution API webhook callbacks
   '/api/campaigns/process-all', // Vercel Cron job (has its own CRON_SECRET check)
+]
+
+// Role hierarchy: master > admin > operador
+const ROLE_LEVELS: Record<string, number> = { master: 3, admin: 2, operador: 1 }
+
+// API routes that require minimum role level
+const ROLE_PROTECTED_ROUTES: Array<{ pattern: RegExp; minRole: string }> = [
+  { pattern: /^\/api\/vps-setup/, minRole: 'master' },
+  { pattern: /^\/api\/settings/, minRole: 'master' },
+  { pattern: /^\/api\/auth\/change-password/, minRole: 'operador' }, // any logged-in user
+  { pattern: /^\/api\/antiban/, minRole: 'admin' },
+  { pattern: /^\/api\/users/, minRole: 'master' },
 ]
 
 export async function middleware(req: NextRequest) {
@@ -38,7 +50,23 @@ export async function middleware(req: NextRequest) {
 
   try {
     // Verify JWT token
-    await jwtVerify(token, AUTH_SECRET)
+    const { payload } = await jwtVerify(token, AUTH_SECRET)
+    const userRole = (payload.role as string) || 'operador'
+
+    // Check role-based access for protected routes
+    for (const route of ROLE_PROTECTED_ROUTES) {
+      if (route.pattern.test(pathname)) {
+        const userLevel = ROLE_LEVELS[userRole] || 0
+        const requiredLevel = ROLE_LEVELS[route.minRole] || 0
+        if (userLevel < requiredLevel) {
+          return NextResponse.json(
+            { error: 'Acesso negado. Permissão insuficiente.' },
+            { status: 403 }
+          )
+        }
+      }
+    }
+
     return NextResponse.next()
   } catch {
     // Token is invalid or expired

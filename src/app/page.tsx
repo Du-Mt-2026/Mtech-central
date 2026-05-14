@@ -195,18 +195,21 @@ interface InboxMessage {
 }
 
 // ===== Navigation Items =====
+// Role hierarchy: master > admin > operador
+const ROLE_LEVELS: Record<string, number> = { master: 3, admin: 2, operador: 1 }
+
 const NAV_ITEMS = [
-  { id: 'dashboard', label: 'Dashboard', icon: BarChart3 },
-  { id: 'chips', label: 'Chips', icon: Smartphone },
-  { id: 'inbox', label: 'Caixa de Entrada', icon: Inbox },
-  { id: 'contatos', label: 'Contatos', icon: Users },
-  { id: 'verificar', label: 'Verificar Números', icon: ShieldCheck },
-  { id: 'campanhas', label: 'Campanhas', icon: Send },
-  { id: 'templates', label: 'Templates', icon: FileText },
-  { id: 'antiban', label: 'Anti-Ban', icon: Shield },
-  { id: 'mensagens', label: 'Mensagens', icon: MessageSquare },
-  { id: 'vps', label: 'VPS / Proxy', icon: Server },
-  { id: 'config', label: 'Configurações', icon: Settings },
+  { id: 'dashboard', label: 'Dashboard', icon: BarChart3, minRole: 'operador' },
+  { id: 'chips', label: 'Chips', icon: Smartphone, minRole: 'operador' },
+  { id: 'inbox', label: 'Caixa de Entrada', icon: Inbox, minRole: 'operador' },
+  { id: 'contatos', label: 'Contatos', icon: Users, minRole: 'operador' },
+  { id: 'verificar', label: 'Verificar Números', icon: ShieldCheck, minRole: 'operador' },
+  { id: 'campanhas', label: 'Campanhas', icon: Send, minRole: 'operador' },
+  { id: 'templates', label: 'Templates', icon: FileText, minRole: 'operador' },
+  { id: 'antiban', label: 'Anti-Ban', icon: Shield, minRole: 'admin' },
+  { id: 'mensagens', label: 'Mensagens', icon: MessageSquare, minRole: 'operador' },
+  { id: 'vps', label: 'VPS / Proxy', icon: Server, minRole: 'master' },
+  { id: 'config', label: 'Configurações', icon: Settings, minRole: 'master' },
 ]
 
 // ===== Status Helpers =====
@@ -3758,8 +3761,9 @@ export default function OctupusZapApp() {
   const [stats, setStats] = useState<Stats | null>(null)
   const [loggedIn, setLoggedIn] = useState(false)
   const [username, setUsername] = useState('')
+  const [userRole, setUserRole] = useState('operador')
   const [authLoading, setAuthLoading] = useState(true)
-  const [loginForm, setLoginForm] = useState({ username: '', password: '' })
+  const [loginForm, setLoginForm] = useState({ email: '', password: '' })
   const [loginLoading, setLoginLoading] = useState(false)
   const [forgotDialogOpen, setForgotDialogOpen] = useState(false)
   const [forgotForm, setForgotForm] = useState({ newPassword: '', confirmPassword: '', verificationKey: '' })
@@ -3767,7 +3771,18 @@ export default function OctupusZapApp() {
 
   useEffect(() => {
     fetch('/api/auth/session').then(r => r.json()).then(data => {
-      if (data.authenticated) { setLoggedIn(true); setUsername(data.username || '') }
+      if (data.authenticated) {
+        setLoggedIn(true)
+        setUsername(data.username || '')
+        setUserRole(data.role || 'operador')
+        // If active tab is not accessible with user's role, reset to dashboard
+        const userLevel = ROLE_LEVELS[data.role || 'operador'] || 1
+        const currentItem = NAV_ITEMS.find(n => n.id === activeTab)
+        if (currentItem) {
+          const requiredLevel = ROLE_LEVELS[currentItem.minRole] || 1
+          if (userLevel < requiredLevel) setActiveTab('dashboard')
+        }
+      }
     }).catch(() => {}).finally(() => setAuthLoading(false))
   }, [])
 
@@ -3808,7 +3823,8 @@ export default function OctupusZapApp() {
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Erro ao fazer login')
       setLoggedIn(true)
-      setUsername(loginForm.username)
+      setUsername(data.user?.name || loginForm.email)
+      setUserRole(data.user?.role || 'operador')
       toast.success('Login realizado com sucesso!')
     } catch (err: unknown) { toast.error((err as Error).message || 'Erro ao fazer login') }
     finally { setLoginLoading(false) }
@@ -3902,11 +3918,11 @@ export default function OctupusZapApp() {
             <CardContent className="space-y-4">
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.4 }} className="space-y-4">
                 <div className="space-y-2">
-                  <Label className="text-zinc-300">Usuário</Label>
+                  <Label className="text-zinc-300">Email</Label>
                   <Input
-                    placeholder="admin"
-                    value={loginForm.username}
-                    onChange={e => setLoginForm(p => ({ ...p, username: e.target.value }))}
+                    placeholder="seu@email.com"
+                    value={loginForm.email}
+                    onChange={e => setLoginForm(p => ({ ...p, email: e.target.value }))}
                     className="bg-zinc-800/50 border-zinc-700 text-white placeholder:text-zinc-500 focus:border-emerald-500 focus:ring-emerald-500/20"
                   />
                 </div>
@@ -3924,7 +3940,7 @@ export default function OctupusZapApp() {
                 <Button
                   className="w-full gap-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 shadow-lg shadow-emerald-500/25 text-white font-semibold h-11"
                   onClick={handleLogin}
-                  disabled={loginLoading || !loginForm.username || !loginForm.password}
+                  disabled={loginLoading || !loginForm.email || !loginForm.password}
                 >
                   {loginLoading ? <RefreshCw className="size-4 animate-spin" /> : <Lock className="size-4" />}
                   {loginLoading ? 'Entrando...' : 'Entrar'}
@@ -4026,7 +4042,11 @@ export default function OctupusZapApp() {
         </div>
 
         <nav className="flex-1 px-3 space-y-1">
-          {NAV_ITEMS.map(item => (
+          {NAV_ITEMS.filter(item => {
+            const userLevel = ROLE_LEVELS[userRole] || 1
+            const requiredLevel = ROLE_LEVELS[item.minRole] || 1
+            return userLevel >= requiredLevel
+          }).map(item => (
             <button key={item.id}
               onClick={() => setActiveTab(item.id)}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
@@ -4047,7 +4067,7 @@ export default function OctupusZapApp() {
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium text-white truncate">{username || 'OctupusZap'}</p>
-              <p className="text-xs text-zinc-400">Plano Pro</p>
+              <p className="text-xs text-zinc-400">{userRole === 'master' ? 'Master' : userRole === 'admin' ? 'Admin' : 'Operador'}</p>
             </div>
             <TooltipProvider>
               <Tooltip>
@@ -4092,7 +4112,11 @@ export default function OctupusZapApp() {
                 </div>
               </div>
               <nav className="flex-1 px-3 space-y-1">
-                {NAV_ITEMS.map(item => (
+                {NAV_ITEMS.filter(item => {
+                  const userLevel = ROLE_LEVELS[userRole] || 1
+                  const requiredLevel = ROLE_LEVELS[item.minRole] || 1
+                  return userLevel >= requiredLevel
+                }).map(item => (
                   <button key={item.id}
                     onClick={() => { setActiveTab(item.id); setSidebarOpen(false) }}
                     className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${

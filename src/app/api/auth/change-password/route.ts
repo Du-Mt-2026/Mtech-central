@@ -20,9 +20,9 @@ export async function PUT(request: Request) {
       return NextResponse.json({ error: 'A nova senha deve ter pelo menos 6 caracteres' }, { status: 400 })
     }
 
-    // Find the admin user
+    // Find the admin user by ID from session
     const user = await db.adminUser.findUnique({
-      where: { username: session.username },
+      where: { id: session.userId },
     })
 
     if (!user) {

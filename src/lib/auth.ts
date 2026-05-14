@@ -13,6 +13,7 @@ const TOKEN_EXPIRY = '7d'
 export interface SessionPayload {
   userId: string
   username: string
+  role: string
 }
 
 /**
@@ -33,7 +34,7 @@ export async function verifyPassword(password: string, hash: string): Promise<bo
  * Create a JWT token for a user session
  */
 export async function createToken(payload: SessionPayload): Promise<string> {
-  return new SignJWT({ userId: payload.userId, username: payload.username })
+  return new SignJWT({ userId: payload.userId, username: payload.username, role: payload.role })
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
     .setExpirationTime(TOKEN_EXPIRY)
@@ -49,6 +50,7 @@ export async function verifyToken(token: string): Promise<SessionPayload | null>
     return {
       userId: payload.userId as string,
       username: payload.username as string,
+      role: (payload.role as string) || 'operador',
     }
   } catch {
     return null
