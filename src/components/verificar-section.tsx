@@ -556,7 +556,7 @@ export function VerificarSection() {
 
     const header = 'Telefone,Telefone Original,Nome,Status\n'
     const rows = filteredResults.map(r =>
-      `"${r.phone}","${r.originalInput}","${r.name || ''}","${r.exists ? 'No WhatsApp' : 'Fora do WhatsApp'}"`
+      `"${r.phone}","${r.originalInput}","${r.name || ''}","${r.exists ? 'Com WhatsApp' : 'Sem WhatsApp'}"`
     ).join('\n')
 
     const blob = new Blob([header + rows], { type: 'text/csv;charset=utf-8;' })
@@ -757,7 +757,7 @@ export function VerificarSection() {
             trend: totalVerified > 0 ? 'verificação em andamento' : 'aguardando',
           },
           {
-            title: 'No WhatsApp',
+            title: 'Com WhatsApp',
             value: validCount,
             sub: 'números válidos',
             icon: CheckCircle2,
@@ -766,7 +766,7 @@ export function VerificarSection() {
             trend: validCount > 0 ? `${validationRate}% do total` : 'nenhum encontrado',
           },
           {
-            title: 'Fora do WhatsApp',
+            title: 'Sem WhatsApp',
             value: invalidCount,
             sub: 'não registrados',
             icon: XCircle,
@@ -1019,10 +1019,10 @@ export function VerificarSection() {
                       Todos ({results.length})
                     </TabsTrigger>
                     <TabsTrigger value="valid" className="text-xs px-3">
-                      No WhatsApp ({validCount})
+                      Com WhatsApp ({validCount})
                     </TabsTrigger>
                     <TabsTrigger value="invalid" className="text-xs px-3">
-                      Fora ({invalidCount})
+                      Sem WhatsApp ({invalidCount})
                     </TabsTrigger>
                   </TabsList>
                 </Tabs>
@@ -1046,7 +1046,7 @@ export function VerificarSection() {
                     disabled={validCount === 0}
                   >
                     <Copy className="size-3" />
-                    Copiar No WhatsApp
+                    Copiar Com WhatsApp
                   </Button>
                   <Button
                     variant="outline"
@@ -1117,7 +1117,7 @@ export function VerificarSection() {
                               : 'bg-rose-500/10 text-rose-500 border-rose-500/30'
                           }`}
                         >
-                          {result.exists ? 'No WhatsApp' : 'Fora'}
+                          {result.exists ? 'Com WhatsApp' : 'Sem WhatsApp'}
                         </Badge>
                       </motion.div>
                     ))}
