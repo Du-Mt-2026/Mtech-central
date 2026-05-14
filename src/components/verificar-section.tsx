@@ -1019,10 +1019,10 @@ export function VerificarSection() {
                       Todos ({results.length})
                     </TabsTrigger>
                     <TabsTrigger value="valid" className="text-xs px-3">
-                      Com WhatsApp ({validCount})
+                      ✅ Com WhatsApp ({validCount})
                     </TabsTrigger>
                     <TabsTrigger value="invalid" className="text-xs px-3">
-                      Sem WhatsApp ({invalidCount})
+                      ❌ Sem WhatsApp ({invalidCount})
                     </TabsTrigger>
                   </TabsList>
                 </Tabs>
@@ -1117,7 +1117,7 @@ export function VerificarSection() {
                               : 'bg-rose-500/10 text-rose-500 border-rose-500/30'
                           }`}
                         >
-                          {result.exists ? 'Com WhatsApp' : 'Sem WhatsApp'}
+                          {result.exists ? '✅ Com WhatsApp' : '❌ Sem WhatsApp'}
                         </Badge>
                       </motion.div>
                     ))}
