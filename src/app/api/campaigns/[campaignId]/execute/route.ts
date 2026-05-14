@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { sendTextMessage, setPresence, formatPhoneNumber, getInstanceName } from '@/lib/evolution-api'
+import { sendTextMessage, sendMediaMessage, setPresence, formatPhoneNumber, getInstanceName } from '@/lib/evolution-api'
 
 export async function POST(
   request: Request,
@@ -26,25 +26,44 @@ export async function POST(
 
     const antiBan = await db.antiBanSettings.findFirst()
 
-    const messages = campaign.sequenceSteps.length > 0
-      ? campaign.sequenceSteps.map(s => s.content)
-      : [campaign.messageVariations ? JSON.parse(campaign.messageVariations)[0] || '' : '']
+    // Build message items with media support
+    type MsgItem = { content: string; mediaUrl: string | null; mediatype: string | null }
+    let messageItems: MsgItem[] = []
+    if (campaign.sequenceSteps.length > 0) {
+      messageItems = campaign.sequenceSteps.map(s => ({ content: s.content, mediaUrl: s.mediaUrl || null, mediatype: s.mediatype || null }))
+    } else {
+      try {
+        const raw = JSON.parse(campaign.messageVariations || '[]')
+        if (Array.isArray(raw) && raw.length > 0) {
+          if (typeof raw[0] === 'string') {
+            messageItems = raw.filter((v: string) => v && v.trim()).map((content: string) => ({ content, mediaUrl: null, mediatype: null }))
+          } else {
+            messageItems = raw.filter((v: any) => v.content && v.content.trim()).map((v: any) => ({ content: v.content, mediaUrl: v.mediaUrl || null, mediatype: v.mediatype || null }))
+          }
+        }
+      } catch {
+        messageItems = []
+      }
+    }
 
     // Create pending messages
     for (let i = 0; i < contacts.length; i++) {
       const contact = contacts[i]
       const chipAssignment = campaign.chips[i % campaign.chips.length]
-      for (let stepIdx = 0; stepIdx < messages.length; stepIdx++) {
-        await db.message.create({
-          data: {
-            campaignId: campaign.id,
-            chipId: chipAssignment.chipId,
-            contactId: contact.id,
-            content: messages[stepIdx] || '',
-            status: stepIdx === 0 ? 'pending' : 'scheduled',
-          },
-        })
-      }
+      const msgItem = messageItems.length > 0
+        ? messageItems[Math.floor(Math.random() * messageItems.length)]
+        : { content: '', mediaUrl: null, mediatype: null }
+      await db.message.create({
+        data: {
+          campaignId: campaign.id,
+          chipId: chipAssignment.chipId,
+          contactId: contact.id,
+          content: msgItem.content,
+          mediaUrl: msgItem.mediaUrl,
+          mediatype: msgItem.mediatype,
+          status: 'pending',
+        },
+      })
     }
 
     await db.campaign.update({
@@ -60,7 +79,7 @@ export async function POST(
     return NextResponse.json({
       success: true,
       message: `Campanha iniciada com ${contacts.length} contatos`,
-      totalMessages: contacts.length * messages.length,
+      totalMessages: contacts.length,
     })
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 })
@@ -114,7 +133,18 @@ async function processCampaignMessages(campaignId: string, antiBan: any, campaig
       const typingDelay = antiBan ? Math.floor(Math.random() * (antiBan.typingMaxDelay - antiBan.typingMinDelay) + antiBan.typingMinDelay) : 1500
       try { await setPresence(instanceName, phone, 'composing', typingDelay) } catch {}
 
-      await sendTextMessage(instanceName, phone, next.content)
+      // Send media or text based on message fields
+      if (next.mediaUrl && next.mediatype) {
+        const validMediaTypes = ['image', 'document', 'video', 'audio']
+        const mt = next.mediatype as 'image' | 'document' | 'video' | 'audio'
+        if (validMediaTypes.includes(mt)) {
+          await sendMediaMessage(instanceName, phone, next.mediaUrl, mt, { caption: next.content || '' })
+        } else {
+          await sendTextMessage(instanceName, phone, next.content)
+        }
+      } else {
+        await sendTextMessage(instanceName, phone, next.content)
+      }
       await db.message.update({ where: { id: next.id }, data: { status: 'sent', sentAt: new Date() } })
       await db.chip.update({ where: { id: chip.id }, data: { sentToday: { increment: 1 } } })
     } catch (err: any) {

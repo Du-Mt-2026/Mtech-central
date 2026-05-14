@@ -120,14 +120,28 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
 
   // Derive message content from either sequence steps or message variations
   const hasSteps = campaign.sequenceSteps.length > 0
-  let parsedVariations: string[] = []
+
+  // Variation format: can be string[] (legacy) or {content, mediaUrl?, mediatype?}[] (new)
+  type VariationObj = { content: string; mediaUrl?: string; mediatype?: string }
+  let parsedVariations: VariationObj[] = []
   if (!hasSteps) {
     try {
-      parsedVariations = JSON.parse(campaign.messageVariations || '[]')
+      const raw = JSON.parse(campaign.messageVariations || '[]')
+      if (Array.isArray(raw) && raw.length > 0) {
+        if (typeof raw[0] === 'string') {
+          // Legacy format: ["text1", "text2"] → convert to objects
+          parsedVariations = (raw as string[])
+            .filter((v: string) => v && v.trim())
+            .map((content: string) => ({ content }))
+        } else if (typeof raw[0] === 'object') {
+          // New format: [{content, mediaUrl, mediatype}, ...]
+          parsedVariations = (raw as VariationObj[])
+            .filter((v: VariationObj) => v.content && v.content.trim())
+        }
+      }
     } catch {
       parsedVariations = []
     }
-    parsedVariations = parsedVariations.filter((v: string) => v && v.trim())
   }
 
   if (!hasSteps && parsedVariations.length === 0) {
@@ -144,7 +158,7 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
   type MessageItem = { content: string; mediaUrl: string | null; mediatype: string | null }
   const messageItems: MessageItem[] = hasSteps
     ? campaign.sequenceSteps.map(s => ({ content: s.content, mediaUrl: s.mediaUrl || null, mediatype: s.mediatype || null }))
-    : parsedVariations.map(content => ({ content, mediaUrl: null, mediatype: null }))
+    : parsedVariations.map(v => ({ content: v.content, mediaUrl: v.mediaUrl || null, mediatype: v.mediatype || null }))
 
   // Create messages: each contact gets a random message variation (or first step from sequence)
   const messagesToCreate = []

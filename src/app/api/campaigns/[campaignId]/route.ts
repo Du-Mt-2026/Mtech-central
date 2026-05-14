@@ -64,11 +64,13 @@ export async function PATCH(
       await db.sequenceStep.deleteMany({ where: { campaignId } })
       if (body.steps.length > 0) {
         await db.sequenceStep.createMany({
-          data: body.steps.map((step: { stepOrder: number; content: string; delayMinutes: number }) => ({
+          data: body.steps.map((step: { stepOrder: number; content: string; delayMinutes: number; mediaUrl?: string; mediatype?: string }) => ({
             campaignId,
             stepOrder: step.stepOrder,
             content: step.content,
             delayMinutes: step.delayMinutes ?? 0,
+            mediaUrl: step.mediaUrl || null,
+            mediatype: step.mediatype || null,
           })),
         })
       }

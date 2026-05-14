@@ -1738,14 +1738,14 @@ function CampanhasTab() {
     name: '', sendIntervalMin: 30, sendIntervalMax: 90,
     chipIds: [] as string[], contactListId: '', scheduledAt: '',
     useSequence: false, sequenceSteps: [{ content: '', delayMinutes: 0, mediaFile: null as File | null, mediaUrl: '', mediatype: '' }],
-    messageVariations: [''], antiBanEnabled: true, warmingMode: 'normal',
+    messageVariations: [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '' }], antiBanEnabled: true, warmingMode: 'normal',
   })
 
   const resetNewCampaign = () => setNewCampaign({
     name: '', sendIntervalMin: 30, sendIntervalMax: 90,
     chipIds: [], contactListId: '', scheduledAt: '',
     useSequence: false, sequenceSteps: [{ content: '', delayMinutes: 0, mediaFile: null as File | null, mediaUrl: '', mediatype: '' }],
-    messageVariations: [''], antiBanEnabled: true, warmingMode: 'normal',
+    messageVariations: [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '' }], antiBanEnabled: true, warmingMode: 'normal',
   })
 
   const fetchCampaigns = useCallback(async () => {
@@ -1791,12 +1791,34 @@ function CampanhasTab() {
         }
       }
 
+      // Upload media for variations
+      const variationsWithMedia: Array<{ content: string; mediaUrl?: string; mediatype?: string }> = []
+      if (!newCampaign.useSequence) {
+        for (const v of newCampaign.messageVariations) {
+          if (!v.content.trim()) continue
+          let mediaUrl = v.mediaUrl || ''
+          let mediatype = v.mediatype || ''
+
+          if (v.mediaFile && mediatype) {
+            const uploadForm = new FormData()
+            uploadForm.append('file', v.mediaFile)
+            const uploadRes = await fetch('/api/upload', { method: 'POST', body: uploadForm })
+            const uploadData = await uploadRes.json()
+            if (!uploadRes.ok) throw new Error(uploadData.error || 'Erro ao fazer upload da mídia')
+            mediaUrl = uploadData.mediaUrl
+            mediatype = uploadData.mediatype
+          }
+
+          variationsWithMedia.push({ content: v.content, mediaUrl: mediaUrl || undefined, mediatype: mediatype || undefined })
+        }
+      }
+
       const payload = {
         name: newCampaign.name, sendIntervalMin: newCampaign.sendIntervalMin, sendIntervalMax: newCampaign.sendIntervalMax,
         chipIds: newCampaign.chipIds, contactListId: newCampaign.contactListId || null,
         scheduledAt: newCampaign.scheduledAt ? new Date(newCampaign.scheduledAt).toISOString() : null,
         steps: stepsWithMedia, antiBanEnabled: newCampaign.antiBanEnabled, warmingMode: newCampaign.warmingMode,
-        messageVariations: !newCampaign.useSequence ? JSON.stringify(newCampaign.messageVariations.filter((v: string) => v.trim())) : '[]',
+        messageVariations: !newCampaign.useSequence ? JSON.stringify(variationsWithMedia) : '[]',
       }
       const res = await fetch('/api/campaigns', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
       if (!res.ok) { const data = await res.json(); throw new Error(data.error) }
@@ -1867,8 +1889,15 @@ function CampanhasTab() {
     setNewCampaign(prev => { const steps = [...prev.sequenceSteps]; steps[idx] = { ...steps[idx], [field]: value }; return { ...prev, sequenceSteps: steps } })
   }
 
+  // Variation helpers
+  const addVariation = () => setNewCampaign(prev => ({ ...prev, messageVariations: [...prev.messageVariations, { content: '', mediaFile: null, mediaUrl: '', mediatype: '' }] }))
+  const removeVariation = (idx: number) => setNewCampaign(prev => ({ ...prev, messageVariations: prev.messageVariations.filter((_, i) => i !== idx) }))
+  const updateVariation = (idx: number, field: 'content' | 'mediaFile' | 'mediaUrl' | 'mediatype', value: string | File | null) => {
+    setNewCampaign(prev => { const vars = [...prev.messageVariations]; vars[idx] = { ...vars[idx], [field]: value }; return { ...prev, messageVariations: vars } })
+  }
+
   const canCreate = newCampaign.name.trim() && newCampaign.chipIds.length > 0 && (
-    newCampaign.useSequence ? newCampaign.sequenceSteps.some(s => s.content.trim()) : newCampaign.messageVariations.some(v => v.trim())
+    newCampaign.useSequence ? newCampaign.sequenceSteps.some(s => s.content.trim()) : newCampaign.messageVariations.some(v => v.content.trim())
   )
 
   return (
@@ -2008,19 +2037,44 @@ function CampanhasTab() {
               ) : (
                 <div className="space-y-3">
                   {newCampaign.messageVariations.map((v, idx) => (
-                    <div key={idx} className="flex gap-2">
-                      <Textarea placeholder={`Variação ${idx + 1}...`} value={v} onChange={e => {
-                        const vars = [...newCampaign.messageVariations]; vars[idx] = e.target.value
-                        setNewCampaign(prev => ({ ...prev, messageVariations: vars }))
-                      }} rows={2} className="flex-1" />
-                      {newCampaign.messageVariations.length > 1 && (
-                        <Button variant="ghost" size="sm" className="text-rose-500" onClick={() => setNewCampaign(prev => ({ ...prev, messageVariations: prev.messageVariations.filter((_, i) => i !== idx) }))}>
-                          <X className="size-4" />
-                        </Button>
-                      )}
+                    <div key={idx} className="relative p-3 border rounded-lg space-y-2">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-sm font-medium text-muted-foreground">Variação {idx + 1}</span>
+                        {newCampaign.messageVariations.length > 1 && (
+                          <Button variant="ghost" size="sm" className="ml-auto text-rose-500 h-6 w-6 p-0" onClick={() => removeVariation(idx)}>
+                            <X className="size-3" />
+                          </Button>
+                        )}
+                      </div>
+                      <Textarea placeholder={`Texto da variação ${idx + 1}...`} value={v.content} onChange={e => updateVariation(idx, 'content', e.target.value)} rows={2} />
+                      <p className="text-xs text-muted-foreground">Se tiver mídia, o texto acima será a legenda/descrição da mídia</p>
+                      {/* Media Upload for variation */}
+                      <div className="space-y-2">
+                        <Label className="text-xs flex items-center gap-1"><ImageIcon className="size-3" /> Mídia (opcional)</Label>
+                        <div className="flex gap-2">
+                          <Select value={v.mediatype} onValueChange={mt => updateVariation(idx, 'mediatype', mt)}>
+                            <SelectTrigger className="w-32 h-8 text-xs"><SelectValue placeholder="Tipo" /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="image">Imagem</SelectItem>
+                              <SelectItem value="document">Documento</SelectItem>
+                              <SelectItem value="video">Vídeo</SelectItem>
+                              <SelectItem value="audio">Áudio</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <Input type="file" className="h-8 text-xs" accept={v.mediatype === 'image' ? 'image/*' : v.mediatype === 'video' ? 'video/*' : v.mediatype === 'audio' ? 'audio/*' : undefined} onChange={e => { const f = e.target.files?.[0] || null; updateVariation(idx, 'mediaFile', f) }} />
+                        </div>
+                        {v.mediaFile && (
+                          <div className="flex items-center gap-2 p-2 bg-muted/50 rounded-lg text-xs">
+                            {v.mediatype === 'image' ? <ImageIcon className="size-3.5 text-emerald-500" /> : v.mediatype === 'video' ? <Film className="size-3.5 text-sky-500" /> : v.mediatype === 'audio' ? <Music className="size-3.5 text-amber-500" /> : <File className="size-3.5 text-zinc-500" />}
+                            <span className="truncate">{v.mediaFile.name}</span>
+                            <span className="text-muted-foreground">({(v.mediaFile.size / 1024).toFixed(1)}KB)</span>
+                            <Button variant="ghost" size="sm" className="h-5 w-5 p-0 ml-auto" onClick={() => updateVariation(idx, 'mediaFile', null)}><X className="size-3" /></Button>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   ))}
-                  <Button variant="outline" size="sm" onClick={() => setNewCampaign(prev => ({ ...prev, messageVariations: [...prev.messageVariations, ''] }))} className="gap-1.5 w-full">
+                  <Button variant="outline" size="sm" onClick={addVariation} className="gap-1.5 w-full">
                     <Plus className="size-3.5" /> Adicionar Variação
                   </Button>
                 </div>
