@@ -43,6 +43,10 @@ model Chip {
   profileName              String?  
   profilePicUrl            String?  
   disconnectionReasonCode  Int?
+
+  // Verification anti-ban fields
+  verifiedToday       Int      @default(0)
+  lastVerifiedResetAt DateTime @default(now())
 }
 
 model AntiBanSettings {

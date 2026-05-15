@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { evolutionFetch, getInstanceName } from '@/lib/evolution-api'
 
+// Daily verification limit per chip (safe anti-ban threshold)
+const DAILY_VERIFY_LIMIT = 300
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
@@ -24,11 +27,50 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Chip não encontrado' }, { status: 404 })
     }
 
+    // --- Anti-ban: daily verification limit ---
+    // Reset counter if it's a new day
+    const now = new Date()
+    const lastReset = new Date(chip.lastVerifiedResetAt)
+    const isDifferentDay = now.getFullYear() !== lastReset.getFullYear() ||
+      now.getMonth() !== lastReset.getMonth() ||
+      now.getDate() !== lastReset.getDate()
+
+    let currentVerifiedToday = chip.verifiedToday
+
+    if (isDifferentDay) {
+      await db.chip.update({
+        where: { id: chipId },
+        data: { verifiedToday: 0, lastVerifiedResetAt: now },
+      })
+      currentVerifiedToday = 0
+    }
+
+    // Check if chip has hit daily limit
+    if (currentVerifiedToday >= DAILY_VERIFY_LIMIT) {
+      return NextResponse.json(
+        {
+          error: `Chip "${chip.name}" atingiu o limite diário de ${DAILY_VERIFY_LIMIT} verificações. Use outro chip ou aguarde até amanhã.`,
+          code: 'DAILY_LIMIT_REACHED',
+          dailyLimit: DAILY_VERIFY_LIMIT,
+          verifiedToday: currentVerifiedToday,
+        },
+        { status: 429 }
+      )
+    }
+
+    // Cap the batch to not exceed daily limit
+    const remainingQuota = DAILY_VERIFY_LIMIT - currentVerifiedToday
+    const cappedPhones = phones.slice(0, remainingQuota)
+
+    if (cappedPhones.length < phones.length) {
+      console.warn(`Chip ${chip.name}: capped verification batch from ${phones.length} to ${cappedPhones.length} (daily limit)`)
+    }
+
     // Determine the Evolution instance name
     const instanceName = chip.evolutionInstance || getInstanceName(chip.id, chip.name)
 
     // Format phone numbers: remove +, spaces, dashes; ensure they start with country code
-    const formattedPhones = phones.map((phone: string) => {
+    const formattedPhones = cappedPhones.map((phone: string) => {
       let p = phone.replace(/[\s\-\+\.\(\)]/g, '')
       if (p.startsWith('0')) p = p.substring(1)
       if (!p.startsWith('55')) p = '55' + p
@@ -43,8 +85,6 @@ export async function POST(request: NextRequest) {
     }
 
     // Call Evolution API's whatsappNumbers endpoint to check which numbers exist
-    // POST /chat/whatsappNumbers/{instanceName}
-    // Body: { numbers: ["5511999999999", "5511888888888"] }
     const res = await evolutionFetch(`/chat/whatsappNumbers/${instanceName}`, {
       method: 'POST',
       body: JSON.stringify({ numbers: formattedPhones }),
@@ -61,7 +101,6 @@ export async function POST(request: NextRequest) {
 
     // Evolution API returns an array of results like:
     // [{ exists: true, jid: "55119...@s.whatsapp.net", name: "João" }, ...]
-    // Or: [{ number: "55119...", exists: false }, ...]
     // Normalize to the format the frontend expects
     let results: Array<{ number: string; exists: boolean; jid?: string; name?: string; error?: string }>
 
@@ -92,7 +131,21 @@ export async function POST(request: NextRequest) {
       }))
     }
 
-    return NextResponse.json({ results })
+    // Update verification count for this chip
+    await db.chip.update({
+      where: { id: chipId },
+      data: {
+        verifiedToday: currentVerifiedToday + formattedPhones.length,
+      },
+    })
+
+    return NextResponse.json({
+      results,
+      chipName: chip.name,
+      verifiedToday: currentVerifiedToday + formattedPhones.length,
+      dailyLimit: DAILY_VERIFY_LIMIT,
+      quotaRemaining: DAILY_VERIFY_LIMIT - (currentVerifiedToday + formattedPhones.length),
+    })
   } catch (error: any) {
     console.error('Verifier check error:', error)
     return NextResponse.json(

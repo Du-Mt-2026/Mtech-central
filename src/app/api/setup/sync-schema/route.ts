@@ -79,6 +79,32 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Step 2: Sync Chip table — add verification anti-ban columns
+    try {
+      const chipColumns = await db.$queryRaw<Array<{ column_name: string }>>`
+        SELECT column_name FROM information_schema.columns
+        WHERE table_name = 'Chip'
+        ORDER BY ordinal_position
+      `
+      const chipColumnNames = chipColumns.map(c => c.column_name)
+
+      if (!chipColumnNames.includes('verifiedToday')) {
+        await db.$executeRawUnsafe(`ALTER TABLE "Chip" ADD COLUMN IF NOT EXISTS "verifiedToday" INTEGER NOT NULL DEFAULT 0`)
+        results.push('Chip: adicionada coluna verifiedToday')
+      } else {
+        results.push('Chip: verifiedToday já existe')
+      }
+
+      if (!chipColumnNames.includes('lastVerifiedResetAt')) {
+        await db.$executeRawUnsafe(`ALTER TABLE "Chip" ADD COLUMN IF NOT EXISTS "lastVerifiedResetAt" TIMESTAMP(3) NOT NULL DEFAULT NOW()`)
+        results.push('Chip: adicionada coluna lastVerifiedResetAt')
+      } else {
+        results.push('Chip: lastVerifiedResetAt já existe')
+      }
+    } catch (chipError: any) {
+      results.push(`Erro na migração Chip: ${chipError.message}`)
+    }
+
     return NextResponse.json({
       success: true,
       message: 'Migração processada',
