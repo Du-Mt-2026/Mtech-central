@@ -107,6 +107,7 @@ export function VerificarSection() {
   const [chipQuotas, setChipQuotas] = useState<ChipQuota[]>([])
   const [selectedChipIds, setSelectedChipIds] = useState<string[]>([])
   const [serviceAvailable, setServiceAvailable] = useState(false)
+  const [whatsappConnected, setWhatsappConnected] = useState(false)
   const [checkingConnection, setCheckingConnection] = useState(false)
 
   // QR Code dialog
@@ -181,11 +182,14 @@ export function VerificarSection() {
       if (res.ok) {
         const data = await res.json()
         setServiceAvailable(data.serviceAvailable)
+        setWhatsappConnected(data.connection?.connected || false)
       } else {
         setServiceAvailable(false)
+        setWhatsappConnected(false)
       }
     } catch {
       setServiceAvailable(false)
+      setWhatsappConnected(false)
     } finally {
       setCheckingConnection(false)
     }
@@ -231,6 +235,22 @@ export function VerificarSection() {
 
   const deselectAll = () => {
     setSelectedChipIds([])
+  }
+
+  // ===== Disconnect WhatsApp for a chip =====
+  const disconnectWhatsApp = async (chipId?: string) => {
+    try {
+      const res = await fetch('/api/verifier/disconnect', { method: 'POST' })
+      if (!res.ok) {
+        const data = await res.json()
+        throw new Error(data.error || 'Erro ao desconectar')
+      }
+      setWhatsappConnected(false)
+      toast.success('WhatsApp desconectado')
+      fetchChipQuotas()
+    } catch (err: unknown) {
+      toast.error((err as Error).message || 'Erro ao desconectar')
+    }
   }
 
   // ===== Add New Chip =====
@@ -290,6 +310,7 @@ export function VerificarSection() {
 
       if (data.connected || data.status === 'connected') {
         setQrConnected(true)
+        setWhatsappConnected(true)
         toast.success('WhatsApp conectado com sucesso!')
         fetchChipQuotas()
         return
@@ -322,6 +343,7 @@ export function VerificarSection() {
             const qrRefreshData = await qrRefresh.json()
             if (qrRefreshData.connected) {
               setQrConnected(true)
+              setWhatsappConnected(true)
               if (pollingRef.current) clearInterval(pollingRef.current)
               toast.success('WhatsApp conectado com sucesso!')
               fetchChipQuotas()
@@ -912,10 +934,17 @@ export function VerificarSection() {
                 Verificando...
               </Badge>
             ) : serviceAvailable ? (
-              <Badge variant="default" className="gap-1.5 bg-emerald-600 hover:bg-emerald-700">
-                <Wifi className="size-3" />
-                API Online
-              </Badge>
+              whatsappConnected ? (
+                <Badge variant="default" className="gap-1.5 bg-emerald-600 hover:bg-emerald-700">
+                  <Wifi className="size-3" />
+                  WhatsApp Conectado
+                </Badge>
+              ) : (
+                <Badge variant="outline" className="gap-1.5 border-amber-500/30 text-amber-600">
+                  <WifiOff className="size-3" />
+                  Desconectado
+                </Badge>
+              )
             ) : (
               <Badge variant="destructive" className="gap-1.5">
                 <AlertTriangle className="size-3" />
@@ -923,6 +952,35 @@ export function VerificarSection() {
               </Badge>
             )}
           </div>
+
+          {serviceAvailable && !whatsappConnected && (
+            <Button
+              variant="outline"
+              className="gap-2 border-emerald-500/30 text-emerald-600 hover:bg-emerald-500/10 hover:text-emerald-500"
+              onClick={() => {
+                if (selectedChipIds.length > 0) {
+                  connectWhatsApp(selectedChipIds[0])
+                } else {
+                  toast.error('Selecione um chip para conectar')
+                }
+              }}
+              disabled={selectedChipIds.length === 0}
+            >
+              <QrCode className="size-4" />
+              Conectar WhatsApp
+            </Button>
+          )}
+
+          {whatsappConnected && (
+            <Button
+              variant="outline"
+              className="gap-2 text-rose-500 hover:bg-rose-500/10 border-rose-500/30"
+              onClick={() => disconnectWhatsApp()}
+            >
+              <WifiOff className="size-4" />
+              Desconectar
+            </Button>
+          )}
 
           <Button
             variant="outline"
@@ -1100,6 +1158,9 @@ export function VerificarSection() {
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium truncate">{chip.name}</p>
                           <p className="text-xs text-muted-foreground">{chip.phoneNumber}</p>
+                          <p className="text-[10px] text-muted-foreground/70">
+                            Proxy: {chip.proxyMode === 'socks5' && chip.socks5Host ? `SOCKS5 ${chip.socks5Host}:${chip.socks5Port}` : chip.wireguardIp ? `SOCKS5 ${chip.wireguardIp}:${chip.socksPort || 8080} (auto)` : 'Nenhum'}
+                          </p>
                         </div>
                         <div className="text-right">
                           <p className="text-xs font-medium">{chip.verifiedToday}/{chip.dailyLimit}</p>
@@ -1112,7 +1173,7 @@ export function VerificarSection() {
                             />
                           </div>
                         </div>
-                        {!chip.isConnected && (
+                        {!chip.isConnected ? (
                           <Button
                             variant="outline"
                             size="sm"
@@ -1121,6 +1182,15 @@ export function VerificarSection() {
                           >
                             <QrCode className="size-3" />
                             Conectar
+                          </Button>
+                        ) : (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="gap-1 text-xs h-7 px-2 text-rose-500 hover:bg-rose-500/10 border-rose-500/30"
+                            onClick={(e) => { e.stopPropagation(); disconnectWhatsApp(chip.id) }}
+                          >
+                            <WifiOff className="size-3" />
                           </Button>
                         )}
                       </div>
@@ -1293,7 +1363,21 @@ export function VerificarSection() {
                 </p>
               )}
 
-              {connectedSelectedChips.length === 0 && !isVerifying && (
+              {!whatsappConnected && serviceAvailable && selectedChipIds.length === 0 && (
+                <p className="text-xs text-amber-600 flex items-center gap-1">
+                  <AlertTriangle className="size-3" />
+                  Conecte ao WhatsApp antes de verificar números
+                </p>
+              )}
+
+              {!serviceAvailable && (
+                <p className="text-xs text-rose-600 flex items-center gap-1">
+                  <AlertTriangle className="size-3" />
+                  Evolution API indisponível. Verifique se a Evolution API está rodando e as credenciais estão configuradas.
+                </p>
+              )}
+
+              {connectedSelectedChips.length === 0 && !isVerifying && serviceAvailable && selectedChipIds.length > 0 && (
                 <p className="text-xs text-muted-foreground flex items-center gap-1">
                   <AlertTriangle className="size-3" />
                   Selecione pelo menos um chip conectado para verificar
@@ -1357,7 +1441,7 @@ export function VerificarSection() {
                     disabled={validCount === 0}
                   >
                     <Copy className="size-3" />
-                    Copiar Válidos
+                    Copiar Com WhatsApp
                   </Button>
                   <Button
                     variant="outline"
@@ -1396,11 +1480,15 @@ export function VerificarSection() {
                             : 'bg-rose-50/50 dark:bg-rose-900/5 hover:bg-rose-100/50 dark:hover:bg-rose-900/10'
                         }`}
                       >
-                        {result.exists ? (
-                          <CheckCircle2 className="size-4 text-emerald-600 shrink-0" />
-                        ) : (
-                          <XCircle className="size-4 text-rose-400 shrink-0" />
-                        )}
+                        <div className={`flex size-7 items-center justify-center rounded-full shrink-0 ${
+                          result.exists ? 'bg-emerald-100 dark:bg-emerald-900/30' : 'bg-rose-100 dark:bg-rose-900/30'
+                        }`}>
+                          {result.exists ? (
+                            <CheckCircle2 className="size-4 text-emerald-600" />
+                          ) : (
+                            <XCircle className="size-4 text-rose-500" />
+                          )}
+                        </div>
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium truncate">
                             {formatPhoneDisplay(result.phone)}
@@ -1409,6 +1497,16 @@ export function VerificarSection() {
                             <p className="text-xs text-muted-foreground truncate">{result.name}</p>
                           )}
                         </div>
+                        <Badge
+                          variant="outline"
+                          className={`text-[10px] px-1.5 py-0 shrink-0 ${
+                            result.exists
+                              ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/30'
+                              : 'bg-rose-500/10 text-rose-500 border-rose-500/30'
+                          }`}
+                        >
+                          {result.exists ? 'Com WhatsApp' : 'Sem WhatsApp'}
+                        </Badge>
                         {result.chipName && (
                           <Badge variant="outline" className="text-[10px] px-1.5 py-0 shrink-0">
                             {result.chipName}
@@ -1606,7 +1704,10 @@ export function VerificarSection() {
       <Dialog open={qrDialogOpen} onOpenChange={closeQrDialog}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
-            <DialogTitle>Conectar WhatsApp</DialogTitle>
+            <DialogTitle className="flex items-center gap-2">
+              <QrCode className="size-5" />
+              Conectar WhatsApp
+            </DialogTitle>
             <DialogDescription>
               Escaneie o QR Code com o WhatsApp do chip
             </DialogDescription>
@@ -1624,20 +1725,35 @@ export function VerificarSection() {
                 <p className="text-sm font-medium text-emerald-600">WhatsApp Conectado!</p>
               </div>
             ) : qrCode ? (
-              <img
-                src={qrCode}
-                alt="QR Code WhatsApp"
-                className="max-w-[256px] rounded-lg border shadow-md"
-              />
+              <>
+                <img
+                  src={qrCode}
+                  alt="QR Code WhatsApp"
+                  className="max-w-[256px] rounded-lg border shadow-md"
+                />
+                <p className="text-xs text-center text-muted-foreground">
+                  Abra o WhatsApp &gt; Menu &gt; Aparelhos conectados &gt; Conectar
+                </p>
+              </>
             ) : (
               <div className="flex flex-col items-center gap-3 py-8">
-                <QrCode className="size-12 text-muted-foreground/30" />
-                <p className="text-sm text-muted-foreground">Aguardando QR Code...</p>
+                <AlertTriangle className="size-8 text-amber-500" />
+                <p className="text-sm text-muted-foreground">Não foi possível gerar o QR Code</p>
               </div>
             )}
           </div>
 
-          <DialogFooter>
+          <DialogFooter className="gap-2">
+            {!qrConnected && qrCode && !qrLoading && (
+              <Button
+                variant="outline"
+                className="gap-2"
+                onClick={() => connectWhatsApp(qrChipId)}
+              >
+                <RefreshCw className="size-4" />
+                Atualizar QR Code
+              </Button>
+            )}
             <Button variant="outline" onClick={() => closeQrDialog(false)}>Fechar</Button>
           </DialogFooter>
         </DialogContent>
