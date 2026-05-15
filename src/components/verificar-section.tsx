@@ -7,7 +7,7 @@ import {
   Phone, UserPlus, RefreshCw, Loader2, FileSpreadsheet,
   TrendingUp, TrendingDown, CheckCircle2, XCircle, AlertTriangle,
   QrCode, Wifi, WifiOff, Trash2, Clock, Zap, Shuffle, Settings2,
-  Pause, Play,
+  Pause, Play, Plus,
 } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardAction } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -141,6 +141,12 @@ export function VerificarSection() {
   // Filter state
   const [activeFilter, setActiveFilter] = useState<'all' | 'valid' | 'invalid'>('all')
 
+  // Add chip dialog
+  const [addChipDialogOpen, setAddChipDialogOpen] = useState(false)
+  const [newChipName, setNewChipName] = useState('')
+  const [newChipPhone, setNewChipPhone] = useState('')
+  const [addingChip, setAddingChip] = useState(false)
+
   // Contact lists dialog
   const [contactLists, setContactLists] = useState<ContactList[]>([])
   const [addToListDialogOpen, setAddToListDialogOpen] = useState(false)
@@ -225,6 +231,41 @@ export function VerificarSection() {
 
   const deselectAll = () => {
     setSelectedChipIds([])
+  }
+
+  // ===== Add New Chip =====
+  const addNewChip = async () => {
+    if (!newChipName.trim() || !newChipPhone.trim()) {
+      toast.error('Preencha o nome e o número do chip')
+      return
+    }
+
+    setAddingChip(true)
+    try {
+      const res = await fetch('/api/chips', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: newChipName.trim(),
+          phoneNumber: newChipPhone.trim(),
+        }),
+      })
+
+      if (!res.ok) {
+        const data = await res.json()
+        throw new Error(data.error || 'Erro ao criar chip')
+      }
+
+      toast.success(`Chip "${newChipName.trim()}" criado com sucesso!`)
+      setNewChipName('')
+      setNewChipPhone('')
+      setAddChipDialogOpen(false)
+      await fetchChipQuotas()
+    } catch (err: unknown) {
+      toast.error((err as Error).message || 'Erro ao criar chip')
+    } finally {
+      setAddingChip(false)
+    }
   }
 
   // ===== Connect WhatsApp for a specific chip =====
@@ -999,6 +1040,16 @@ export function VerificarSection() {
               <div className="flex items-center justify-between">
                 <Label className="text-sm font-medium">Chips para Verificação</Label>
                 <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-1 text-xs h-7 px-2 border-emerald-500/30 text-emerald-600 hover:bg-emerald-500/10"
+                    onClick={() => setAddChipDialogOpen(true)}
+                    disabled={isVerifying}
+                  >
+                    <Plus className="size-3" />
+                    Adicionar Chip
+                  </Button>
                   <Button variant="ghost" size="sm" className="text-xs h-7 px-2" onClick={selectAllConnected}>
                     Selecionar conectados
                   </Button>
@@ -1372,6 +1423,62 @@ export function VerificarSection() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Add Chip Dialog */}
+      <Dialog open={addChipDialogOpen} onOpenChange={setAddChipDialogOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Plus className="size-5" />
+              Adicionar Novo Chip
+            </DialogTitle>
+            <DialogDescription>
+              Cadastre um novo chip para verificação de números
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>Nome do Chip</Label>
+              <input
+                type="text"
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                placeholder="Ex: Chip VIVO 1"
+                value={newChipName}
+                onChange={e => setNewChipName(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') addNewChip() }}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Número do WhatsApp</Label>
+              <input
+                type="text"
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                placeholder="Ex: 5511999999999"
+                value={newChipPhone}
+                onChange={e => setNewChipPhone(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') addNewChip() }}
+              />
+              <p className="text-xs text-muted-foreground">
+                Inclua o DDI + DDD. Ex: 5511999999999
+              </p>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAddChipDialogOpen(false)}>Cancelar</Button>
+            <Button
+              onClick={addNewChip}
+              disabled={!newChipName.trim() || !newChipPhone.trim() || addingChip}
+              className="gap-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700"
+            >
+              {addingChip && <Loader2 className="size-4 animate-spin" />}
+              <Plus className="size-4" />
+              Criar Chip
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Settings Dialog */}
       <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
