@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { normalizePhone } from '@/lib/phone-utils'
 
 export async function GET(
   req: NextRequest,
@@ -53,7 +54,7 @@ export async function POST(
     const contact = await db.contact.create({
       data: {
         name,
-        phone,
+        phone: normalizePhone(phone),
         contactListId: id,
       },
     })

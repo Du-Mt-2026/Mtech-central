@@ -31,6 +31,7 @@ import {
   AlertDialogFooter, AlertDialogTitle, AlertDialogDescription, AlertDialogAction, AlertDialogCancel,
 } from '@/components/ui/alert-dialog'
 import { toast } from 'sonner'
+import { normalizePhone, formatPhoneDisplay as formatPhoneDisplayUtil } from '@/lib/phone-utils'
 
 // ===== Types =====
 interface ChipQuota {
@@ -79,22 +80,11 @@ interface ChipProgress {
 
 // ===== Helpers =====
 function formatPhoneDisplay(phone: string): string {
-  if (phone.startsWith('55') && phone.length >= 12) {
-    const ddi = phone.slice(0, 2)
-    const ddd = phone.slice(2, 4)
-    const rest = phone.slice(4)
-    if (rest.length <= 9) {
-      return `+${ddi} (${ddd}) ${rest.slice(0, rest.length - 4)}-${rest.slice(-4)}`
-    }
-  }
-  return phone
+  return formatPhoneDisplayUtil(phone)
 }
 
 function formatPhoneForApi(phone: string): string {
-  let p = phone.replace(/[\s\-\+\.\(\)]/g, '')
-  if (p.startsWith('0')) p = p.substring(1)
-  if (!p.startsWith('55')) p = '55' + p
-  return p
+  return normalizePhone(phone)
 }
 
 function randomBetween(min: number, max: number): number {

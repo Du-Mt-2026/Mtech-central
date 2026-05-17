@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import * as XLSX from 'xlsx'
+import { normalizePhone } from '@/lib/phone-utils'
 
 const ACCEPTED_EXTENSIONS = ['.csv', '.xlsx', '.xls', '.ods']
 const ACCEPTED_MIMES = [
@@ -95,11 +96,11 @@ export async function POST(
       return NextResponse.json({ error: 'Nenhum contato válido encontrado no arquivo' }, { status: 400 })
     }
 
-    // Bulk create contacts
+    // Bulk create contacts (normalize phones)
     const created = await db.contact.createMany({
       data: contacts.map(c => ({
         name: c.name,
-        phone: c.phone,
+        phone: normalizePhone(c.phone),
         contactListId: id,
       })),
       skipDuplicates: true,

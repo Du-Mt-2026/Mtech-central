@@ -3,6 +3,7 @@
 // Credentials are stored in the database (Settings table) with env var fallback
 
 import { db } from './db'
+import { normalizePhone } from './phone-utils'
 
 // Prefix for all OctupusZap instances — only instances with this prefix are managed by the site
 export const INSTANCE_PREFIX = 'OctupusZap_';
@@ -515,21 +516,13 @@ export async function setWebhook(
  * Format phone number for WhatsApp API
  * Accepts formats like: 11999990001, 5511999990001, +5511999990001
  * Returns: 5511999990001
+ *
+ * Uses centralized normalizePhone() from lib/phone-utils.ts which correctly
+ * handles DDD 55 (Rio Grande do Sul) by using length-based detection instead
+ * of prefix-based detection.
  */
 export function formatPhoneNumber(phone: string): string {
-  let cleaned = phone.replace(/[^0-9]/g, '');
-
-  // If it starts with 0, remove it
-  if (cleaned.startsWith('0')) {
-    cleaned = cleaned.substring(1);
-  }
-
-  // If it doesn't start with 55, add it (Brazil)
-  if (!cleaned.startsWith('55')) {
-    cleaned = '55' + cleaned;
-  }
-
-  return cleaned;
+  return normalizePhone(phone);
 }
 
 /**

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { evolutionFetch, getInstanceName } from '@/lib/evolution-api'
+import { normalizePhone } from '@/lib/phone-utils'
 
 // Daily verification limit per chip (safe anti-ban threshold)
 const DAILY_VERIFY_LIMIT = 300
@@ -69,13 +70,10 @@ export async function POST(request: NextRequest) {
     // Determine the Evolution instance name
     const instanceName = chip.evolutionInstance || getInstanceName(chip.id, chip.name)
 
-    // Format phone numbers: remove +, spaces, dashes; ensure they start with country code
-    const formattedPhones = cappedPhones.map((phone: string) => {
-      let p = phone.replace(/[\s\-\+\.\(\)]/g, '')
-      if (p.startsWith('0')) p = p.substring(1)
-      if (!p.startsWith('55')) p = '55' + p
-      return p
-    }).filter((p: string) => p.length >= 10 && p.length <= 15)
+    // Format phone numbers using centralized normalizePhone (handles DDD 55 correctly)
+    const formattedPhones = cappedPhones
+      .map((phone: string) => normalizePhone(phone))
+      .filter((p: string) => p.length >= 10 && p.length <= 15)
 
     if (formattedPhones.length === 0) {
       return NextResponse.json(

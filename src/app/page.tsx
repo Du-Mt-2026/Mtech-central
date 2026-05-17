@@ -12,7 +12,7 @@ import {
   MessageCircle, Type, Shuffle, Flame, Snowflake, EyeOff,
   Download, Filter, ArrowRight, QrCode, Globe, Lock, Server,
   Sparkles, Heart, Star, AlertTriangle, Info, ChevronDown,
-  Pencil, LayoutList, Database, WifiOff, ArrowDownToLine,
+  Pencil, LayoutList, Database, WifiOff, ArrowDownToLine, Save, XCircle,
   Inbox, LogOut, RotateCcw, Film, Music, File, Webhook, ImageIcon
 } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardAction } from '@/components/ui/card'
@@ -1747,6 +1747,14 @@ function CampanhasTab() {
   const [availableLists, setAvailableLists] = useState<ContactList[]>([])
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
   const [processing, setProcessing] = useState(false)
+  const [editing, setEditing] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [editForm, setEditForm] = useState({
+    name: '', sendIntervalMin: 30, sendIntervalMax: 90,
+    chipIds: [] as string[], contactListId: '', scheduledAt: '',
+    steps: [{ content: '', delayMinutes: 0, mediaFile: null as File | null, mediaUrl: '', mediatype: '', variations: [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '' }] }] as StepForm[],
+    antiBanEnabled: true, warmingMode: 'normal',
+  })
 
   const [newCampaign, setNewCampaign] = useState({
     name: '', sendIntervalMin: 30, sendIntervalMax: 90,
@@ -1887,7 +1895,7 @@ function CampanhasTab() {
   }
 
   const openDetail = async (campaign: Campaign) => {
-    setSelectedCampaign(campaign); setDetailDialogOpen(true)
+    setSelectedCampaign(campaign); setDetailDialogOpen(true); setEditing(false)
     try { const res = await fetch(`/api/messages?campaignId=${campaign.id}`); const data = await res.json(); setDetailMessages(Array.isArray(data) ? data : []) }
     catch { setDetailMessages([]) }
   }
@@ -1928,6 +1936,152 @@ function CampanhasTab() {
 
   const canCreate = newCampaign.name.trim() && newCampaign.chipIds.length > 0 &&
     newCampaign.steps.some(s => s.content.trim() || s.variations.some(v => v.content.trim()))
+
+  // ─── Edit Campaign Helpers ──────────────────────────────────
+  const startEditing = (campaign: Campaign) => {
+    const steps: StepForm[] = (campaign.sequenceSteps || [])
+      .sort((a, b) => a.stepOrder - b.stepOrder)
+      .map(s => {
+        let parsedVars: Array<{ content: string; mediaUrl?: string; mediatype?: string }> = []
+        try { parsedVars = JSON.parse(s.variations || '[]') } catch { /* ignore */ }
+        return {
+          content: s.content || '',
+          delayMinutes: s.delayMinutes || 0,
+          mediaFile: null as File | null,
+          mediaUrl: s.mediaUrl || '',
+          mediatype: s.mediatype || '',
+          variations: parsedVars.length > 0
+            ? parsedVars.map(v => ({ content: v.content, mediaFile: null as File | null, mediaUrl: v.mediaUrl || '', mediatype: v.mediatype || '' }))
+            : [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '' }],
+        }
+      })
+    if (steps.length === 0) {
+      steps.push({ content: '', delayMinutes: 0, mediaFile: null, mediaUrl: '', mediatype: '', variations: [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '' }] })
+    }
+    setEditForm({
+      name: campaign.name,
+      sendIntervalMin: campaign.sendIntervalMin || 30,
+      sendIntervalMax: campaign.sendIntervalMax || 90,
+      chipIds: (campaign.chips || []).map(cc => cc.chipId),
+      contactListId: campaign.contactList?.id || '',
+      scheduledAt: campaign.scheduledAt ? new Date(campaign.scheduledAt).toISOString().slice(0, 16) : '',
+      steps,
+      antiBanEnabled: campaign.antiBanEnabled ?? true,
+      warmingMode: campaign.warmingMode || 'normal',
+    })
+    setEditing(true)
+  }
+
+  const cancelEditing = () => {
+    setEditing(false)
+  }
+
+  const saveEdit = async () => {
+    if (!selectedCampaign) return
+    setSaving(true)
+    try {
+      const stepsPayload: Array<{ stepOrder: number; content: string; delayMinutes: number; mediaUrl?: string; mediatype?: string; variations: string }> = []
+      for (let i = 0; i < editForm.steps.length; i++) {
+        const s = editForm.steps[i]
+        let mediaUrl = s.mediaUrl || ''
+        let mediatype = s.mediatype || ''
+        if (s.mediaFile && mediatype) {
+          const uploadForm = new FormData()
+          uploadForm.append('file', s.mediaFile)
+          const uploadRes = await fetch('/api/upload', { method: 'POST', body: uploadForm })
+          const uploadData = await uploadRes.json()
+          if (!uploadRes.ok) throw new Error(uploadData.error || 'Erro ao fazer upload da mídia')
+          mediaUrl = uploadData.mediaUrl
+          mediatype = uploadData.mediatype
+        }
+        const variationsWithMedia: Array<{ content: string; mediaUrl?: string; mediatype?: string }> = []
+        for (const v of s.variations) {
+          if (!v.content.trim()) continue
+          let vMediaUrl = v.mediaUrl || ''
+          let vMediatype = v.mediatype || ''
+          if (v.mediaFile && vMediatype) {
+            const uploadForm = new FormData()
+            uploadForm.append('file', v.mediaFile)
+            const uploadRes = await fetch('/api/upload', { method: 'POST', body: uploadForm })
+            const uploadData = await uploadRes.json()
+            if (!uploadRes.ok) throw new Error(uploadData.error || 'Erro ao fazer upload da mídia')
+            vMediaUrl = uploadData.mediaUrl
+            vMediatype = uploadData.mediatype
+          }
+          variationsWithMedia.push({ content: v.content, mediaUrl: vMediaUrl || undefined, mediatype: vMediatype || undefined })
+        }
+        stepsPayload.push({
+          stepOrder: i + 1,
+          content: s.content,
+          delayMinutes: s.delayMinutes,
+          mediaUrl: mediaUrl || undefined,
+          mediatype: mediatype || undefined,
+          variations: JSON.stringify(variationsWithMedia),
+        })
+      }
+      const payload = {
+        name: editForm.name,
+        sendIntervalMin: editForm.sendIntervalMin,
+        sendIntervalMax: editForm.sendIntervalMax,
+        chipIds: editForm.chipIds,
+        contactListId: editForm.contactListId || null,
+        scheduledAt: editForm.scheduledAt ? new Date(editForm.scheduledAt).toISOString() : null,
+        steps: stepsPayload,
+        antiBanEnabled: editForm.antiBanEnabled,
+        warmingMode: editForm.warmingMode,
+      }
+      const res = await fetch(`/api/campaigns/${selectedCampaign.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      if (!res.ok) { const data = await res.json(); throw new Error(data.error || 'Erro ao atualizar campanha') }
+      toast.success('Campanha atualizada com sucesso!')
+      setEditing(false)
+      fetchCampaigns()
+      // Refresh selected campaign
+      const updated = await fetch(`/api/campaigns/${selectedCampaign.id}`).then(r => r.json())
+      setSelectedCampaign(updated)
+    } catch (err: unknown) {
+      toast.error((err as Error).message || 'Erro ao atualizar campanha')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const editToggleChip = (chipId: string) => {
+    setEditForm(prev => ({
+      ...prev,
+      chipIds: prev.chipIds.includes(chipId) ? prev.chipIds.filter(id => id !== chipId) : [...prev.chipIds, chipId],
+    }))
+  }
+  const editAddStep = () => setEditForm(prev => ({ ...prev, steps: [...prev.steps, { content: '', delayMinutes: 60, mediaFile: null, mediaUrl: '', mediatype: '', variations: [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '' }] }] }))
+  const editRemoveStep = (idx: number) => setEditForm(prev => ({ ...prev, steps: prev.steps.filter((_, i) => i !== idx) }))
+  const editUpdateStep = (idx: number, field: 'content' | 'delayMinutes' | 'mediaFile' | 'mediaUrl' | 'mediatype', value: string | number | File | null) => {
+    setEditForm(prev => { const steps = [...prev.steps]; steps[idx] = { ...steps[idx], [field]: value }; return { ...prev, steps } })
+  }
+  const editAddVariation = (stepIdx: number) => setEditForm(prev => {
+    const steps = [...prev.steps]
+    steps[stepIdx] = { ...steps[stepIdx], variations: [...steps[stepIdx].variations, { content: '', mediaFile: null, mediaUrl: '', mediatype: '' }] }
+    return { ...prev, steps }
+  })
+  const editRemoveVariation = (stepIdx: number, varIdx: number) => setEditForm(prev => {
+    const steps = [...prev.steps]
+    steps[stepIdx] = { ...steps[stepIdx], variations: steps[stepIdx].variations.filter((_, i) => i !== varIdx) }
+    return { ...prev, steps }
+  })
+  const editUpdateVariation = (stepIdx: number, varIdx: number, field: 'content' | 'mediaFile' | 'mediaUrl' | 'mediatype', value: string | File | null) => {
+    setEditForm(prev => {
+      const steps = [...prev.steps]
+      const vars = [...steps[stepIdx].variations]
+      vars[varIdx] = { ...vars[varIdx], [field]: value }
+      steps[stepIdx] = { ...steps[stepIdx], variations: vars }
+      return { ...prev, steps }
+    })
+  }
+
+  const canSaveEdit = editForm.name.trim() && editForm.chipIds.length > 0 &&
+    editForm.steps.some(s => s.content.trim() || s.variations.some(v => v.content.trim()))
 
   return (
     <div className="space-y-6">
@@ -2204,13 +2358,20 @@ function CampanhasTab() {
         onConfirm={() => { if (deleteConfirm) deleteCampaign(deleteConfirm) }} confirmLabel="Remover" variant="destructive" />
 
       {/* Detail Dialog */}
-      <Dialog open={detailDialogOpen} onOpenChange={setDetailDialogOpen}>
+      <Dialog open={detailDialogOpen} onOpenChange={(open) => { setDetailDialogOpen(open); if (!open) setEditing(false) }}>
         <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">{selectedCampaign?.name}</DialogTitle>
-            <DialogDescription>Detalhes da campanha</DialogDescription>
+            <DialogTitle className="flex items-center gap-2">
+              {editing ? 'Editar Campanha' : selectedCampaign?.name}
+              {!editing && selectedCampaign && ['draft', 'paused', 'scheduled'].includes(selectedCampaign.status) && (
+                <Button variant="outline" size="sm" className="gap-1.5 text-amber-600 border-amber-300 hover:bg-amber-50 dark:hover:bg-amber-900/20" onClick={() => startEditing(selectedCampaign)}>
+                  <Pencil className="size-3.5" /> Editar
+                </Button>
+              )}
+            </DialogTitle>
+            <DialogDescription>{editing ? 'Modifique os dados da campanha' : 'Detalhes da campanha'}</DialogDescription>
           </DialogHeader>
-          {selectedCampaign && (
+          {selectedCampaign && !editing && (
             <div className="space-y-4">
               <div className="flex flex-wrap gap-2">
                 <StatusBadge status={selectedCampaign.status} />
@@ -2253,6 +2414,188 @@ function CampanhasTab() {
                   })}
                 </div>
               )}
+            </div>
+          )}
+          {selectedCampaign && editing && (
+            <div className="space-y-5 py-4">
+              <div className="space-y-2">
+                <Label>Nome da Campanha</Label>
+                <Input placeholder="Ex: Campanha Black Friday" value={editForm.name} onChange={e => setEditForm(prev => ({ ...prev, name: e.target.value }))} />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Intervalo Mín (seg)</Label>
+                  <Input type="number" min={5} value={editForm.sendIntervalMin} onChange={e => setEditForm(prev => ({ ...prev, sendIntervalMin: parseInt(e.target.value) || 30 }))} />
+                </div>
+                <div className="space-y-2">
+                  <Label>Intervalo Máx (seg)</Label>
+                  <Input type="number" min={10} value={editForm.sendIntervalMax} onChange={e => setEditForm(prev => ({ ...prev, sendIntervalMax: parseInt(e.target.value) || 90 }))} />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label>Lista de Contatos</Label>
+                <Select value={editForm.contactListId} onValueChange={v => setEditForm(prev => ({ ...prev, contactListId: v }))}>
+                  <SelectTrigger><SelectValue placeholder="Selecione uma lista de contatos" /></SelectTrigger>
+                  <SelectContent>
+                    {availableLists.map(l => (
+                      <SelectItem key={l.id} value={l.id}>
+                        <div className="flex items-center gap-2"><Users className="size-3.5" />{l.name}<span className="text-xs text-muted-foreground">({l._count?.contacts || 0})</span></div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label className="flex items-center gap-2"><CalendarDays className="size-4 text-muted-foreground" /> Agendamento (opcional)</Label>
+                <Input type="datetime-local" value={editForm.scheduledAt} onChange={e => setEditForm(prev => ({ ...prev, scheduledAt: e.target.value }))} />
+              </div>
+              <div className="space-y-2">
+                <Label>Chips para envio</Label>
+                <div className="grid grid-cols-2 gap-2">
+                  {availableChips.map(chip => (
+                    <label key={chip.id} className={`flex items-center gap-2 p-2.5 rounded-lg border cursor-pointer transition-all ${editForm.chipIds.includes(chip.id) ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20' : 'hover:bg-muted/50'}`}>
+                      <input type="checkbox" checked={editForm.chipIds.includes(chip.id)} onChange={() => editToggleChip(chip.id)} className="sr-only" />
+                      <div className={`size-4 rounded border-2 flex items-center justify-center ${editForm.chipIds.includes(chip.id) ? 'bg-emerald-500 border-emerald-500' : 'border-muted-foreground'}`}>
+                        {editForm.chipIds.includes(chip.id) && <Check className="size-3 text-white" />}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium truncate">{chip.name}</p>
+                        <p className="text-xs text-muted-foreground">{chip.phoneNumber}</p>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <div className="space-y-3">
+                {editForm.steps.map((step, idx) => (
+                  <div key={idx} className="relative border rounded-xl p-4 space-y-3 bg-muted/20">
+                    <div className="flex items-center gap-2">
+                      <span className="flex items-center justify-center size-7 rounded-full bg-emerald-600 text-white text-xs font-bold">{idx + 1}</span>
+                      <span className="text-sm font-semibold">Etapa {idx + 1}</span>
+                      {idx > 0 && (
+                        <div className="flex items-center gap-1 text-xs text-muted-foreground ml-2">
+                          <Clock className="size-3" /> {step.delayMinutes}min após etapa anterior
+                        </div>
+                      )}
+                      {editForm.steps.length > 1 && (
+                        <Button variant="ghost" size="sm" className="ml-auto text-rose-500 h-6 w-6 p-0" onClick={() => editRemoveStep(idx)}>
+                          <X className="size-3" />
+                        </Button>
+                      )}
+                    </div>
+                    <Textarea placeholder="Mensagem principal da etapa..." value={step.content} onChange={e => editUpdateStep(idx, 'content', e.target.value)} rows={2} />
+                    {idx > 0 && (
+                      <div className="mt-2">
+                        <Label className="text-xs">Atraso antes desta etapa (minutos)</Label>
+                        <Input type="number" min={0} value={step.delayMinutes} onChange={e => editUpdateStep(idx, 'delayMinutes', parseInt(e.target.value) || 0)} className="mt-1 w-40" />
+                      </div>
+                    )}
+                    {/* Media Upload for step */}
+                    <div className="space-y-2">
+                      <Label className="text-xs flex items-center gap-1"><ImageIcon className="size-3" /> Mídia da etapa (opcional)</Label>
+                      <div className="flex gap-2">
+                        <Select value={step.mediatype} onValueChange={v => editUpdateStep(idx, 'mediatype', v)}>
+                          <SelectTrigger className="w-32 h-8 text-xs"><SelectValue placeholder="Tipo" /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="image">Imagem</SelectItem>
+                            <SelectItem value="document">Documento</SelectItem>
+                            <SelectItem value="video">Vídeo</SelectItem>
+                            <SelectItem value="audio">Áudio</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <Input type="file" className="h-8 text-xs" accept={step.mediatype === 'image' ? 'image/*' : step.mediatype === 'video' ? 'video/*' : step.mediatype === 'audio' ? 'audio/*' : undefined} onChange={e => { const f = e.target.files?.[0] || null; editUpdateStep(idx, 'mediaFile', f) }} />
+                      </div>
+                      {(step.mediaUrl || step.mediaFile) && (
+                        <div className="flex items-center gap-2 p-2 bg-muted/50 rounded-lg text-xs">
+                          {step.mediatype === 'image' ? <ImageIcon className="size-3.5 text-emerald-500" /> : step.mediatype === 'video' ? <Film className="size-3.5 text-sky-500" /> : step.mediatype === 'audio' ? <Music className="size-3.5 text-amber-500" /> : <File className="size-3.5 text-zinc-500" />}
+                          <span className="truncate">{step.mediaFile ? step.mediaFile.name : step.mediaUrl}</span>
+                          {step.mediaFile && <Button variant="ghost" size="sm" className="h-5 w-5 p-0 ml-auto" onClick={() => editUpdateStep(idx, 'mediaFile', null)}><X className="size-3" /></Button>}
+                        </div>
+                      )}
+                    </div>
+                    {/* Variations for this step */}
+                    <div className="space-y-2 pt-2 border-t">
+                      <div className="flex items-center justify-between">
+                        <Label className="text-xs font-semibold flex items-center gap-1">
+                          <Shuffle className="size-3" /> Variações da Etapa {idx + 1}
+                        </Label>
+                        <Button variant="ghost" size="sm" className="h-6 text-xs text-emerald-600 gap-1" onClick={() => editAddVariation(idx)}>
+                          <Plus className="size-3" /> Variação
+                        </Button>
+                      </div>
+                      <p className="text-xs text-muted-foreground">Uma variação aleatória será escolhida para cada contato</p>
+                      {step.variations.map((v, vIdx) => (
+                        <div key={vIdx} className="relative p-3 border rounded-lg space-y-2 bg-background/50">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="text-xs font-medium text-muted-foreground">Variação {vIdx + 1}</span>
+                            {step.variations.length > 1 && (
+                              <Button variant="ghost" size="sm" className="ml-auto text-rose-500 h-5 w-5 p-0" onClick={() => editRemoveVariation(idx, vIdx)}>
+                                <X className="size-3" />
+                              </Button>
+                            )}
+                          </div>
+                          <Textarea placeholder={`Texto da variação ${vIdx + 1}...`} value={v.content} onChange={e => editUpdateVariation(idx, vIdx, 'content', e.target.value)} rows={2} />
+                          <div className="space-y-2">
+                            <div className="flex gap-2">
+                              <Select value={v.mediatype} onValueChange={mt => editUpdateVariation(idx, vIdx, 'mediatype', mt)}>
+                                <SelectTrigger className="w-28 h-7 text-xs"><SelectValue placeholder="Tipo" /></SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="image">Imagem</SelectItem>
+                                  <SelectItem value="document">Documento</SelectItem>
+                                  <SelectItem value="video">Vídeo</SelectItem>
+                                  <SelectItem value="audio">Áudio</SelectItem>
+                                </SelectContent>
+                              </Select>
+                              <Input type="file" className="h-7 text-xs" accept={v.mediatype === 'image' ? 'image/*' : v.mediatype === 'video' ? 'video/*' : v.mediatype === 'audio' ? 'audio/*' : undefined} onChange={e => { const f = e.target.files?.[0] || null; editUpdateVariation(idx, vIdx, 'mediaFile', f) }} />
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+                <Button variant="outline" size="sm" onClick={editAddStep} className="gap-1.5 w-full">
+                  <Plus className="size-3.5" /> Adicionar Etapa
+                </Button>
+              </div>
+              {/* Anti-Ban Section */}
+              <Separator />
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Shield className="size-5 text-emerald-500" />
+                    <Label className="text-base font-semibold">Proteção Anti-Ban</Label>
+                  </div>
+                  <Switch checked={editForm.antiBanEnabled} onCheckedChange={v => setEditForm(prev => ({ ...prev, antiBanEnabled: v }))} />
+                </div>
+                {editForm.antiBanEnabled && (
+                  <div className="space-y-3 p-4 bg-muted/50 rounded-xl">
+                    <Label className="text-sm">Modo de Aquecimento</Label>
+                    <div className="grid grid-cols-3 gap-2">
+                      {[
+                        { value: 'normal', label: 'Normal', icon: Shield, desc: 'Equilibrado' },
+                        { value: 'agressive', label: 'Agressivo', icon: Flame, desc: 'Mais rápido' },
+                        { value: 'stealth', label: 'Furtivo', icon: Snowflake, desc: 'Máx. segurança' },
+                      ].map(m => (
+                        <button key={m.value} type="button" onClick={() => setEditForm(prev => ({ ...prev, warmingMode: m.value }))}
+                          className={`p-3 rounded-lg border text-center transition-all ${editForm.warmingMode === m.value ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20' : 'hover:bg-muted/50'}`}>
+                          <m.icon className={`size-5 mx-auto mb-1 ${editForm.warmingMode === m.value ? 'text-emerald-600' : 'text-muted-foreground'}`} />
+                          <p className="text-sm font-medium">{m.label}</p>
+                          <p className="text-xs text-muted-foreground">{m.desc}</p>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+              {/* Save / Cancel buttons */}
+              <div className="flex items-center gap-3 pt-2">
+                <Button variant="outline" onClick={cancelEditing} disabled={saving}>Cancelar</Button>
+                <Button onClick={saveEdit} disabled={!canSaveEdit || saving} className="bg-emerald-600 hover:bg-emerald-700 gap-2">
+                  {saving ? <RefreshCw className="size-4 animate-spin" /> : <Save className="size-4" />}
+                  {saving ? 'Salvando...' : 'Salvar Alterações'}
+                </Button>
+              </div>
             </div>
           )}
         </DialogContent>
@@ -4131,6 +4474,8 @@ export default function OctupusZapApp() {
   const [authLoading, setAuthLoading] = useState(true)
   const [loginForm, setLoginForm] = useState({ email: '', password: '' })
   const [loginLoading, setLoginLoading] = useState(false)
+  const [loginError, setLoginError] = useState('')
+  const [loginErrorType, setLoginErrorType] = useState<'credentials' | 'locked' | 'database' | 'internal' | ''>('')
   const [forgotDialogOpen, setForgotDialogOpen] = useState(false)
   const [forgotForm, setForgotForm] = useState({ newPassword: '', confirmPassword: '', verificationKey: '' })
   const [forgotLoading, setForgotLoading] = useState(false)
@@ -4181,13 +4526,31 @@ export default function OctupusZapApp() {
 
   const handleLogin = async () => {
     setLoginLoading(true)
+    setLoginError('')
+    setLoginErrorType('')
     try {
       const res = await fetch('/api/auth/login', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(loginForm),
       })
       const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'Erro ao fazer login')
+      if (!res.ok) {
+        // Detect error type from HTTP status code
+        if (res.status === 429) {
+          setLoginErrorType('locked')
+          setLoginError(data.error || 'Muitas tentativas de login falharam. Tente novamente em 5 minutos.')
+        } else if (res.status === 401) {
+          setLoginErrorType('credentials')
+          setLoginError(data.error || 'Email ou senha incorretos.')
+        } else if (res.status === 503) {
+          setLoginErrorType('database')
+          setLoginError(data.error || 'Erro de conexão com o banco de dados.')
+        } else {
+          setLoginErrorType('internal')
+          setLoginError(data.error || 'Erro interno do servidor.')
+        }
+        throw new Error(data.error || 'Erro ao fazer login')
+      }
       setLoggedIn(true)
       setUsername(data.user?.name || loginForm.email)
       setUserRole(data.user?.role || 'operador')
@@ -4284,12 +4647,31 @@ export default function OctupusZapApp() {
             </CardHeader>
             <CardContent className="space-y-4">
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.4 }} className="space-y-4">
+                {/* Login Error Banner */}
+                {loginError && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -5 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className={`rounded-lg p-3 text-sm flex items-start gap-2 ${
+                      loginErrorType === 'locked'
+                        ? 'bg-amber-500/15 border border-amber-500/30 text-amber-300'
+                        : loginErrorType === 'database'
+                        ? 'bg-sky-500/15 border border-sky-500/30 text-sky-300'
+                        : loginErrorType === 'credentials'
+                        ? 'bg-rose-500/15 border border-rose-500/30 text-rose-300'
+                        : 'bg-rose-500/15 border border-rose-500/30 text-rose-300'
+                    }`}
+                  >
+                    {loginErrorType === 'locked' ? <AlertTriangle className="size-4 mt-0.5 shrink-0" /> : <XCircle className="size-4 mt-0.5 shrink-0" />}
+                    <span>{loginError}</span>
+                  </motion.div>
+                )}
                 <div className="space-y-2">
                   <Label className="text-zinc-300">Email</Label>
                   <Input
                     placeholder="seu@email.com"
                     value={loginForm.email}
-                    onChange={e => setLoginForm(p => ({ ...p, email: e.target.value }))}
+                    onChange={e => { setLoginForm(p => ({ ...p, email: e.target.value })); setLoginError(''); setLoginErrorType('') }}
                     className="bg-zinc-800/50 border-zinc-700 text-white placeholder:text-zinc-500 focus:border-emerald-500 focus:ring-emerald-500/20"
                   />
                 </div>
@@ -4299,7 +4681,7 @@ export default function OctupusZapApp() {
                     type="password"
                     placeholder="••••••"
                     value={loginForm.password}
-                    onChange={e => setLoginForm(p => ({ ...p, password: e.target.value }))}
+                    onChange={e => { setLoginForm(p => ({ ...p, password: e.target.value })); setLoginError(''); setLoginErrorType('') }}
                     onKeyDown={e => e.key === 'Enter' && handleLogin()}
                     className="bg-zinc-800/50 border-zinc-700 text-white placeholder:text-zinc-500 focus:border-emerald-500 focus:ring-emerald-500/20"
                   />

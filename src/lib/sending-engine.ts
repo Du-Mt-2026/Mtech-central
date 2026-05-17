@@ -325,7 +325,7 @@ export async function processNextMessage(campaignId: string): Promise<{
     // Simulate typing (best-effort, non-blocking)
     const typingDelay = randomInt(settings.typingMinDelay, settings.typingMaxDelay)
     try {
-      await setPresence(instanceName, `${message.contact.phone}@s.whatsapp.net`, 'composing', typingDelay)
+      await setPresence(instanceName, `${formattedPhone}@s.whatsapp.net`, 'composing', typingDelay)
     } catch {
       // Non-fatal
     }

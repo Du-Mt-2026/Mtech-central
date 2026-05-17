@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { normalizePhone } from '@/lib/phone-utils'
 
 export async function GET(
   request: NextRequest,
@@ -44,7 +45,7 @@ export async function PATCH(
     // Build update data — only allow name and phone
     const updateData: Record<string, unknown> = {}
     if (name !== undefined) updateData.name = name
-    if (phone !== undefined) updateData.phone = phone
+    if (phone !== undefined) updateData.phone = normalizePhone(phone)
 
     if (Object.keys(updateData).length === 0) {
       return NextResponse.json({ error: 'Nenhum campo para atualizar' }, { status: 400 })
