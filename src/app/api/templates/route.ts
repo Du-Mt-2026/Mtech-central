@@ -16,14 +16,22 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const body = await request.json()
-    const { name, content, category } = body
+    const { name, content, category, mediatype, mediaDescription, linkUrl, linkPreview } = body
 
     if (!name || !content) {
       return NextResponse.json({ error: 'Nome e conteúdo são obrigatórios' }, { status: 400 })
     }
 
     const template = await db.messageTemplate.create({
-      data: { name, content, category: category || 'geral' },
+      data: {
+        name,
+        content,
+        category: category || 'geral',
+        mediatype: mediatype || 'text',
+        mediaDescription: mediaDescription || '',
+        linkUrl: linkUrl || '',
+        linkPreview: linkPreview !== undefined ? linkPreview : true,
+      },
     })
     return NextResponse.json(template, { status: 201 })
   } catch (error) {

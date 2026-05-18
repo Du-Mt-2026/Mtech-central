@@ -181,6 +181,10 @@ interface MessageTemplate {
   name: string
   content: string
   category: string
+  mediatype: string
+  mediaDescription: string
+  linkUrl: string
+  linkPreview: boolean
   createdAt: string
   updatedAt: string
 }
@@ -2985,12 +2989,12 @@ function TemplatesTab() {
   const [loading, setLoading] = useState(true)
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
-  const [newTemplate, setNewTemplate] = useState({ name: '', content: '', category: 'geral' })
+  const [newTemplate, setNewTemplate] = useState({ name: '', content: '', category: 'geral', mediatype: 'text', mediaDescription: '', linkUrl: '', linkPreview: true })
   const [searchQuery, setSearchQuery] = useState('')
   const [filterCategory, setFilterCategory] = useState('todas')
   const [editDialogOpen, setEditDialogOpen] = useState(false)
   const [editTemplate, setEditTemplate] = useState<MessageTemplate | null>(null)
-  const [editForm, setEditForm] = useState({ name: '', content: '', category: 'geral' })
+  const [editForm, setEditForm] = useState({ name: '', content: '', category: 'geral', mediatype: 'text', mediaDescription: '', linkUrl: '', linkPreview: true })
 
   const fetchTemplates = useCallback(async () => {
     try { const res = await fetch('/api/templates'); setTemplates(await res.json()) }
@@ -3005,7 +3009,7 @@ function TemplatesTab() {
       if (!res.ok) throw new Error()
       toast.success('Template criado!')
       setCreateDialogOpen(false)
-      setNewTemplate({ name: '', content: '', category: 'geral' })
+      setNewTemplate({ name: '', content: '', category: 'geral', mediatype: 'text', mediaDescription: '', linkUrl: '', linkPreview: true })
       fetchTemplates()
     } catch { toast.error('Erro ao criar template') }
   }
@@ -3025,10 +3029,15 @@ function TemplatesTab() {
   const insertVariable = (v: string) => {
     setNewTemplate(prev => ({ ...prev, content: prev.content + v }))
   }
+  const insertEditVariable = (v: string) => {
+    setEditForm(prev => ({ ...prev, content: prev.content + v }))
+  }
+
+  const TEMPLATE_VARS = ['{{nome}}', '{{saudacao}}', '{{telefone}}', '{{email}}', '{{cidade}}', '{{empresa}}', '{{vendedor}}']
 
   const openEditTemplate = (t: MessageTemplate) => {
     setEditTemplate(t)
-    setEditForm({ name: t.name, content: t.content, category: t.category })
+    setEditForm({ name: t.name, content: t.content, category: t.category, mediatype: t.mediatype || 'text', mediaDescription: t.mediaDescription || '', linkUrl: t.linkUrl || '', linkPreview: t.linkPreview !== undefined ? t.linkPreview : true })
     setEditDialogOpen(true)
   }
 
@@ -3054,6 +3063,17 @@ function TemplatesTab() {
     'geral': 'bg-zinc-100 text-zinc-700 dark:bg-zinc-900/30 dark:text-zinc-400',
   }
 
+  const mediaTypeIcons: Record<string, { icon: React.ReactNode; color: string; label: string }> = {
+    'text': { icon: <MessageCircle className="size-3.5" />, color: 'text-zinc-500', label: 'Texto' },
+    'image': { icon: <ImageIcon className="size-3.5" />, color: 'text-emerald-500', label: 'Imagem' },
+    'video': { icon: <Film className="size-3.5" />, color: 'text-sky-500', label: 'Vídeo' },
+    'audio': { icon: <Music className="size-3.5" />, color: 'text-amber-500', label: 'Áudio' },
+    'document': { icon: <File className="size-3.5" />, color: 'text-violet-500', label: 'Documento' },
+    'contact': { icon: <Users className="size-3.5" />, color: 'text-rose-500', label: 'Contato' },
+    'location': { icon: <MapPin className="size-3.5" />, color: 'text-orange-500', label: 'Localização' },
+    'link': { icon: <Link2 className="size-3.5" />, color: 'text-blue-500', label: 'Link' },
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -3077,24 +3097,58 @@ function TemplatesTab() {
                 <Label>Nome</Label>
                 <Input placeholder="Ex: Boas-vindas" value={newTemplate.name} onChange={e => setNewTemplate(p => ({ ...p, name: e.target.value }))} />
               </div>
-              <div className="space-y-2">
-                <Label>Categoria</Label>
-                <Select value={newTemplate.category} onValueChange={v => setNewTemplate(p => ({ ...p, category: v }))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {['geral', 'saudação', 'vendas', 'follow-up', 'pós-venda'].map(c => (
-                      <SelectItem key={c} value={c}>{c.charAt(0).toUpperCase() + c.slice(1)}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <Label>Categoria</Label>
+                  <Select value={newTemplate.category} onValueChange={v => setNewTemplate(p => ({ ...p, category: v }))}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {['geral', 'saudação', 'vendas', 'follow-up', 'pós-venda'].map(c => (
+                        <SelectItem key={c} value={c}>{c.charAt(0).toUpperCase() + c.slice(1)}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label className="flex items-center gap-1"><Paperclip className="size-3" /> Tipo de Mídia</Label>
+                  <Select value={newTemplate.mediatype} onValueChange={v => setNewTemplate(p => ({ ...p, mediatype: v }))}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="text">Somente texto</SelectItem>
+                      <SelectItem value="image">Imagem</SelectItem>
+                      <SelectItem value="video">Vídeo</SelectItem>
+                      <SelectItem value="audio">Áudio</SelectItem>
+                      <SelectItem value="document">Documento</SelectItem>
+                      <SelectItem value="contact">Contato</SelectItem>
+                      <SelectItem value="location">Localização</SelectItem>
+                      <SelectItem value="link">Link</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
+              {newTemplate.mediatype !== 'text' && (
+                <div className="space-y-2">
+                  <Label>Descrição da mídia</Label>
+                  <Input placeholder={newTemplate.mediatype === 'image' ? 'Ex: Foto do monitor 27"' : newTemplate.mediatype === 'audio' ? 'Ex: Áudio de apresentação' : 'Descreva a mídia a anexar...'} value={newTemplate.mediaDescription} onChange={e => setNewTemplate(p => ({ ...p, mediaDescription: e.target.value }))} />
+                </div>
+              )}
+              {newTemplate.mediatype === 'link' && (
+                <div className="space-y-2">
+                  <Label>URL do Link</Label>
+                  <Input placeholder="https://..." value={newTemplate.linkUrl} onChange={e => setNewTemplate(p => ({ ...p, linkUrl: e.target.value }))} />
+                  <div className="flex items-center gap-2">
+                    <Switch checked={newTemplate.linkPreview} onCheckedChange={v => setNewTemplate(p => ({ ...p, linkPreview: v }))} />
+                    <Label className="text-xs">Com visualização (preview)</Label>
+                  </div>
+                </div>
+              )}
               <div className="space-y-2">
                 <Label>Conteúdo</Label>
-                <Textarea placeholder="Ex: Olá {nome}! Tudo bem?" value={newTemplate.content} onChange={e => setNewTemplate(p => ({ ...p, content: e.target.value }))} rows={4} />
+                <Textarea placeholder="Ex: Olá {{nome}}! Tudo bem?" value={newTemplate.content} onChange={e => setNewTemplate(p => ({ ...p, content: e.target.value }))} rows={4} />
                 <div className="flex flex-wrap gap-1.5">
-                  {['{nome}', '{empresa}', '{telefone}', '{cidade}'].map(v => (
-                    <Button key={v} variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={() => insertVariable(v)}>
-                      <Sparkles className="size-3" />{v}
+                  {TEMPLATE_VARS.map(v => (
+                    <Button key={v} variant="outline" size="sm" className="h-7 text-xs gap-1 px-2 text-emerald-600 border-emerald-200 hover:bg-emerald-50" onClick={() => insertVariable(v)}>
+                      {v}
                     </Button>
                   ))}
                 </div>
@@ -3135,7 +3189,8 @@ function TemplatesTab() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {filtered.map((t, i) => {
-            const vars = t.content.match(/\{[^}]+\}/g) || []
+            const vars = t.content.match(/\{\{[^}]+\}\}/g) || []
+            const mediaInfo = mediaTypeIcons[t.mediatype || 'text'] || mediaTypeIcons['text']
             return (
               <motion.div key={t.id} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}>
                 <Card className="shadow-lg hover:shadow-xl transition-all duration-200 border-0 group">
@@ -3146,14 +3201,26 @@ function TemplatesTab() {
                       </div>
                       <div className="flex-1 min-w-0">
                         <CardTitle className="truncate text-base">{t.name}</CardTitle>
-                        <Badge className={`mt-1 text-xs ${categoryColors[t.category] || categoryColors['geral']}`}>
-                          {t.category}
-                        </Badge>
+                        <div className="flex items-center gap-1.5 mt-1">
+                          <Badge className={`text-xs ${categoryColors[t.category] || categoryColors['geral']}`}>
+                            {t.category}
+                          </Badge>
+                          {t.mediatype && t.mediatype !== 'text' && (
+                            <Badge variant="outline" className={`text-xs gap-1 ${mediaInfo.color}`}>
+                              {mediaInfo.icon} {mediaInfo.label}
+                            </Badge>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </CardHeader>
                   <CardContent className="space-y-3">
                     <p className="text-sm text-muted-foreground line-clamp-3">{t.content}</p>
+                    {t.mediaDescription && (
+                      <p className="text-xs text-muted-foreground italic flex items-center gap-1">
+                        <Paperclip className="size-3" /> {t.mediaDescription}
+                      </p>
+                    )}
                     {vars.length > 0 && (
                       <div className="flex flex-wrap gap-1">
                         {vars.map((v, idx) => (
@@ -3199,20 +3266,61 @@ function TemplatesTab() {
               <Label>Nome</Label>
               <Input value={editForm.name} onChange={e => setEditForm(p => ({ ...p, name: e.target.value }))} />
             </div>
-            <div className="space-y-2">
-              <Label>Categoria</Label>
-              <Select value={editForm.category} onValueChange={v => setEditForm(p => ({ ...p, category: v }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {['geral', 'saudação', 'vendas', 'follow-up', 'pós-venda'].map(c => (
-                    <SelectItem key={c} value={c}>{c.charAt(0).toUpperCase() + c.slice(1)}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label>Categoria</Label>
+                <Select value={editForm.category} onValueChange={v => setEditForm(p => ({ ...p, category: v }))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {['geral', 'saudação', 'vendas', 'follow-up', 'pós-venda'].map(c => (
+                      <SelectItem key={c} value={c}>{c.charAt(0).toUpperCase() + c.slice(1)}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label className="flex items-center gap-1"><Paperclip className="size-3" /> Tipo de Mídia</Label>
+                <Select value={editForm.mediatype} onValueChange={v => setEditForm(p => ({ ...p, mediatype: v }))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="text">Somente texto</SelectItem>
+                    <SelectItem value="image">Imagem</SelectItem>
+                    <SelectItem value="video">Vídeo</SelectItem>
+                    <SelectItem value="audio">Áudio</SelectItem>
+                    <SelectItem value="document">Documento</SelectItem>
+                    <SelectItem value="contact">Contato</SelectItem>
+                    <SelectItem value="location">Localização</SelectItem>
+                    <SelectItem value="link">Link</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
+            {editForm.mediatype !== 'text' && (
+              <div className="space-y-2">
+                <Label>Descrição da mídia</Label>
+                <Input placeholder="Descreva a mídia a anexar..." value={editForm.mediaDescription} onChange={e => setEditForm(p => ({ ...p, mediaDescription: e.target.value }))} />
+              </div>
+            )}
+            {editForm.mediatype === 'link' && (
+              <div className="space-y-2">
+                <Label>URL do Link</Label>
+                <Input placeholder="https://..." value={editForm.linkUrl} onChange={e => setEditForm(p => ({ ...p, linkUrl: e.target.value }))} />
+                <div className="flex items-center gap-2">
+                  <Switch checked={editForm.linkPreview} onCheckedChange={v => setEditForm(p => ({ ...p, linkPreview: v }))} />
+                  <Label className="text-xs">Com visualização (preview)</Label>
+                </div>
+              </div>
+            )}
             <div className="space-y-2">
               <Label>Conteúdo</Label>
               <Textarea value={editForm.content} onChange={e => setEditForm(p => ({ ...p, content: e.target.value }))} rows={4} />
+              <div className="flex flex-wrap gap-1.5">
+                {TEMPLATE_VARS.map(v => (
+                  <Button key={v} variant="outline" size="sm" className="h-7 text-xs gap-1 px-2 text-emerald-600 border-emerald-200 hover:bg-emerald-50" onClick={() => insertEditVariable(v)}>
+                    {v}
+                  </Button>
+                ))}
+              </div>
             </div>
           </div>
           <DialogFooter>

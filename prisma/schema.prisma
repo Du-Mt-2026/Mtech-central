@@ -78,12 +78,16 @@ model AntiBanSettings {
 }
 
 model MessageTemplate {
-  id        String   @id @default(cuid())
-  name      String
-  content   String
-  category  String   @default("geral")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id               String   @id @default(cuid())
+  name             String
+  content          String
+  category         String   @default("geral")
+  mediatype        String   @default("text")    // text | image | video | audio | document | contact | location | link
+  mediaDescription String   @default("")         // Dica de qual mídia anexar (ex: "Foto do monitor 27\"")
+  linkUrl          String   @default("")         // URL para tipo link
+  linkPreview      Boolean  @default(true)       // Link com visualização?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 }
 
 model MessageKey {
