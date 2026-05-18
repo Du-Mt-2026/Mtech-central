@@ -30,6 +30,7 @@ export async function POST(request: Request) {
       'MESSAGES_UPDATE',
       'SEND_MESSAGE',
       'CONNECTION_UPDATE',
+      'INSTANCE_DELETED',
     ])
 
     return NextResponse.json({

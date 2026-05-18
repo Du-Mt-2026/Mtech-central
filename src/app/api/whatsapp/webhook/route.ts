@@ -1,13 +1,14 @@
 import { NextResponse } from 'next/server'
-import { INSTANCE_PREFIX } from '@/lib/evolution-api'
+import { INSTANCE_PREFIX, deleteInstance } from '@/lib/evolution-api'
 import { db } from '@/lib/db'
 
 /**
  * Webhook endpoint for Evolution API to send status updates
  * Evolution API calls this when:
  * - Messages are sent/delivered/read
- * - Connection status changes
+ * - Connection status changes (including disconnections)
  * - New messages arrive
+ * - Instance is deleted or connection is lost
  */
 export async function POST(request: Request) {
   try {
@@ -26,6 +27,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true })
     }
 
+    console.log(`[Webhook] Event: ${event} | Instance: ${instance}`)
+
     // Handle different events
     switch (event) {
       case 'CONNECTION_UPDATE': {
@@ -35,18 +38,55 @@ export async function POST(request: Request) {
         })
 
         if (chip) {
-          const newStatus = data?.state === 'open' ? 'connected'
-            : data?.state === 'connecting' ? 'connecting'
+          const state = data?.state
+          const newStatus = state === 'open' ? 'connected'
+            : state === 'connecting' ? 'connecting'
             : 'disconnected'
+
+          // If disconnected, also clear QR pairing
+          const updateData: Record<string, unknown> = {
+            status: newStatus,
+            isQrPaired: state === 'open',
+            lastSeen: state === 'open' ? new Date() : chip.lastSeen,
+          }
+
+          if (state === 'close' || state === 'disconnected') {
+            updateData.isQrPaired = false
+            updateData.qrPairingCode = null
+
+            // Log disconnection reason if available
+            const reason = data?.reason || data?.disconnectReason || ''
+            if (reason) {
+              console.log(`[Webhook] Instance ${instance} disconnected. Reason: ${reason}`)
+              updateData.disconnectionReasonCode = data?.code || data?.statusCode || null
+            }
+          }
 
           await db.chip.update({
             where: { id: chip.id },
-            data: {
-              status: newStatus,
-              isQrPaired: data?.state === 'open',
-              lastSeen: data?.state === 'open' ? new Date() : chip.lastSeen,
-            },
+            data: updateData,
           })
+
+          console.log(`[Webhook] Chip ${chip.name} status updated: ${chip.status} → ${newStatus}`)
+        }
+        break
+      }
+
+      case 'INSTANCE_DELETED': {
+        // Instance was deleted from Evolution API (or via another client)
+        // Delete the chip from our database too
+        const chip = await db.chip.findFirst({
+          where: { evolutionInstance: instance },
+        })
+
+        if (chip) {
+          console.log(`[Webhook] Instance ${instance} was deleted from Evolution API. Removing chip ${chip.name} from database.`)
+
+          // Delete related records
+          await db.message.deleteMany({ where: { chipId: chip.id } })
+          await db.contact.deleteMany({ where: { chipId: chip.id } })
+          await db.campaignChip.deleteMany({ where: { chipId: chip.id } })
+          await db.chip.delete({ where: { id: chip.id } })
         }
         break
       }
@@ -189,7 +229,8 @@ export async function POST(request: Request) {
       }
 
       default:
-        // Silently ignore unhandled events
+        // Log unhandled events for debugging
+        console.log(`[Webhook] Unhandled event: ${event} for ${instance}`)
         break
     }
 

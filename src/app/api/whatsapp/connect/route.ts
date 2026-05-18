@@ -39,6 +39,7 @@ export async function POST(request: Request) {
         'MESSAGES_UPDATE',
         'SEND_MESSAGE',
         'CONNECTION_UPDATE',
+        'INSTANCE_DELETED',
       ])
     } catch (webhookErr) {
       console.error('Failed to set webhook:', webhookErr)

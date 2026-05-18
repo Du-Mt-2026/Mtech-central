@@ -1,10 +1,31 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { setProxy, resolveChipProxy, getGlobalProxy } from '@/lib/evolution-api'
+import { setProxy, resolveChipProxy, getGlobalProxy, deleteInstance, disconnectInstance, getInstanceName } from '@/lib/evolution-api'
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ chipId: string }> }) {
   const { chipId } = await params
   try {
+    // Find chip first to get the Evolution instance name
+    const chip = await db.chip.findUnique({ where: { id: chipId } })
+
+    if (chip) {
+      const instanceName = chip.evolutionInstance || getInstanceName(chip.id, chip.name)
+
+      // Disconnect and delete instance from Evolution API
+      try {
+        await disconnectInstance(instanceName)
+      } catch (err) {
+        console.log('[Chip DELETE] Disconnect failed (may already be disconnected):', err)
+      }
+
+      try {
+        await deleteInstance(instanceName)
+      } catch (err) {
+        console.log('[Chip DELETE] Delete instance failed (may not exist):', err)
+      }
+    }
+
+    // Delete related records and chip from database
     await db.message.deleteMany({ where: { chipId } })
     await db.contact.deleteMany({ where: { chipId } })
     await db.campaignChip.deleteMany({ where: { chipId } })
