@@ -5181,19 +5181,7 @@ export default function OctupusZapApp() {
 
           <div className="flex-1" />
 
-          <div className="flex items-center gap-3">
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-100 dark:bg-emerald-900/30">
-                    <Shield className="size-3.5 text-emerald-600" />
-                    <span className="text-xs font-semibold text-emerald-600">Anti-Ban Ativo</span>
-                  </div>
-                </TooltipTrigger>
-                <TooltipContent>Proteção anti-ban está ativada</TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          </div>
+
         </header>
 
         {/* Page Content */}
