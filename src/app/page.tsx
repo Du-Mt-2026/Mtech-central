@@ -13,7 +13,7 @@ import {
   Download, Filter, ArrowRight, QrCode, Globe, Lock, Server,
   Sparkles, Heart, Star, AlertTriangle, Info, ChevronDown,
   Pencil, LayoutList, Database, WifiOff, ArrowDownToLine, Save, XCircle,
-  Inbox, LogOut, RotateCcw, Film, Music, File, Webhook, ImageIcon
+  Inbox, LogOut, RotateCcw, Film, Music, File, Webhook, ImageIcon, Key
 } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardAction } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -38,6 +38,8 @@ import {
 import { toast } from 'sonner'
 import QRCode from 'qrcode'
 import { VerificarSection } from '@/components/verificar-section'
+import { KeysSection } from '@/components/keys-section'
+import { VendedoresSection } from '@/components/vendedores-section'
 
 // ===== Types =====
 interface Chip {
@@ -206,6 +208,8 @@ const NAV_ITEMS = [
   { id: 'verificar', label: 'Verificar Números', icon: ShieldCheck, minRole: 'operador' },
   { id: 'campanhas', label: 'Campanhas', icon: Send, minRole: 'operador' },
   { id: 'templates', label: 'Templates', icon: FileText, minRole: 'operador' },
+  { id: 'chaves', label: 'Chaves', icon: Key, minRole: 'admin' },
+  { id: 'vendedores', label: 'Vendedores', icon: Users, minRole: 'admin' },
   { id: 'antiban', label: 'Anti-Ban', icon: Shield, minRole: 'admin' },
   { id: 'mensagens', label: 'Mensagens', icon: MessageSquare, minRole: 'operador' },
   { id: 'usuarios', label: 'Usuários', icon: UserPlus, minRole: 'master' },
@@ -4792,6 +4796,8 @@ export default function OctupusZapApp() {
       case 'verificar': return <VerificarSection />
       case 'campanhas': return <CampanhasTab />
       case 'templates': return <TemplatesTab />
+      case 'chaves': return <KeysSection />
+      case 'vendedores': return <VendedoresSection />
       case 'antiban': return <AntiBanTab />
       case 'mensagens': return <MensagensTab />
       case 'usuarios': return <UsuariosTab />
