@@ -11,6 +11,11 @@ export async function GET() {
   try {
     const chips = await db.chip.findMany({
       orderBy: { createdAt: 'desc' },
+      include: {
+        vendedor: {
+          select: { id: true, nome: true },
+        },
+      },
     })
     return NextResponse.json(chips)
   } catch (error) {

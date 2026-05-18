@@ -20,6 +20,9 @@ export async function GET() {
         contactList: {
           select: { id: true, name: true },
         },
+        vendedor: {
+          select: { id: true, nome: true, treatAs: true },
+        },
       },
     })
     return NextResponse.json(campaigns)
@@ -32,7 +35,7 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const body = await request.json()
-    const { name, sendIntervalMin, sendIntervalMax, chipIds, contactListId, steps, antiBanEnabled, warmingMode, scheduledAt } = body
+    const { name, sendIntervalMin, sendIntervalMax, chipIds, contactListId, steps, antiBanEnabled, warmingMode, scheduledAt, vendedorId } = body
 
     if (!name) {
       return NextResponse.json({ error: 'Name is required' }, { status: 400 })
@@ -45,6 +48,7 @@ export async function POST(request: Request) {
         sendIntervalMax: sendIntervalMax || 90,
         contactListId: contactListId || null,
         scheduledAt: scheduledAt ? new Date(scheduledAt) : null,
+        vendedorId: vendedorId || null,
         status: 'draft',
         antiBanEnabled: antiBanEnabled !== undefined ? antiBanEnabled : true,
         warmingMode: warmingMode || 'normal',
@@ -78,6 +82,9 @@ export async function POST(request: Request) {
         },
         contactList: {
           select: { id: true, name: true },
+        },
+        vendedor: {
+          select: { id: true, nome: true, treatAs: true },
         },
       },
     })
