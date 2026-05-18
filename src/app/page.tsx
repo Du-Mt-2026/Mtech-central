@@ -4765,10 +4765,10 @@ export default function OctupusZapApp() {
     fetch('/api/auth/session').then(r => r.json()).then(data => {
       if (data.authenticated) {
         setLoggedIn(true)
-        setUsername(data.username || '')
-        setUserRole(data.role || 'operador')
+        setUsername(data.user?.username || '')
+        setUserRole(data.user?.role || 'operador')
         // If active tab is not accessible with user's role, reset to dashboard
-        const userLevel = ROLE_LEVELS[data.role || 'operador'] || 1
+        const userLevel = ROLE_LEVELS[data.user?.role || 'operador'] || 1
         const currentItem = NAV_ITEMS.find(n => n.id === activeTab)
         if (currentItem) {
           const requiredLevel = ROLE_LEVELS[currentItem.minRole] || 1
