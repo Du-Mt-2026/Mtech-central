@@ -251,6 +251,13 @@ export async function processNextMessage(campaignId: string): Promise<{
     return { processed: false, delayMs: 0, remaining: -1, completed: false }
   }
 
+  // Check if anti-ban is enabled for this campaign
+  const campaignInfo = await db.campaign.findUnique({
+    where: { id: campaignId },
+    select: { antiBanEnabled: true },
+  })
+  const antiBanEnabled = campaignInfo?.antiBanEnabled ?? true
+
   const settings = await getAntiBanSettings()
 
   // Find the next pending message
@@ -300,15 +307,15 @@ export async function processNextMessage(campaignId: string): Promise<{
   }
 
   const effectiveLimit = getEffectiveDailyLimit(chip, settings)
-  if (chip.sentToday >= effectiveLimit) {
+  if (antiBanEnabled && chip.sentToday >= effectiveLimit) {
     // Skip this chip's messages — mark as skipped (will retry next day via auto-reset)
     console.log(`[SendingEngine] Chip ${chip.name} hit daily limit (${chip.sentToday}/${effectiveLimit})`)
     // Don't fail the message, just skip it for now
     return { processed: false, delayMs: 2000, remaining: -1, completed: false }
   }
 
-  // Check cooldown
-  if (await isInCooldown(message.chipId, settings)) {
+  // Check cooldown (skip if anti-ban disabled)
+  if (antiBanEnabled && await isInCooldown(message.chipId, settings)) {
     return { processed: false, delayMs: settings.cooldownMinutes * 60 * 1000, remaining: -1, completed: false }
   }
 
@@ -322,16 +329,17 @@ export async function processNextMessage(campaignId: string): Promise<{
     const instanceName = message.chip.evolutionInstance
     const formattedPhone = formatPhoneNumber(message.contact.phone)
 
-    // Simulate typing (best-effort, non-blocking)
-    const typingDelay = randomInt(settings.typingMinDelay, settings.typingMaxDelay)
-    try {
-      await setPresence(instanceName, `${formattedPhone}@s.whatsapp.net`, 'composing', typingDelay)
-    } catch {
-      // Non-fatal
+    // Simulate typing (skip if anti-ban disabled)
+    if (antiBanEnabled) {
+      const typingDelay = randomInt(settings.typingMinDelay, settings.typingMaxDelay)
+      try {
+        await setPresence(instanceName, `${formattedPhone}@s.whatsapp.net`, 'composing', typingDelay)
+      } catch {
+        // Non-fatal
+      }
+      // Small delay for typing
+      await new Promise(resolve => setTimeout(resolve, Math.min(typingDelay, 2000)))
     }
-
-    // Small delay for typing
-    await new Promise(resolve => setTimeout(resolve, Math.min(typingDelay, 2000)))
 
     // Send the message — use media or text depending on message fields
     let result
@@ -339,8 +347,10 @@ export async function processNextMessage(campaignId: string): Promise<{
       const validMediaTypes = ['image', 'document', 'video', 'audio']
       const mt = message.mediatype as 'image' | 'document' | 'video' | 'audio'
       if (validMediaTypes.includes(mt)) {
+        // Audio doesn't support captions on WhatsApp
+        const caption = mt === 'audio' ? '' : (message.content || '')
         result = await sendMediaMessage(instanceName, formattedPhone, message.mediaUrl, mt, {
-          caption: message.content || '',
+          caption,
           delay: 0,
         })
       } else {
