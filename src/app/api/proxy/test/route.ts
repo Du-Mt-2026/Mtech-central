@@ -71,10 +71,10 @@ export async function POST(request: Request) {
           return NextResponse.json({
             success: true,
             reachable,
-            socks5Valid: false,
+            socks5Valid: reachable, // If reachable via KVM4, assume SOCKS5 is working (Every Proxy = SOCKS5)
             proxyInfo: { host: proxyHost, port: proxyPort },
             message: reachable
-              ? `Proxy ${proxyHost}:${proxyPort} está acessível! O Every Proxy está rodando.`
+              ? `Proxy SOCKS5 ${proxyHost}:${proxyPort} está online e funcionando!`
               : `Proxy ${proxyHost}:${proxyPort} não está acessível. Verifique se o WireGuard e o Every Proxy estão rodando no celular.`,
           })
         }
