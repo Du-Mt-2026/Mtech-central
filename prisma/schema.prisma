@@ -41,19 +41,23 @@ model Chip {
 
   // Evolution API integration
   evolutionInstance         String?  @unique
-  profileName              String?  
-  profilePicUrl            String?  
+  profileName              String?
+  profilePicUrl            String?
   disconnectionReasonCode  Int?
 
   // Verification anti-ban fields
   verifiedToday       Int      @default(0)
   lastVerifiedResetAt DateTime @default(now())
+
+  // Vendedor association — each chip can belong to a vendedor
+  vendedorId String?
+  vendedor   Vendedor? @relation(fields: [vendedorId], references: [id], onDelete: SetNull)
 }
 
 model AntiBanSettings {
   id                    String   @id @default(cuid())
-  typingMinDelay        Int      @default(500)
-  typingMaxDelay        Int      @default(2000)
+  typingMinDelay        Int      @default(3000)    // Changed: 3s minimum (was 500ms)
+  typingMaxDelay        Int      @default(15000)    // Changed: 15s maximum (was 2000ms)
   messageIntervalMin    Int      @default(30)
   messageIntervalMax    Int      @default(90)
   randomLineBreaks      Boolean  @default(true)
@@ -66,6 +70,11 @@ model AntiBanSettings {
   stopOnWarning         Boolean  @default(true)
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
+
+  // New fields for sending window
+  sendingWindowStart    Int      @default(8)       // Hour 0-23 (default 8h)
+  sendingWindowEnd      Int      @default(21)      // Hour 0-23 (default 21h)
+  timezone              String   @default("America/Sao_Paulo")
 }
 
 model MessageTemplate {
@@ -75,6 +84,35 @@ model MessageTemplate {
   category  String   @default("geral")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model MessageKey {
+  id          String   @id @default(cuid())
+  name        String   @unique          // "SAUDACAO_MANHA"
+  label       String                    // "Saudação - Bom dia" (nome amigável)
+  category    String   @default("geral") // "saudacao", "apresentacao", "pergunta", "encerramento", "emoji", "geral"
+  variations  String                     // JSON array: ["Oi, bom dia...", "Olá, tudo bem?...", ...]
+  isDefault   Boolean  @default(false)   // Keys pré-definidas do sistema
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  userId      String?                    // null = global, string = criada por usuário específico
+}
+
+model Vendedor {
+  id              String   @id @default(cuid())
+  nome            String                    // "Renato"
+  empresa         String?                   // "Mtech Distribuidora"
+  cargo           String?                   // "Gerente de Contas"
+  genero          String?                   // "masculino" | "feminino"
+  treatAs         String?                   // "o" (sou o Renato) | "a" (sou a Carla)
+  whatsapp        String?                   // Número do chip do vendedor (pra receber respostas)
+  ativo           Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  chips     Chip[]          // Chips associados a este vendedor
+  campaigns Campaign[]      // Campanhas atribuídas a este vendedor
 }
 
 model ContactList {
@@ -97,6 +135,16 @@ model Contact {
   messages      Message[]
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
+
+  // Personalization fields (anti-ban)
+  empresa           String?    // Usado na variável {empresa}
+  cidade            String?    // Usado na variável {cidade}
+  email             String?    // Usado na variável {email}
+  profissao         String?    // Usado na variável {profissao}
+  tratamento        String?    // Usado na variável {tratamento} — "Sr", "Sra", "Dr"...
+  produtoInteresse  String?    // Usado na variável {produto}
+  tags              String?    // Tags separadas por vírgula — para segmentação
+  observacoes       String?    // Notas internas (não enviadas)
 }
 
 model Campaign {
@@ -118,7 +166,11 @@ model Campaign {
 
   // Anti-ban campaign fields
   antiBanEnabled   Boolean  @default(true)
-  warmingMode      String   @default("normal")
+  warmingMode      String   @default("normal")  // "normal" | "agressive" | "stealth"
+
+  // Vendedor association — this campaign sends on behalf of this vendedor
+  vendedorId String?
+  vendedor   Vendedor? @relation(fields: [vendedorId], references: [id], onDelete: SetNull)
 }
 
 model SequenceStep {

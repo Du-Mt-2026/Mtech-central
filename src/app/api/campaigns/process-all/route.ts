@@ -3,15 +3,19 @@ import { db } from '@/lib/db'
 import { getRunningCampaigns, processNextMessage, startCampaign } from '@/lib/sending-engine'
 
 /**
- * Process one message per running campaign.
+ * Process messages for running campaigns.
  * Also checks for scheduled campaigns whose time has come and auto-starts them.
  * Called by Vercel Cron every minute.
- * Each invocation processes 1 message per campaign (serverless-safe).
+ *
+ * KEY IMPROVEMENT: Instead of processing just 1 message per campaign per cron tick,
+ * this now uses a time-based approach — it processes messages in a loop
+ * until the function is about to timeout (50 seconds max for Vercel).
+ * This means more messages get processed per cron invocation while still
+ * respecting anti-ban intervals.
  */
 export async function POST(request: Request) {
-  // This route is public for Vercel Cron (which sends CRON_SECRET in Authorization header).
-  // It's also accessible to authenticated users via the "Processar Campanhas" button.
-  // The middleware allows this route through, so both cron and authenticated users can access it.
+  const FUNCTION_TIMEOUT_MS = 50_000 // Vercel timeout is 60s, leave 10s margin
+  const startTime = Date.now()
 
   try {
     // 1. Auto-start scheduled campaigns whose scheduledAt has passed
@@ -49,23 +53,81 @@ export async function POST(request: Request) {
       })
     }
 
-    const results = []
+    const allResults: any[] = []
+    let totalProcessed = 0
+    let totalSkipped = 0
+
+    // Process each campaign — try to send multiple messages per campaign per tick
+    // if the anti-ban interval allows (some campaigns may have short intervals)
     for (const campaignId of campaignIds) {
-      const result = await processNextMessage(campaignId)
-      results.push({ campaignId, ...result })
+      let campaignProcessed = 0
+      let campaignSkipped = 0
+      let lastReason = ''
+
+      // Process up to 5 messages per campaign per tick
+      // (respects anti-ban by checking delays)
+      for (let attempt = 0; attempt < 5; attempt++) {
+        // Check if we're about to timeout
+        if (Date.now() - startTime > FUNCTION_TIMEOUT_MS) {
+          console.log(`[ProcessAll] Approaching function timeout, stopping. Processed ${totalProcessed} messages.`)
+          break
+        }
+
+        const result = await processNextMessage(campaignId)
+
+        if (result.processed) {
+          campaignProcessed++
+          totalProcessed++
+        } else {
+          campaignSkipped++
+          totalSkipped++
+          lastReason = result.reason || ''
+        }
+
+        // If the delay is longer than the time remaining in this function invocation,
+        // don't wait — let the next cron tick handle it
+        const remainingTime = FUNCTION_TIMEOUT_MS - (Date.now() - startTime)
+        if (result.delayMs > remainingTime) {
+          // The interval says we should wait longer than we have — stop processing this campaign
+          break
+        }
+
+        // If no message was processed and the reason is a hard block (ban, window, etc.),
+        // don't retry this campaign in this tick
+        if (!result.processed && ['cooldown', 'outside_sending_window', 'chip_banned', 'whatsapp_warning_detected'].some(r => lastReason.includes(r))) {
+          break
+        }
+
+        // If the message was processed, wait the anti-ban interval before the next one
+        if (result.processed && result.delayMs > 0) {
+          await new Promise(resolve => setTimeout(resolve, result.delayMs))
+        }
+
+        // If campaign is complete, stop processing it
+        if (result.completed) break
+      }
+
+      allResults.push({
+        campaignId,
+        processed: campaignProcessed,
+        skipped: campaignSkipped,
+        reason: lastReason || undefined,
+      })
     }
 
-    const totalProcessed = results.filter(r => r.processed).length
-    const totalRemaining = results.reduce((sum, r) => sum + (r.remaining > 0 ? r.remaining : 0), 0)
+    const totalRemaining = allResults.reduce((sum, r) => sum + (r.remaining > 0 ? r.remaining : 0), 0)
+    const elapsedMs = Date.now() - startTime
 
     return NextResponse.json({
       processed: totalProcessed,
+      skipped: totalSkipped,
       remaining: totalRemaining,
-      campaigns: results.length,
-      results,
+      campaigns: campaignIds.length,
+      results: allResults,
       startedScheduled: startedCampaigns.length,
       startedCampaigns,
       startErrors: startErrors.length > 0 ? startErrors : undefined,
+      elapsedMs,
     })
   } catch (error: any) {
     console.error('Process all campaigns error:', error)

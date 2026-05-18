@@ -1,9 +1,16 @@
-// Sending Engine with Anti-Ban Protection
-// Serverless-compatible: processes ONE message per invocation
-// Vercel Cron calls /api/campaigns/process-all every minute
+// Sending Engine with Anti-Ban Protection v2.0
+// ==============================================
+// Realistic human behavior: typing proportional to message length,
+// random line breaks, emoji variation, ban detection, auto-warming.
+// Serverless-compatible: processes messages with real delays.
+// Vercel Cron calls /api/campaigns/process-all every minute.
 
-import { sendTextMessage, sendMediaMessage, setPresence, formatPhoneNumber } from './evolution-api'
+import { sendTextMessage, sendMediaMessage, setPresence, formatPhoneNumber, getConnectionState } from './evolution-api'
 import { db } from './db'
+
+// ============================================================
+// TYPES & CONSTANTS
+// ============================================================
 
 interface AntiBanConfig {
   typingMinDelay: number
@@ -16,14 +23,49 @@ interface AntiBanConfig {
   cooldownMinutes: number
   cooldownAfterMessages: number
   stopOnWarning: boolean
+  randomLineBreaks: boolean
+  emojiVariation: boolean
+  sendingWindowStart: number  // hora inicial (0-23), default 8
+  sendingWindowEnd: number    // hora final (0-23), default 21
+  timezone: string            // fuso horário, default 'America/Sao_Paulo'
 }
 
 // Warming schedule: stage -> daily limit
 const WARMING_LIMITS = [10, 30, 80, 150, 200]
 
+// Warming mode multipliers
+const WARMING_MODE_MULTIPLIERS: Record<string, { intervalMultiplier: number; limitMultiplier: number }> = {
+  normal: { intervalMultiplier: 1, limitMultiplier: 1 },
+  agressive: { intervalMultiplier: 0.5, limitMultiplier: 1.5 },
+  stealth: { intervalMultiplier: 2, limitMultiplier: 0.6 },
+}
+
+// Typing speed: characters per second (human average is 5-15 for mobile)
+const TYPING_SPEED_MIN = 6    // chars/second (slow typer)
+const TYPING_SPEED_MAX = 14   // chars/second (fast typer)
+const TYPING_MIN_MS = 3000    // minimum typing time (3 seconds even for short messages)
+const TYPING_MAX_MS = 25000   // maximum typing time (25 seconds — avoids Vercel timeout)
+const TYPING_PAUSE_CHANCE = 0.3  // 30% chance of a mid-typing pause (simulates thinking)
+
+// Common emoji swaps for variation
+const EMOJI_SWAPS: Record<string, string[]> = {
+  '🙂': ['😊', '😄', '🙂', '😃'],
+  '😊': ['🙂', '😄', '😊', '😃'],
+  '👍': ['👌', '👍', '🤝', '👏'],
+  '❤️': ['💜', '🧡', '❤️', '💙'],
+  '😎': ['🤓', '😎', '😄', '🤩'],
+  '🤦': ['😅', '🤦', '🙈', '😬'],
+  '✨': ['🌟', '⭐', '✨', '💫'],
+  '!': ['!', '!!', '!'],
+  '?': ['?', '??', '?'],
+}
+
+// Line break insertion points (after these words/chars)
+const LINE_BREAK_POINTS = [',', '.', '!', '?', ' - ', ': ']
+
 const DEFAULT_SETTINGS: AntiBanConfig = {
-  typingMinDelay: 500,
-  typingMaxDelay: 2000,
+  typingMinDelay: 3000,
+  typingMaxDelay: 15000,
   messageIntervalMin: 30,
   messageIntervalMax: 90,
   dailyLimitPerChip: 200,
@@ -32,16 +74,152 @@ const DEFAULT_SETTINGS: AntiBanConfig = {
   cooldownMinutes: 30,
   cooldownAfterMessages: 50,
   stopOnWarning: true,
+  randomLineBreaks: true,
+  emojiVariation: true,
+  sendingWindowStart: 8,
+  sendingWindowEnd: 21,
+  timezone: 'America/Sao_Paulo',
 }
+
+// ============================================================
+// UTILITY FUNCTIONS
+// ============================================================
 
 function randomInt(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min
 }
 
-function getEffectiveDailyLimit(chip: { dailyLimit: number; warmingEnabled: boolean; warmingStage: number }, settings: AntiBanConfig): number {
-  if (!chip.warmingEnabled || !settings.warmingEnabled) return chip.dailyLimit || settings.dailyLimitPerChip
+function randomFloat(min: number, max: number): number {
+  return Math.random() * (max - min) + min
+}
+
+/**
+ * Calculate realistic typing duration based on message length.
+ * A human types at 6-14 chars/second on mobile.
+ * Short messages get a minimum of 3 seconds.
+ * Long messages cap at 25 seconds (Vercel timeout safety).
+ * 30% chance of a "thinking pause" mid-typing (1-4 seconds).
+ */
+function calculateTypingDuration(text: string): number {
+  const charCount = text.length
+  const typingSpeed = randomFloat(TYPING_SPEED_MIN, TYPING_SPEED_MAX)
+  let durationMs = (charCount / typingSpeed) * 1000
+
+  // Clamp to reasonable bounds
+  durationMs = Math.max(TYPING_MIN_MS, Math.min(TYPING_MAX_MS, durationMs))
+
+  // 30% chance of a "thinking pause" (1-4 seconds)
+  if (Math.random() < TYPING_PAUSE_CHANCE) {
+    durationMs += randomInt(1000, 4000)
+  }
+
+  return Math.round(durationMs)
+}
+
+/**
+ * Apply random line breaks to message content.
+ * Inserts line breaks after punctuation with 20-40% probability.
+ * This makes each message visually different even with the same text.
+ */
+function applyRandomLineBreaks(text: string): string {
+  let result = text
+  const breakChance = randomFloat(0.2, 0.4)
+
+  for (const point of LINE_BREAK_POINTS) {
+    // Split by the punctuation mark
+    const parts = result.split(point)
+    if (parts.length <= 1) continue
+
+    // Rejoin with occasional line breaks
+    result = parts[0]
+    for (let i = 1; i < parts.length; i++) {
+      if (Math.random() < breakChance && parts[i].trim().length > 0) {
+        result += point + '\n' + parts[i]
+      } else {
+        result += point + parts[i]
+      }
+    }
+  }
+
+  return result
+}
+
+/**
+ * Apply emoji variation to message content.
+ * Swaps common emojis and punctuation with random alternatives.
+ */
+function applyEmojiVariation(text: string): string {
+  let result = text
+
+  for (const [original, alternatives] of Object.entries(EMOJI_SWAPS)) {
+    // Only swap with 50% probability per occurrence
+    const regex = new RegExp(escapeRegex(original), 'g')
+    result = result.replace(regex, () => {
+      if (Math.random() < 0.5) {
+        return alternatives[Math.floor(Math.random() * alternatives.length)]
+      }
+      return original
+    })
+  }
+
+  return result
+}
+
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/**
+ * Get current hour in the configured timezone
+ */
+function getCurrentHour(timezone: string): number {
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    hour: 'numeric',
+    hour12: false,
+    timeZone: timezone,
+  })
+  return parseInt(formatter.format(new Date()), 10)
+}
+
+/**
+ * Check if current time is within the sending window
+ */
+function isWithinSendingWindow(settings: AntiBanConfig): boolean {
+  const currentHour = getCurrentHour(settings.timezone)
+  const start = settings.sendingWindowStart
+  const end = settings.sendingWindowEnd
+
+  if (start <= end) {
+    // Same day window: e.g., 8-21
+    return currentHour >= start && currentHour < end
+  } else {
+    // Overnight window: e.g., 22-6
+    return currentHour >= start || currentHour < end
+  }
+}
+
+// ============================================================
+// ANTI-BAN LOGIC
+// ============================================================
+
+function getEffectiveDailyLimit(
+  chip: { dailyLimit: number; warmingEnabled: boolean; warmingStage: number },
+  settings: AntiBanConfig,
+  warmingMode?: string
+): number {
+  if (!chip.warmingEnabled || !settings.warmingEnabled) {
+    return chip.dailyLimit || settings.dailyLimitPerChip
+  }
   const stage = Math.min(chip.warmingStage, WARMING_LIMITS.length - 1)
-  return Math.min(WARMING_LIMITS[stage], chip.dailyLimit || settings.dailyLimitPerChip)
+  let limit = Math.min(WARMING_LIMITS[stage], chip.dailyLimit || settings.dailyLimitPerChip)
+
+  // Apply warming mode multiplier
+  const modeMultiplier = WARMING_MODE_MULTIPLIERS[warmingMode || 'normal']
+  if (modeMultiplier) {
+    limit = Math.round(limit * modeMultiplier.limitMultiplier)
+  }
+
+  return limit
 }
 
 /**
@@ -62,6 +240,12 @@ async function getAntiBanSettings(): Promise<AntiBanConfig> {
         cooldownMinutes: saved.cooldownMinutes,
         cooldownAfterMessages: saved.cooldownAfterMessages,
         stopOnWarning: saved.stopOnWarning,
+        randomLineBreaks: saved.randomLineBreaks,
+        emojiVariation: saved.emojiVariation,
+        // New fields with safe defaults for existing DB rows
+        sendingWindowStart: (saved as any).sendingWindowStart ?? 8,
+        sendingWindowEnd: (saved as any).sendingWindowEnd ?? 21,
+        timezone: (saved as any).timezone ?? 'America/Sao_Paulo',
       }
     }
   } catch {
@@ -71,26 +255,70 @@ async function getAntiBanSettings(): Promise<AntiBanConfig> {
 }
 
 /**
- * Reset chip daily counter if a new day has started
+ * Reset chip daily counter if a new day has started (timezone-aware)
  */
-async function resetDailyIfNeeded(chipId: string): Promise<void> {
+async function resetDailyIfNeeded(chipId: string, timezone: string = 'America/Sao_Paulo'): Promise<void> {
   const chip = await db.chip.findUnique({ where: { id: chipId } })
   if (!chip) return
+
   const now = new Date()
   const lastReset = new Date(chip.lastResetAt)
-  if (now.getDate() !== lastReset.getDate() || now.getMonth() !== lastReset.getMonth()) {
+
+  // Use timezone-aware date comparison
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    year: 'numeric', month: 'numeric', day: 'numeric',
+    timeZone: timezone,
+  })
+
+  const nowDateStr = formatter.format(now)
+  const lastDateStr = formatter.format(lastReset)
+
+  if (nowDateStr !== lastDateStr) {
     await db.chip.update({
       where: { id: chipId },
-      data: { sentToday: 0, lastResetAt: now },
+      data: { sentToday: 0, verifiedToday: 0, lastResetAt: now, lastVerifiedResetAt: now },
     })
+  }
+}
+
+/**
+ * Auto-advance warming stage based on days since chip creation or last stage change.
+ * This is the fix for the critical bug where warmingStage was stuck at 0 forever.
+ */
+async function advanceWarmingStage(chipId: string, settings: AntiBanConfig): Promise<void> {
+  if (!settings.warmingEnabled) return
+
+  const chip = await db.chip.findUnique({ where: { id: chipId } })
+  if (!chip || !chip.warmingEnabled) return
+
+  const currentStage = chip.warmingStage
+  if (currentStage >= WARMING_LIMITS.length - 1) return // Already at max stage
+
+  // Calculate days since chip was created
+  const createdAt = new Date(chip.createdAt)
+  const now = new Date()
+  const daysSinceCreation = Math.floor((now.getTime() - createdAt.getTime()) / (1000 * 60 * 60 * 24))
+
+  // Calculate what stage the chip SHOULD be at
+  // Each stage lasts (warmingDays / number of stages) days
+  const daysPerStage = Math.ceil(settings.warmingDays / WARMING_LIMITS.length)
+  const expectedStage = Math.min(
+    Math.floor(daysSinceCreation / daysPerStage),
+    WARMING_LIMITS.length - 1
+  )
+
+  if (expectedStage > currentStage) {
+    await db.chip.update({
+      where: { id: chipId },
+      data: { warmingStage: expectedStage },
+    })
+    console.log(`[SendingEngine] Chip ${chip.name} advanced from stage ${currentStage} to ${expectedStage} (day ${daysSinceCreation}, ${daysPerStage} days/stage)`)
   }
 }
 
 /**
  * Check if chip is in cooldown period.
  * Uses cooldownUntil timestamp on the chip record.
- * When a chip hits cooldownAfterMessages, we set cooldownUntil = now + cooldownMinutes.
- * This avoids the infinite cooldown bug where modulo alone would trap the chip forever.
  */
 async function isInCooldown(chipId: string, settings: AntiBanConfig): Promise<boolean> {
   const chip = await db.chip.findUnique({ where: { id: chipId } })
@@ -98,15 +326,14 @@ async function isInCooldown(chipId: string, settings: AntiBanConfig): Promise<bo
 
   const now = new Date()
 
-  // If chip has an active cooldownUntil and it hasn't expired yet, chip is in cooldown
+  // If chip has an active cooldownUntil and it hasn't expired yet
   if (chip.cooldownUntil && new Date(chip.cooldownUntil) > now) {
     console.log(`[SendingEngine] Chip ${chipId} in cooldown until ${chip.cooldownUntil}`)
     return true
   }
 
-  // Check if chip just hit the cooldown threshold (multiple of cooldownAfterMessages)
+  // Check if chip just hit the cooldown threshold
   if (chip.sentToday > 0 && chip.sentToday % settings.cooldownAfterMessages === 0) {
-    // Set cooldownUntil timestamp so we know when to resume
     const cooldownUntil = new Date(now.getTime() + settings.cooldownMinutes * 60 * 1000)
     await db.chip.update({
       where: { id: chipId },
@@ -116,7 +343,7 @@ async function isInCooldown(chipId: string, settings: AntiBanConfig): Promise<bo
     return true
   }
 
-  // Cooldown expired or not in cooldown — clear cooldownUntil if it was set
+  // Cooldown expired — clear it
   if (chip.cooldownUntil) {
     await db.chip.update({
       where: { id: chipId },
@@ -126,6 +353,82 @@ async function isInCooldown(chipId: string, settings: AntiBanConfig): Promise<bo
 
   return false
 }
+
+/**
+ * Detect if a chip might be banned by checking its connection state.
+ * If the chip is disconnected or has a disconnection reason, it may be banned.
+ * Returns true if the chip appears to be banned/disconnected.
+ */
+async function detectChipBan(chip: { id: string; evolutionInstance: string | null; status: string; disconnectionReasonCode: number | null }): Promise<{ banned: boolean; reason: string }> {
+  // Check chip status first (fast)
+  if (chip.status === 'disconnected' || chip.status === 'banned') {
+    return { banned: true, reason: `Chip status: ${chip.status}` }
+  }
+
+  // Check disconnection reason code
+  // WhatsApp ban codes: 401 (logged out), 403 (banned), 428 (replaced), 440 (device removed)
+  const BAN_CODES = [401, 403, 428, 440]
+  if (chip.disconnectionReasonCode && BAN_CODES.includes(chip.disconnectionReasonCode)) {
+    return { banned: true, reason: `Disconnection code: ${chip.disconnectionReasonCode}` }
+  }
+
+  // Try to get live connection state from Evolution API
+  if (chip.evolutionInstance) {
+    try {
+      const state = await getConnectionState(chip.evolutionInstance)
+      const instanceState = state?.instance?.state
+      if (instanceState === 'close') {
+        return { banned: true, reason: 'Evolution API reports connection state: close' }
+      }
+    } catch {
+      // If we can't reach Evolution API, don't assume ban — could be network issue
+      console.log(`[SendingEngine] Could not check connection state for ${chip.evolutionInstance}`)
+    }
+  }
+
+  return { banned: false, reason: '' }
+}
+
+/**
+ * Check for WhatsApp warning messages in the inbox.
+ * WhatsApp sends warning messages from specific JIDs when an account is at risk.
+ */
+async function checkForWarnings(chipId: string): Promise<boolean> {
+  try {
+    const chip = await db.chip.findUnique({ where: { id: chipId } })
+    if (!chip?.evolutionInstance) return false
+
+    // Check for recent warning messages from WhatsApp
+    // WhatsApp official JIDs: status@broadcast, server@whatsapp.com
+    const WARNING_SENDERS = ['status@broadcast', 'server@whatsapp.com']
+    const WARNING_KEYWORDS = ['segurança', 'suspeita', 'violação', 'banimento', 'restrição', 'security', 'violation', 'restricted', 'banned', 'warning', 'alerta', 'aviso']
+
+    const recentWarnings = await db.inboxMessage.findMany({
+      where: {
+        instanceName: chip.evolutionInstance,
+        fromMe: false,
+        remoteJid: { in: WARNING_SENDERS },
+        createdAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) }, // last 24h
+      },
+      take: 10,
+    })
+
+    for (const msg of recentWarnings) {
+      const content = (msg.messageContent || '').toLowerCase()
+      if (WARNING_KEYWORDS.some(kw => content.includes(kw))) {
+        console.log(`[SendingEngine] WARNING detected for chip ${chip.name}: ${msg.messageContent?.substring(0, 100)}`)
+        return true
+      }
+    }
+  } catch {
+    // Non-critical — don't block sending
+  }
+  return false
+}
+
+// ============================================================
+// CAMPAIGN MANAGEMENT
+// ============================================================
 
 /**
  * Start a campaign: create pending messages and set status to running
@@ -225,7 +528,8 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
     const itemsPool = isMultiStep ? step1Items : singleStepItems
     const messageItem = itemsPool[Math.floor(Math.random() * itemsPool.length)]
 
-    // Replace template variables
+    // Replace template variables — DO NOT pre-substitute here when Key system is active
+    // For now, keep existing variable substitution
     const content = messageItem.content
       .replace(/\{nome\}/g, contact.name)
       .replace(/\{telefone\}/g, contact.phone)
@@ -254,9 +558,12 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
   return { messageCount: messagesToCreate.length }
 }
 
+// ============================================================
+// MESSAGE PROCESSING
+// ============================================================
+
 /**
  * Process the NEXT pending message for a campaign.
- * Serverless-friendly: processes exactly ONE message per call.
  * Returns the delay (ms) the caller should wait before processing the next one.
  */
 export async function processNextMessage(campaignId: string): Promise<{
@@ -264,8 +571,9 @@ export async function processNextMessage(campaignId: string): Promise<{
   delayMs: number
   remaining: number
   completed: boolean
+  reason?: string
 }> {
-  // Check if campaign is paused — if so, skip processing
+  // Check if campaign is paused or completed
   const campaignStatus = await db.campaign.findUnique({
     where: { id: campaignId },
     select: { status: true },
@@ -274,17 +582,31 @@ export async function processNextMessage(campaignId: string): Promise<{
     return { processed: false, delayMs: 0, remaining: 0, completed: true }
   }
   if (campaignStatus.status === 'paused') {
-    return { processed: false, delayMs: 0, remaining: -1, completed: false }
+    return { processed: false, delayMs: 0, remaining: -1, completed: false, reason: 'paused' }
   }
 
-  // Check if anti-ban is enabled for this campaign
+  // Get campaign anti-ban settings
   const campaignInfo = await db.campaign.findUnique({
     where: { id: campaignId },
-    select: { antiBanEnabled: true },
+    select: { antiBanEnabled: true, warmingMode: true },
   })
   const antiBanEnabled = campaignInfo?.antiBanEnabled ?? true
+  const warmingMode = campaignInfo?.warmingMode || 'normal'
 
   const settings = await getAntiBanSettings()
+
+  // CHECK SENDING WINDOW — don't send outside business hours
+  if (antiBanEnabled && !isWithinSendingWindow(settings)) {
+    const currentHour = getCurrentHour(settings.timezone)
+    console.log(`[SendingEngine] Outside sending window (${currentHour}h, window: ${settings.sendingWindowStart}-${settings.sendingWindowEnd}). Pausing.`)
+    return {
+      processed: false,
+      delayMs: 60 * 1000, // Check again in 1 minute
+      remaining: -1,
+      completed: false,
+      reason: `outside_sending_window_${currentHour}h`,
+    }
+  }
 
   // Find the next pending message
   const message = await db.message.findFirst({
@@ -294,7 +616,6 @@ export async function processNextMessage(campaignId: string): Promise<{
   })
 
   if (!message) {
-    // No more pending messages — check if campaign is done
     const stillPending = await db.message.count({
       where: { campaignId, status: { in: ['pending', 'sending'] } },
     })
@@ -319,10 +640,75 @@ export async function processNextMessage(campaignId: string): Promise<{
     return { processed: true, delayMs: 1000, remaining: -1, completed: false }
   }
 
-  // Reset daily counter if needed
-  await resetDailyIfNeeded(message.chipId)
+  // CHECK FOR CHIP BAN — detect disconnected/banned chips
+  if (antiBanEnabled) {
+    const banCheck = await detectChipBan(message.chip)
+    if (banCheck.banned) {
+      console.log(`[SendingEngine] Chip ${message.chip.name} appears BANNED: ${banCheck.reason}`)
 
-  // Check daily limit
+      // Update chip status
+      await db.chip.update({
+        where: { id: message.chip.id },
+        data: { status: 'banned' },
+      })
+
+      // Find another pending message with a different chip (retry logic)
+      const altMessage = await db.message.findFirst({
+        where: {
+          campaignId,
+          status: 'pending',
+          chipId: { not: message.chip.id }, // Different chip
+        },
+        include: { chip: true, contact: true },
+        orderBy: { createdAt: 'asc' },
+      })
+
+      if (altMessage) {
+        // Process the alternative message instead
+        console.log(`[SendingEngine] Retrying with different chip for message ${altMessage.id}`)
+        // We'll fall through to process this alternative — but for serverless simplicity,
+        // just return and the next cron tick will pick up the alternative message
+      }
+
+      return {
+        processed: false,
+        delayMs: 5000,
+        remaining: -1,
+        completed: false,
+        reason: `chip_banned_${message.chip.name}`,
+      }
+    }
+  }
+
+  // CHECK FOR WHATSAPP WARNINGS — stopOnWarning
+  if (antiBanEnabled && settings.stopOnWarning) {
+    const hasWarning = await checkForWarnings(message.chip.id)
+    if (hasWarning) {
+      // Pause the campaign — a warning was detected
+      await db.campaign.update({
+        where: { id: campaignId },
+        data: { status: 'paused' },
+      })
+      console.log(`[SendingEngine] Campaign ${campaignId} PAUSED — WhatsApp warning detected for chip ${message.chip.name}`)
+      return {
+        processed: false,
+        delayMs: 0,
+        remaining: -1,
+        completed: false,
+        reason: 'whatsapp_warning_detected',
+      }
+    }
+  }
+
+  // Reset daily counter if needed (timezone-aware)
+  await resetDailyIfNeeded(message.chipId, settings.timezone)
+
+  // AUTO-ADVANCE WARMING STAGE (fix for critical bug)
+  if (antiBanEnabled && settings.warmingEnabled) {
+    await advanceWarmingStage(message.chipId, settings)
+  }
+
+  // Re-fetch chip after potential updates
   const chip = await db.chip.findUnique({ where: { id: message.chipId } })
   if (!chip) {
     await db.message.update({
@@ -332,17 +718,28 @@ export async function processNextMessage(campaignId: string): Promise<{
     return { processed: true, delayMs: 1000, remaining: -1, completed: false }
   }
 
-  const effectiveLimit = getEffectiveDailyLimit(chip, settings)
+  // Check daily limit (with warming mode multiplier)
+  const effectiveLimit = getEffectiveDailyLimit(chip, settings, warmingMode)
   if (antiBanEnabled && chip.sentToday >= effectiveLimit) {
-    // Skip this chip's messages — mark as skipped (will retry next day via auto-reset)
     console.log(`[SendingEngine] Chip ${chip.name} hit daily limit (${chip.sentToday}/${effectiveLimit})`)
-    // Don't fail the message, just skip it for now
-    return { processed: false, delayMs: 2000, remaining: -1, completed: false }
+    return {
+      processed: false,
+      delayMs: 60 * 1000, // Check again in 1 minute (might be a different chip next time)
+      remaining: -1,
+      completed: false,
+      reason: `daily_limit_${chip.name}`,
+    }
   }
 
-  // Check cooldown (skip if anti-ban disabled)
+  // Check cooldown
   if (antiBanEnabled && await isInCooldown(message.chipId, settings)) {
-    return { processed: false, delayMs: settings.cooldownMinutes * 60 * 1000, remaining: -1, completed: false }
+    return {
+      processed: false,
+      delayMs: settings.cooldownMinutes * 60 * 1000,
+      remaining: -1,
+      completed: false,
+      reason: 'cooldown',
+    }
   }
 
   // Mark as sending
@@ -352,42 +749,64 @@ export async function processNextMessage(campaignId: string): Promise<{
   })
 
   try {
-    const instanceName = message.chip.evolutionInstance
+    const instanceName = chip.evolutionInstance!
     const formattedPhone = formatPhoneNumber(message.contact.phone)
 
-    // Simulate typing (skip if anti-ban disabled)
+    // ============================================
+    // ANTI-BAN: REALISTIC TYPING SIMULATION
+    // ============================================
     if (antiBanEnabled) {
-      const typingDelay = randomInt(settings.typingMinDelay, settings.typingMaxDelay)
+      // Calculate typing duration proportional to message length
+      const typingDurationMs = calculateTypingDuration(message.content)
+
+      console.log(`[SendingEngine] Typing for ${typingDurationMs}ms (${message.content.length} chars) to ${formattedPhone}`)
+
+      // Send "composing" presence with the calculated delay
       try {
-        await setPresence(instanceName, `${formattedPhone}@s.whatsapp.net`, 'composing', typingDelay)
+        await setPresence(instanceName, `${formattedPhone}@s.whatsapp.net`, 'composing', typingDurationMs)
       } catch {
-        // Non-fatal
+        // Non-fatal — some evoGO versions may not support this endpoint
       }
-      // Small delay for typing
-      await new Promise(resolve => setTimeout(resolve, Math.min(typingDelay, 2000)))
+
+      // ACTUALLY WAIT the typing duration before sending
+      // This is the critical fix: the contact sees "digitando..." for a realistic time
+      await new Promise(resolve => setTimeout(resolve, typingDurationMs))
     }
 
-    // Send the message — use media or text depending on message fields
+    // ============================================
+    // ANTI-BAN: TEXT VARIATION (line breaks + emoji)
+    // ============================================
+    let finalContent = message.content
+
+    if (antiBanEnabled && settings.randomLineBreaks) {
+      finalContent = applyRandomLineBreaks(finalContent)
+    }
+
+    if (antiBanEnabled && settings.emojiVariation) {
+      finalContent = applyEmojiVariation(finalContent)
+    }
+
+    // ============================================
+    // SEND THE MESSAGE
+    // ============================================
     let result
     if (message.mediaUrl && message.mediatype) {
       const validMediaTypes = ['image', 'document', 'video', 'audio']
       const mt = message.mediatype as 'image' | 'document' | 'video' | 'audio'
       if (validMediaTypes.includes(mt)) {
-        // Audio doesn't support captions on WhatsApp
-        const caption = mt === 'audio' ? '' : (message.content || '')
+        const caption = mt === 'audio' ? '' : (finalContent || '')
         result = await sendMediaMessage(instanceName, formattedPhone, message.mediaUrl, mt, {
           caption,
-          delay: 0,
+          delay: 0, // We already handled delay via typing simulation
         })
       } else {
-        // Fallback to text if mediatype is invalid
-        result = await sendTextMessage(instanceName, formattedPhone, message.content, {
+        result = await sendTextMessage(instanceName, formattedPhone, finalContent, {
           delay: 0,
         })
       }
     } else {
-      result = await sendTextMessage(instanceName, formattedPhone, message.content, {
-        delay: 0, // We handle delays ourselves via cron intervals
+      result = await sendTextMessage(instanceName, formattedPhone, finalContent, {
+        delay: 0, // Delay is already handled by typing simulation + interval
       })
     }
 
@@ -409,8 +828,18 @@ export async function processNextMessage(campaignId: string): Promise<{
 
     console.log(`[SendingEngine] Sent message ${message.id} to ${formattedPhone} via ${instanceName}`)
 
-    // Calculate delay before next message (anti-ban interval)
-    const nextDelay = randomInt(settings.messageIntervalMin, settings.messageIntervalMax) * 1000
+    // ============================================
+    // CALCULATE NEXT MESSAGE DELAY
+    // ============================================
+    // The interval is how long to wait BEFORE processing the next message.
+    // Apply warming mode multiplier to the interval.
+    let nextDelay = randomInt(settings.messageIntervalMin, settings.messageIntervalMax) * 1000
+
+    const modeMultiplier = WARMING_MODE_MULTIPLIERS[warmingMode]
+    if (modeMultiplier && antiBanEnabled) {
+      nextDelay = Math.round(nextDelay * modeMultiplier.intervalMultiplier)
+    }
+
     const remaining = await db.message.count({ where: { campaignId, status: 'pending' } })
 
     return { processed: true, delayMs: nextDelay, remaining, completed: remaining === 0 }
@@ -433,7 +862,6 @@ export async function processNextMessage(campaignId: string): Promise<{
 
 /**
  * Legacy function kept for backwards compatibility.
- * Now processes just ONE message per call (serverless-safe).
  */
 export async function processCampaign(campaignId: string): Promise<{
   processed: number

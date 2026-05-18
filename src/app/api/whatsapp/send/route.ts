@@ -2,6 +2,29 @@ import { NextResponse } from 'next/server'
 import { sendTextMessage, setPresence, formatPhoneNumber, getInstanceName } from '@/lib/evolution-api'
 import { db } from '@/lib/db'
 
+/**
+ * Calculate realistic typing duration based on message length.
+ * Same logic as sending-engine.ts — human-like typing speed.
+ */
+function calculateTypingDuration(text: string): number {
+  const TYPING_SPEED_MIN = 6    // chars/second (slow typer on mobile)
+  const TYPING_SPEED_MAX = 14   // chars/second (fast typer)
+  const TYPING_MIN_MS = 3000    // minimum 3 seconds even for short messages
+  const TYPING_MAX_MS = 25000   // cap at 25 seconds
+  const TYPING_PAUSE_CHANCE = 0.3  // 30% chance of a "thinking pause"
+
+  const typingSpeed = Math.random() * (TYPING_SPEED_MAX - TYPING_SPEED_MIN) + TYPING_SPEED_MIN
+  let durationMs = (text.length / typingSpeed) * 1000
+
+  durationMs = Math.max(TYPING_MIN_MS, Math.min(TYPING_MAX_MS, durationMs))
+
+  if (Math.random() < TYPING_PAUSE_CHANCE) {
+    durationMs += Math.floor(Math.random() * 3000) + 1000
+  }
+
+  return Math.round(durationMs)
+}
+
 export async function POST(request: Request) {
   let chipId: string | undefined
   let contactId: string | undefined
@@ -37,21 +60,23 @@ export async function POST(request: Request) {
     const instanceName = chip.evolutionInstance || getInstanceName(chip.id, chip.name)
     const formattedPhone = formatPhoneNumber(contactPhone)
 
-    // Simulate typing before sending (anti-ban)
-    try {
-      const antiBan = await db.antiBanSettings.findFirst()
-      const typingDelay = antiBan
-        ? Math.floor(Math.random() * (antiBan.typingMaxDelay - antiBan.typingMinDelay) + antiBan.typingMinDelay)
-        : 1500
+    // REALISTIC TYPING SIMULATION
+    // Calculate typing duration proportional to message length (not fixed 500ms-2000ms)
+    const typingDurationMs = calculateTypingDuration(content)
 
-      await setPresence(instanceName, formattedPhone, 'composing', typingDelay)
+    try {
+      // Send "composing" presence with the calculated delay
+      await setPresence(instanceName, formattedPhone, 'composing', typingDurationMs)
     } catch (typingErr) {
       console.error('Typing simulation failed:', typingErr)
       // Continue even if typing fails
     }
 
-    // Add small delay after typing before sending
-    const sendDelay = delayMs || Math.floor(Math.random() * 1000) + 500
+    // WAIT the full typing duration — the contact sees "digitando..." realistically
+    await new Promise(resolve => setTimeout(resolve, typingDurationMs))
+
+    // Small additional delay before sending (simulates pressing "send" button)
+    const sendDelay = delayMs || Math.floor(Math.random() * 800) + 200
     await new Promise(resolve => setTimeout(resolve, sendDelay))
 
     // Send the message
@@ -83,6 +108,7 @@ export async function POST(request: Request) {
       success: true,
       messageId: result.key?.id,
       remoteJid: result.key?.remoteJid,
+      typingDurationMs,
     })
   } catch (error: any) {
     console.error('Send message error:', error)
