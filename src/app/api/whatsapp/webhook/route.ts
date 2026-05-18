@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { INSTANCE_PREFIX, deleteInstance } from '@/lib/evolution-api'
+import { removeWireGuardPeer } from '@/lib/wireguard-peer-api'
 import { db } from '@/lib/db'
 
 /**
@@ -81,6 +82,13 @@ export async function POST(request: Request) {
 
         if (chip) {
           console.log(`[Webhook] Instance ${instance} was deleted from Evolution API. Removing chip ${chip.name} from database.`)
+
+          // Remove WireGuard peer from KVM8 server (best-effort, non-blocking)
+          if (chip.wireguardPubKey && chip.wireguardIp) {
+            removeWireGuardPeer(chip.wireguardPubKey, chip.wireguardIp).catch(err => {
+              console.error('[Webhook INSTANCE_DELETED] WireGuard peer remove failed:', err)
+            })
+          }
 
           // Delete related records
           await db.message.deleteMany({ where: { chipId: chip.id } })
