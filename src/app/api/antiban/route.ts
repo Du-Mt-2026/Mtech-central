@@ -25,13 +25,64 @@ export async function PATCH(request: NextRequest) {
     }
 
     const body = await request.json()
+
+    // Reset all to defaults
+    if (body._resetToDefaults) {
+      const defaults = {
+        typingMinDelay: 3000,
+        typingMaxDelay: 15000,
+        messageIntervalMin: 30,
+        messageIntervalMax: 90,
+        dailyLimitPerChip: 200,
+        warmingEnabled: true,
+        warmingDays: 7,
+        cooldownMinutes: 30,
+        cooldownAfterMessages: 50,
+        stopOnWarning: true,
+        sendingWindowStart: 8,
+        sendingWindowEnd: 21,
+        timezone: 'America/Sao_Paulo',
+      }
+      const updated = await db.antiBanSettings.update({
+        where: { id: settings.id },
+        data: defaults,
+      })
+      return NextResponse.json(updated)
+    }
+
+    // Reset single field to default
+    if (body._resetField) {
+      const fieldDefaults: Record<string, unknown> = {
+        typingMinDelay: 3000,
+        typingMaxDelay: 15000,
+        messageIntervalMin: 30,
+        messageIntervalMax: 90,
+        dailyLimitPerChip: 200,
+        warmingEnabled: true,
+        warmingDays: 7,
+        cooldownMinutes: 30,
+        cooldownAfterMessages: 50,
+        stopOnWarning: true,
+        sendingWindowStart: 8,
+        sendingWindowEnd: 21,
+        timezone: 'America/Sao_Paulo',
+      }
+      const field = body._resetField as string
+      if (!(field in fieldDefaults)) {
+        return NextResponse.json({ error: 'Campo desconhecido' }, { status: 400 })
+      }
+      const updated = await db.antiBanSettings.update({
+        where: { id: settings.id },
+        data: { [field]: fieldDefaults[field] },
+      })
+      return NextResponse.json(updated)
+    }
+
     const allowedFields = [
       'typingMinDelay',
       'typingMaxDelay',
       'messageIntervalMin',
       'messageIntervalMax',
-      'randomLineBreaks',
-      'emojiVariation',
       'dailyLimitPerChip',
       'warmingEnabled',
       'warmingDays',

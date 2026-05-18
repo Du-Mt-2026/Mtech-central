@@ -165,14 +165,15 @@ interface AntiBanSettings {
   typingMaxDelay: number
   messageIntervalMin: number
   messageIntervalMax: number
-  randomLineBreaks: boolean
-  emojiVariation: boolean
   dailyLimitPerChip: number
   warmingEnabled: boolean
   warmingDays: number
   cooldownMinutes: number
   cooldownAfterMessages: number
   stopOnWarning: boolean
+  sendingWindowStart: number
+  sendingWindowEnd: number
+  timezone: string
 }
 
 interface MessageTemplate {
@@ -3049,6 +3050,22 @@ function AntiBanTab() {
   const [resetDialogOpen, setResetDialogOpen] = useState(false)
   const [resetting, setResetting] = useState(false)
 
+  const DEFAULTS: Record<string, unknown> = {
+    typingMinDelay: 3000,
+    typingMaxDelay: 15000,
+    messageIntervalMin: 30,
+    messageIntervalMax: 90,
+    dailyLimitPerChip: 200,
+    warmingEnabled: true,
+    warmingDays: 7,
+    cooldownMinutes: 30,
+    cooldownAfterMessages: 50,
+    stopOnWarning: true,
+    sendingWindowStart: 8,
+    sendingWindowEnd: 21,
+    timezone: 'America/Sao_Paulo',
+  }
+
   const fetchSettings = useCallback(async () => {
     try {
       const res = await fetch('/api/antiban')
@@ -3070,6 +3087,17 @@ function AntiBanTab() {
     finally { setSaving(false) }
   }
 
+  const resetField = async (field: string) => {
+    if (!settings) return
+    setSaving(true)
+    try {
+      const res = await fetch('/api/antiban', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ _resetField: field }) })
+      setSettings(await res.json())
+      toast.success('Campo restaurado para o padrão!')
+    } catch { toast.error('Erro ao restaurar campo') }
+    finally { setSaving(false) }
+  }
+
   const resetToDefaults = async () => {
     setResetting(true)
     try {
@@ -3083,13 +3111,6 @@ function AntiBanTab() {
 
   if (loading) return <div className="flex items-center justify-center py-20"><RefreshCw className="size-6 animate-spin text-muted-foreground" /></div>
   if (!settings) return null
-
-  const protectionItems = [
-    { key: 'randomLineBreaks', label: 'Quebra de Linha Aleatória', desc: 'Insere quebras de linha aleatórias nas mensagens', icon: Shuffle, enabled: settings.randomLineBreaks },
-    { key: 'emojiVariation', label: 'Variação de Emoji', desc: 'Varia emojis para evitar detecção de padrão', icon: Sparkles, enabled: settings.emojiVariation },
-    { key: 'warmingEnabled', label: 'Aquecimento Progressivo', desc: 'Aumenta o volume gradualmente', icon: Flame, enabled: settings.warmingEnabled },
-    { key: 'stopOnWarning', label: 'Parada em Aviso', desc: 'Para automaticamente se detectar aviso do WhatsApp', icon: AlertTriangle, enabled: settings.stopOnWarning },
-  ]
 
   const warmingStages = [
     { day: '1-2', msgs: 20, pct: 10 },
@@ -3112,7 +3133,7 @@ function AntiBanTab() {
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h2 className="text-2xl font-bold">Anti-Ban</h2>
-          <p className="text-sm text-muted-foreground">Proteja seus chips contra bloqueios do WhatsApp</p>
+          <p className="text-sm text-muted-foreground">Configurações de envio para minimizar risco de bloqueios</p>
         </div>
         <Button
           variant="outline"
@@ -3121,7 +3142,7 @@ function AntiBanTab() {
           disabled={saving}
         >
           <RotateCcw className="size-4" />
-          Restaurar Padrões
+          Restaurar Tudo
         </Button>
       </div>
 
@@ -3129,9 +3150,9 @@ function AntiBanTab() {
       <AlertDialog open={resetDialogOpen} onOpenChange={setResetDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Restaurar configurações padrão?</AlertDialogTitle>
+            <AlertDialogTitle>Restaurar todas as configurações padrão?</AlertDialogTitle>
             <AlertDialogDescription>
-              Isso vai redefinir todas as configurações anti-ban para os valores originais de fábrica. Suas personalizações serão perdidas.
+              Isso vai redefinir todas as configurações anti-ban para os valores originais. Suas personalizações serão perdidas.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -3148,46 +3169,6 @@ function AntiBanTab() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Active Protection Banner */}
-      <Card className="shadow-lg border-0 overflow-hidden">
-        <div className={`p-6 ${settings.warmingEnabled ? 'bg-gradient-to-r from-emerald-500 to-teal-600' : 'bg-gradient-to-r from-zinc-500 to-zinc-600'}`}>
-          <div className="flex items-center justify-between text-white">
-            <div className="flex items-center gap-4">
-              <div className="flex size-14 items-center justify-center rounded-2xl bg-white/20 backdrop-blur">
-                {settings.warmingEnabled ? <ShieldCheck className="size-7" /> : <ShieldAlert className="size-7" />}
-              </div>
-              <div>
-                <h3 className="text-xl font-bold">{settings.warmingEnabled ? 'Proteção Ativada' : 'Proteção Desativada'}</h3>
-                <p className="text-sm opacity-90">{settings.warmingEnabled ? 'Seus chips estão protegidos contra bloqueios' : 'Ative a proteção para evitar bloqueios'}</p>
-              </div>
-            </div>
-            <Switch checked={settings.warmingEnabled} onCheckedChange={v => updateSetting('warmingEnabled', v)} />
-          </div>
-        </div>
-      </Card>
-
-      {/* Protection Features Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {protectionItems.map((item, i) => (
-          <motion.div key={item.key} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.1 }}>
-            <Card className="shadow-lg hover:shadow-xl transition-all duration-200 border-0">
-              <CardContent className="p-4">
-                <div className="flex items-center gap-3">
-                  <div className={`flex size-10 items-center justify-center rounded-xl ${item.enabled ? 'bg-emerald-100 dark:bg-emerald-900/30' : 'bg-zinc-100 dark:bg-zinc-900/30'}`}>
-                    <item.icon className={`size-5 ${item.enabled ? 'text-emerald-600' : 'text-zinc-400'}`} />
-                  </div>
-                  <div className="flex-1">
-                    <p className="font-medium text-sm">{item.label}</p>
-                    <p className="text-xs text-muted-foreground">{item.desc}</p>
-                  </div>
-                  <Switch checked={item.enabled} onCheckedChange={v => updateSetting(item.key, v)} />
-                </div>
-              </CardContent>
-            </Card>
-          </motion.div>
-        ))}
-      </div>
-
       {/* Typing Simulation */}
       <Card className="shadow-lg border-0 hover:shadow-xl transition-all duration-200">
         <CardHeader>
@@ -3202,18 +3183,28 @@ function AntiBanTab() {
         <CardContent className="space-y-6">
           <div className="space-y-4">
             <div className="space-y-2">
-              <div className="flex justify-between">
+              <div className="flex justify-between items-center">
                 <Label className="text-sm">Atraso mínimo (ms)</Label>
-                <span className="text-sm font-semibold">{settings.typingMinDelay}ms</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-semibold">{settings.typingMinDelay}ms</span>
+                  <Button variant="ghost" size="icon" className="size-6 text-muted-foreground hover:text-amber-600" onClick={() => resetField('typingMinDelay')} title={`Padrão: ${DEFAULTS.typingMinDelay}ms`}>
+                    <RotateCcw className="size-3" />
+                  </Button>
+                </div>
               </div>
-              <Slider value={[settings.typingMinDelay]} onValueChange={([v]) => updateSetting('typingMinDelay', v)} min={200} max={3000} step={100} />
+              <Slider value={[settings.typingMinDelay]} onValueChange={([v]) => updateSetting('typingMinDelay', v)} min={1000} max={10000} step={100} />
             </div>
             <div className="space-y-2">
-              <div className="flex justify-between">
+              <div className="flex justify-between items-center">
                 <Label className="text-sm">Atraso máximo (ms)</Label>
-                <span className="text-sm font-semibold">{settings.typingMaxDelay}ms</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-semibold">{settings.typingMaxDelay}ms</span>
+                  <Button variant="ghost" size="icon" className="size-6 text-muted-foreground hover:text-amber-600" onClick={() => resetField('typingMaxDelay')} title={`Padrão: ${DEFAULTS.typingMaxDelay}ms`}>
+                    <RotateCcw className="size-3" />
+                  </Button>
+                </div>
               </div>
-              <Slider value={[settings.typingMaxDelay]} onValueChange={([v]) => updateSetting('typingMaxDelay', v)} min={500} max={5000} step={100} />
+              <Slider value={[settings.typingMaxDelay]} onValueChange={([v]) => updateSetting('typingMaxDelay', v)} min={2000} max={30000} step={100} />
             </div>
           </div>
           <div className="p-4 bg-muted/50 rounded-xl">
@@ -3225,7 +3216,7 @@ function AntiBanTab() {
                 <span className="animate-pulse">...</span>
               </div>
               <span className="text-xs text-muted-foreground">({settings.typingMinDelay}–{settings.typingMaxDelay}ms)</span>
-              <span className="text-sm">→ Olá, tudo bem? 😊</span>
+              <span className="text-sm">→ Olá, tudo bem?</span>
             </div>
           </div>
         </CardContent>
@@ -3244,16 +3235,26 @@ function AntiBanTab() {
         <CardContent className="space-y-6">
           <div className="space-y-4">
             <div className="space-y-2">
-              <div className="flex justify-between">
+              <div className="flex justify-between items-center">
                 <Label className="text-sm">Intervalo mínimo (segundos)</Label>
-                <span className="text-sm font-semibold">{settings.messageIntervalMin}s</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-semibold">{settings.messageIntervalMin}s</span>
+                  <Button variant="ghost" size="icon" className="size-6 text-muted-foreground hover:text-amber-600" onClick={() => resetField('messageIntervalMin')} title={`Padrão: ${DEFAULTS.messageIntervalMin}s`}>
+                    <RotateCcw className="size-3" />
+                  </Button>
+                </div>
               </div>
               <Slider value={[settings.messageIntervalMin]} onValueChange={([v]) => updateSetting('messageIntervalMin', v)} min={5} max={120} step={5} />
             </div>
             <div className="space-y-2">
-              <div className="flex justify-between">
+              <div className="flex justify-between items-center">
                 <Label className="text-sm">Intervalo máximo (segundos)</Label>
-                <span className="text-sm font-semibold">{settings.messageIntervalMax}s</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-semibold">{settings.messageIntervalMax}s</span>
+                  <Button variant="ghost" size="icon" className="size-6 text-muted-foreground hover:text-amber-600" onClick={() => resetField('messageIntervalMax')} title={`Padrão: ${DEFAULTS.messageIntervalMax}s`}>
+                    <RotateCcw className="size-3" />
+                  </Button>
+                </div>
               </div>
               <Slider value={[settings.messageIntervalMax]} onValueChange={([v]) => updateSetting('messageIntervalMax', v)} min={10} max={300} step={5} />
             </div>
@@ -3276,17 +3277,33 @@ function AntiBanTab() {
       {/* Progressive Warming */}
       <Card className="shadow-lg border-0 hover:shadow-xl transition-all duration-200">
         <CardHeader>
-          <div className="flex items-center gap-2">
-            <div className="flex size-8 items-center justify-center rounded-lg bg-orange-100 dark:bg-orange-900/30">
-              <Flame className="size-4 text-orange-600" />
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="flex size-8 items-center justify-center rounded-lg bg-orange-100 dark:bg-orange-900/30">
+                <Flame className="size-4 text-orange-600" />
+              </div>
+              <div>
+                <CardTitle className="text-lg">Aquecimento Progressivo</CardTitle>
+                <CardDescription>Aumente o volume gradualmente para evitar detecção</CardDescription>
+              </div>
             </div>
-            <CardTitle className="text-lg">Aquecimento Progressivo</CardTitle>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">{settings.warmingEnabled ? 'Ativado' : 'Desativado'}</span>
+              <Switch checked={settings.warmingEnabled} onCheckedChange={v => updateSetting('warmingEnabled', v)} />
+              <Button variant="ghost" size="icon" className="size-6 text-muted-foreground hover:text-amber-600" onClick={() => resetField('warmingEnabled')} title="Restaurar padrão">
+                <RotateCcw className="size-3" />
+              </Button>
+            </div>
           </div>
-          <CardDescription>Aumente o volume gradualmente para evitar detecção</CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
           <div className="space-y-2">
-            <Label className="text-sm">Período de aquecimento</Label>
+            <div className="flex items-center justify-between">
+              <Label className="text-sm">Período de aquecimento</Label>
+              <Button variant="ghost" size="icon" className="size-6 text-muted-foreground hover:text-amber-600" onClick={() => resetField('warmingDays')} title={`Padrão: ${DEFAULTS.warmingDays} dias`}>
+                <RotateCcw className="size-3" />
+              </Button>
+            </div>
             <div className="flex gap-2">
               {[3, 5, 7, 14, 30].map(d => (
                 <Button key={d} variant={settings.warmingDays === d ? 'default' : 'outline'} size="sm"
@@ -3333,23 +3350,38 @@ function AntiBanTab() {
         <CardContent className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="space-y-2">
-              <div className="flex justify-between">
+              <div className="flex justify-between items-center">
                 <Label className="text-sm">Limite diário por chip</Label>
-                <span className="text-sm font-semibold">{settings.dailyLimitPerChip} mensagens</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-semibold">{settings.dailyLimitPerChip} msgs</span>
+                  <Button variant="ghost" size="icon" className="size-6 text-muted-foreground hover:text-amber-600" onClick={() => resetField('dailyLimitPerChip')} title={`Padrão: ${DEFAULTS.dailyLimitPerChip}`}>
+                    <RotateCcw className="size-3" />
+                  </Button>
+                </div>
               </div>
               <Slider value={[settings.dailyLimitPerChip]} onValueChange={([v]) => updateSetting('dailyLimitPerChip', v)} min={50} max={500} step={10} />
             </div>
             <div className="space-y-2">
-              <div className="flex justify-between">
+              <div className="flex justify-between items-center">
                 <Label className="text-sm">Cooldown após</Label>
-                <span className="text-sm font-semibold">{settings.cooldownAfterMessages} mensagens</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-semibold">{settings.cooldownAfterMessages} msgs</span>
+                  <Button variant="ghost" size="icon" className="size-6 text-muted-foreground hover:text-amber-600" onClick={() => resetField('cooldownAfterMessages')} title={`Padrão: ${DEFAULTS.cooldownAfterMessages}`}>
+                    <RotateCcw className="size-3" />
+                  </Button>
+                </div>
               </div>
               <Slider value={[settings.cooldownAfterMessages]} onValueChange={([v]) => updateSetting('cooldownAfterMessages', v)} min={10} max={100} step={5} />
             </div>
             <div className="space-y-2">
-              <div className="flex justify-between">
+              <div className="flex justify-between items-center">
                 <Label className="text-sm">Duração do cooldown</Label>
-                <span className="text-sm font-semibold">{settings.cooldownMinutes} minutos</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-semibold">{settings.cooldownMinutes} min</span>
+                  <Button variant="ghost" size="icon" className="size-6 text-muted-foreground hover:text-amber-600" onClick={() => resetField('cooldownMinutes')} title={`Padrão: ${DEFAULTS.cooldownMinutes} min`}>
+                    <RotateCcw className="size-3" />
+                  </Button>
+                </div>
               </div>
               <Slider value={[settings.cooldownMinutes]} onValueChange={([v]) => updateSetting('cooldownMinutes', v)} min={5} max={120} step={5} />
             </div>
@@ -3358,8 +3390,66 @@ function AntiBanTab() {
                 <p className="font-medium text-sm">Parada em Aviso</p>
                 <p className="text-xs text-muted-foreground">Para se detectar aviso do WhatsApp</p>
               </div>
-              <Switch checked={settings.stopOnWarning} onCheckedChange={v => updateSetting('stopOnWarning', v)} />
+              <div className="flex items-center gap-2">
+                <Switch checked={settings.stopOnWarning} onCheckedChange={v => updateSetting('stopOnWarning', v)} />
+                <Button variant="ghost" size="icon" className="size-6 text-muted-foreground hover:text-amber-600" onClick={() => resetField('stopOnWarning')} title="Restaurar padrão">
+                  <RotateCcw className="size-3" />
+                </Button>
+              </div>
             </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Sending Window */}
+      <Card className="shadow-lg border-0 hover:shadow-xl transition-all duration-200">
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <div className="flex size-8 items-center justify-center rounded-lg bg-violet-100 dark:bg-violet-900/30">
+              <Clock className="size-4 text-violet-600" />
+            </div>
+            <CardTitle className="text-lg">Janela de Envio</CardTitle>
+          </div>
+          <CardDescription>Defina o horário permitido para envio de mensagens</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="space-y-2">
+              <div className="flex justify-between items-center">
+                <Label className="text-sm">Início (hora)</Label>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-semibold">{settings.sendingWindowStart}h</span>
+                  <Button variant="ghost" size="icon" className="size-6 text-muted-foreground hover:text-amber-600" onClick={() => resetField('sendingWindowStart')} title={`Padrão: ${DEFAULTS.sendingWindowStart}h`}>
+                    <RotateCcw className="size-3" />
+                  </Button>
+                </div>
+              </div>
+              <Slider value={[settings.sendingWindowStart]} onValueChange={([v]) => updateSetting('sendingWindowStart', v)} min={0} max={23} step={1} />
+            </div>
+            <div className="space-y-2">
+              <div className="flex justify-between items-center">
+                <Label className="text-sm">Término (hora)</Label>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-semibold">{settings.sendingWindowEnd}h</span>
+                  <Button variant="ghost" size="icon" className="size-6 text-muted-foreground hover:text-amber-600" onClick={() => resetField('sendingWindowEnd')} title={`Padrão: ${DEFAULTS.sendingWindowEnd}h`}>
+                    <RotateCcw className="size-3" />
+                  </Button>
+                </div>
+              </div>
+              <Slider value={[settings.sendingWindowEnd]} onValueChange={([v]) => updateSetting('sendingWindowEnd', v)} min={1} max={24} step={1} />
+            </div>
+          </div>
+          <div className="p-4 bg-muted/50 rounded-xl">
+            <div className="flex items-center gap-1 mb-2">
+              {Array.from({ length: 24 }, (_, i) => (
+                <div
+                  key={i}
+                  className={`flex-1 h-6 rounded-sm ${i >= settings.sendingWindowStart && i < settings.sendingWindowEnd ? 'bg-emerald-500' : 'bg-zinc-300 dark:bg-zinc-700'}`}
+                  title={`${i}h`}
+                />
+              ))}
+            </div>
+            <p className="text-xs text-muted-foreground">Envio permitido das {settings.sendingWindowStart}h às {settings.sendingWindowEnd}h (fuso: {settings.timezone})</p>
           </div>
         </CardContent>
       </Card>
@@ -3373,7 +3463,7 @@ function AntiBanTab() {
             </div>
             <CardTitle className="text-lg">Dicas Anti-Ban</CardTitle>
           </div>
-          <CardDescription>Boas práticas para evitar bloqueios</CardDescription>
+          <CardDescription>Boas práticas para minimizar bloqueios</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
