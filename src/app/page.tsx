@@ -2346,10 +2346,10 @@ function CampanhasTab() {
                     <div key={idx} className="relative border rounded-xl p-4 space-y-3 bg-muted/20">
                       <div className="flex items-center gap-2">
                         <span className="flex items-center justify-center size-7 rounded-full bg-emerald-600 text-white text-xs font-bold">{idx + 1}</span>
-                        <span className="text-sm font-semibold">Etapa {idx + 1}</span>
+                        <span className="text-sm font-semibold">Mensagem {idx + 1}</span>
                         {idx > 0 && (
                           <div className="flex items-center gap-1 text-xs text-muted-foreground ml-2">
-                            <Clock className="size-3" /> {step.delayMinutes}min após etapa anterior
+                            <Clock className="size-3" /> {step.delayMinutes}min após mensagem anterior
                           </div>
                         )}
                         {newCampaign.steps.length > 1 && (
@@ -2358,16 +2358,16 @@ function CampanhasTab() {
                           </Button>
                         )}
                       </div>
-                      <Textarea placeholder="Mensagem principal da etapa..." value={step.content} onChange={e => updateStep(idx, 'content', e.target.value)} rows={2} />
+                      <Textarea placeholder="Texto da mensagem..." value={step.content} onChange={e => updateStep(idx, 'content', e.target.value)} rows={2} />
                       {idx > 0 && (
                         <div className="mt-2">
-                          <Label className="text-xs">Atraso antes desta etapa (minutos)</Label>
+                          <Label className="text-xs">Atraso antes desta mensagem (minutos)</Label>
                           <Input type="number" min={0} value={step.delayMinutes} onChange={e => updateStep(idx, 'delayMinutes', parseInt(e.target.value) || 0)} className="mt-1 w-40" />
                         </div>
                       )}
                       {/* Media Upload for step */}
                       <div className="space-y-2">
-                        <Label className="text-xs flex items-center gap-1"><ImageIcon className="size-3" /> Mídia da etapa (opcional)</Label>
+                        <Label className="text-xs flex items-center gap-1"><ImageIcon className="size-3" /> Mídia da mensagem (opcional)</Label>
                         <div className="flex gap-2">
                           <Select value={step.mediatype} onValueChange={v => updateStep(idx, 'mediatype', v)}>
                             <SelectTrigger className="w-32 h-8 text-xs"><SelectValue placeholder="Tipo" /></SelectTrigger>
@@ -2394,7 +2394,7 @@ function CampanhasTab() {
                       <div className="space-y-2 pt-2 border-t">
                         <div className="flex items-center justify-between">
                           <Label className="text-xs font-semibold flex items-center gap-1">
-                            <Shuffle className="size-3" /> Variações da Etapa {idx + 1}
+                            <Shuffle className="size-3" /> Variações da Mensagem {idx + 1}
                           </Label>
                           <Button variant="ghost" size="sm" className="h-6 text-xs text-emerald-600 gap-1" onClick={() => addVariation(idx)}>
                             <Plus className="size-3" /> Variação
@@ -2445,7 +2445,7 @@ function CampanhasTab() {
                     </div>
                   ))}
                   <Button variant="outline" size="sm" onClick={addStep} className="gap-1.5 w-full">
-                    <Plus className="size-3.5" /> Adicionar Etapa
+                    <Plus className="size-3.5" /> Adicionar Mensagem
                   </Button>
                 </div>
 
@@ -2578,7 +2578,7 @@ function CampanhasTab() {
               </div>
               {selectedCampaign.sequenceSteps?.length > 0 && (
                 <div className="space-y-2">
-                  <Label className="text-sm font-semibold">Etapas & Variações</Label>
+                  <Label className="text-sm font-semibold">Mensagens & Variações</Label>
                   {selectedCampaign.sequenceSteps.sort((a, b) => a.stepOrder - b.stepOrder).map((step, idx) => {
                     let parsedVars: Array<{content: string; mediaUrl?: string; mediatype?: string}> = []
                     try { parsedVars = JSON.parse(step.variations || '[]') } catch { /* ignore */ }
@@ -2663,10 +2663,10 @@ function CampanhasTab() {
                   <div key={idx} className="relative border rounded-xl p-4 space-y-3 bg-muted/20">
                     <div className="flex items-center gap-2">
                       <span className="flex items-center justify-center size-7 rounded-full bg-emerald-600 text-white text-xs font-bold">{idx + 1}</span>
-                      <span className="text-sm font-semibold">Etapa {idx + 1}</span>
+                      <span className="text-sm font-semibold">Mensagem {idx + 1}</span>
                       {idx > 0 && (
                         <div className="flex items-center gap-1 text-xs text-muted-foreground ml-2">
-                          <Clock className="size-3" /> {step.delayMinutes}min após etapa anterior
+                          <Clock className="size-3" /> {step.delayMinutes}min após mensagem anterior
                         </div>
                       )}
                       {editForm.steps.length > 1 && (
@@ -2675,16 +2675,16 @@ function CampanhasTab() {
                         </Button>
                       )}
                     </div>
-                    <Textarea placeholder="Mensagem principal da etapa..." value={step.content} onChange={e => editUpdateStep(idx, 'content', e.target.value)} rows={2} />
+                    <Textarea placeholder="Texto da mensagem..." value={step.content} onChange={e => editUpdateStep(idx, 'content', e.target.value)} rows={2} />
                     {idx > 0 && (
                       <div className="mt-2">
-                        <Label className="text-xs">Atraso antes desta etapa (minutos)</Label>
+                        <Label className="text-xs">Atraso antes desta mensagem (minutos)</Label>
                         <Input type="number" min={0} value={step.delayMinutes} onChange={e => editUpdateStep(idx, 'delayMinutes', parseInt(e.target.value) || 0)} className="mt-1 w-40" />
                       </div>
                     )}
                     {/* Media Upload for step */}
                     <div className="space-y-2">
-                      <Label className="text-xs flex items-center gap-1"><ImageIcon className="size-3" /> Mídia da etapa (opcional)</Label>
+                      <Label className="text-xs flex items-center gap-1"><ImageIcon className="size-3" /> Mídia da mensagem (opcional)</Label>
                       <div className="flex gap-2">
                         <Select value={step.mediatype} onValueChange={v => editUpdateStep(idx, 'mediatype', v)}>
                           <SelectTrigger className="w-32 h-8 text-xs"><SelectValue placeholder="Tipo" /></SelectTrigger>
@@ -2709,7 +2709,7 @@ function CampanhasTab() {
                     <div className="space-y-2 pt-2 border-t">
                       <div className="flex items-center justify-between">
                         <Label className="text-xs font-semibold flex items-center gap-1">
-                          <Shuffle className="size-3" /> Variações da Etapa {idx + 1}
+                          <Shuffle className="size-3" /> Variações da Mensagem {idx + 1}
                         </Label>
                         <Button variant="ghost" size="sm" className="h-6 text-xs text-emerald-600 gap-1" onClick={() => editAddVariation(idx)}>
                           <Plus className="size-3" /> Variação
@@ -2747,7 +2747,7 @@ function CampanhasTab() {
                   </div>
                 ))}
                 <Button variant="outline" size="sm" onClick={editAddStep} className="gap-1.5 w-full">
-                  <Plus className="size-3.5" /> Adicionar Etapa
+                  <Plus className="size-3.5" /> Adicionar Mensagem
                 </Button>
               </div>
               {/* Anti-Ban Section */}
