@@ -10,7 +10,7 @@ export async function POST() {
   try {
     const chips = await db.chip.findMany({
       where: {
-        wireguardIp: { not: null },
+        wireguardIp: { isEmpty: false },
         wireguardPubKey: { not: null },
       },
       select: {
