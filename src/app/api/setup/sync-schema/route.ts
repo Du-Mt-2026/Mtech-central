@@ -101,6 +101,13 @@ export async function POST(req: NextRequest) {
       } else {
         results.push('Chip: lastVerifiedResetAt já existe')
       }
+
+      if (!chipColumnNames.includes('cooldownUntil')) {
+        await db.$executeRawUnsafe(`ALTER TABLE "Chip" ADD COLUMN IF NOT EXISTS "cooldownUntil" TIMESTAMP(3)`)
+        results.push('Chip: adicionada coluna cooldownUntil')
+      } else {
+        results.push('Chip: cooldownUntil já existe')
+      }
     } catch (chipError: any) {
       results.push(`Erro na migração Chip: ${chipError.message}`)
     }
