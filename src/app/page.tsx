@@ -3098,6 +3098,17 @@ function AntiBanTab() {
     finally { setSaving(false) }
   }
 
+  const resetSection = async (section: string, sectionLabel: string) => {
+    if (!settings) return
+    setSaving(true)
+    try {
+      const res = await fetch('/api/antiban', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ _resetSection: section }) })
+      setSettings(await res.json())
+      toast.success(`${sectionLabel} restaurado para o padrão!`)
+    } catch { toast.error('Erro ao restaurar seção') }
+    finally { setSaving(false) }
+  }
+
   const resetToDefaults = async () => {
     setResetting(true)
     try {
@@ -3172,13 +3183,21 @@ function AntiBanTab() {
       {/* Typing Simulation */}
       <Card className="shadow-lg border-0 hover:shadow-xl transition-all duration-200">
         <CardHeader>
-          <div className="flex items-center gap-2">
-            <div className="flex size-8 items-center justify-center rounded-lg bg-amber-100 dark:bg-amber-900/30">
-              <Type className="size-4 text-amber-600" />
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="flex size-8 items-center justify-center rounded-lg bg-amber-100 dark:bg-amber-900/30">
+                <Type className="size-4 text-amber-600" />
+              </div>
+              <div>
+                <CardTitle className="text-lg">Simulação de Digitação</CardTitle>
+                <CardDescription>Simule o comportamento humano de digitação</CardDescription>
+              </div>
             </div>
-            <CardTitle className="text-lg">Simulação de Digitação</CardTitle>
+            <Button variant="ghost" size="sm" className="text-xs text-muted-foreground hover:text-amber-600 gap-1" onClick={() => resetSection('typing', 'Simulação de Digitação')} disabled={saving}>
+              <RotateCcw className="size-3" />
+              Restaurar
+            </Button>
           </div>
-          <CardDescription>Simule o comportamento humano de digitação</CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
           <div className="space-y-4">
@@ -3225,11 +3244,17 @@ function AntiBanTab() {
       {/* Message Interval */}
       <Card className="shadow-lg border-0 hover:shadow-xl transition-all duration-200">
         <CardHeader>
-          <div className="flex items-center gap-2">
-            <div className="flex size-8 items-center justify-center rounded-lg bg-sky-100 dark:bg-sky-900/30">
-              <Timer className="size-4 text-sky-600" />
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="flex size-8 items-center justify-center rounded-lg bg-sky-100 dark:bg-sky-900/30">
+                <Timer className="size-4 text-sky-600" />
+              </div>
+              <CardTitle className="text-lg">Intervalo entre Mensagens</CardTitle>
             </div>
-            <CardTitle className="text-lg">Intervalo entre Mensagens</CardTitle>
+            <Button variant="ghost" size="sm" className="text-xs text-muted-foreground hover:text-sky-600 gap-1" onClick={() => resetSection('interval', 'Intervalo entre Mensagens')} disabled={saving}>
+              <RotateCcw className="size-3" />
+              Restaurar
+            </Button>
           </div>
         </CardHeader>
         <CardContent className="space-y-6">
@@ -3290,8 +3315,9 @@ function AntiBanTab() {
             <div className="flex items-center gap-2">
               <span className="text-xs text-muted-foreground">{settings.warmingEnabled ? 'Ativado' : 'Desativado'}</span>
               <Switch checked={settings.warmingEnabled} onCheckedChange={v => updateSetting('warmingEnabled', v)} />
-              <Button variant="ghost" size="icon" className="size-6 text-muted-foreground hover:text-amber-600" onClick={() => resetField('warmingEnabled')} title="Restaurar padrão">
+              <Button variant="ghost" size="sm" className="text-xs text-muted-foreground hover:text-orange-600 gap-1" onClick={() => resetSection('warming', 'Aquecimento Progressivo')} disabled={saving}>
                 <RotateCcw className="size-3" />
+                Restaurar
               </Button>
             </div>
           </div>
@@ -3340,11 +3366,17 @@ function AntiBanTab() {
       {/* Cooldown & Limits */}
       <Card className="shadow-lg border-0 hover:shadow-xl transition-all duration-200">
         <CardHeader>
-          <div className="flex items-center gap-2">
-            <div className="flex size-8 items-center justify-center rounded-lg bg-rose-100 dark:bg-rose-900/30">
-              <ShieldAlert className="size-4 text-rose-600" />
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="flex size-8 items-center justify-center rounded-lg bg-rose-100 dark:bg-rose-900/30">
+                <ShieldAlert className="size-4 text-rose-600" />
+              </div>
+              <CardTitle className="text-lg">Cooldown & Limites</CardTitle>
             </div>
-            <CardTitle className="text-lg">Cooldown & Limites</CardTitle>
+            <Button variant="ghost" size="sm" className="text-xs text-muted-foreground hover:text-rose-600 gap-1" onClick={() => resetSection('cooldown', 'Cooldown & Limites')} disabled={saving}>
+              <RotateCcw className="size-3" />
+              Restaurar
+            </Button>
           </div>
         </CardHeader>
         <CardContent className="space-y-6">
@@ -3404,13 +3436,21 @@ function AntiBanTab() {
       {/* Sending Window */}
       <Card className="shadow-lg border-0 hover:shadow-xl transition-all duration-200">
         <CardHeader>
-          <div className="flex items-center gap-2">
-            <div className="flex size-8 items-center justify-center rounded-lg bg-violet-100 dark:bg-violet-900/30">
-              <Clock className="size-4 text-violet-600" />
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="flex size-8 items-center justify-center rounded-lg bg-violet-100 dark:bg-violet-900/30">
+                <Clock className="size-4 text-violet-600" />
+              </div>
+              <div>
+                <CardTitle className="text-lg">Janela de Envio</CardTitle>
+                <CardDescription>Defina o horário permitido para envio de mensagens</CardDescription>
+              </div>
             </div>
-            <CardTitle className="text-lg">Janela de Envio</CardTitle>
+            <Button variant="ghost" size="sm" className="text-xs text-muted-foreground hover:text-violet-600 gap-1" onClick={() => resetSection('sendingWindow', 'Janela de Envio')} disabled={saving}>
+              <RotateCcw className="size-3" />
+              Restaurar
+            </Button>
           </div>
-          <CardDescription>Defina o horário permitido para envio de mensagens</CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

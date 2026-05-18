@@ -50,6 +50,45 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json(updated)
     }
 
+    // Reset a whole section to defaults
+    if (body._resetSection) {
+      const sectionFields: Record<string, string[]> = {
+        typing: ['typingMinDelay', 'typingMaxDelay'],
+        interval: ['messageIntervalMin', 'messageIntervalMax'],
+        warming: ['warmingEnabled', 'warmingDays'],
+        cooldown: ['dailyLimitPerChip', 'cooldownAfterMessages', 'cooldownMinutes', 'stopOnWarning'],
+        sendingWindow: ['sendingWindowStart', 'sendingWindowEnd', 'timezone'],
+      }
+      const fieldDefaults: Record<string, unknown> = {
+        typingMinDelay: 3000,
+        typingMaxDelay: 15000,
+        messageIntervalMin: 30,
+        messageIntervalMax: 90,
+        dailyLimitPerChip: 200,
+        warmingEnabled: true,
+        warmingDays: 7,
+        cooldownMinutes: 30,
+        cooldownAfterMessages: 50,
+        stopOnWarning: true,
+        sendingWindowStart: 8,
+        sendingWindowEnd: 21,
+        timezone: 'America/Sao_Paulo',
+      }
+      const section = body._resetSection as string
+      if (!(section in sectionFields)) {
+        return NextResponse.json({ error: 'Seção desconhecida' }, { status: 400 })
+      }
+      const resetData: Record<string, unknown> = {}
+      for (const field of sectionFields[section]) {
+        resetData[field] = fieldDefaults[field]
+      }
+      const updated = await db.antiBanSettings.update({
+        where: { id: settings.id },
+        data: resetData,
+      })
+      return NextResponse.json(updated)
+    }
+
     // Reset single field to default
     if (body._resetField) {
       const fieldDefaults: Record<string, unknown> = {
