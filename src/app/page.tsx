@@ -3200,30 +3200,46 @@ function AntiBanTab() {
           </div>
         </CardHeader>
         <CardContent className="space-y-6">
-          <div className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="space-y-2">
               <div className="flex justify-between items-center">
-                <Label className="text-sm">Atraso mínimo (ms)</Label>
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-semibold">{settings.typingMinDelay}ms</span>
-                  <Button variant="ghost" size="icon" className="size-6 text-muted-foreground hover:text-amber-600" onClick={() => resetField('typingMinDelay')} title={`Padrão: ${DEFAULTS.typingMinDelay}ms`}>
-                    <RotateCcw className="size-3" />
-                  </Button>
-                </div>
+                <Label className="text-sm">Atraso mínimo</Label>
+                <Button variant="ghost" size="icon" className="size-6 text-muted-foreground hover:text-amber-600" onClick={() => resetField('typingMinDelay')} title={`Padrão: ${DEFAULTS.typingMinDelay}ms`}>
+                  <RotateCcw className="size-3" />
+                </Button>
               </div>
-              <Slider value={[settings.typingMinDelay]} onValueChange={([v]) => updateSetting('typingMinDelay', v)} min={1000} max={10000} step={100} />
+              <div className="flex items-center gap-2">
+                <Input
+                  type="number"
+                  min={1000}
+                  max={10000}
+                  step={100}
+                  value={settings.typingMinDelay}
+                  onChange={e => updateSetting('typingMinDelay', Math.max(1000, parseInt(e.target.value) || 1000))}
+                  className="w-28"
+                />
+                <span className="text-xs text-muted-foreground whitespace-nowrap">ms</span>
+              </div>
             </div>
             <div className="space-y-2">
               <div className="flex justify-between items-center">
-                <Label className="text-sm">Atraso máximo (ms)</Label>
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-semibold">{settings.typingMaxDelay}ms</span>
-                  <Button variant="ghost" size="icon" className="size-6 text-muted-foreground hover:text-amber-600" onClick={() => resetField('typingMaxDelay')} title={`Padrão: ${DEFAULTS.typingMaxDelay}ms`}>
-                    <RotateCcw className="size-3" />
-                  </Button>
-                </div>
+                <Label className="text-sm">Atraso máximo</Label>
+                <Button variant="ghost" size="icon" className="size-6 text-muted-foreground hover:text-amber-600" onClick={() => resetField('typingMaxDelay')} title={`Padrão: ${DEFAULTS.typingMaxDelay}ms`}>
+                  <RotateCcw className="size-3" />
+                </Button>
               </div>
-              <Slider value={[settings.typingMaxDelay]} onValueChange={([v]) => updateSetting('typingMaxDelay', v)} min={2000} max={30000} step={100} />
+              <div className="flex items-center gap-2">
+                <Input
+                  type="number"
+                  min={2000}
+                  max={30000}
+                  step={100}
+                  value={settings.typingMaxDelay}
+                  onChange={e => updateSetting('typingMaxDelay', Math.max(2000, parseInt(e.target.value) || 2000))}
+                  className="w-28"
+                />
+                <span className="text-xs text-muted-foreground whitespace-nowrap">ms</span>
+              </div>
             </div>
           </div>
           <div className="p-4 bg-muted/50 rounded-xl">
@@ -3258,30 +3274,46 @@ function AntiBanTab() {
           </div>
         </CardHeader>
         <CardContent className="space-y-6">
-          <div className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="space-y-2">
               <div className="flex justify-between items-center">
-                <Label className="text-sm">Intervalo mínimo (segundos)</Label>
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-semibold">{settings.messageIntervalMin}s</span>
-                  <Button variant="ghost" size="icon" className="size-6 text-muted-foreground hover:text-amber-600" onClick={() => resetField('messageIntervalMin')} title={`Padrão: ${DEFAULTS.messageIntervalMin}s`}>
-                    <RotateCcw className="size-3" />
-                  </Button>
-                </div>
+                <Label className="text-sm">Intervalo mínimo</Label>
+                <Button variant="ghost" size="icon" className="size-6 text-muted-foreground hover:text-amber-600" onClick={() => resetField('messageIntervalMin')} title={`Padrão: ${DEFAULTS.messageIntervalMin}s`}>
+                  <RotateCcw className="size-3" />
+                </Button>
               </div>
-              <Slider value={[settings.messageIntervalMin]} onValueChange={([v]) => updateSetting('messageIntervalMin', v)} min={5} max={120} step={5} />
+              <div className="flex items-center gap-2">
+                <Input
+                  type="number"
+                  min={5}
+                  max={120}
+                  step={5}
+                  value={settings.messageIntervalMin}
+                  onChange={e => updateSetting('messageIntervalMin', Math.max(5, parseInt(e.target.value) || 5))}
+                  className="w-28"
+                />
+                <span className="text-xs text-muted-foreground whitespace-nowrap">seg</span>
+              </div>
             </div>
             <div className="space-y-2">
               <div className="flex justify-between items-center">
-                <Label className="text-sm">Intervalo máximo (segundos)</Label>
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-semibold">{settings.messageIntervalMax}s</span>
-                  <Button variant="ghost" size="icon" className="size-6 text-muted-foreground hover:text-amber-600" onClick={() => resetField('messageIntervalMax')} title={`Padrão: ${DEFAULTS.messageIntervalMax}s`}>
-                    <RotateCcw className="size-3" />
-                  </Button>
-                </div>
+                <Label className="text-sm">Intervalo máximo</Label>
+                <Button variant="ghost" size="icon" className="size-6 text-muted-foreground hover:text-amber-600" onClick={() => resetField('messageIntervalMax')} title={`Padrão: ${DEFAULTS.messageIntervalMax}s`}>
+                  <RotateCcw className="size-3" />
+                </Button>
               </div>
-              <Slider value={[settings.messageIntervalMax]} onValueChange={([v]) => updateSetting('messageIntervalMax', v)} min={10} max={300} step={5} />
+              <div className="flex items-center gap-2">
+                <Input
+                  type="number"
+                  min={10}
+                  max={300}
+                  step={5}
+                  value={settings.messageIntervalMax}
+                  onChange={e => updateSetting('messageIntervalMax', Math.max(10, parseInt(e.target.value) || 10))}
+                  className="w-28"
+                />
+                <span className="text-xs text-muted-foreground whitespace-nowrap">seg</span>
+              </div>
             </div>
           </div>
           <div className="p-4 bg-muted/50 rounded-xl">
@@ -3384,38 +3416,62 @@ function AntiBanTab() {
             <div className="space-y-2">
               <div className="flex justify-between items-center">
                 <Label className="text-sm">Limite diário por chip</Label>
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-semibold">{settings.dailyLimitPerChip} msgs</span>
-                  <Button variant="ghost" size="icon" className="size-6 text-muted-foreground hover:text-amber-600" onClick={() => resetField('dailyLimitPerChip')} title={`Padrão: ${DEFAULTS.dailyLimitPerChip}`}>
-                    <RotateCcw className="size-3" />
-                  </Button>
-                </div>
+                <Button variant="ghost" size="icon" className="size-6 text-muted-foreground hover:text-amber-600" onClick={() => resetField('dailyLimitPerChip')} title={`Padrão: ${DEFAULTS.dailyLimitPerChip}`}>
+                  <RotateCcw className="size-3" />
+                </Button>
               </div>
-              <Slider value={[settings.dailyLimitPerChip]} onValueChange={([v]) => updateSetting('dailyLimitPerChip', v)} min={50} max={500} step={10} />
+              <div className="flex items-center gap-2">
+                <Input
+                  type="number"
+                  min={50}
+                  max={500}
+                  step={10}
+                  value={settings.dailyLimitPerChip}
+                  onChange={e => updateSetting('dailyLimitPerChip', Math.max(50, parseInt(e.target.value) || 50))}
+                  className="w-28"
+                />
+                <span className="text-xs text-muted-foreground whitespace-nowrap">msgs</span>
+              </div>
             </div>
             <div className="space-y-2">
               <div className="flex justify-between items-center">
                 <Label className="text-sm">Cooldown após</Label>
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-semibold">{settings.cooldownAfterMessages} msgs</span>
-                  <Button variant="ghost" size="icon" className="size-6 text-muted-foreground hover:text-amber-600" onClick={() => resetField('cooldownAfterMessages')} title={`Padrão: ${DEFAULTS.cooldownAfterMessages}`}>
-                    <RotateCcw className="size-3" />
-                  </Button>
-                </div>
+                <Button variant="ghost" size="icon" className="size-6 text-muted-foreground hover:text-amber-600" onClick={() => resetField('cooldownAfterMessages')} title={`Padrão: ${DEFAULTS.cooldownAfterMessages}`}>
+                  <RotateCcw className="size-3" />
+                </Button>
               </div>
-              <Slider value={[settings.cooldownAfterMessages]} onValueChange={([v]) => updateSetting('cooldownAfterMessages', v)} min={10} max={100} step={5} />
+              <div className="flex items-center gap-2">
+                <Input
+                  type="number"
+                  min={10}
+                  max={100}
+                  step={5}
+                  value={settings.cooldownAfterMessages}
+                  onChange={e => updateSetting('cooldownAfterMessages', Math.max(10, parseInt(e.target.value) || 10))}
+                  className="w-28"
+                />
+                <span className="text-xs text-muted-foreground whitespace-nowrap">msgs</span>
+              </div>
             </div>
             <div className="space-y-2">
               <div className="flex justify-between items-center">
                 <Label className="text-sm">Duração do cooldown</Label>
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-semibold">{settings.cooldownMinutes} min</span>
-                  <Button variant="ghost" size="icon" className="size-6 text-muted-foreground hover:text-amber-600" onClick={() => resetField('cooldownMinutes')} title={`Padrão: ${DEFAULTS.cooldownMinutes} min`}>
-                    <RotateCcw className="size-3" />
-                  </Button>
-                </div>
+                <Button variant="ghost" size="icon" className="size-6 text-muted-foreground hover:text-amber-600" onClick={() => resetField('cooldownMinutes')} title={`Padrão: ${DEFAULTS.cooldownMinutes} min`}>
+                  <RotateCcw className="size-3" />
+                </Button>
               </div>
-              <Slider value={[settings.cooldownMinutes]} onValueChange={([v]) => updateSetting('cooldownMinutes', v)} min={5} max={120} step={5} />
+              <div className="flex items-center gap-2">
+                <Input
+                  type="number"
+                  min={5}
+                  max={120}
+                  step={5}
+                  value={settings.cooldownMinutes}
+                  onChange={e => updateSetting('cooldownMinutes', Math.max(5, parseInt(e.target.value) || 5))}
+                  className="w-28"
+                />
+                <span className="text-xs text-muted-foreground whitespace-nowrap">min</span>
+              </div>
             </div>
             <div className="flex items-center justify-between p-4 bg-muted/50 rounded-xl">
               <div>
@@ -3457,26 +3513,42 @@ function AntiBanTab() {
             <div className="space-y-2">
               <div className="flex justify-between items-center">
                 <Label className="text-sm">Início (hora)</Label>
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-semibold">{settings.sendingWindowStart}h</span>
-                  <Button variant="ghost" size="icon" className="size-6 text-muted-foreground hover:text-amber-600" onClick={() => resetField('sendingWindowStart')} title={`Padrão: ${DEFAULTS.sendingWindowStart}h`}>
-                    <RotateCcw className="size-3" />
-                  </Button>
-                </div>
+                <Button variant="ghost" size="icon" className="size-6 text-muted-foreground hover:text-amber-600" onClick={() => resetField('sendingWindowStart')} title={`Padrão: ${DEFAULTS.sendingWindowStart}h`}>
+                  <RotateCcw className="size-3" />
+                </Button>
               </div>
-              <Slider value={[settings.sendingWindowStart]} onValueChange={([v]) => updateSetting('sendingWindowStart', v)} min={0} max={23} step={1} />
+              <div className="flex items-center gap-2">
+                <Input
+                  type="number"
+                  min={0}
+                  max={23}
+                  step={1}
+                  value={settings.sendingWindowStart}
+                  onChange={e => updateSetting('sendingWindowStart', Math.min(23, Math.max(0, parseInt(e.target.value) || 0)))}
+                  className="w-28"
+                />
+                <span className="text-xs text-muted-foreground whitespace-nowrap">h</span>
+              </div>
             </div>
             <div className="space-y-2">
               <div className="flex justify-between items-center">
                 <Label className="text-sm">Término (hora)</Label>
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-semibold">{settings.sendingWindowEnd}h</span>
-                  <Button variant="ghost" size="icon" className="size-6 text-muted-foreground hover:text-amber-600" onClick={() => resetField('sendingWindowEnd')} title={`Padrão: ${DEFAULTS.sendingWindowEnd}h`}>
-                    <RotateCcw className="size-3" />
-                  </Button>
-                </div>
+                <Button variant="ghost" size="icon" className="size-6 text-muted-foreground hover:text-amber-600" onClick={() => resetField('sendingWindowEnd')} title={`Padrão: ${DEFAULTS.sendingWindowEnd}h`}>
+                  <RotateCcw className="size-3" />
+                </Button>
               </div>
-              <Slider value={[settings.sendingWindowEnd]} onValueChange={([v]) => updateSetting('sendingWindowEnd', v)} min={1} max={24} step={1} />
+              <div className="flex items-center gap-2">
+                <Input
+                  type="number"
+                  min={1}
+                  max={24}
+                  step={1}
+                  value={settings.sendingWindowEnd}
+                  onChange={e => updateSetting('sendingWindowEnd', Math.min(24, Math.max(1, parseInt(e.target.value) || 1)))}
+                  className="w-28"
+                />
+                <span className="text-xs text-muted-foreground whitespace-nowrap">h</span>
+              </div>
             </div>
           </div>
           <div className="p-4 bg-muted/50 rounded-xl">
