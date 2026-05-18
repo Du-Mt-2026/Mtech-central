@@ -499,6 +499,10 @@ function ChipsTab() {
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
   const [proxyForm, setProxyForm] = useState({ socks5Host: '', socks5Port: 1080, socks5User: '', socks5Pass: '' })
 
+  // Proxy test state
+  const [proxyTesting, setProxyTesting] = useState(false)
+  const [proxyTestResult, setProxyTestResult] = useState<{ reachable: boolean; socks5Valid: boolean; message: string } | null>(null)
+
   // WhatsApp QR Code integration state
   const [whatsappQr, setWhatsappQr] = useState<string | null>(null)
   const [qrLoading, setQrLoading] = useState(false)
@@ -817,10 +821,53 @@ function ChipsTab() {
     } catch { toast.error('Erro ao buscar configuração') }
   }
 
-  const openProxyDialog = (chip: Chip) => {
+  const openProxyDialog = async (chip: Chip) => {
     setSelectedChip(chip)
-    setProxyForm({ socks5Host: chip.socks5Host, socks5Port: chip.socks5Port, socks5User: chip.socks5User, socks5Pass: chip.socks5Pass })
+    setProxyTestResult(null)
+    setProxyForm({ socks5Host: chip.socks5Host, socks5Port: chip.socks5Port || chip.socksPort || 8080, socks5User: chip.socks5User, socks5Pass: chip.socks5Pass })
+    // Try to load WireGuard config too
+    try {
+      const res = await fetch(`/api/wireguard/${chip.id}`)
+      if (res.ok) {
+        const data = await res.json()
+        setSelectedChipConfig(data)
+        // Generate QR code
+        try {
+          const url = await QRCode.toDataURL(data.config, { width: 256, margin: 2 })
+          setQrCodeUrl(url)
+        } catch { setQrCodeUrl('') }
+      } else {
+        setSelectedChipConfig(null)
+        setQrCodeUrl('')
+      }
+    } catch {
+      setSelectedChipConfig(null)
+      setQrCodeUrl('')
+    }
     setProxyDialogOpen(true)
+  }
+
+  const testProxyConnection = async () => {
+    if (!selectedChip) return
+    setProxyTesting(true)
+    setProxyTestResult(null)
+    try {
+      const res = await fetch('/api/proxy/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chipId: selectedChip.id }),
+      })
+      const data = await res.json()
+      setProxyTestResult({
+        reachable: data.reachable || false,
+        socks5Valid: data.socks5Valid || false,
+        message: data.message || data.error || 'Resultado desconhecido',
+      })
+    } catch (err: unknown) {
+      setProxyTestResult({ reachable: false, socks5Valid: false, message: (err as Error).message || 'Erro ao testar proxy' })
+    } finally {
+      setProxyTesting(false)
+    }
   }
 
   const saveProxy = async () => {
@@ -1103,10 +1150,7 @@ function ChipsTab() {
                         </Button>
                       )}
                       <Button variant="outline" size="sm" className="gap-1.5 text-xs" onClick={() => openProxyDialog(chip)}>
-                        <Globe className="size-3.5" /> Proxy
-                      </Button>
-                      <Button variant="outline" size="sm" className="gap-1.5 text-xs" onClick={() => fetchConfig(chip.id)}>
-                        <Lock className="size-3.5" /> WireGuard
+                        <Globe className="size-3.5" /> Conectar Proxy
                       </Button>
                       {chip.evolutionInstance && (
                         <Button variant="outline" size="sm" className="gap-1.5 text-xs" onClick={async () => {
@@ -1310,108 +1354,250 @@ function ChipsTab() {
         </DialogContent>
       </Dialog>
 
-      {/* Proxy Config Dialog */}
-      <Dialog open={proxyDialogOpen} onOpenChange={setProxyDialogOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Globe className="size-5 text-emerald-500" /> Configurar Proxy SOCKS5
-            </DialogTitle>
-            <DialogDescription>Configure o proxy SOCKS5 para rotacionar IPs</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label>Host</Label>
-              <Input placeholder="Ex: 192.168.1.100" value={proxyForm.socks5Host} onChange={e => setProxyForm(p => ({ ...p, socks5Host: e.target.value }))} />
-            </div>
-            <div className="space-y-2">
-              <Label>Porta</Label>
-              <Input type="number" placeholder="1080" value={proxyForm.socks5Port} onChange={e => setProxyForm(p => ({ ...p, socks5Port: parseInt(e.target.value) || 0 }))} />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-2">
-                <Label>Usuário</Label>
-                <Input placeholder="Opcional" value={proxyForm.socks5User} onChange={e => setProxyForm(p => ({ ...p, socks5User: e.target.value }))} />
-              </div>
-              <div className="space-y-2">
-                <Label>Senha</Label>
-                <Input type="password" placeholder="Opcional" value={proxyForm.socks5Pass} onChange={e => setProxyForm(p => ({ ...p, socks5Pass: e.target.value }))} />
-              </div>
-            </div>
-            <div className="p-3 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-800">
-              <p className="text-xs text-amber-700 dark:text-amber-400 flex items-start gap-2">
-                <Info className="size-4 shrink-0 mt-0.5" />
-                Modo Avançado: Use proxy SOCKS5 para rotacionar IPs com múltiplos chips e evitar bloqueios.
-              </p>
-            </div>
-          </div>
-          <DialogFooter>
-            <DialogClose asChild><Button variant="outline">Cancelar</Button></DialogClose>
-            <Button onClick={saveProxy} className="bg-emerald-600 hover:bg-emerald-700">Salvar Proxy</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* WireGuard Config Dialog */}
-      <Dialog open={configDialogOpen} onOpenChange={(open) => {
-        setConfigDialogOpen(open)
-        if (!open) { setSelectedChipConfig(null); setQrCodeUrl(''); setCopied(false) }
+      {/* Unified Proxy Connection Dialog */}
+      <Dialog open={proxyDialogOpen} onOpenChange={(open) => {
+        setProxyDialogOpen(open)
+        if (!open) { setProxyTestResult(null); setQrCodeUrl(''); setCopied(false) }
       }}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <Lock className="size-5 text-emerald-500" /> Configuração WireGuard — {selectedChipConfig?.chip.name}
+              <Globe className="size-5 text-emerald-500" /> Conectar Proxy — {selectedChip?.name}
             </DialogTitle>
-            <DialogDescription>Use as abas para visualizar o QR Code, copiar a config ou seguir o tutorial.</DialogDescription>
+            <DialogDescription>Configure o WireGuard e o Every Proxy para que as campanhas saiam pelo IP do celular.</DialogDescription>
           </DialogHeader>
-          {selectedChipConfig && (
-            <Tabs defaultValue="qrcode" className="w-full">
-              <TabsList className="w-full">
-                <TabsTrigger value="qrcode" className="flex-1 gap-1.5"><QrCode className="size-3.5" /> QR Code</TabsTrigger>
-                <TabsTrigger value="config" className="flex-1 gap-1.5"><FileText className="size-3.5" /> Configuração</TabsTrigger>
-                <TabsTrigger value="tutorial" className="flex-1 gap-1.5"><Info className="size-3.5" /> Passo a Passo</TabsTrigger>
-              </TabsList>
-              <TabsContent value="qrcode" className="mt-4">
-                <div className="flex flex-col items-center gap-4">
-                  {qrCodeUrl ? (
-                    <div className="bg-white p-4 rounded-xl shadow-lg"><img src={qrCodeUrl} alt="QR Code WireGuard" className="w-64 h-64" /></div>
-                  ) : (
-                    <div className="w-64 h-64 bg-muted rounded-xl flex items-center justify-center"><RefreshCw className="size-8 animate-spin text-muted-foreground" /></div>
-                  )}
-                  <p className="text-sm text-muted-foreground">Escaneie com o app WireGuard no celular</p>
+
+          <Tabs defaultValue="setup" className="w-full">
+            <TabsList className="w-full">
+              <TabsTrigger value="setup" className="flex-1 gap-1.5"><Smartphone className="size-3.5" /> Configurar</TabsTrigger>
+              <TabsTrigger value="test" className="flex-1 gap-1.5"><Activity className="size-3.5" /> Testar</TabsTrigger>
+              <TabsTrigger value="manual" className="flex-1 gap-1.5"><Settings className="size-3.5" /> Manual</TabsTrigger>
+            </TabsList>
+
+            {/* === SETUP TAB — Step-by-step instructions === */}
+            <TabsContent value="setup" className="mt-4">
+              <div className="space-y-5">
+                {/* Step 1: WireGuard */}
+                <div className="space-y-3">
+                  <h4 className="font-semibold flex items-center gap-2 text-sm">
+                    <span className="flex items-center justify-center size-7 rounded-full bg-blue-600 text-white text-xs font-bold">1</span>
+                    WireGuard no Celular
+                  </h4>
+                  <div className="ml-9 space-y-3">
+                    {selectedChipConfig ? (
+                      <>
+                        {/* QR Code */}
+                        <div className="flex flex-col items-center gap-2">
+                          {qrCodeUrl ? (
+                            <div className="bg-white p-3 rounded-xl shadow-md"><img src={qrCodeUrl} alt="QR Code WireGuard" className="w-48 h-48" /></div>
+                          ) : (
+                            <div className="w-48 h-48 bg-muted rounded-xl flex items-center justify-center"><RefreshCw className="size-6 animate-spin text-muted-foreground" /></div>
+                          )}
+                          <p className="text-xs text-muted-foreground">Abra o app WireGuard → + → Escanear QR Code</p>
+                        </div>
+                        {/* Config text */}
+                        <div className="space-y-2">
+                          <p className="text-xs text-muted-foreground">Ou copie a configuração e cole manualmente:</p>
+                          <pre className="bg-zinc-900 text-zinc-100 p-3 rounded-lg text-[10px] overflow-x-auto whitespace-pre-wrap break-all font-mono border border-zinc-700 max-h-40 overflow-y-auto">
+                            {selectedChipConfig.config}
+                          </pre>
+                          <Button onClick={() => copyToClipboard(selectedChipConfig.config)} variant="outline" size="sm" className="w-full gap-1.5">
+                            {copied ? <><Check className="size-3.5 text-emerald-500" /> Copiado!</> : <><Copy className="size-3.5" /> Copiar Config WireGuard</>}
+                          </Button>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="p-3 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-800">
+                        <p className="text-xs text-amber-700 dark:text-amber-400 flex items-start gap-2">
+                          <AlertTriangle className="size-4 shrink-0 mt-0.5" />
+                          WireGuard nao configurado para este chip. Gere as chaves na aba VPS Setup primeiro.
+                        </p>
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </TabsContent>
-              <TabsContent value="config" className="mt-4">
-                <div className="space-y-4">
-                  <pre className="bg-zinc-900 text-zinc-100 p-4 rounded-lg text-xs overflow-x-auto whitespace-pre-wrap break-all font-mono border border-zinc-700">
-                    {selectedChipConfig.config}
-                  </pre>
-                  <Button onClick={() => copyToClipboard(selectedChipConfig.config)} variant="outline" className="w-full">
-                    {copied ? <><Check className="size-4 mr-2 text-emerald-500" /> Copiado!</> : <><Copy className="size-4 mr-2" /> Copiar Config</>}
-                  </Button>
-                </div>
-              </TabsContent>
-              <TabsContent value="tutorial" className="mt-4">
-                <div className="space-y-4 text-sm">
-                  {[
-                    { step: 1, title: 'No Servidor (VPS)', items: ['Instale o WireGuard: apt install wireguard', 'Copie a config do servidor', 'Ative: wg-quick up wg0'] },
-                    { step: 2, title: 'No Celular — WireGuard', items: ['Instale o app WireGuard', 'Toque em "+" → Escanear QR Code', 'Ative o túnel'] },
-                    { step: 3, title: 'No Celular — Every Proxy', items: ['Instale o app Every Proxy', 'Vá na aba SOCKS5', 'Ligue o switch — pronto!'] },
-                  ].map(s => (
-                    <div key={s.step} className="space-y-2">
-                      <h4 className="font-semibold flex items-center gap-2">
-                        <span className="flex items-center justify-center size-6 rounded-full bg-emerald-600 text-white text-xs font-bold">{s.step}</span>
-                        {s.title}
-                      </h4>
-                      <div className="ml-8 space-y-1 text-muted-foreground text-xs">
-                        {s.items.map((item, idx) => <p key={idx}>• {item}</p>)}
+
+                {/* Step 2: Every Proxy */}
+                <div className="space-y-3">
+                  <h4 className="font-semibold flex items-center gap-2 text-sm">
+                    <span className="flex items-center justify-center size-7 rounded-full bg-purple-600 text-white text-xs font-bold">2</span>
+                    Every Proxy no Celular
+                  </h4>
+                  <div className="ml-9 space-y-2">
+                    <div className="p-3 bg-purple-50 dark:bg-purple-900/20 rounded-lg border border-purple-200 dark:border-purple-800 space-y-2">
+                      <p className="text-xs text-purple-700 dark:text-purple-300">
+                        Depois de ativar o WireGuard, abra o app <strong>Every Proxy</strong> no celular:
+                      </p>
+                      <ol className="text-xs text-purple-700 dark:text-purple-300 space-y-1 list-decimal ml-4">
+                        <li>Vá na aba <strong>SOCKS5</strong></li>
+                        <li>Confira a <strong>porta</strong> (padrão: 8080)</li>
+                        <li>Ative o <strong>switch</strong> para ligar o proxy</li>
+                      </ol>
+                    </div>
+                    <div className="p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800 space-y-1">
+                      <p className="text-xs text-blue-700 dark:text-blue-300 font-semibold">Dados do proxy para este chip:</p>
+                      <div className="flex items-center gap-2 text-xs">
+                        <span className="text-blue-600 dark:text-blue-400">IP WireGuard:</span>
+                        <code className="bg-white dark:bg-zinc-800 px-2 py-0.5 rounded font-mono text-blue-800 dark:text-blue-200 border">
+                          {selectedChip?.wireguardIp || selectedChipConfig?.chip.wireguardIp || 'Não configurado'}
+                        </code>
+                        {selectedChip?.wireguardIp && (
+                          <Button variant="ghost" size="sm" className="h-5 px-1" onClick={() => copyToClipboard(selectedChip.wireguardIp)}>
+                            <Copy className="size-3" />
+                          </Button>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 text-xs">
+                        <span className="text-blue-600 dark:text-blue-400">Porta SOCKS5:</span>
+                        <code className="bg-white dark:bg-zinc-800 px-2 py-0.5 rounded font-mono text-blue-800 dark:text-blue-200 border">
+                          {selectedChip?.socksPort || 8080}
+                        </code>
+                      </div>
+                      <div className="flex items-center gap-2 text-xs">
+                        <span className="text-blue-600 dark:text-blue-400">Proxy completo:</span>
+                        <code className="bg-white dark:bg-zinc-800 px-2 py-0.5 rounded font-mono text-blue-800 dark:text-blue-200 border">
+                          {selectedChip?.wireguardIp || selectedChipConfig?.chip.wireguardIp || '0.0.0.0'}:{selectedChip?.socksPort || 8080}
+                        </code>
+                        {selectedChip?.wireguardIp && (
+                          <Button variant="ghost" size="sm" className="h-5 px-1" onClick={() => copyToClipboard(`${selectedChip.wireguardIp}:${selectedChip.socksPort || 8080}`)}>
+                            <Copy className="size-3" />
+                          </Button>
+                        )}
                       </div>
                     </div>
-                  ))}
+                  </div>
                 </div>
-              </TabsContent>
-            </Tabs>
-          )}
+
+                {/* Step 3: Confirm */}
+                <div className="space-y-3">
+                  <h4 className="font-semibold flex items-center gap-2 text-sm">
+                    <span className="flex items-center justify-center size-7 rounded-full bg-emerald-600 text-white text-xs font-bold">3</span>
+                    Confirmar Conexão
+                  </h4>
+                  <div className="ml-9 space-y-2">
+                    <p className="text-xs text-muted-foreground">
+                      Depois de configurar o WireGuard e o Every Proxy no celular, clique em <strong>"Testar Proxy"</strong> na aba Testar para verificar se o proxy está funcionando.
+                    </p>
+                    <Button onClick={testProxyConnection} disabled={proxyTesting} className="gap-1.5 bg-emerald-600 hover:bg-emerald-700" size="sm">
+                      {proxyTesting ? <><RefreshCw className="size-3.5 animate-spin" /> Testando...</> : <><Activity className="size-3.5" /> Testar Proxy Agora</>}
+                    </Button>
+                    {proxyTestResult && (
+                      <div className={`p-3 rounded-lg border ${proxyTestResult.reachable && proxyTestResult.socks5Valid ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800' : proxyTestResult.reachable ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800' : 'bg-rose-50 dark:bg-rose-900/20 border-rose-200 dark:border-rose-800'}`}>
+                        <div className="flex items-center gap-2">
+                          {proxyTestResult.reachable && proxyTestResult.socks5Valid ? (
+                            <><Check className="size-4 text-emerald-600" /><span className="text-xs font-semibold text-emerald-700 dark:text-emerald-300">Proxy SOCKS5 Online!</span></>
+                          ) : proxyTestResult.reachable ? (
+                            <><AlertTriangle className="size-4 text-amber-600" /><span className="text-xs font-semibold text-amber-700 dark:text-amber-300">Acessível mas não é SOCKS5</span></>
+                          ) : (
+                            <><X className="size-4 text-rose-600" /><span className="text-xs font-semibold text-rose-700 dark:text-rose-300">Proxy Offline</span></>
+                          )}
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-1">{proxyTestResult.message}</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </TabsContent>
+
+            {/* === TEST TAB — Proxy testing === */}
+            <TabsContent value="test" className="mt-4">
+              <div className="space-y-4">
+                <div className="text-center space-y-3 py-4">
+                  <div className={`inline-flex items-center justify-center size-20 rounded-full border-4 ${proxyTestResult ? (proxyTestResult.reachable && proxyTestResult.socks5Valid ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20' : proxyTestResult.reachable ? 'border-amber-500 bg-amber-50 dark:bg-amber-900/20' : 'border-rose-500 bg-rose-50 dark:bg-rose-900/20') : 'border-muted bg-muted/50'}`}>
+                    {proxyTesting ? (
+                      <RefreshCw className="size-8 animate-spin text-muted-foreground" />
+                    ) : proxyTestResult ? (
+                      proxyTestResult.reachable && proxyTestResult.socks5Valid ? (
+                        <Check className="size-8 text-emerald-600" />
+                      ) : proxyTestResult.reachable ? (
+                        <AlertTriangle className="size-8 text-amber-600" />
+                      ) : (
+                        <X className="size-8 text-rose-600" />
+                      )
+                    ) : (
+                      <Activity className="size-8 text-muted-foreground" />
+                    )}
+                  </div>
+                  <div>
+                    <p className="font-semibold text-sm">
+                      {proxyTestResult ? (proxyTestResult.reachable && proxyTestResult.socks5Valid ? 'Proxy Online' : proxyTestResult.reachable ? 'Parcialmente Acessível' : 'Proxy Offline') : 'Aguardando Teste'}
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {selectedChip?.wireguardIp ? `${selectedChip.wireguardIp}:${selectedChip.socksPort || 8080}` : 'Nenhum proxy configurado'}
+                    </p>
+                  </div>
+                </div>
+
+                <Button onClick={testProxyConnection} disabled={proxyTesting} className="w-full gap-1.5 bg-emerald-600 hover:bg-emerald-700">
+                  {proxyTesting ? <><RefreshCw className="size-4 animate-spin" /> Testando Conexão...</> : <><Activity className="size-4" /> Testar Proxy</>}
+                </Button>
+
+                {proxyTestResult && (
+                  <div className={`p-4 rounded-lg border ${proxyTestResult.reachable && proxyTestResult.socks5Valid ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800' : proxyTestResult.reachable ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800' : 'bg-rose-50 dark:bg-rose-900/20 border-rose-200 dark:border-rose-800'}`}>
+                    <p className="text-sm font-medium">{proxyTestResult.message}</p>
+                    {!proxyTestResult.reachable && (
+                      <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+                        <p>Verifique:</p>
+                        <ul className="list-disc ml-4 space-y-0.5">
+                          <li>O WireGuard está conectado no celular?</li>
+                          <li>O Every Proxy está com SOCKS5 ativado?</li>
+                          <li>O IP e porta estão corretos?</li>
+                        </ul>
+                      </div>
+                    )}
+                    {proxyTestResult.reachable && !proxyTestResult.socks5Valid && (
+                      <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+                        <p>O endereço responde, mas não como SOCKS5. Possíveis causas:</p>
+                        <ul className="list-disc ml-4 space-y-0.5">
+                          <li>O Every Proxy está na aba SOCKS5 (não HTTP)?</li>
+                          <li>A porta do Every Proxy confere com a configurada?</li>
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </TabsContent>
+
+            {/* === MANUAL TAB — Advanced SOCKS5 config === */}
+            <TabsContent value="manual" className="mt-4">
+              <div className="space-y-4">
+                <div className="p-3 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-800">
+                  <p className="text-xs text-amber-700 dark:text-amber-400 flex items-start gap-2">
+                    <Info className="size-4 shrink-0 mt-0.5" />
+                    Configuração manual: use apenas se não estiver usando o WireGuard + Every Proxy. Preencha o host e porta do seu proxy SOCKS5 externo.
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <Label>Host</Label>
+                  <Input placeholder="Ex: 192.168.1.100 ou IP do WireGuard" value={proxyForm.socks5Host} onChange={e => setProxyForm(p => ({ ...p, socks5Host: e.target.value }))} />
+                </div>
+                <div className="space-y-2">
+                  <Label>Porta</Label>
+                  <Input type="number" placeholder="8080" value={proxyForm.socks5Port} onChange={e => setProxyForm(p => ({ ...p, socks5Port: parseInt(e.target.value) || 0 }))} />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <Label>Usuário</Label>
+                    <Input placeholder="Opcional" value={proxyForm.socks5User} onChange={e => setProxyForm(p => ({ ...p, socks5User: e.target.value }))} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Senha</Label>
+                    <Input type="password" placeholder="Opcional" value={proxyForm.socks5Pass} onChange={e => setProxyForm(p => ({ ...p, socks5Pass: e.target.value }))} />
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <Button onClick={() => fetch('/api/proxy/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ host: proxyForm.socks5Host, port: proxyForm.socks5Port }) }).then(r => r.json()).then(data => setProxyTestResult({ reachable: data.reachable || false, socks5Valid: data.socks5Valid || false, message: data.message || data.error || 'Resultado desconhecido' })).catch(() => setProxyTestResult({ reachable: false, socks5Valid: false, message: 'Erro ao testar' }))} disabled={!proxyForm.socks5Host || !proxyForm.socks5Port} variant="outline" className="gap-1.5">
+                    <Activity className="size-3.5" /> Testar
+                  </Button>
+                  <Button onClick={saveProxy} className="flex-1 bg-emerald-600 hover:bg-emerald-700 gap-1.5">
+                    <Check className="size-3.5" /> Salvar Proxy
+                  </Button>
+                </div>
+              </div>
+            </TabsContent>
+          </Tabs>
         </DialogContent>
       </Dialog>
     </div>
