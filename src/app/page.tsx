@@ -205,7 +205,7 @@ const NAV_ITEMS = [
   { id: 'dashboard', label: 'Dashboard', icon: BarChart3, minRole: 'operador' },
   { id: 'chips', label: 'Chips', icon: Smartphone, minRole: 'operador' },
   { id: 'inbox', label: 'Caixa de Entrada', icon: Inbox, minRole: 'operador' },
-  { id: 'contatos', label: 'Contatos', icon: Users, minRole: 'operador' },
+  { id: 'contatos', label: 'Lista de Contatos', icon: Users, minRole: 'operador' },
   { id: 'verificar', label: 'Verificar Números', icon: ShieldCheck, minRole: 'operador' },
   { id: 'campanhas', label: 'Campanhas', icon: Send, minRole: 'operador' },
   { id: 'templates', label: 'Templates', icon: FileText, minRole: 'operador' },
