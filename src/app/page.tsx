@@ -13,7 +13,7 @@ import {
   Download, Filter, ArrowRight, QrCode, Globe, Lock, Server,
   Sparkles, Heart, Star, AlertTriangle, Info, ChevronDown,
   Pencil, LayoutList, Database, WifiOff, ArrowDownToLine, Save, XCircle,
-  Inbox, LogOut, RotateCcw, Film, Music, File, Webhook, ImageIcon, Key
+  Inbox, LogOut, RotateCcw, Film, Music, File, Webhook, ImageIcon, Key, Paperclip, MapPin, Link2
 } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardAction } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -1924,7 +1924,15 @@ type StepForm = {
   mediaFile: File | null
   mediaUrl: string
   mediatype: string
-  variations: { content: string; mediaFile: File | null; mediaUrl: string; mediatype: string }[]
+  caption: string
+  linkUrl: string
+  linkPreview: boolean
+  contactName: string
+  contactPhone: string
+  locationLat: string
+  locationLng: string
+  locationName: string
+  variations: { content: string; mediaFile: File | null; mediaUrl: string; mediatype: string; caption: string; linkUrl: string; linkPreview: boolean; contactName: string; contactPhone: string; locationLat: string; locationLng: string; locationName: string }[]
 }
 
 function CampanhasTab() {
@@ -1943,21 +1951,21 @@ function CampanhasTab() {
   const [editForm, setEditForm] = useState({
     name: '', sendIntervalMin: 30, sendIntervalMax: 90,
     chipIds: [] as string[], contactListId: '', scheduledAt: '',
-    steps: [{ content: '', delayMinutes: 0, mediaFile: null as File | null, mediaUrl: '', mediatype: '', variations: [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '' }] }] as StepForm[],
+    steps: [{ content: '', delayMinutes: 0, mediaFile: null as File | null, mediaUrl: '', mediatype: '', caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '', variations: [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '', caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '' }] }] as StepForm[],
     antiBanEnabled: true, warmingMode: 'normal',
   })
 
   const [newCampaign, setNewCampaign] = useState({
     name: '', sendIntervalMin: 30, sendIntervalMax: 90,
     chipIds: [] as string[], contactListId: '', scheduledAt: '',
-    steps: [{ content: '', delayMinutes: 0, mediaFile: null as File | null, mediaUrl: '', mediatype: '', variations: [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '' }] }] as StepForm[],
+    steps: [{ content: '', delayMinutes: 0, mediaFile: null as File | null, mediaUrl: '', mediatype: '', caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '', variations: [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '', caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '' }] }] as StepForm[],
     antiBanEnabled: true, warmingMode: 'normal',
   })
 
   const resetNewCampaign = () => setNewCampaign({
     name: '', sendIntervalMin: 30, sendIntervalMax: 90,
     chipIds: [], contactListId: '', scheduledAt: '',
-    steps: [{ content: '', delayMinutes: 0, mediaFile: null, mediaUrl: '', mediatype: '', variations: [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '' }] }] as StepForm[],
+    steps: [{ content: '', delayMinutes: 0, mediaFile: null, mediaUrl: '', mediatype: '', variations: [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '', caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '' }] }] as StepForm[],
     antiBanEnabled: true, warmingMode: 'normal',
   })
 
@@ -2098,16 +2106,16 @@ function CampanhasTab() {
     }))
   }
 
-  const addStep = () => setNewCampaign(prev => ({ ...prev, steps: [...prev.steps, { content: '', delayMinutes: 60, mediaFile: null, mediaUrl: '', mediatype: '', variations: [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '' }] }] }))
+  const addStep = () => setNewCampaign(prev => ({ ...prev, steps: [...prev.steps, { content: '', delayMinutes: 60, mediaFile: null, mediaUrl: '', mediatype: '', caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '', variations: [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '', caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '' }] }] }))
   const removeStep = (idx: number) => setNewCampaign(prev => ({ ...prev, steps: prev.steps.filter((_, i) => i !== idx) }))
-  const updateStep = (idx: number, field: 'content' | 'delayMinutes' | 'mediaFile' | 'mediaUrl' | 'mediatype', value: string | number | File | null) => {
+  const updateStep = (idx: number, field: 'content' | 'delayMinutes' | 'mediaFile' | 'mediaUrl' | 'mediatype' | 'caption' | 'linkUrl' | 'linkPreview' | 'contactName' | 'contactPhone' | 'locationLat' | 'locationLng' | 'locationName', value: string | number | File | boolean | null) => {
     setNewCampaign(prev => { const steps = [...prev.steps]; steps[idx] = { ...steps[idx], [field]: value }; return { ...prev, steps } })
   }
 
   // Variation helpers (within a step)
   const addVariation = (stepIdx: number) => setNewCampaign(prev => {
     const steps = [...prev.steps]
-    steps[stepIdx] = { ...steps[stepIdx], variations: [...steps[stepIdx].variations, { content: '', mediaFile: null, mediaUrl: '', mediatype: '' }] }
+    steps[stepIdx] = { ...steps[stepIdx], variations: [...steps[stepIdx].variations, { content: '', mediaFile: null, mediaUrl: '', mediatype: '', caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '' }] }
     return { ...prev, steps }
   })
   const removeVariation = (stepIdx: number, varIdx: number) => setNewCampaign(prev => {
@@ -2115,7 +2123,7 @@ function CampanhasTab() {
     steps[stepIdx] = { ...steps[stepIdx], variations: steps[stepIdx].variations.filter((_, i) => i !== varIdx) }
     return { ...prev, steps }
   })
-  const updateVariation = (stepIdx: number, varIdx: number, field: 'content' | 'mediaFile' | 'mediaUrl' | 'mediatype', value: string | File | null) => {
+  const updateVariation = (stepIdx: number, varIdx: number, field: 'content' | 'mediaFile' | 'mediaUrl' | 'mediatype' | 'caption' | 'linkUrl' | 'linkPreview' | 'contactName' | 'contactPhone' | 'locationLat' | 'locationLng' | 'locationName', value: string | File | boolean | null) => {
     setNewCampaign(prev => {
       const steps = [...prev.steps]
       const vars = [...steps[stepIdx].variations]
@@ -2143,11 +2151,11 @@ function CampanhasTab() {
           mediatype: s.mediatype || '',
           variations: parsedVars.length > 0
             ? parsedVars.map(v => ({ content: v.content, mediaFile: null as File | null, mediaUrl: v.mediaUrl || '', mediatype: v.mediatype || '' }))
-            : [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '' }],
+            : [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '', caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '' }],
         }
       })
     if (steps.length === 0) {
-      steps.push({ content: '', delayMinutes: 0, mediaFile: null, mediaUrl: '', mediatype: '', variations: [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '' }] })
+      steps.push({ content: '', delayMinutes: 0, mediaFile: null, mediaUrl: '', mediatype: '', variations: [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '', caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '' }] })
     }
     setEditForm({
       name: campaign.name,
@@ -2246,14 +2254,14 @@ function CampanhasTab() {
       chipIds: prev.chipIds.includes(chipId) ? prev.chipIds.filter(id => id !== chipId) : [...prev.chipIds, chipId],
     }))
   }
-  const editAddStep = () => setEditForm(prev => ({ ...prev, steps: [...prev.steps, { content: '', delayMinutes: 60, mediaFile: null, mediaUrl: '', mediatype: '', variations: [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '' }] }] }))
+  const editAddStep = () => setEditForm(prev => ({ ...prev, steps: [...prev.steps, { content: '', delayMinutes: 60, mediaFile: null, mediaUrl: '', mediatype: '', caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '', variations: [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '', caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '' }] }] }))
   const editRemoveStep = (idx: number) => setEditForm(prev => ({ ...prev, steps: prev.steps.filter((_, i) => i !== idx) }))
-  const editUpdateStep = (idx: number, field: 'content' | 'delayMinutes' | 'mediaFile' | 'mediaUrl' | 'mediatype', value: string | number | File | null) => {
+  const editUpdateStep = (idx: number, field: 'content' | 'delayMinutes' | 'mediaFile' | 'mediaUrl' | 'mediatype' | 'caption' | 'linkUrl' | 'linkPreview' | 'contactName' | 'contactPhone' | 'locationLat' | 'locationLng' | 'locationName', value: string | number | File | boolean | null) => {
     setEditForm(prev => { const steps = [...prev.steps]; steps[idx] = { ...steps[idx], [field]: value }; return { ...prev, steps } })
   }
   const editAddVariation = (stepIdx: number) => setEditForm(prev => {
     const steps = [...prev.steps]
-    steps[stepIdx] = { ...steps[stepIdx], variations: [...steps[stepIdx].variations, { content: '', mediaFile: null, mediaUrl: '', mediatype: '' }] }
+    steps[stepIdx] = { ...steps[stepIdx], variations: [...steps[stepIdx].variations, { content: '', mediaFile: null, mediaUrl: '', mediatype: '', caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '' }] }
     return { ...prev, steps }
   })
   const editRemoveVariation = (stepIdx: number, varIdx: number) => setEditForm(prev => {
@@ -2261,7 +2269,7 @@ function CampanhasTab() {
     steps[stepIdx] = { ...steps[stepIdx], variations: steps[stepIdx].variations.filter((_, i) => i !== varIdx) }
     return { ...prev, steps }
   })
-  const editUpdateVariation = (stepIdx: number, varIdx: number, field: 'content' | 'mediaFile' | 'mediaUrl' | 'mediatype', value: string | File | null) => {
+  const editUpdateVariation = (stepIdx: number, varIdx: number, field: 'content' | 'mediaFile' | 'mediaUrl' | 'mediatype' | 'caption' | 'linkUrl' | 'linkPreview' | 'contactName' | 'contactPhone' | 'locationLat' | 'locationLng' | 'locationName', value: string | File | boolean | null) => {
     setEditForm(prev => {
       const steps = [...prev.steps]
       const vars = [...steps[stepIdx].variations]
@@ -2365,21 +2373,60 @@ function CampanhasTab() {
                           <Input type="number" min={0} value={step.delayMinutes} onChange={e => updateStep(idx, 'delayMinutes', parseInt(e.target.value) || 0)} className="mt-1 w-40" />
                         </div>
                       )}
-                      {/* Media Upload for step */}
+                      {/* Anexar */}
                       <div className="space-y-2">
-                        <Label className="text-xs flex items-center gap-1"><ImageIcon className="size-3" /> Mídia da mensagem (opcional)</Label>
+                        <Label className="text-xs flex items-center gap-1"><Paperclip className="size-3" /> Anexar</Label>
                         <div className="flex gap-2">
                           <Select value={step.mediatype} onValueChange={v => updateStep(idx, 'mediatype', v)}>
                             <SelectTrigger className="w-32 h-8 text-xs"><SelectValue placeholder="Tipo" /></SelectTrigger>
                             <SelectContent>
                               <SelectItem value="image">Imagem</SelectItem>
-                              <SelectItem value="document">Documento</SelectItem>
                               <SelectItem value="video">Vídeo</SelectItem>
                               <SelectItem value="audio">Áudio</SelectItem>
+                              <SelectItem value="document">Documento</SelectItem>
+                              <SelectItem value="contact">Contato</SelectItem>
+                              <SelectItem value="location">Localização</SelectItem>
+                              <SelectItem value="link">Link</SelectItem>
                             </SelectContent>
                           </Select>
-                          <Input type="file" className="h-8 text-xs" accept={step.mediatype === 'image' ? 'image/*' : step.mediatype === 'video' ? 'video/*' : step.mediatype === 'audio' ? 'audio/*' : undefined} onChange={e => { const f = e.target.files?.[0] || null; updateStep(idx, 'mediaFile', f) }} />
+                          {['image','video','audio','document'].includes(step.mediatype) && (
+                            <Input type="file" className="h-8 text-xs flex-1" accept={step.mediatype === 'image' ? 'image/*' : step.mediatype === 'video' ? 'video/*' : step.mediatype === 'audio' ? 'audio/*' : undefined} onChange={e => { const f = e.target.files?.[0] || null; updateStep(idx, 'mediaFile', f) }} />
+                          )}
                         </div>
+                        {/* Caption for image/video */}
+                        {['image','video'].includes(step.mediatype) && (
+                          <div className="space-y-1">
+                            <Label className="text-xs text-muted-foreground">Legenda</Label>
+                            <Input placeholder="Legenda da imagem/vídeo..." value={step.caption} onChange={e => updateStep(idx, 'caption', e.target.value)} className="h-8 text-xs" />
+                          </div>
+                        )}
+                        {/* Contact fields */}
+                        {step.mediatype === 'contact' && (
+                          <div className="grid grid-cols-2 gap-2">
+                            <Input placeholder="Nome do contato" value={step.contactName} onChange={e => updateStep(idx, 'contactName', e.target.value)} className="h-8 text-xs" />
+                            <Input placeholder="Telefone (5511999999999)" value={step.contactPhone} onChange={e => updateStep(idx, 'contactPhone', e.target.value)} className="h-8 text-xs" />
+                          </div>
+                        )}
+                        {/* Location fields */}
+                        {step.mediatype === 'location' && (
+                          <div className="space-y-2">
+                            <Input placeholder="Nome do local" value={step.locationName} onChange={e => updateStep(idx, 'locationName', e.target.value)} className="h-8 text-xs" />
+                            <div className="grid grid-cols-2 gap-2">
+                              <Input placeholder="Latitude" value={step.locationLat} onChange={e => updateStep(idx, 'locationLat', e.target.value)} className="h-8 text-xs" />
+                              <Input placeholder="Longitude" value={step.locationLng} onChange={e => updateStep(idx, 'locationLng', e.target.value)} className="h-8 text-xs" />
+                            </div>
+                          </div>
+                        )}
+                        {/* Link fields */}
+                        {step.mediatype === 'link' && (
+                          <div className="space-y-2">
+                            <Input placeholder="https://..." value={step.linkUrl} onChange={e => updateStep(idx, 'linkUrl', e.target.value)} className="h-8 text-xs" />
+                            <div className="flex items-center gap-2">
+                              <Switch checked={step.linkPreview} onCheckedChange={v => updateStep(idx, 'linkPreview', v)} />
+                              <Label className="text-xs">Com visualização (preview)</Label>
+                            </div>
+                          </div>
+                        )}
                         {step.mediaFile && (
                           <div className="flex items-center gap-2 p-2 bg-muted/50 rounded-lg text-xs">
                             {step.mediatype === 'image' ? <ImageIcon className="size-3.5 text-emerald-500" /> : step.mediatype === 'video' ? <Film className="size-3.5 text-sky-500" /> : step.mediatype === 'audio' ? <Music className="size-3.5 text-amber-500" /> : <File className="size-3.5 text-zinc-500" />}
@@ -2413,20 +2460,49 @@ function CampanhasTab() {
                             </div>
                             <Textarea placeholder={`Texto da variação ${vIdx + 1}...`} value={v.content} onChange={e => updateVariation(idx, vIdx, 'content', e.target.value)} rows={2} />
                             <p className="text-xs text-muted-foreground">Se tiver mídia, o texto será a legenda/descrição</p>
-                            {/* Media Upload for variation */}
+                            {/* Anexar (variation) */}
                             <div className="space-y-2">
                               <div className="flex gap-2">
                                 <Select value={v.mediatype} onValueChange={mt => updateVariation(idx, vIdx, 'mediatype', mt)}>
                                   <SelectTrigger className="w-28 h-7 text-xs"><SelectValue placeholder="Tipo" /></SelectTrigger>
                                   <SelectContent>
                                     <SelectItem value="image">Imagem</SelectItem>
-                                    <SelectItem value="document">Documento</SelectItem>
                                     <SelectItem value="video">Vídeo</SelectItem>
                                     <SelectItem value="audio">Áudio</SelectItem>
+                                    <SelectItem value="document">Documento</SelectItem>
+                                    <SelectItem value="contact">Contato</SelectItem>
+                                    <SelectItem value="location">Localização</SelectItem>
+                                    <SelectItem value="link">Link</SelectItem>
                                   </SelectContent>
                                 </Select>
-                                <Input type="file" className="h-7 text-xs" accept={v.mediatype === 'image' ? 'image/*' : v.mediatype === 'video' ? 'video/*' : v.mediatype === 'audio' ? 'audio/*' : undefined} onChange={e => { const f = e.target.files?.[0] || null; updateVariation(idx, vIdx, 'mediaFile', f) }} />
+                                {['image','video','audio','document'].includes(v.mediatype) && (
+                                  <Input type="file" className="h-7 text-xs flex-1" accept={v.mediatype === 'image' ? 'image/*' : v.mediatype === 'video' ? 'video/*' : v.mediatype === 'audio' ? 'audio/*' : undefined} onChange={e => { const f = e.target.files?.[0] || null; updateVariation(idx, vIdx, 'mediaFile', f) }} />
+                                )}
                               </div>
+                              {['image','video'].includes(v.mediatype) && (
+                                <Input placeholder="Legenda..." value={v.caption} onChange={e => updateVariation(idx, vIdx, 'caption', e.target.value)} className="h-7 text-xs" />
+                              )}
+                              {v.mediatype === 'contact' && (
+                                <div className="grid grid-cols-2 gap-2">
+                                  <Input placeholder="Nome" value={v.contactName} onChange={e => updateVariation(idx, vIdx, 'contactName', e.target.value)} className="h-7 text-xs" />
+                                  <Input placeholder="Telefone" value={v.contactPhone} onChange={e => updateVariation(idx, vIdx, 'contactPhone', e.target.value)} className="h-7 text-xs" />
+                                </div>
+                              )}
+                              {v.mediatype === 'location' && (
+                                <div className="grid grid-cols-2 gap-2">
+                                  <Input placeholder="Nome do local" value={v.locationName} onChange={e => updateVariation(idx, vIdx, 'locationName', e.target.value)} className="h-7 text-xs" />
+                                  <Input placeholder="Lat, Lng" value={v.locationLat && v.locationLng ? `${v.locationLat}, ${v.locationLng}` : ''} onChange={e => { const [lat, lng] = e.target.value.split(',').map(s => s.trim()); updateVariation(idx, vIdx, 'locationLat', lat || ''); updateVariation(idx, vIdx, 'locationLng', lng || '') }} className="h-7 text-xs" />
+                                </div>
+                              )}
+                              {v.mediatype === 'link' && (
+                                <div className="space-y-1">
+                                  <Input placeholder="https://..." value={v.linkUrl} onChange={e => updateVariation(idx, vIdx, 'linkUrl', e.target.value)} className="h-7 text-xs" />
+                                  <div className="flex items-center gap-2">
+                                    <Switch checked={v.linkPreview} onCheckedChange={val => updateVariation(idx, vIdx, 'linkPreview', val)} />
+                                    <Label className="text-xs">Preview</Label>
+                                  </div>
+                                </div>
+                              )}
                               {v.mediaFile && (
                                 <div className="flex items-center gap-2 p-1.5 bg-muted/50 rounded-lg text-xs">
                                   {v.mediatype === 'image' ? <ImageIcon className="size-3 text-emerald-500" /> : v.mediatype === 'video' ? <Film className="size-3 text-sky-500" /> : v.mediatype === 'audio' ? <Music className="size-3 text-amber-500" /> : <File className="size-3 text-zinc-500" />}
@@ -2682,21 +2758,60 @@ function CampanhasTab() {
                         <Input type="number" min={0} value={step.delayMinutes} onChange={e => editUpdateStep(idx, 'delayMinutes', parseInt(e.target.value) || 0)} className="mt-1 w-40" />
                       </div>
                     )}
-                    {/* Media Upload for step */}
+                    {/* Anexar */}
                     <div className="space-y-2">
-                      <Label className="text-xs flex items-center gap-1"><ImageIcon className="size-3" /> Mídia da mensagem (opcional)</Label>
+                      <Label className="text-xs flex items-center gap-1"><Paperclip className="size-3" /> Anexar</Label>
                       <div className="flex gap-2">
                         <Select value={step.mediatype} onValueChange={v => editUpdateStep(idx, 'mediatype', v)}>
                           <SelectTrigger className="w-32 h-8 text-xs"><SelectValue placeholder="Tipo" /></SelectTrigger>
                           <SelectContent>
                             <SelectItem value="image">Imagem</SelectItem>
-                            <SelectItem value="document">Documento</SelectItem>
                             <SelectItem value="video">Vídeo</SelectItem>
                             <SelectItem value="audio">Áudio</SelectItem>
+                            <SelectItem value="document">Documento</SelectItem>
+                            <SelectItem value="contact">Contato</SelectItem>
+                            <SelectItem value="location">Localização</SelectItem>
+                            <SelectItem value="link">Link</SelectItem>
                           </SelectContent>
                         </Select>
-                        <Input type="file" className="h-8 text-xs" accept={step.mediatype === 'image' ? 'image/*' : step.mediatype === 'video' ? 'video/*' : step.mediatype === 'audio' ? 'audio/*' : undefined} onChange={e => { const f = e.target.files?.[0] || null; editUpdateStep(idx, 'mediaFile', f) }} />
+                        {['image','video','audio','document'].includes(step.mediatype) && (
+                          <Input type="file" className="h-8 text-xs flex-1" accept={step.mediatype === 'image' ? 'image/*' : step.mediatype === 'video' ? 'video/*' : step.mediatype === 'audio' ? 'audio/*' : undefined} onChange={e => { const f = e.target.files?.[0] || null; editUpdateStep(idx, 'mediaFile', f) }} />
+                        )}
                       </div>
+                      {/* Caption for image/video */}
+                      {['image','video'].includes(step.mediatype) && (
+                        <div className="space-y-1">
+                          <Label className="text-xs text-muted-foreground">Legenda</Label>
+                          <Input placeholder="Legenda da imagem/vídeo..." value={step.caption} onChange={e => editUpdateStep(idx, 'caption', e.target.value)} className="h-8 text-xs" />
+                        </div>
+                      )}
+                      {/* Contact fields */}
+                      {step.mediatype === 'contact' && (
+                        <div className="grid grid-cols-2 gap-2">
+                          <Input placeholder="Nome do contato" value={step.contactName} onChange={e => editUpdateStep(idx, 'contactName', e.target.value)} className="h-8 text-xs" />
+                          <Input placeholder="Telefone (5511999999999)" value={step.contactPhone} onChange={e => editUpdateStep(idx, 'contactPhone', e.target.value)} className="h-8 text-xs" />
+                        </div>
+                      )}
+                      {/* Location fields */}
+                      {step.mediatype === 'location' && (
+                        <div className="space-y-2">
+                          <Input placeholder="Nome do local" value={step.locationName} onChange={e => editUpdateStep(idx, 'locationName', e.target.value)} className="h-8 text-xs" />
+                          <div className="grid grid-cols-2 gap-2">
+                            <Input placeholder="Latitude" value={step.locationLat} onChange={e => editUpdateStep(idx, 'locationLat', e.target.value)} className="h-8 text-xs" />
+                            <Input placeholder="Longitude" value={step.locationLng} onChange={e => editUpdateStep(idx, 'locationLng', e.target.value)} className="h-8 text-xs" />
+                          </div>
+                        </div>
+                      )}
+                      {/* Link fields */}
+                      {step.mediatype === 'link' && (
+                        <div className="space-y-2">
+                          <Input placeholder="https://..." value={step.linkUrl} onChange={e => editUpdateStep(idx, 'linkUrl', e.target.value)} className="h-8 text-xs" />
+                          <div className="flex items-center gap-2">
+                            <Switch checked={step.linkPreview} onCheckedChange={v => editUpdateStep(idx, 'linkPreview', v)} />
+                            <Label className="text-xs">Com visualização (preview)</Label>
+                          </div>
+                        </div>
+                      )}
                       {(step.mediaUrl || step.mediaFile) && (
                         <div className="flex items-center gap-2 p-2 bg-muted/50 rounded-lg text-xs">
                           {step.mediatype === 'image' ? <ImageIcon className="size-3.5 text-emerald-500" /> : step.mediatype === 'video' ? <Film className="size-3.5 text-sky-500" /> : step.mediatype === 'audio' ? <Music className="size-3.5 text-amber-500" /> : <File className="size-3.5 text-zinc-500" />}
@@ -2733,13 +2848,42 @@ function CampanhasTab() {
                                 <SelectTrigger className="w-28 h-7 text-xs"><SelectValue placeholder="Tipo" /></SelectTrigger>
                                 <SelectContent>
                                   <SelectItem value="image">Imagem</SelectItem>
-                                  <SelectItem value="document">Documento</SelectItem>
                                   <SelectItem value="video">Vídeo</SelectItem>
                                   <SelectItem value="audio">Áudio</SelectItem>
+                                  <SelectItem value="document">Documento</SelectItem>
+                                  <SelectItem value="contact">Contato</SelectItem>
+                                  <SelectItem value="location">Localização</SelectItem>
+                                  <SelectItem value="link">Link</SelectItem>
                                 </SelectContent>
                               </Select>
-                              <Input type="file" className="h-7 text-xs" accept={v.mediatype === 'image' ? 'image/*' : v.mediatype === 'video' ? 'video/*' : v.mediatype === 'audio' ? 'audio/*' : undefined} onChange={e => { const f = e.target.files?.[0] || null; editUpdateVariation(idx, vIdx, 'mediaFile', f) }} />
+                              {['image','video','audio','document'].includes(v.mediatype) && (
+                                <Input type="file" className="h-7 text-xs flex-1" accept={v.mediatype === 'image' ? 'image/*' : v.mediatype === 'video' ? 'video/*' : v.mediatype === 'audio' ? 'audio/*' : undefined} onChange={e => { const f = e.target.files?.[0] || null; editUpdateVariation(idx, vIdx, 'mediaFile', f) }} />
+                              )}
                             </div>
+                            {['image','video'].includes(v.mediatype) && (
+                              <Input placeholder="Legenda..." value={v.caption} onChange={e => editUpdateVariation(idx, vIdx, 'caption', e.target.value)} className="h-7 text-xs" />
+                            )}
+                            {v.mediatype === 'contact' && (
+                              <div className="grid grid-cols-2 gap-2">
+                                <Input placeholder="Nome" value={v.contactName} onChange={e => editUpdateVariation(idx, vIdx, 'contactName', e.target.value)} className="h-7 text-xs" />
+                                <Input placeholder="Telefone" value={v.contactPhone} onChange={e => editUpdateVariation(idx, vIdx, 'contactPhone', e.target.value)} className="h-7 text-xs" />
+                              </div>
+                            )}
+                            {v.mediatype === 'location' && (
+                              <div className="grid grid-cols-2 gap-2">
+                                <Input placeholder="Nome do local" value={v.locationName} onChange={e => editUpdateVariation(idx, vIdx, 'locationName', e.target.value)} className="h-7 text-xs" />
+                                <Input placeholder="Lat, Lng" value={v.locationLat && v.locationLng ? `${v.locationLat}, ${v.locationLng}` : ''} onChange={e => { const [lat, lng] = e.target.value.split(',').map(s => s.trim()); editUpdateVariation(idx, vIdx, 'locationLat', lat || ''); editUpdateVariation(idx, vIdx, 'locationLng', lng || '') }} className="h-7 text-xs" />
+                              </div>
+                            )}
+                            {v.mediatype === 'link' && (
+                              <div className="space-y-1">
+                                <Input placeholder="https://..." value={v.linkUrl} onChange={e => editUpdateVariation(idx, vIdx, 'linkUrl', e.target.value)} className="h-7 text-xs" />
+                                <div className="flex items-center gap-2">
+                                  <Switch checked={v.linkPreview} onCheckedChange={val => editUpdateVariation(idx, vIdx, 'linkPreview', val)} />
+                                  <Label className="text-xs">Preview</Label>
+                                </div>
+                              </div>
+                            )}
                           </div>
                         </div>
                       ))}
