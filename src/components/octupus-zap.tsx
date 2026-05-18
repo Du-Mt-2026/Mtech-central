@@ -12,6 +12,9 @@ import {
   Moon,
   Sun,
   Zap,
+  Key,
+  Users,
+  Shield,
 } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import { Button } from '@/components/ui/button'
@@ -19,15 +22,27 @@ import { DashboardSection } from '@/components/dashboard-section'
 import { ChipsSection } from '@/components/chips-section'
 import { CampaignsSection } from '@/components/campaigns-section'
 import { MessagesSection } from '@/components/messages-section'
+import { KeysSection } from '@/components/keys-section'
+import { VendedoresSection } from '@/components/vendedores-section'
+import { AntibanSection } from '@/components/antiban-section'
 
-type Section = 'dashboard' | 'chips' | 'campanhas' | 'mensagens'
+type Section = 'dashboard' | 'chips' | 'campanhas' | 'mensagens' | 'chaves' | 'vendedores' | 'antiban'
 
-const navItems: { id: Section; label: string; icon: React.ElementType }[] = [
-  { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { id: 'chips', label: 'Chips', icon: Smartphone },
-  { id: 'campanhas', label: 'Campanhas', icon: Megaphone },
-  { id: 'mensagens', label: 'Mensagens', icon: MessageSquare },
+const navItems: { id: Section; label: string; icon: React.ElementType; group?: string }[] = [
+  { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, group: 'principal' },
+  { id: 'chips', label: 'Chips', icon: Smartphone, group: 'principal' },
+  { id: 'campanhas', label: 'Campanhas', icon: Megaphone, group: 'principal' },
+  { id: 'mensagens', label: 'Mensagens', icon: MessageSquare, group: 'principal' },
+  { id: 'chaves', label: 'Chaves', icon: Key, group: 'personalização' },
+  { id: 'vendedores', label: 'Vendedores', icon: Users, group: 'personalização' },
+  { id: 'antiban', label: 'Anti-Ban', icon: Shield, group: 'configuração' },
 ]
+
+const groupLabels: Record<string, string> = {
+  principal: '',
+  personalização: 'Personalização',
+  configuração: 'Configuração',
+}
 
 export function OctupusZap() {
   const [activeSection, setActiveSection] = useState<Section>('dashboard')
@@ -44,9 +59,25 @@ export function OctupusZap() {
         return <CampaignsSection />
       case 'mensagens':
         return <MessagesSection />
+      case 'chaves':
+        return <KeysSection />
+      case 'vendedores':
+        return <VendedoresSection />
+      case 'antiban':
+        return <AntibanSection />
       default:
         return <DashboardSection />
     }
+  }
+
+  const sectionLabels: Record<Section, string> = {
+    dashboard: 'Dashboard',
+    chips: 'Chips',
+    campanhas: 'Campanhas',
+    mensagens: 'Mensagens',
+    chaves: 'Chaves de Variação',
+    vendedores: 'Vendedores',
+    antiban: 'Anti-Ban',
   }
 
   return (
@@ -94,37 +125,49 @@ export function OctupusZap() {
             </div>
 
             {/* Navigation */}
-            <nav className="flex-1 px-3 py-4 space-y-1">
-              {navItems.map((item) => {
-                const Icon = item.icon
-                const isActive = activeSection === item.id
-                return (
-                  <button
-                    key={item.id}
-                    onClick={() => {
-                      setActiveSection(item.id)
-                      setSidebarOpen(false)
-                    }}
-                    className={`
-                      w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium
-                      transition-colors duration-150
-                      ${
-                        isActive
-                          ? 'bg-emerald-600/20 text-emerald-400 border border-emerald-600/30'
-                          : 'text-zinc-400 hover:text-white hover:bg-zinc-800 border border-transparent'
-                      }
-                    `}
-                  >
-                    <Icon className="w-5 h-5" />
-                    {item.label}
-                  </button>
-                )
-              })}
+            <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
+              {(() => {
+                let lastGroup = ''
+                return navItems.map((item) => {
+                  const Icon = item.icon
+                  const isActive = activeSection === item.id
+                  const group = item.group || ''
+                  const showGroupLabel = group !== lastGroup && groupLabels[group]
+                  lastGroup = group
+                  return (
+                    <div key={item.id}>
+                      {showGroupLabel && (
+                        <p className="text-[10px] uppercase tracking-wider text-zinc-600 font-semibold mt-4 mb-1 px-3">
+                          {groupLabels[group]}
+                        </p>
+                      )}
+                      <button
+                        onClick={() => {
+                          setActiveSection(item.id)
+                          setSidebarOpen(false)
+                        }}
+                        className={`
+                          w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium
+                          transition-colors duration-150
+                          ${
+                            isActive
+                              ? 'bg-emerald-600/20 text-emerald-400 border border-emerald-600/30'
+                              : 'text-zinc-400 hover:text-white hover:bg-zinc-800 border border-transparent'
+                          }
+                        `}
+                      >
+                        <Icon className="w-5 h-5" />
+                        {item.label}
+                      </button>
+                    </div>
+                  )
+                })
+              })()}
             </nav>
 
             {/* Footer */}
             <div className="px-6 py-4 border-t border-zinc-800">
-              <p className="text-xs text-zinc-500">OctupusZap v1.0</p>
+              <p className="text-xs text-zinc-500">OctupusZap v2.0</p>
             </div>
           </div>
         </aside>
@@ -142,8 +185,8 @@ export function OctupusZap() {
               >
                 <Menu className="w-5 h-5" />
               </Button>
-              <h2 className="text-lg font-semibold capitalize">
-                {activeSection === 'campanhas' ? 'Campanhas' : activeSection === 'mensagens' ? 'Mensagens' : activeSection === 'chips' ? 'Chips' : 'Dashboard'}
+              <h2 className="text-lg font-semibold">
+                {sectionLabels[activeSection]}
               </h2>
             </div>
 

@@ -1,54 +1,23 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 
-// Whitelist of allowed fields for anti-ban settings
-const ALLOWED_FIELDS = [
-  'typingMinDelay',
-  'typingMaxDelay',
-  'messageIntervalMin',
-  'messageIntervalMax',
-  'randomLineBreaks',
-  'emojiVariation',
-  'dailyLimitPerChip',
-  'warmingEnabled',
-  'warmingDays',
-  'cooldownMinutes',
-  'cooldownAfterMessages',
-  'stopOnWarning',
-] as const
-
-// Default values matching Prisma schema @default() annotations
-export const ANTI_BAN_DEFAULTS = {
-  typingMinDelay: 500,
-  typingMaxDelay: 2000,
-  messageIntervalMin: 30,
-  messageIntervalMax: 90,
-  randomLineBreaks: true,
-  emojiVariation: true,
-  dailyLimitPerChip: 200,
-  warmingEnabled: true,
-  warmingDays: 7,
-  cooldownMinutes: 30,
-  cooldownAfterMessages: 50,
-  stopOnWarning: true,
-} as const
-
-type AllowedField = typeof ALLOWED_FIELDS[number]
-
+// GET /api/antiban — Get current anti-ban settings
 export async function GET() {
   try {
     let settings = await db.antiBanSettings.findFirst()
     if (!settings) {
+      // Create default settings if none exist
       settings = await db.antiBanSettings.create({ data: {} })
     }
     return NextResponse.json(settings)
   } catch (error) {
-    console.error('AntiBan GET error:', error)
-    return NextResponse.json({ error: 'Erro ao carregar configurações anti-ban' }, { status: 500 })
+    console.error('Error fetching anti-ban settings:', error)
+    return NextResponse.json({ error: 'Erro ao buscar configurações anti-ban' }, { status: 500 })
   }
 }
 
-export async function PATCH(request: Request) {
+// PATCH /api/antiban — Update anti-ban settings
+export async function PATCH(request: NextRequest) {
   try {
     let settings = await db.antiBanSettings.findFirst()
     if (!settings) {
@@ -56,35 +25,65 @@ export async function PATCH(request: Request) {
     }
 
     const body = await request.json()
+    const allowedFields = [
+      'typingMinDelay',
+      'typingMaxDelay',
+      'messageIntervalMin',
+      'messageIntervalMax',
+      'randomLineBreaks',
+      'emojiVariation',
+      'dailyLimitPerChip',
+      'warmingEnabled',
+      'warmingDays',
+      'cooldownMinutes',
+      'cooldownAfterMessages',
+      'stopOnWarning',
+      'sendingWindowStart',
+      'sendingWindowEnd',
+      'timezone',
+    ]
 
-    // Handle reset to defaults
-    if (body._resetToDefaults) {
-      const reset = await db.antiBanSettings.update({
-        where: { id: settings.id },
-        data: { ...ANTI_BAN_DEFAULTS },
-      })
-      return NextResponse.json(reset)
-    }
-
-    // Only allow whitelisted fields — prevent arbitrary field injection
-    const sanitizedData: Record<string, unknown> = {}
-    for (const key of ALLOWED_FIELDS) {
-      if (key in body) {
-        sanitizedData[key] = body[key]
+    const updateData: Record<string, unknown> = {}
+    for (const field of allowedFields) {
+      if (body[field] !== undefined) {
+        updateData[field] = body[field]
       }
     }
 
-    if (Object.keys(sanitizedData).length === 0) {
-      return NextResponse.json({ error: 'Nenhum campo válido para atualizar' }, { status: 400 })
+    // Validate ranges
+    if (updateData.typingMinDelay !== undefined && Number(updateData.typingMinDelay) < 1000) {
+      return NextResponse.json(
+        { error: 'Delay mínimo de digitação deve ser pelo menos 1000ms' },
+        { status: 400 }
+      )
+    }
+    if (updateData.typingMaxDelay !== undefined && Number(updateData.typingMaxDelay) < Number(updateData.typingMinDelay || settings.typingMinDelay)) {
+      return NextResponse.json(
+        { error: 'Delay máximo deve ser maior que o mínimo' },
+        { status: 400 }
+      )
+    }
+    if (updateData.sendingWindowStart !== undefined && (Number(updateData.sendingWindowStart) < 0 || Number(updateData.sendingWindowStart) > 23)) {
+      return NextResponse.json(
+        { error: 'Hora de início deve ser entre 0 e 23' },
+        { status: 400 }
+      )
+    }
+    if (updateData.sendingWindowEnd !== undefined && (Number(updateData.sendingWindowEnd) < 1 || Number(updateData.sendingWindowEnd) > 24)) {
+      return NextResponse.json(
+        { error: 'Hora de término deve ser entre 1 e 24' },
+        { status: 400 }
+      )
     }
 
     const updated = await db.antiBanSettings.update({
       where: { id: settings.id },
-      data: sanitizedData as Record<AllowedField, unknown>,
+      data: updateData,
     })
+
     return NextResponse.json(updated)
   } catch (error) {
-    console.error('AntiBan PATCH error:', error)
+    console.error('Error updating anti-ban settings:', error)
     return NextResponse.json({ error: 'Erro ao atualizar configurações anti-ban' }, { status: 500 })
   }
 }
