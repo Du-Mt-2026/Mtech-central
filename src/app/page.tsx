@@ -218,6 +218,17 @@ const NAV_ITEMS = [
   { id: 'config', label: 'Configurações', icon: Settings, minRole: 'master' },
 ]
 
+// ===== Variáveis de Mensagem =====
+const MSG_VARIABLES = [
+  { tag: '{{nome}}', label: 'Nome' },
+  { tag: '{{saudacao}}', label: 'Saudação' },
+  { tag: '{{telefone}}', label: 'Telefone' },
+  { tag: '{{email}}', label: 'E-mail' },
+  { tag: '{{cidade}}', label: 'Cidade' },
+  { tag: '{{empresa}}', label: 'Empresa' },
+  { tag: '{{vendedor}}', label: 'Vendedor' },
+]
+
 // ===== Status Helpers =====
 function statusColor(status: string) {
   const map: Record<string, string> = {
@@ -2367,6 +2378,13 @@ function CampanhasTab() {
                         )}
                       </div>
                       <Textarea placeholder="Texto da mensagem..." value={step.content} onChange={e => updateStep(idx, 'content', e.target.value)} rows={2} />
+                      <div className="flex flex-wrap gap-1">
+                        {MSG_VARIABLES.map(v => (
+                          <Button key={v.tag} variant="outline" size="sm" className="h-6 text-[11px] gap-1 px-2 text-emerald-600 border-emerald-200 hover:bg-emerald-50" onClick={() => updateStep(idx, 'content', step.content + v.tag)}>
+                            {v.label}
+                          </Button>
+                        ))}
+                      </div>
                       {idx > 0 && (
                         <div className="mt-2">
                           <Label className="text-xs">Atraso antes desta mensagem (minutos)</Label>
@@ -2459,6 +2477,13 @@ function CampanhasTab() {
                               )}
                             </div>
                             <Textarea placeholder={`Texto da variação ${vIdx + 1}...`} value={v.content} onChange={e => updateVariation(idx, vIdx, 'content', e.target.value)} rows={2} />
+                            <div className="flex flex-wrap gap-1">
+                              {MSG_VARIABLES.map(vv => (
+                                <Button key={vv.tag} variant="outline" size="sm" className="h-6 text-[11px] gap-1 px-2 text-emerald-600 border-emerald-200 hover:bg-emerald-50" onClick={() => updateVariation(idx, vIdx, 'content', v.content + vv.tag)}>
+                                  {vv.label}
+                                </Button>
+                              ))}
+                            </div>
                             <p className="text-xs text-muted-foreground">Se tiver mídia, o texto será a legenda/descrição</p>
                             {/* Anexar (variation) */}
                             <div className="space-y-2">
@@ -2752,6 +2777,13 @@ function CampanhasTab() {
                       )}
                     </div>
                     <Textarea placeholder="Texto da mensagem..." value={step.content} onChange={e => editUpdateStep(idx, 'content', e.target.value)} rows={2} />
+                    <div className="flex flex-wrap gap-1">
+                      {MSG_VARIABLES.map(v => (
+                        <Button key={v.tag} variant="outline" size="sm" className="h-6 text-[11px] gap-1 px-2 text-emerald-600 border-emerald-200 hover:bg-emerald-50" onClick={() => editUpdateStep(idx, 'content', step.content + v.tag)}>
+                          {v.label}
+                        </Button>
+                      ))}
+                    </div>
                     {idx > 0 && (
                       <div className="mt-2">
                         <Label className="text-xs">Atraso antes desta mensagem (minutos)</Label>
@@ -2842,6 +2874,13 @@ function CampanhasTab() {
                             )}
                           </div>
                           <Textarea placeholder={`Texto da variação ${vIdx + 1}...`} value={v.content} onChange={e => editUpdateVariation(idx, vIdx, 'content', e.target.value)} rows={2} />
+                          <div className="flex flex-wrap gap-1">
+                            {MSG_VARIABLES.map(vv => (
+                              <Button key={vv.tag} variant="outline" size="sm" className="h-6 text-[11px] gap-1 px-2 text-emerald-600 border-emerald-200 hover:bg-emerald-50" onClick={() => editUpdateVariation(idx, vIdx, 'content', v.content + vv.tag)}>
+                                {vv.label}
+                              </Button>
+                            ))}
+                          </div>
                           <div className="space-y-2">
                             <div className="flex gap-2">
                               <Select value={v.mediatype} onValueChange={mt => editUpdateVariation(idx, vIdx, 'mediatype', mt)}>
