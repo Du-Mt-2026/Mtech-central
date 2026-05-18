@@ -161,10 +161,10 @@ export function CampaignsSection() {
 
   const handleStatusChange = async (id: string, newStatus: string) => {
     try {
-      const res = await fetch('/api/campaigns', {
+      const res = await fetch(`/api/campaigns/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, status: newStatus }),
+        body: JSON.stringify({ status: newStatus }),
       })
       if (res.ok) {
         toast({ title: `Campanha ${statusLabels[newStatus]?.toLowerCase() || newStatus}!` })
@@ -179,7 +179,7 @@ export function CampaignsSection() {
 
   const handleDelete = async (id: string) => {
     try {
-      const res = await fetch(`/api/campaigns?id=${id}`, { method: 'DELETE' })
+      const res = await fetch(`/api/campaigns/${id}`, { method: 'DELETE' })
       if (res.ok) {
         toast({ title: 'Campanha removida!' })
         fetchCampaigns()

@@ -87,17 +87,43 @@ async function resetDailyIfNeeded(chipId: string): Promise<void> {
 }
 
 /**
- * Check if chip is in cooldown period
+ * Check if chip is in cooldown period.
+ * Uses cooldownUntil timestamp on the chip record.
+ * When a chip hits cooldownAfterMessages, we set cooldownUntil = now + cooldownMinutes.
+ * This avoids the infinite cooldown bug where modulo alone would trap the chip forever.
  */
 async function isInCooldown(chipId: string, settings: AntiBanConfig): Promise<boolean> {
   const chip = await db.chip.findUnique({ where: { id: chipId } })
   if (!chip) return true
 
-  if (chip.sentToday > 0 && chip.sentToday % settings.cooldownAfterMessages === 0) {
-    // Simple cooldown: skip this chip for now (next cron will retry)
-    console.log(`[SendingEngine] Chip ${chipId} in cooldown after ${chip.sentToday} messages`)
+  const now = new Date()
+
+  // If chip has an active cooldownUntil and it hasn't expired yet, chip is in cooldown
+  if (chip.cooldownUntil && new Date(chip.cooldownUntil) > now) {
+    console.log(`[SendingEngine] Chip ${chipId} in cooldown until ${chip.cooldownUntil}`)
     return true
   }
+
+  // Check if chip just hit the cooldown threshold (multiple of cooldownAfterMessages)
+  if (chip.sentToday > 0 && chip.sentToday % settings.cooldownAfterMessages === 0) {
+    // Set cooldownUntil timestamp so we know when to resume
+    const cooldownUntil = new Date(now.getTime() + settings.cooldownMinutes * 60 * 1000)
+    await db.chip.update({
+      where: { id: chipId },
+      data: { cooldownUntil },
+    })
+    console.log(`[SendingEngine] Chip ${chipId} entering cooldown after ${chip.sentToday} messages until ${cooldownUntil.toISOString()}`)
+    return true
+  }
+
+  // Cooldown expired or not in cooldown — clear cooldownUntil if it was set
+  if (chip.cooldownUntil) {
+    await db.chip.update({
+      where: { id: chipId },
+      data: { cooldownUntil: null },
+    })
+  }
+
   return false
 }
 

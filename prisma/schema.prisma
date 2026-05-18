@@ -28,6 +28,7 @@ model Chip {
   dailyLimit       Int      @default(200)
   sentToday        Int      @default(0)
   lastResetAt      DateTime @default(now())
+  cooldownUntil    DateTime?
   warmingEnabled   Boolean  @default(true)
   warmingStage     Int      @default(0)
   isQrPaired       Boolean  @default(false)
