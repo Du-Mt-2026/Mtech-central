@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { setProxy, resolveChipProxy, getGlobalProxy, deleteInstance, disconnectInstance, getInstanceName } from '@/lib/evolution-api'
+import { removeWireGuardPeer } from '@/lib/wireguard-peer-api'
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ chipId: string }> }) {
   const { chipId } = await params
@@ -22,6 +23,13 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ c
         await deleteInstance(instanceName)
       } catch (err) {
         console.log('[Chip DELETE] Delete instance failed (may not exist):', err)
+      }
+
+      // Remove WireGuard peer from KVM8 server
+      if (chip.wireguardPubKey && chip.wireguardIp) {
+        removeWireGuardPeer(chip.wireguardPubKey, chip.wireguardIp).catch(err => {
+          console.error('[Chip DELETE] Background WireGuard peer remove failed:', err)
+        })
       }
     }
 

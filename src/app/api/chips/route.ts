@@ -5,6 +5,7 @@ import {
   generateSocksPort,
   generateWireGuardKeys,
 } from '@/lib/wireguard'
+import { addWireGuardPeer } from '@/lib/wireguard-peer-api'
 
 export async function GET() {
   try {
@@ -62,6 +63,13 @@ export async function POST(request: Request) {
         status: 'disconnected',
       },
     })
+
+    // Auto-add WireGuard peer on the KVM8 server
+    if (publicKey && wireguardIp) {
+      addWireGuardPeer(publicKey, wireguardIp).catch(err => {
+        console.error('[Chips POST] Background WireGuard peer add failed:', err)
+      })
+    }
 
     return NextResponse.json(chip, { status: 201 })
   } catch (error) {
