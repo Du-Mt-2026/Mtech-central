@@ -1933,27 +1933,51 @@ function ContatosTab() {
               <p className="text-sm text-muted-foreground mb-3">CSV, Excel (.xlsx, .xls) ou LibreOffice (.ods)</p>
               <Input type="file" accept=".csv,.xlsx,.xls,.ods" onChange={handleImport} className="max-w-xs mx-auto" />
             </div>
-            <div className="p-3 bg-muted/50 rounded-lg text-xs space-y-2">
+            <div className="p-3 bg-muted/50 rounded-lg text-xs space-y-3">
               <p className="font-medium">Formato da planilha:</p>
-              <p className="text-muted-foreground">A coluna <strong>Telefone</strong> é obrigatória. As demais colunas ficam disponíveis como variáveis {'{{nome}}'}, {'{{empresa}}'}, {'{{vendedor}}'} etc. no texto da mensagem.</p>
-              <code className="block bg-muted p-2 rounded text-[11px]">Empresa,Nome,Telefone,Vendedor{'\n'}Tech Corp,João,11999990001,Renato{'\n'}Info Ltda,Maria,21988880002,Carlos</code>
-              <Button
-                variant="outline"
-                size="sm"
-                className="w-full h-8 text-xs gap-2 mt-1"
-                onClick={() => {
-                  const csv = 'Empresa,Nome,Telefone,Vendedor\nTech Corp,João Silva,11999990001,Renato\nInfo Ltda,Maria Santos,21988880002,Carlos\nDigital Inc,Pedro Lima,31977770003,Ana'
-                  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
-                  const url = URL.createObjectURL(blob)
-                  const a = document.createElement('a')
-                  a.href = url
-                  a.download = 'planilha_exemplo_contatos.csv'
-                  a.click()
-                  URL.revokeObjectURL(url)
-                  toast.success('Planilha de exemplo baixada!')
-                }}>
-                <Download className="size-3.5" /> Baixar Planilha de Exemplo
-              </Button>
+              <p className="text-muted-foreground">A coluna <strong>Telefone</strong> é obrigatória. As demais colunas ficam disponíveis como variáveis {'{{nome}}'}, {'{{empresa}}'}, {'{{vendedor}}'} etc. no texto da mensagem. Adicione quantas colunas quiser!</p>
+              <code className="block bg-muted p-2 rounded text-[11px]">Empresa,Nome,Telefone,Vendedor,Nota{'\n'}Tech Corp,João,11999990001,Renato,VIP{'\n'}Info Ltda,Maria,21988880002,Carlos,</code>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="flex-1 h-8 text-xs gap-2"
+                  onClick={() => {
+                    const a = document.createElement('a')
+                    a.href = '/templates/modelo_contatos.xlsx'
+                    a.download = 'modelo_contatos_octupuszap.xlsx'
+                    a.click()
+                    toast.success('Planilha XLSX baixada!')
+                  }}>
+                  <Download className="size-3.5" /> Baixar XLSX
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="flex-1 h-8 text-xs gap-2"
+                  onClick={async () => {
+                    try {
+                      // Download CSV from our API
+                      const res = await fetch('/api/templates/download?format=csv')
+                      const csv = await res.text()
+                      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+                      const url = URL.createObjectURL(blob)
+                      // Open Google Sheets import page
+                      window.open('https://docs.google.com/spreadsheets/create', '_blank')
+                      // Also download the CSV so user can drag-drop import
+                      const a = document.createElement('a')
+                      a.href = url
+                      a.download = 'modelo_contatos_octupuszap.csv'
+                      a.click()
+                      URL.revokeObjectURL(url)
+                      toast.success('CSV baixado! No Google Sheets: Arquivo → Importar → Enviar e selecione o arquivo baixado', { duration: 8000 })
+                    } catch {
+                      toast.error('Erro ao gerar CSV')
+                    }
+                  }}>
+                  <FileSpreadsheet className="size-3.5" /> Google Sheets
+                </Button>
+              </div>
             </div>
           </div>
         </DialogContent>
