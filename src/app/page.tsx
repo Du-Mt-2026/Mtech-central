@@ -3370,6 +3370,37 @@ function CampanhasTab() {
                 <Card className="shadow-lg"><CardContent className="p-3 text-center"><p className="text-xs text-muted-foreground">Entregues</p><p className="text-xl font-bold text-emerald-600">{detailMessages.filter(m => m.status === 'delivered' || m.status === 'read').length}</p></CardContent></Card>
                 <Card className="shadow-lg"><CardContent className="p-3 text-center"><p className="text-xs text-muted-foreground">Falharam</p><p className="text-xl font-bold text-rose-600">{detailMessages.filter(m => m.status === 'failed').length}</p></CardContent></Card>
               </div>
+              {detailMessages.length > 0 && (
+                <div className="space-y-2">
+                  <Label className="text-sm font-semibold">Detalhes das Mensagens</Label>
+                  <ScrollArea className="max-h-[300px]">
+                    <div className="space-y-1.5">
+                      {detailMessages.map((m, i) => (
+                        <div key={m.id} className={`p-2.5 rounded-lg text-xs flex items-center gap-3 ${m.status === 'failed' ? 'bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800' : m.status === 'pending' ? 'bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800' : 'bg-muted/50'}`}>
+                          <span className="font-mono text-muted-foreground w-5 text-center">{i + 1}</span>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium">{m.contact?.name || '—'}</span>
+                              <span className="text-muted-foreground">{m.contact?.phone || ''}</span>
+                            </div>
+                            <div className="flex items-center gap-2 mt-0.5">
+                              <StatusBadge status={m.status} />
+                              {m.chip?.name && <span className="text-muted-foreground">via {m.chip.name}</span>}
+                            </div>
+                            {m.error && <p className="text-rose-600 mt-1 font-medium">Erro: {m.error}</p>}
+                          </div>
+                          <div className="text-right shrink-0">
+                            {m.sentAt && <p className="text-muted-foreground">Envio: {new Date(m.sentAt).toLocaleString('pt-BR')}</p>}
+                            {m.deliveredAt && <p className="text-emerald-600">Entrega: {new Date(m.deliveredAt).toLocaleString('pt-BR')}</p>}
+                            {m.readAt && <p className="text-sky-600">Leitura: {new Date(m.readAt).toLocaleString('pt-BR')}</p>}
+                            {m.status === 'pending' && !m.sentAt && <p className="text-amber-600 font-medium">Aguardando envio</p>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </ScrollArea>
+                </div>
+              )}
               {selectedCampaign.sequenceSteps?.length > 0 && (
                 <div className="space-y-2">
                   <Label className="text-sm font-semibold">Mensagens & Variações</Label>
