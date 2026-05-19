@@ -2659,37 +2659,6 @@ function CampanhasTab() {
                   </div>
                 )}
               </div>
-
-              {/* Anti-Ban Section in Campaign */}
-              <Separator />
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Shield className="size-5 text-emerald-500" />
-                    <Label className="text-base font-semibold">Proteção Anti-Ban</Label>
-                  </div>
-                  <Switch checked={newCampaign.antiBanEnabled} onCheckedChange={v => setNewCampaign(prev => ({ ...prev, antiBanEnabled: v }))} />
-                </div>
-                {newCampaign.antiBanEnabled && (
-                  <div className="space-y-3 p-4 bg-muted/50 rounded-xl">
-                    <Label className="text-sm">Modo de Aquecimento</Label>
-                    <div className="grid grid-cols-3 gap-2">
-                      {[
-                        { value: 'normal', label: 'Normal', icon: Shield, desc: 'Equilibrado' },
-                        { value: 'agressive', label: 'Agressivo', icon: Flame, desc: 'Mais rápido' },
-                        { value: 'stealth', label: 'Furtivo', icon: Snowflake, desc: 'Máx. segurança' },
-                      ].map(m => (
-                        <button key={m.value} type="button" onClick={() => setNewCampaign(prev => ({ ...prev, warmingMode: m.value }))}
-                          className={`p-3 rounded-lg border text-center transition-all ${newCampaign.warmingMode === m.value ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20' : 'hover:bg-muted/50'}`}>
-                          <m.icon className={`size-5 mx-auto mb-1 ${newCampaign.warmingMode === m.value ? 'text-emerald-600' : 'text-muted-foreground'}`} />
-                          <p className="text-sm font-medium">{m.label}</p>
-                          <p className="text-xs text-muted-foreground">{m.desc}</p>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
             </div>
             <DialogFooter>
               <DialogClose asChild><Button variant="outline">Cancelar</Button></DialogClose>
