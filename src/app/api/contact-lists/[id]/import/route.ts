@@ -87,25 +87,33 @@ export async function POST(
 
     // Extra columns (everything except name and phone) go into customFields
     const extraHeaders = headers.filter(h => h !== nameHeader && h !== phoneHeader)
-    const detectedColumns = [
-      nameHeader ? { name: nameHeader, variable: 'nome', type: 'core' } : null,
-      { name: phoneHeader, variable: 'telefone', type: 'core' },
-      ...extraHeaders.map(h => ({ name: h, variable: h.toLowerCase().replace(/[^a-zA-Z0-9À-ÿ]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, ''), type: 'custom' })),
-    ].filter(Boolean) as Array<{ name: string; variable: string; type: string }>
 
-    // Save column mapping to the ContactList so labels are preserved
+    // Generate variable key from header name (normalize accents and special chars)
+    function toVarKey(header: string): string {
+      return header.toLowerCase().replace(/[^a-zA-Z0-9À-ÿ]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '')
+    }
+
+    // Determine the variable key for core fields based on the ORIGINAL header name
+    // This way, if the column is "WhatsApp", the variable will be {{whatsapp}} not {{telefone}}
+    const nameVarKey = nameHeader ? toVarKey(nameHeader) : 'nome'
+    const phoneVarKey = phoneHeader ? toVarKey(phoneHeader) : 'telefone'
+
+    const detectedColumns = [
+      nameHeader ? { name: nameHeader, variable: nameVarKey, type: 'core', coreField: 'name' } : null,
+      { name: phoneHeader, variable: phoneVarKey, type: 'core', coreField: 'phone' },
+      ...extraHeaders.map(h => ({ name: h, variable: toVarKey(h), type: 'custom', coreField: null })),
+    ].filter(Boolean) as Array<{ name: string; variable: string; type: string; coreField: string | null }>
+
+    // Save FULL column mapping to the ContactList (including core fields)
+    // This maps original header name → variable key, for ALL columns
     const columnMapping: Record<string, string> = {}
     for (const col of detectedColumns) {
-      if (col.type === 'custom') {
-        columnMapping[col.name] = col.variable
-      }
+      columnMapping[col.name] = col.variable
     }
-    if (Object.keys(columnMapping).length > 0) {
-      await db.contactList.update({
-        where: { id },
-        data: { columns: JSON.stringify(columnMapping) },
-      })
-    }
+    await db.contactList.update({
+      where: { id },
+      data: { columns: JSON.stringify(columnMapping) },
+    })
 
     // Build contacts with customFields
     const contacts: { name: string; phone: string; customFields: string }[] = []
@@ -113,12 +121,32 @@ export async function POST(
       const name = nameHeader ? String(row[nameHeader] || '').trim() : ''
       const phone = String(row[phoneHeader] || '').trim()
       if (phone && /\d/.test(phone)) {
-        // Collect extra columns into customFields JSON
+        // Collect ALL columns into customFields JSON (including core field aliases)
+        // This way {{whatsapp}} resolves even though the value is also in the phone core field
         const customData: Record<string, string> = {}
+
+        // Add name column under its original variable key (e.g., {{nome}})
+        if (nameHeader && name) {
+          customData[nameVarKey] = name
+        }
+        // Add phone column under its original variable key (e.g., {{whatsapp}} instead of just {{telefone}})
+        if (phoneHeader && phone) {
+          customData[phoneVarKey] = phone
+          // Always add {{telefone}} as an alias for the phone column too
+          if (phoneVarKey !== 'telefone') {
+            customData['telefone'] = phone
+          }
+        }
+        // Always add {{nome}} as an alias for the name column too
+        if (nameHeader && name && nameVarKey !== 'nome') {
+          customData['nome'] = name
+        }
+
+        // Add extra (custom) columns
         for (const header of extraHeaders) {
           const value = String(row[header] || '').trim()
           if (value) {
-            const varKey = header.toLowerCase().replace(/[^a-zA-Z0-9À-ÿ]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '')
+            const varKey = toVarKey(header)
             customData[varKey] = value
           }
         }

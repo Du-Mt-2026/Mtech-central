@@ -231,7 +231,8 @@ const NAV_ITEMS = [
 // Core variables always available (come from dedicated DB columns)
 const CONTACT_VARIABLES = [
   { tag: '{{nome}}', label: 'Nome', icon: '👤', source: 'core' },
-  { tag: '{{telefone}}', label: 'Telefone', icon: '📱', source: 'core' },
+  { tag: '{{whatsapp}}', label: 'WhatsApp', icon: '📱', source: 'core' },
+  { tag: '{{telefone}}', label: 'Telefone', icon: '📞', source: 'core' },
 ]
 // Note: Custom variables from spreadsheet columns (empresa, vendedora, etc.) are loaded dynamically
 // from the selected contact list via the API — see fetchContactVariables()
@@ -2053,8 +2054,8 @@ function ContatosTab() {
             </div>
             <div className="p-3 bg-muted/50 rounded-lg text-xs space-y-3">
               <p className="font-medium">Formato da planilha:</p>
-              <p className="text-muted-foreground">A coluna <strong>Telefone</strong> é obrigatória. A coluna <strong>WhatsApp</strong> deve conter o número no formato internacional (ex: 5511999990001). As demais colunas ficam disponíveis automaticamente como variáveis (ex: coluna "Empresa" vira {'{{empresa}}'}, coluna "Vendedora" vira {'{{vendedora}}'}). Adicione quantas colunas quiser!</p>
-              <code className="block bg-muted p-2 rounded text-[11px]">Empresa,Nome,Telefone,WhatsApp,Vendedora,Nota{'\n'}Tech Corp,João,11999990001,5511999990001,Renato,VIP{'\n'}Info Ltda,Maria,21988880002,5521988880002,Carlos,</code>
+              <p className="text-muted-foreground">Uma coluna de <strong>Telefone/WhatsApp</strong> é obrigatória (aceita: Telefone, WhatsApp, Celular, Tel, Phone, Numero). A coluna <strong>Nome</strong> é recomendada. As demais colunas ficam disponíveis automaticamente como variáveis (ex: coluna "Empresa" vira {'{{empresa}}'}, coluna "Vendedora" vira {'{{vendedora}}'}). Adicione quantas colunas quiser!</p>
+              <code className="block bg-muted p-2 rounded text-[11px]">Nome,WhatsApp,Empresa,Vendedora{'\n'}Maria,5511999990001,Tech Corp,Ana{'\n'}Julia,5521988880002,Info Ltda,Carla</code>
             </div>
           </div>
         </DialogContent>
@@ -2271,7 +2272,7 @@ function parseKeyBlocksFromText(text: string): Array<{ fullMatch: string; variat
 }
 
 // Helper: generate preview text replacing KEY blocks and contact variables
-function generatePreviewText(text: string, messageKeys: Array<{ id: string; name: string; label: string; category: string; variations: string }>, seed: number, contactVariables?: Array<{ tag: string; label: string; source: string }>): string {
+function generatePreviewText(text: string, messageKeys: Array<{ id: string; name: string; label: string; category: string; variations: string }>, seed: number, contactVariables?: Array<{ tag: string; label: string; source: string }>, previewContactData?: { name: string; phone: string; customFields?: string } | null): string {
   // First, resolve {{KEY: ...}} blocks — pick a deterministic variation based on seed
   let preview = text.replace(/\{\{KEY:\s*((?:[^{}]|\{\{[^}]*\}\})*)\}\}/g, (_, inner) => {
     const options = inner.split('|').map((s: string) => s.trim()).filter(Boolean)
@@ -2289,18 +2290,39 @@ function generatePreviewText(text: string, messageKeys: Array<{ id: string; name
   })
 
   // Replace contact variables dynamically
-  // Sample data for preview — core fields always available
-  const sampleData: Record<string, string> = {
-    nome: 'João',
-    telefone: '11999990001',
+  // Use real contact data if available, otherwise use fallback sample data
+  const sampleData: Record<string, string> = {}
+
+  // Populate from real contact data if available
+  if (previewContactData) {
+    sampleData['nome'] = previewContactData.name
+    sampleData['name'] = previewContactData.name
+    sampleData['telefone'] = previewContactData.phone
+    sampleData['phone'] = previewContactData.phone
+    sampleData['whatsapp'] = previewContactData.phone
+    sampleData['celular'] = previewContactData.phone
+    // Parse customFields from the real contact
+    if (previewContactData.customFields) {
+      try {
+        const customData = JSON.parse(previewContactData.customFields)
+        for (const [key, value] of Object.entries(customData)) {
+          sampleData[key] = String(value)
+        }
+      } catch { /* ignore invalid JSON */ }
+    }
+  } else {
+    // Fallback sample data when no contact is selected
+    sampleData['nome'] = 'João'
+    sampleData['telefone'] = '11999990001'
   }
-  // Add sample data for custom variables from contact list
+
+  // Ensure custom variables from contact list also have sample data
   if (contactVariables && contactVariables.length > 0) {
     for (const cv of contactVariables) {
-      if (cv.source === 'custom') {
-        const key = cv.tag.replace(/\{\{|\}\}/g, '').toLowerCase()
-        // Use the label as sample value for custom fields
-        if (!sampleData[key]) sampleData[key] = cv.label
+      const key = cv.tag.replace(/\{\{|\}\}/g, '').toLowerCase()
+      if (!sampleData[key]) {
+        // Use the label as sample value for custom fields that don't have real data
+        sampleData[key] = cv.label
       }
     }
   }
@@ -2328,12 +2350,13 @@ function generatePreviewText(text: string, messageKeys: Array<{ id: string; name
   return preview
 }
 
-function MessageBuilder({ value, onChange, messageKeys, templates, contactVariables, rows = 3 }: {
+function MessageBuilder({ value, onChange, messageKeys, templates, contactVariables, previewContactData, rows = 3 }: {
   value: string
   onChange: (v: string) => void
   messageKeys: Array<{ id: string; name: string; label: string; category: string; variations: string }>
   templates?: MessageTemplate[]
   contactVariables?: Array<{ tag: string; label: string; source: string }>
+  previewContactData?: { name: string; phone: string; customFields?: string } | null
   rows?: number
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -2386,7 +2409,7 @@ function MessageBuilder({ value, onChange, messageKeys, templates, contactVariab
     setNewBlockOpen(false)
   }
 
-  const previewText = generatePreviewText(value, messageKeys, previewSeed, contactVariables)
+  const previewText = generatePreviewText(value, messageKeys, previewSeed, contactVariables, previewContactData)
   const charCount = previewText.length
   const lineCount = value.split('\n').length
 
@@ -2698,6 +2721,7 @@ function CampanhasTab() {
   const [messageKeys, setMessageKeys] = useState<Array<{ id: string; name: string; label: string; category: string; variations: string }>>([])
   const [templates, setTemplates] = useState<MessageTemplate[]>([])
   const [contactVariables, setContactVariables] = useState<Array<{ tag: string; label: string; source: string }>>([])
+  const [previewContact, setPreviewContact] = useState<{ name: string; phone: string; customFields?: string } | null>(null)
   const [activeStep, setActiveStep] = useState(0)
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
   const [processing, setProcessing] = useState(false)
@@ -2755,8 +2779,15 @@ function CampanhasTab() {
       } else {
         setContactVariables([])
       }
+      // Also store first contact data for realistic preview
+      if (data.firstContact) {
+        setPreviewContact(data.firstContact)
+      } else {
+        setPreviewContact(null)
+      }
     } catch {
       setContactVariables([])
+      setPreviewContact(null)
     }
   }, [])
 
@@ -2768,6 +2799,7 @@ function CampanhasTab() {
       fetchContactVariables(newCampaign.contactListId)
     } else {
       setContactVariables([])
+      setPreviewContact(null)
     }
   }, [newCampaign.contactListId, fetchContactVariables])
 
@@ -3213,7 +3245,7 @@ function CampanhasTab() {
                           </div>
                         )}
 
-                        <MessageBuilder value={step.content} onChange={v => updateStep(idx, 'content', v)} messageKeys={messageKeys} templates={templates} contactVariables={contactVariables} rows={14} />
+                        <MessageBuilder value={step.content} onChange={v => updateStep(idx, 'content', v)} messageKeys={messageKeys} templates={templates} contactVariables={contactVariables} previewContactData={previewContact} rows={14} />
 
                         {/* Attach media */}
                         <div className="space-y-2">
@@ -3784,7 +3816,7 @@ function CampanhasTab() {
                         </Button>
                       )}
                     </div>
-                    <MessageBuilder value={step.content} onChange={v => editUpdateStep(idx, 'content', v)} messageKeys={messageKeys} templates={templates} contactVariables={contactVariables} />
+                    <MessageBuilder value={step.content} onChange={v => editUpdateStep(idx, 'content', v)} messageKeys={messageKeys} templates={templates} contactVariables={contactVariables} previewContactData={previewContact} />
                     {idx > 0 && (
                       <div className="mt-2">
                         <Label className="text-xs">Atraso antes desta mensagem (minutos)</Label>
@@ -4054,7 +4086,7 @@ function TemplatesTab() {
     setEditForm(prev => ({ ...prev, content: prev.content + v }))
   }
 
-  const TEMPLATE_VARS = ['{{nome}}', '{{telefone}}']
+  const TEMPLATE_VARS = ['{{nome}}', '{{whatsapp}}', '{{telefone}}']
 
   const openEditTemplate = (t: MessageTemplate) => {
     setEditTemplate(t)

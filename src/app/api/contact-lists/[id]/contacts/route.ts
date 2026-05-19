@@ -58,17 +58,47 @@ export async function GET(
       keyToLabel[varKey] = originalName
     }
 
-    const availableVariables = [
-      { tag: '{{nome}}', label: 'Nome', source: 'core' },
-      { tag: '{{telefone}}', label: 'Telefone', source: 'core' },
-      ...Array.from(customKeys).sort().map(k => ({
+    // Core variables — always include nome and telefone
+    // Also include any column aliases from the mapping (e.g., {{whatsapp}} if phone column was "WhatsApp")
+    const coreVariables: Array<{ tag: string; label: string; source: string }> = [
+      { tag: '{{nome}}', label: keyToLabel['nome'] || 'Nome', source: 'core' },
+      { tag: '{{telefone}}', label: keyToLabel['telefone'] || 'Telefone', source: 'core' },
+    ]
+
+    // If the column mapping has aliases for core fields, add them too
+    // e.g., if phone column was "WhatsApp", add {{whatsapp}} as a core variable
+    for (const [varKey, originalName] of Object.entries(keyToLabel)) {
+      if (varKey !== 'nome' && varKey !== 'telefone') {
+        // Check if this is a core field alias (phone or name column)
+        const phoneAliases = ['whatsapp', 'celular', 'numero', 'tel', 'phone']
+        const nameAliases = ['name', 'nombre', 'cliente']
+        if (phoneAliases.includes(varKey)) {
+          coreVariables.push({ tag: `{{${varKey}}}`, label: originalName, source: 'core' })
+        } else if (nameAliases.includes(varKey)) {
+          coreVariables.push({ tag: `{{${varKey}}}`, label: originalName, source: 'core' })
+        }
+      }
+    }
+
+    // Custom variables from customFields (exclude any that are already in coreVariables)
+    const coreTags = new Set(coreVariables.map(v => v.tag))
+    const customVariables = Array.from(customKeys).sort()
+      .filter(k => !coreTags.has(`{{${k}}}`))
+      .map(k => ({
         tag: `{{${k}}}`,
         label: keyToLabel[k] || k.charAt(0).toUpperCase() + k.slice(1).replace(/_/g, ' '),
         source: 'custom'
-      })),
-    ]
+      }))
 
-    return NextResponse.json({ contacts, total, page, limit, availableVariables })
+    const availableVariables = [...coreVariables, ...customVariables]
+
+    // Also fetch first contact for preview data
+    const firstContact = await db.contact.findFirst({
+      where: { contactListId: id },
+      orderBy: { createdAt: 'asc' },
+    })
+
+    return NextResponse.json({ contacts, total, page, limit, availableVariables, firstContact })
   } catch (error) {
     console.error('Contacts GET error:', error)
     return NextResponse.json({ error: 'Erro interno' }, { status: 500 })

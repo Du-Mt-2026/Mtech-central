@@ -606,8 +606,8 @@ function resolveKeyBlocks(text: string): string {
  * Each key has variations stored as JSON; pick a random one.
  */
 async function resolveMessageKeyMarkers(text: string): Promise<string> {
-  // Find all {{SOME_NAME}} patterns that are NOT {{KEY:...}}, {{nome}}, {{telefone}}, {{empresa}}, {{vendedor}}
-  const contactVars = ['nome', 'telefone', 'empresa', 'vendedor']
+  // Find all {{SOME_NAME}} patterns that are NOT {{KEY:...}}, contact variables, or common aliases
+  const contactVars = ['nome', 'telefone', 'empresa', 'vendedor', 'vendedora', 'whatsapp', 'celular', 'phone', 'name']
   const markerRegex = /\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}/g
   let match
   const markers = new Set<string>()
@@ -749,11 +749,15 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
       }
     } catch { /* ignore invalid JSON */ }
 
-    // Core fields always available
+    // Core fields always available — include common aliases so {{whatsapp}}, {{celular}}, etc. resolve
     const allFields: Record<string, string> = {
       nome: contact.name,
+      name: contact.name,
       telefone: contact.phone,
-      ...customData, // custom fields like empresa, vendedor, nota, etc.
+      phone: contact.phone,
+      whatsapp: contact.phone,
+      celular: contact.phone,
+      ...customData, // custom fields like empresa, vendedora, nota, etc.
     }
 
     // Resolve all {{variable}} patterns dynamically
