@@ -2020,8 +2020,11 @@ function ContatosTab() {
           <DialogHeader><DialogTitle>Importar Planilha</DialogTitle><DialogDescription>Crie uma lista e importe contatos em um passo só</DialogDescription></DialogHeader>
           <div className="py-4 space-y-4">
             <div className="space-y-2">
-              <Label>Nome da Lista</Label>
-              <Input placeholder="Ex: Leads Black Friday" value={quickImportName} onChange={e => setQuickImportName(e.target.value)} />
+              <Label className="flex items-center gap-1">Nome da Lista <span className="text-rose-500 text-sm">*</span></Label>
+              <Input placeholder="Ex: Leads Black Friday (obrigatório)" value={quickImportName} onChange={e => setQuickImportName(e.target.value)} className={!quickImportName.trim() && quickImportFile ? 'border-amber-400 focus:border-amber-500' : ''} />
+              {!quickImportName.trim() && quickImportFile && (
+                <p className="text-xs text-amber-600 font-medium">⚠ Preencha o nome da lista para ativar o botão de importação</p>
+              )}
             </div>
             <div className="border-2 border-dashed rounded-xl p-6 text-center hover:border-emerald-400 transition-colors">
               {quickImportFile ? (
@@ -2042,7 +2045,15 @@ function ContatosTab() {
                   <p className="text-sm text-muted-foreground mb-3">CSV, Excel (.xlsx, .xls) ou LibreOffice (.ods)</p>
                 </>
               )}
-              <Input type="file" accept=".csv,.xlsx,.xls,.ods" onChange={e => setQuickImportFile(e.target.files?.[0] || null)} className="max-w-xs mx-auto" />
+              <Input type="file" accept=".csv,.xlsx,.xls,.ods" onChange={e => {
+                const file = e.target.files?.[0] || null
+                setQuickImportFile(file)
+                // Auto-fill list name from filename if field is empty
+                if (file && !quickImportName.trim()) {
+                  const nameFromFile = file.name.replace(/\.[^.]+$/, '').replace(/[_-]/g, ' ')
+                  setQuickImportName(nameFromFile)
+                }
+              }} className="max-w-xs mx-auto" />
             </div>
             <div className="p-3 bg-muted/50 rounded-lg text-xs space-y-2">
               <p className="font-medium">Não tem uma planilha?</p>
@@ -2077,11 +2088,22 @@ function ContatosTab() {
               </div>
             </div>
           </div>
-          <DialogFooter>
-            <DialogClose asChild><Button variant="outline" disabled={quickImporting}>Cancelar</Button></DialogClose>
-            <Button onClick={handleQuickImport} disabled={!quickImportName.trim() || !quickImportFile || quickImporting} className="bg-emerald-600 hover:bg-emerald-700 gap-2">
-              {quickImporting ? <><RefreshCw className="size-4 animate-spin" /> Importando...</> : <><Upload className="size-4" /> Criar Lista e Importar</>}
-            </Button>
+          <DialogFooter className="flex-col gap-2 sm:flex-col">
+            {!quickImportFile && !quickImportName.trim() && (
+              <p className="text-xs text-amber-600 text-center font-medium">⚠ Preencha o nome da lista e selecione um arquivo para importar</p>
+            )}
+            {quickImportFile && !quickImportName.trim() && (
+              <p className="text-xs text-amber-600 text-center font-medium">⚠ Digite um nome para a lista acima</p>
+            )}
+            {!quickImportFile && quickImportName.trim() && (
+              <p className="text-xs text-amber-600 text-center font-medium">⚠ Selecione um arquivo para importar</p>
+            )}
+            <div className="flex gap-2 w-full justify-end">
+              <DialogClose asChild><Button variant="outline" disabled={quickImporting}>Cancelar</Button></DialogClose>
+              <Button onClick={handleQuickImport} disabled={!quickImportName.trim() || !quickImportFile || quickImporting} className="bg-emerald-600 hover:bg-emerald-700 gap-2 min-w-[200px]">
+                {quickImporting ? <><RefreshCw className="size-4 animate-spin" /> Importando...</> : <><Upload className="size-4" /> Criar Lista e Importar</>}
+              </Button>
+            </div>
           </DialogFooter>
         </DialogContent>
       </Dialog>
