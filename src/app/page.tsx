@@ -2207,6 +2207,7 @@ type StepForm = {
   mediaFile: File | null
   mediaUrl: string
   mediatype: string
+  audioMode: 'whatsapp' | 'original'  // 'whatsapp' = convert to OGG, 'original' = keep as-is
   caption: string
   linkUrl: string
   linkPreview: boolean
@@ -2215,7 +2216,7 @@ type StepForm = {
   locationLat: string
   locationLng: string
   locationName: string
-  variations: { content: string; mediaFile: File | null; mediaUrl: string; mediatype: string; caption: string; linkUrl: string; linkPreview: boolean; contactName: string; contactPhone: string; locationLat: string; locationLng: string; locationName: string }[]
+  variations: { content: string; mediaFile: File | null; mediaUrl: string; mediatype: string; audioMode: 'whatsapp' | 'original'; caption: string; linkUrl: string; linkPreview: boolean; contactName: string; contactPhone: string; locationLat: string; locationLng: string; locationName: string }[]
 }
 
 // ===== MessageBuilder Component =====
@@ -2750,21 +2751,21 @@ function CampanhasTab() {
   const [editForm, setEditForm] = useState({
     name: '', sendIntervalMin: 30, sendIntervalMax: 90,
     chipIds: [] as string[], contactListId: '', scheduledAt: '',
-    steps: [{ content: '', delayMinutes: 0, mediaFile: null as File | null, mediaUrl: '', mediatype: '', caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '', variations: [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '', caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '' }] }] as StepForm[],
+    steps: [{ content: '', delayMinutes: 0, mediaFile: null as File | null, mediaUrl: '', mediatype: '', audioMode: 'whatsapp' as const, caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '', variations: [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '', audioMode: 'whatsapp' as const, caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '' }] }] as StepForm[],
     antiBanEnabled: true, warmingMode: 'normal',
   })
 
   const [newCampaign, setNewCampaign] = useState({
     name: '', sendIntervalMin: 30, sendIntervalMax: 90,
     chipIds: [] as string[], contactListId: '', scheduledAt: '',
-    steps: [{ content: '', delayMinutes: 0, mediaFile: null as File | null, mediaUrl: '', mediatype: '', caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '', variations: [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '', caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '' }] }] as StepForm[],
+    steps: [{ content: '', delayMinutes: 0, mediaFile: null as File | null, mediaUrl: '', mediatype: '', audioMode: 'whatsapp' as const, caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '', variations: [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '', audioMode: 'whatsapp' as const, caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '' }] }] as StepForm[],
     antiBanEnabled: true, warmingMode: 'normal',
   })
 
   const resetNewCampaign = () => setNewCampaign({
     name: '', sendIntervalMin: 30, sendIntervalMax: 90,
     chipIds: [], contactListId: '', scheduledAt: '',
-    steps: [{ content: '', delayMinutes: 0, mediaFile: null, mediaUrl: '', mediatype: '', variations: [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '', caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '' }] }] as StepForm[],
+    steps: [{ content: '', delayMinutes: 0, mediaFile: null, mediaUrl: '', mediatype: '', audioMode: 'whatsapp' as const, variations: [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '', audioMode: 'whatsapp' as const, caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '' }] }] as StepForm[],
     antiBanEnabled: true, warmingMode: 'normal',
   })
 
@@ -2837,6 +2838,8 @@ function CampanhasTab() {
         if (s.mediaFile && mediatype) {
           const uploadForm = new FormData()
           uploadForm.append('file', s.mediaFile)
+          uploadForm.append('mediatype', mediatype)
+          if (mediatype === 'audio') uploadForm.append('audioMode', s.audioMode || 'whatsapp')
           const uploadRes = await fetch('/api/upload', { method: 'POST', body: uploadForm })
           const uploadData = await uploadRes.json()
           if (!uploadRes.ok) throw new Error(uploadData.error || 'Erro ao fazer upload da mídia')
@@ -2854,6 +2857,8 @@ function CampanhasTab() {
           if (v.mediaFile && vMediatype) {
             const uploadForm = new FormData()
             uploadForm.append('file', v.mediaFile)
+            uploadForm.append('mediatype', vMediatype)
+            if (vMediatype === 'audio') uploadForm.append('audioMode', v.audioMode || 'whatsapp')
             const uploadRes = await fetch('/api/upload', { method: 'POST', body: uploadForm })
             const uploadData = await uploadRes.json()
             if (!uploadRes.ok) throw new Error(uploadData.error || 'Erro ao fazer upload da mídia')
@@ -3042,16 +3047,16 @@ function CampanhasTab() {
     }))
   }
 
-  const addStep = () => setNewCampaign(prev => ({ ...prev, steps: [...prev.steps, { content: '', delayMinutes: 60, mediaFile: null, mediaUrl: '', mediatype: '', caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '', variations: [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '', caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '' }] }] }))
+  const addStep = () => setNewCampaign(prev => ({ ...prev, steps: [...prev.steps, { content: '', delayMinutes: 60, mediaFile: null, mediaUrl: '', mediatype: '', audioMode: 'whatsapp' as const, caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '', variations: [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '', audioMode: 'whatsapp' as const, caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '' }] }] }))
   const removeStep = (idx: number) => setNewCampaign(prev => ({ ...prev, steps: prev.steps.filter((_, i) => i !== idx) }))
-  const updateStep = (idx: number, field: 'content' | 'delayMinutes' | 'mediaFile' | 'mediaUrl' | 'mediatype' | 'caption' | 'linkUrl' | 'linkPreview' | 'contactName' | 'contactPhone' | 'locationLat' | 'locationLng' | 'locationName', value: string | number | File | boolean | null) => {
+  const updateStep = (idx: number, field: 'content' | 'delayMinutes' | 'mediaFile' | 'mediaUrl' | 'mediatype' | 'audioMode' | 'caption' | 'linkUrl' | 'linkPreview' | 'contactName' | 'contactPhone' | 'locationLat' | 'locationLng' | 'locationName', value: string | number | File | boolean | null) => {
     setNewCampaign(prev => { const steps = [...prev.steps]; steps[idx] = { ...steps[idx], [field]: value }; return { ...prev, steps } })
   }
 
   // Variation helpers (within a step)
   const addVariation = (stepIdx: number) => setNewCampaign(prev => {
     const steps = [...prev.steps]
-    steps[stepIdx] = { ...steps[stepIdx], variations: [...steps[stepIdx].variations, { content: '', mediaFile: null, mediaUrl: '', mediatype: '', caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '' }] }
+    steps[stepIdx] = { ...steps[stepIdx], variations: [...steps[stepIdx].variations, { content: '', mediaFile: null, mediaUrl: '', mediatype: '', audioMode: 'whatsapp' as const, caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '' }] }
     return { ...prev, steps }
   })
   const removeVariation = (stepIdx: number, varIdx: number) => setNewCampaign(prev => {
@@ -3085,13 +3090,14 @@ function CampanhasTab() {
           mediaFile: null as File | null,
           mediaUrl: s.mediaUrl || '',
           mediatype: s.mediatype || '',
+          audioMode: 'whatsapp' as const,
           variations: parsedVars.length > 0
-            ? parsedVars.map(v => ({ content: v.content, mediaFile: null as File | null, mediaUrl: v.mediaUrl || '', mediatype: v.mediatype || '' }))
-            : [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '', caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '' }],
+            ? parsedVars.map(v => ({ content: v.content, mediaFile: null as File | null, mediaUrl: v.mediaUrl || '', mediatype: v.mediatype || '', audioMode: 'whatsapp' as const }))
+            : [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '', audioMode: 'whatsapp' as const, caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '' }],
         }
       })
     if (steps.length === 0) {
-      steps.push({ content: '', delayMinutes: 0, mediaFile: null, mediaUrl: '', mediatype: '', variations: [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '', caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '' }] })
+      steps.push({ content: '', delayMinutes: 0, mediaFile: null, mediaUrl: '', mediatype: '', audioMode: 'whatsapp' as const, variations: [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '', audioMode: 'whatsapp' as const, caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '' }] })
     }
     // Pre-fill newCampaign and open create dialog instead of editing inside detail dialog
     setNewCampaign({
@@ -3128,6 +3134,8 @@ function CampanhasTab() {
         if (s.mediaFile && mediatype) {
           const uploadForm = new FormData()
           uploadForm.append('file', s.mediaFile)
+          uploadForm.append('mediatype', mediatype)
+          if (mediatype === 'audio') uploadForm.append('audioMode', s.audioMode || 'whatsapp')
           const uploadRes = await fetch('/api/upload', { method: 'POST', body: uploadForm })
           const uploadData = await uploadRes.json()
           if (!uploadRes.ok) throw new Error(uploadData.error || 'Erro ao fazer upload da mídia')
@@ -3142,6 +3150,8 @@ function CampanhasTab() {
           if (v.mediaFile && vMediatype) {
             const uploadForm = new FormData()
             uploadForm.append('file', v.mediaFile)
+            uploadForm.append('mediatype', vMediatype)
+            if (vMediatype === 'audio') uploadForm.append('audioMode', v.audioMode || 'whatsapp')
             const uploadRes = await fetch('/api/upload', { method: 'POST', body: uploadForm })
             const uploadData = await uploadRes.json()
             if (!uploadRes.ok) throw new Error(uploadData.error || 'Erro ao fazer upload da mídia')
@@ -3195,14 +3205,14 @@ function CampanhasTab() {
       chipIds: prev.chipIds.includes(chipId) ? prev.chipIds.filter(id => id !== chipId) : [...prev.chipIds, chipId],
     }))
   }
-  const editAddStep = () => setEditForm(prev => ({ ...prev, steps: [...prev.steps, { content: '', delayMinutes: 60, mediaFile: null, mediaUrl: '', mediatype: '', caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '', variations: [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '', caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '' }] }] }))
+  const editAddStep = () => setEditForm(prev => ({ ...prev, steps: [...prev.steps, { content: '', delayMinutes: 60, mediaFile: null, mediaUrl: '', mediatype: '', audioMode: 'whatsapp' as const, caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '', variations: [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '', audioMode: 'whatsapp' as const, caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '' }] }] }))
   const editRemoveStep = (idx: number) => setEditForm(prev => ({ ...prev, steps: prev.steps.filter((_, i) => i !== idx) }))
   const editUpdateStep = (idx: number, field: 'content' | 'delayMinutes' | 'mediaFile' | 'mediaUrl' | 'mediatype' | 'caption' | 'linkUrl' | 'linkPreview' | 'contactName' | 'contactPhone' | 'locationLat' | 'locationLng' | 'locationName', value: string | number | File | boolean | null) => {
     setEditForm(prev => { const steps = [...prev.steps]; steps[idx] = { ...steps[idx], [field]: value }; return { ...prev, steps } })
   }
   const editAddVariation = (stepIdx: number) => setEditForm(prev => {
     const steps = [...prev.steps]
-    steps[stepIdx] = { ...steps[stepIdx], variations: [...steps[stepIdx].variations, { content: '', mediaFile: null, mediaUrl: '', mediatype: '', caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '' }] }
+    steps[stepIdx] = { ...steps[stepIdx], variations: [...steps[stepIdx].variations, { content: '', mediaFile: null, mediaUrl: '', mediatype: '', audioMode: 'whatsapp' as const, caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '' }] }
     return { ...prev, steps }
   })
   const editRemoveVariation = (stepIdx: number, varIdx: number) => setEditForm(prev => {
@@ -3407,6 +3417,21 @@ function CampanhasTab() {
                               <Input type="file" className="h-8 text-xs flex-1" accept={step.mediatype === 'image' ? 'image/*' : step.mediatype === 'video' ? 'video/*' : step.mediatype === 'audio' ? 'audio/*' : undefined} onChange={e => { const f = e.target.files?.[0] || null; updateStep(idx, 'mediaFile', f) }} />
                             )}
                           </div>
+                          {step.mediatype === 'audio' && (
+                            <div className="space-y-1">
+                              <Label className="text-xs text-muted-foreground">Modo do Áudio</Label>
+                              <div className="flex gap-2">
+                                <button type="button" className={`flex-1 text-xs px-3 py-1.5 rounded-md border transition-all ${step.audioMode === 'whatsapp' ? 'border-emerald-500 bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400' : 'border-border hover:bg-muted/50'}`} onClick={() => updateStep(idx, 'audioMode', 'whatsapp')}>
+                                  <span className="font-medium">WhatsApp</span>
+                                  <span className="block text-[10px] text-muted-foreground">Converte para OGG (nativo)</span>
+                                </button>
+                                <button type="button" className={`flex-1 text-xs px-3 py-1.5 rounded-md border transition-all ${step.audioMode === 'original' ? 'border-sky-500 bg-sky-50 text-sky-700 dark:bg-sky-900/20 dark:text-sky-400' : 'border-border hover:bg-muted/50'}`} onClick={() => updateStep(idx, 'audioMode', 'original')}>
+                                  <span className="font-medium">Personalizado</span>
+                                  <span className="block text-[10px] text-muted-foreground">Mantém formato original</span>
+                                </button>
+                              </div>
+                            </div>
+                          )}
                           {['image','video'].includes(step.mediatype) && (
                             <div className="space-y-1">
                               <Label className="text-xs text-muted-foreground">Legenda</Label>

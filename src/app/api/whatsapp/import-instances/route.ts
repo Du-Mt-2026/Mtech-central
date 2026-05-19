@@ -1,4 +1,4 @@
-import { fetchOctupusZapInstances, INSTANCE_PREFIX } from '@/lib/evolution-api'
+import { fetchOctupusZapInstances, INSTANCE_PREFIX, setWebhook } from '@/lib/evolution-api'
 import { db } from '@/lib/db'
 import { NextResponse } from 'next/server'
 
@@ -97,6 +97,13 @@ export async function POST(request: Request) {
       }
     }
 
+    // Configure webhooks for all imported instances (non-blocking)
+    if (imported.length > 0) {
+      configureWebhooksForImported(imported).catch(err => {
+        console.error('[Import] Background webhook configuration failed:', err)
+      })
+    }
+
     return NextResponse.json({
       imported,
       skipped,
@@ -111,5 +118,28 @@ export async function POST(request: Request) {
       { error: error instanceof Error ? error.message : 'Erro ao importar instâncias' },
       { status: 500 }
     )
+  }
+}
+
+/**
+ * POST /api/whatsapp/import-instances
+ * Also configures webhooks for all imported instances in the background.
+ * This ensures the inbox receives incoming messages.
+ */
+async function configureWebhooksForImported(imported: Array<{ instanceName: string }>) {
+  const webhookUrl = `${process.env.VERCEL_URL ? 'https://' + process.env.VERCEL_URL : process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/whatsapp/webhook`
+  for (const item of imported) {
+    try {
+      await setWebhook(item.instanceName, webhookUrl, [
+        'MESSAGES_UPSERT',
+        'MESSAGES_UPDATE',
+        'SEND_MESSAGE',
+        'CONNECTION_UPDATE',
+        'INSTANCE_DELETED',
+      ])
+      console.log(`[Import] Webhook configured for ${item.instanceName}`)
+    } catch (err) {
+      console.error(`[Import] Failed to configure webhook for ${item.instanceName}:`, err)
+    }
   }
 }
