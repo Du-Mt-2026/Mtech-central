@@ -480,17 +480,25 @@ async function isInCooldown(chipId: string, settings: AntiBanConfig): Promise<bo
  * If the chip is disconnected or has a disconnection reason, it may be banned.
  * Returns true if the chip appears to be banned/disconnected.
  */
-async function detectChipBan(chip: { id: string; evolutionInstance: string | null; status: string; disconnectionReasonCode: number | null }): Promise<{ banned: boolean; reason: string }> {
+async function detectChipBan(chip: { id: string; evolutionInstance: string | null; status: string; disconnectionReasonCode: number | null }): Promise<{ banned: boolean; reason: string; disconnected: boolean }> {
   // Check chip status first (fast)
-  if (chip.status === 'disconnected' || chip.status === 'banned') {
-    return { banned: true, reason: `Chip status: ${chip.status}` }
+  // IMPORTANT: "disconnected" is NOT the same as "banned"!
+  // A chip that's disconnected might just need reconnection — don't block the campaign entirely.
+  if (chip.status === 'banned') {
+    return { banned: true, reason: `Chip status: banned`, disconnected: false }
+  }
+
+  if (chip.status === 'disconnected') {
+    // Chip is disconnected — not banned, but can't send right now.
+    // Return disconnected=true so the caller can skip to next chip instead of blocking.
+    return { banned: false, reason: `Chip status: disconnected`, disconnected: true }
   }
 
   // Check disconnection reason code
   // WhatsApp ban codes: 401 (logged out), 403 (banned), 428 (replaced), 440 (device removed)
   const BAN_CODES = [401, 403, 428, 440]
   if (chip.disconnectionReasonCode && BAN_CODES.includes(chip.disconnectionReasonCode)) {
-    return { banned: true, reason: `Disconnection code: ${chip.disconnectionReasonCode}` }
+    return { banned: true, reason: `Disconnection code: ${chip.disconnectionReasonCode}`, disconnected: false }
   }
 
   // Try to get live connection state from Evolution API
@@ -499,7 +507,7 @@ async function detectChipBan(chip: { id: string; evolutionInstance: string | nul
       const state = await getConnectionState(chip.evolutionInstance)
       const instanceState = state?.instance?.state
       if (instanceState === 'close') {
-        return { banned: true, reason: 'Evolution API reports connection state: close' }
+        return { banned: true, reason: 'Evolution API reports connection state: close', disconnected: false }
       }
     } catch {
       // If we can't reach Evolution API, don't assume ban — could be network issue
@@ -507,7 +515,7 @@ async function detectChipBan(chip: { id: string; evolutionInstance: string | nul
     }
   }
 
-  return { banned: false, reason: '' }
+  return { banned: false, reason: '', disconnected: false }
 }
 
 /**
@@ -891,43 +899,48 @@ export async function processNextMessage(campaignId: string): Promise<{
     return { processed: true, delayMs: 1000, remaining: -1, completed: false }
   }
 
-  // CHECK FOR CHIP BAN — detect disconnected/banned chips
+  // CHECK FOR CHIP BAN — detect banned chips (disconnected chips are NOT banned!)
   if (antiBanEnabled) {
     const banCheck = await detectChipBan(message.chip)
+
+    if (banCheck.disconnected) {
+      // Chip is disconnected but NOT banned — mark this message as failed and try next
+      console.log(`[SendingEngine] Chip ${message.chip.name} is DISCONNECTED (not banned) — skipping message`)
+      await db.message.update({
+        where: { id: message.id },
+        data: { status: 'failed', error: `Chip desconectado: ${banCheck.reason}` },
+      })
+      // Return with short delay so we can try the next message (might use a different chip)
+      const remaining = await db.message.count({ where: { campaignId, status: 'pending' } })
+      return { processed: true, delayMs: 1000, remaining, completed: remaining === 0 }
+    }
+
     if (banCheck.banned) {
       console.log(`[SendingEngine] Chip ${message.chip.name} appears BANNED: ${banCheck.reason}`)
 
-      // Update chip status
+      // Update chip status to banned
       await db.chip.update({
         where: { id: message.chip.id },
         data: { status: 'banned' },
       })
 
-      // Find another pending message with a different chip (retry logic)
-      const altMessage = await db.message.findFirst({
-        where: {
-          campaignId,
-          status: 'pending',
-          chipId: { not: message.chip.id }, // Different chip
-        },
-        include: { chip: true, contact: true },
-        orderBy: { createdAt: 'asc' },
+      // Mark this message as failed
+      await db.message.update({
+        where: { id: message.id },
+        data: { status: 'failed', error: `Chip banido: ${banCheck.reason}` },
       })
 
-      if (altMessage) {
-        // Process the alternative message instead
-        console.log(`[SendingEngine] Retrying with different chip for message ${altMessage.id}`)
-        // We'll fall through to process this alternative — but for serverless simplicity,
-        // just return and the next cron tick will pick up the alternative message
+      // Return with short delay — the next iteration will pick up messages from other chips
+      const remaining = await db.message.count({ where: { campaignId, status: 'pending' } })
+      if (remaining === 0) {
+        // Check if all remaining messages are from banned chips
+        const allFailed = await db.message.count({ where: { campaignId, status: { in: ['pending', 'sending'] } } })
+        if (allFailed === 0) {
+          await db.campaign.update({ where: { id: campaignId }, data: { status: 'completed', completedAt: new Date() } })
+          return { processed: true, delayMs: 0, remaining: 0, completed: true, reason: `chip_banned_${message.chip.name}` }
+        }
       }
-
-      return {
-        processed: false,
-        delayMs: 5000,
-        remaining: -1,
-        completed: false,
-        reason: `chip_banned_${message.chip.name}`,
-      }
+      return { processed: true, delayMs: 2000, remaining, completed: remaining === 0, reason: `chip_banned_${message.chip.name}` }
     }
   }
 

@@ -2702,6 +2702,8 @@ function CampanhasTab() {
   const [activeStep, setActiveStep] = useState(0)
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
   const [processing, setProcessing] = useState(false)
+  const [continuousProcessing, setContinuousProcessing] = useState(false)
+  const [continuousStats, setContinuousStats] = useState({ processed: 0, remaining: 0, elapsed: 0 })
   const [editing, setEditing] = useState(false)
   const [saving, setSaving] = useState(false)
   const [editForm, setEditForm] = useState({
@@ -2850,14 +2852,92 @@ function CampanhasTab() {
       let data
       try { data = await res.json() } catch { data = {} }
       if (!res.ok) throw new Error(data.error || 'Erro ao iniciar campanha')
-      toast.success(`Campanha iniciada! ${data.messageCount || 0} mensagens criadas.`)
+      toast.success(`Campanha iniciada! ${data.messageCount || 0} mensagens criadas. Processando...`)
       fetchCampaigns()
+      // Start continuous processing loop
+      startContinuousProcessing()
     } catch (err: unknown) {
       const msg = (err as Error).message || 'Erro ao iniciar campanha'
       toast.error(msg)
       console.error('Campaign start error:', err)
     }
   }
+
+  // Continuous processing loop — keeps calling /api/campaigns/process
+  // until no more running campaigns or user stops it
+  const startContinuousProcessing = () => {
+    setContinuousProcessing(true)
+    setContinuousStats({ processed: 0, remaining: 0, elapsed: 0 })
+  }
+
+  const stopContinuousProcessing = () => {
+    setContinuousProcessing(false)
+  }
+
+  // Effect that runs the continuous processing loop
+  useEffect(() => {
+    if (!continuousProcessing) return
+
+    let cancelled = false
+
+    const processLoop = async () => {
+      while (!cancelled) {
+        try {
+          const res = await fetch('/api/campaigns/process', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({}),
+          })
+          const data = await res.json()
+
+          if (!res.ok) {
+            console.error('[ContinuousProcess] Error:', data.error)
+            break
+          }
+
+          setContinuousStats(prev => ({
+            processed: prev.processed + (data.processed || 0),
+            remaining: data.remaining || 0,
+            elapsed: data.elapsedMs || 0,
+          }))
+
+          // If no messages were processed and no running campaigns, stop
+          if (data.processed === 0 && data.campaigns === 0) {
+            console.log('[ContinuousProcess] No more running campaigns, stopping.')
+            break
+          }
+
+          // If outside sending window, stop (will resume via cron)
+          if (data.lastReason?.includes('outside_sending_window')) {
+            console.log('[ContinuousProcess] Outside sending window, stopping.')
+            break
+          }
+
+          // If campaign paused by warning, stop
+          if (data.lastReason?.includes('whatsapp_warning_detected')) {
+            toast.error('Campanha pausada — aviso do WhatsApp detectado!')
+            break
+          }
+
+          // Refresh campaign list to show progress
+          fetchCampaigns()
+
+        } catch (err) {
+          console.error('[ContinuousProcess] Fetch error:', err)
+          // Wait a bit and retry
+          await new Promise(r => setTimeout(r, 5000))
+        }
+      }
+
+      if (!cancelled) {
+        setContinuousProcessing(false)
+      }
+    }
+
+    processLoop()
+
+    return () => { cancelled = true }
+  }, [continuousProcessing])
 
   const updateCampaignStatus = async (id: string, status: string) => {
     try {
@@ -3084,10 +3164,26 @@ function CampanhasTab() {
           <p className="text-sm text-muted-foreground">Gerencie suas campanhas de envio em massa</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <Button variant="outline" className="gap-2" onClick={processAllCampaigns} disabled={processing}>
-            {processing ? <RefreshCw className="size-4 animate-spin" /> : <Zap className="size-4" />}
-            {processing ? 'Processando...' : 'Processar Campanhas'}
-          </Button>
+          {continuousProcessing && (
+            <div className="flex items-center gap-3 px-4 py-2 rounded-lg bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800">
+              <div className="flex items-center gap-2">
+                <div className="size-2 rounded-full bg-emerald-500 animate-pulse" />
+                <span className="text-sm font-medium text-emerald-700 dark:text-emerald-300">Enviando...</span>
+              </div>
+              <span className="text-xs text-emerald-600 dark:text-emerald-400">
+                {continuousStats.processed} enviadas | {continuousStats.remaining} restantes
+              </span>
+              <Button size="sm" variant="ghost" className="h-7 text-xs text-red-600 hover:text-red-700 hover:bg-red-50" onClick={stopContinuousProcessing}>
+                Parar
+              </Button>
+            </div>
+          )}
+          {!continuousProcessing && (
+            <Button variant="outline" className="gap-2" onClick={() => { processAllCampaigns(); startContinuousProcessing() }} disabled={processing}>
+              {processing ? <RefreshCw className="size-4 animate-spin" /> : <Zap className="size-4" />}
+              {processing ? 'Processando...' : 'Processar Campanhas'}
+            </Button>
+          )}
           <Dialog open={createDialogOpen} onOpenChange={(o) => { setCreateDialogOpen(o); if (!o) { resetNewCampaign(); setActiveStep(0) } }}>
             <DialogTrigger asChild>
               <Button className="gap-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 shadow-lg">

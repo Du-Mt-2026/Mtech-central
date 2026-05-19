@@ -32,7 +32,7 @@ model Chip {
   warmingEnabled   Boolean  @default(true)
   warmingPhase     String   @default("nursery")   // "nursery" (berçário) | "prewarm" (pré-aquecido) | "ready" (pronto)
   prewarmStartedAt DateTime?                      // When prewarm phase started
-  // warmingStage kept for backward compat, but new logic uses warmingPhase + daysSinceCreation
+  warmingStage     Int      @default(0)            // Legacy compat: 0=new, 5=prewarm, 6=ready
   isQrPaired       Boolean  @default(false)
   qrPairingCode    String?
   proxyMode        String   @default("none")

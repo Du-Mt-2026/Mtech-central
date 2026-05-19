@@ -108,6 +108,27 @@ export async function POST(req: NextRequest) {
       } else {
         results.push('Chip: cooldownUntil já existe')
       }
+
+      if (!chipColumnNames.includes('warmingStage')) {
+        await db.$executeRawUnsafe(`ALTER TABLE "Chip" ADD COLUMN IF NOT EXISTS "warmingStage" INTEGER NOT NULL DEFAULT 0`)
+        results.push('Chip: adicionada coluna warmingStage')
+      } else {
+        results.push('Chip: warmingStage já existe')
+      }
+
+      if (!chipColumnNames.includes('warmingPhase')) {
+        await db.$executeRawUnsafe(`ALTER TABLE "Chip" ADD COLUMN IF NOT EXISTS "warmingPhase" TEXT NOT NULL DEFAULT 'nursery'`)
+        results.push('Chip: adicionada coluna warmingPhase')
+      } else {
+        results.push('Chip: warmingPhase já existe')
+      }
+
+      if (!chipColumnNames.includes('prewarmStartedAt')) {
+        await db.$executeRawUnsafe(`ALTER TABLE "Chip" ADD COLUMN IF NOT EXISTS "prewarmStartedAt" TIMESTAMP(3)`)
+        results.push('Chip: adicionada coluna prewarmStartedAt')
+      } else {
+        results.push('Chip: prewarmStartedAt já existe')
+      }
     } catch (chipError: any) {
       results.push(`Erro na migração Chip: ${chipError.message}`)
     }
