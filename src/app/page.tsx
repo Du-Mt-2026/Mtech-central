@@ -1759,15 +1759,20 @@ function ContatosTab() {
     setQuickImporting(true)
     try {
       // 1. Create list
+      toast.loading('Criando lista...', { id: 'quick-import' })
       const listRes = await fetch('/api/contact-lists', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: quickImportName.trim() }),
       })
       const listData = await listRes.json()
-      if (!listRes.ok) throw new Error(listData.error || 'Erro ao criar lista')
+      if (!listRes.ok) {
+        toast.dismiss('quick-import')
+        throw new Error(listData.error || 'Erro ao criar lista')
+      }
 
       // 2. Import file into the new list
+      toast.loading('Importando contatos...', { id: 'quick-import' })
       const formData = new FormData()
       formData.append('file', quickImportFile)
       const importRes = await fetch(`/api/contact-lists/${listData.id}/import`, {
@@ -1775,18 +1780,23 @@ function ContatosTab() {
         body: formData,
       })
       const importData = await importRes.json()
-      if (!importRes.ok) throw new Error(importData.error || 'Erro ao importar')
+      if (!importRes.ok) {
+        toast.dismiss('quick-import')
+        throw new Error(importData.error || 'Erro ao importar')
+      }
 
       const colInfo = importData.detectedColumns ? ` | Colunas: ${importData.detectedColumns.map((c: any) => c.name).join(', ')}` : ''
-      toast.success(`Lista "${quickImportName}" criada com ${importData.imported} contatos!${colInfo}`)
+      toast.success(`Lista "${quickImportName}" criada com ${importData.imported} contatos!${colInfo}`, { id: 'quick-import', duration: 5000 })
       setQuickImportOpen(false)
       setQuickImportName('')
       setQuickImportFile(null)
-      fetchLists()
+      await fetchLists()
       setSelectedList(listData)
-      fetchContacts(listData.id)
+      // Small delay to ensure DB is synced before fetching contacts
+      setTimeout(() => fetchContacts(listData.id), 500)
     } catch (err: any) {
-      toast.error(err.message || 'Erro na importação')
+      console.error('Quick import error:', err)
+      toast.error(err.message || 'Erro na importação', { duration: 8000 })
     } finally {
       setQuickImporting(false)
     }
@@ -1881,40 +1891,76 @@ function ContatosTab() {
               <CardContent className="flex flex-col items-center justify-center py-12">
                 <Users className="size-10 text-muted-foreground mb-3" />
                 <p className="font-semibold">Nenhum contato nesta lista</p>
-                <p className="text-sm text-muted-foreground">Importe um CSV ou adicione manualmente</p>
+                <p className="text-sm text-muted-foreground mb-4">Importe uma planilha ou adicione manualmente</p>
+                <div className="flex gap-2">
+                  <Button variant="outline" className="gap-1.5" onClick={() => setImportDialogOpen(true)}>
+                    <Upload className="size-4" /> Importar Planilha
+                  </Button>
+                  <Button variant="outline" className="gap-1.5" onClick={() => setAddContactDialog(true)}>
+                    <UserPlus className="size-4" /> Adicionar Contato
+                  </Button>
+                </div>
               </CardContent>
             </Card>
           ) : (
             <Card className="shadow-lg border-0 hover:shadow-xl transition-all duration-200">
               <CardContent className="p-0">
-                <ScrollArea className="max-h-96">
+                <ScrollArea className="max-h-[500px]">
                   <table className="w-full text-sm">
                     <thead className="bg-muted/50 sticky top-0">
                       <tr>
                         <th className="text-left p-3 font-medium">Nome</th>
                         <th className="text-left p-3 font-medium">Telefone</th>
-                        <th className="text-left p-3 font-medium">Criado em</th>
+                        {/* Dynamic custom field columns */}
+                        {contacts.some(c => c.customFields) && (() => {
+                          const customKeys = new Set<string>()
+                          contacts.forEach(c => {
+                            if (c.customFields) {
+                              try { Object.keys(JSON.parse(c.customFields)).forEach(k => customKeys.add(k)) } catch {}
+                            }
+                          })
+                          return Array.from(customKeys).sort().map(k => (
+                            <th key={k} className="text-left p-3 font-medium capitalize">{k.replace(/_/g, ' ')}</th>
+                          ))
+                        })()}
                         <th className="text-left p-3 font-medium">Ações</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {contacts.map(c => (
-                        <tr key={c.id} className="border-t hover:bg-muted/30 transition-colors">
-                          <td className="p-3 font-medium">{c.name}</td>
-                          <td className="p-3 text-muted-foreground">{c.phone}</td>
-                          <td className="p-3 text-xs text-muted-foreground">{new Date(c.createdAt).toLocaleDateString('pt-BR')}</td>
-                          <td className="p-3">
-                            <div className="flex gap-1">
-                              <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-emerald-600" onClick={() => openEditContact(c)}>
-                                <Pencil className="size-3.5" />
-                              </Button>
-                              <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-rose-600" onClick={() => setDeleteContactConfirm(c.id)}>
-                                <Trash2 className="size-3.5" />
-                              </Button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
+                      {contacts.map(c => {
+                        let customData: Record<string, string> = {}
+                        if (c.customFields) {
+                          try { customData = JSON.parse(c.customFields) } catch {}
+                        }
+                        return (
+                          <tr key={c.id} className="border-t hover:bg-muted/30 transition-colors">
+                            <td className="p-3 font-medium">{c.name}</td>
+                            <td className="p-3 text-muted-foreground">{c.phone}</td>
+                            {/* Dynamic custom field values */}
+                            {contacts.some(c2 => c2.customFields) && (() => {
+                              const customKeys = new Set<string>()
+                              contacts.forEach(c2 => {
+                                if (c2.customFields) {
+                                  try { Object.keys(JSON.parse(c2.customFields)).forEach(k => customKeys.add(k)) } catch {}
+                                }
+                              })
+                              return Array.from(customKeys).sort().map(k => (
+                                <td key={k} className="p-3 text-muted-foreground text-xs">{customData[k] || '-'}</td>
+                              ))
+                            })()}
+                            <td className="p-3">
+                              <div className="flex gap-1">
+                                <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-emerald-600" onClick={() => openEditContact(c)}>
+                                  <Pencil className="size-3.5" />
+                                </Button>
+                                <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-rose-600" onClick={() => setDeleteContactConfirm(c.id)}>
+                                  <Trash2 className="size-3.5" />
+                                </Button>
+                              </div>
+                            </td>
+                          </tr>
+                        )
+                      })}
                     </tbody>
                   </table>
                 </ScrollArea>

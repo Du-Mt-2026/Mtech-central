@@ -121,15 +121,43 @@ export async function POST(
     }
 
     // Bulk create contacts (normalize phones)
-    const created = await db.contact.createMany({
-      data: contacts.map(c => ({
-        name: c.name,
-        phone: normalizePhone(c.phone),
-        contactListId: id,
-        customFields: c.customFields || null,
-      })),
-      skipDuplicates: true,
-    })
+    let created: { count: number }
+    try {
+      created = await db.contact.createMany({
+        data: contacts.map(c => ({
+          name: c.name,
+          phone: normalizePhone(c.phone),
+          contactListId: id,
+          customFields: c.customFields || null,
+        })),
+      })
+    } catch (dbError: any) {
+      console.error('Import DB error:', dbError.message)
+      // Fallback: insert one by one to find the problematic record
+      let importedCount = 0
+      for (const c of contacts) {
+        try {
+          await db.contact.create({
+            data: {
+              name: c.name,
+              phone: normalizePhone(c.phone),
+              contactListId: id,
+              customFields: c.customFields || null,
+            },
+          })
+          importedCount++
+        } catch {
+          // Skip duplicates or bad records
+        }
+      }
+      return NextResponse.json({
+        success: true,
+        imported: importedCount,
+        total: contacts.length,
+        detectedColumns,
+        warning: `Alguns contatos podem ter sido pulados (duplicados ou inválidos). ${importedCount} de ${contacts.length} importados.`,
+      })
+    }
 
     return NextResponse.json({
       success: true,
@@ -137,8 +165,8 @@ export async function POST(
       total: contacts.length,
       detectedColumns,
     })
-  } catch (error) {
-    console.error('Import error:', error)
-    return NextResponse.json({ error: 'Erro ao importar arquivo' }, { status: 500 })
+  } catch (error: any) {
+    console.error('Import error:', error?.message || error)
+    return NextResponse.json({ error: `Erro ao importar arquivo: ${error?.message || 'erro desconhecido'}` }, { status: 500 })
   }
 }
