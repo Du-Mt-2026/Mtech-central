@@ -2990,7 +2990,7 @@ function CampanhasTab() {
                 <Plus className="size-4" /> Nova Campanha
               </Button>
             </DialogTrigger>
-          <DialogContent className="sm:!max-w-[95vw] !max-w-[95vw] w-[95vw] max-h-[95vh] h-[90vh] p-0 gap-0 overflow-hidden !flex !flex-col" style={{ maxWidth: '95vw', width: '95vw', height: '90vh' }}>
+          <DialogContent fullWidth className="h-[90vh]" showCloseButton>
             <DialogHeader className="px-6 py-4 border-b shrink-0">
               <DialogTitle>Criar Campanha</DialogTitle>
               <DialogDescription>Configure uma nova campanha de envio</DialogDescription>
