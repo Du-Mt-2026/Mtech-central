@@ -38,13 +38,13 @@ interface AntiBanConfig {
 // After both phases: chip is "ready" with no limit restriction
 
 export const NURSERY_SCHEDULE: { dayRange: string; days: [number, number]; limit: number }[] = [
-  { dayRange: '1-2',   days: [1, 2],   limit: 2 },
-  { dayRange: '3-4',   days: [3, 4],   limit: 3 },
-  { dayRange: '5-6',   days: [5, 6],   limit: 3 },
-  { dayRange: '7-8',   days: [7, 8],   limit: 5 },
-  { dayRange: '9-10',  days: [9, 10],  limit: 5 },
-  { dayRange: '11-12', days: [11, 12], limit: 6 },
-  { dayRange: '13-14', days: [13, 14], limit: 10 },
+  { dayRange: '1-2',   days: [1, 2],   limit: 10 },
+  { dayRange: '3-4',   days: [3, 4],   limit: 20 },
+  { dayRange: '5-6',   days: [5, 6],   limit: 30 },
+  { dayRange: '7-8',   days: [7, 8],   limit: 40 },
+  { dayRange: '9-10',  days: [9, 10],  limit: 50 },
+  { dayRange: '11-12', days: [11, 12], limit: 60 },
+  { dayRange: '13-14', days: [13, 14], limit: 80 },
 ]
 
 export const PREWARM_SCHEDULE: { dayRange: string; days: [number, number]; limit: number }[] = [
@@ -985,10 +985,43 @@ export async function processNextMessage(campaignId: string): Promise<{
   // Check daily limit (with warming mode multiplier)
   const effectiveLimit = getEffectiveDailyLimit(chip, settings, warmingMode)
   if (antiBanEnabled && chip.sentToday >= effectiveLimit) {
-    console.log(`[SendingEngine] Chip ${chip.name} hit daily limit (${chip.sentToday}/${effectiveLimit})`)
+    console.log(`[SendingEngine] Chip ${chip.name} hit daily limit (${chip.sentToday}/${effectiveLimit}) — reassigning messages to other chips`)
+
+    // Find messages assigned to this chip and reassign them to other connected chips
+    const otherChips = await db.chip.findMany({
+      where: {
+        id: { not: chip.id },
+        status: 'connected',
+        evolutionInstance: { not: null },
+      },
+    })
+
+    if (otherChips.length > 0) {
+      // Reassign up to 50 pending messages from this chip to other chips (round-robin)
+      const pendingMessages = await db.message.findMany({
+        where: { campaignId, chipId: chip.id, status: 'pending' },
+        take: 50,
+      })
+
+      for (let i = 0; i < pendingMessages.length; i++) {
+        const targetChip = otherChips[i % otherChips.length]
+        await db.message.update({
+          where: { id: pendingMessages[i].id },
+          data: { chipId: targetChip.id },
+        })
+      }
+
+      console.log(`[SendingEngine] Reassigned ${pendingMessages.length} messages from ${chip.name} to other chips`)
+
+      // Return with short delay so we can try processing again with the reassigned messages
+      const remaining = await db.message.count({ where: { campaignId, status: 'pending' } })
+      return { processed: false, delayMs: 1000, remaining, completed: remaining === 0, reason: `daily_limit_reassigned_${chip.name}` }
+    }
+
+    // No other chips available — truly stuck
     return {
       processed: false,
-      delayMs: 60 * 1000, // Check again in 1 minute (might be a different chip next time)
+      delayMs: 60 * 1000,
       remaining: -1,
       completed: false,
       reason: `daily_limit_${chip.name}`,
