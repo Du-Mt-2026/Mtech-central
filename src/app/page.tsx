@@ -14,7 +14,7 @@ import {
   Sparkles, Heart, Star, AlertTriangle, Info, ChevronDown,
   Pencil, LayoutList, Database, WifiOff, ArrowDownToLine, Save, XCircle,
   Inbox, LogOut, RotateCcw, Film, Music, File, Webhook, ImageIcon, Key, Paperclip, MapPin, Link2,
-  Baby, CheckCircle2, Video, MoreVertical, Mic, User
+  Baby, CheckCircle2, Video, MoreVertical, Mic, User, Smile
 } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardAction } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -2053,8 +2053,8 @@ function ContatosTab() {
             </div>
             <div className="p-3 bg-muted/50 rounded-lg text-xs space-y-3">
               <p className="font-medium">Formato da planilha:</p>
-              <p className="text-muted-foreground">A coluna <strong>Telefone</strong> é obrigatória. As demais colunas ficam disponíveis como variáveis {'{{nome}}'}, {'{{empresa}}'}, {'{{vendedora}}'} etc. no texto da mensagem. Adicione quantas colunas quiser!</p>
-              <code className="block bg-muted p-2 rounded text-[11px]">Empresa,Nome,Telefone,Vendedor,Nota{'\n'}Tech Corp,João,11999990001,Renato,VIP{'\n'}Info Ltda,Maria,21988880002,Carlos,</code>
+              <p className="text-muted-foreground">A coluna <strong>Telefone</strong> é obrigatória. A coluna <strong>WhatsApp</strong> deve conter o número no formato internacional (ex: 5511999990001). As demais colunas ficam disponíveis como variáveis {'{{nome}}'}, {'{{empresa}}'}, {'{{vendedora}}'} etc. no texto da mensagem. Adicione quantas colunas quiser!</p>
+              <code className="block bg-muted p-2 rounded text-[11px]">Empresa,Nome,Telefone,WhatsApp,Vendedora,Nota{'\n'}Tech Corp,João,11999990001,5511999990001,Renato,VIP{'\n'}Info Ltda,Maria,21988880002,5521988880002,Carlos,</code>
             </div>
           </div>
         </DialogContent>
@@ -2179,6 +2179,60 @@ type StepForm = {
 // ===== MessageBuilder Component =====
 // Visual message editor with inline KEY blocks, variable chips, and WhatsApp preview
 
+// Emoji list for the picker
+const EMOJI_LIST = [
+  { emoji: '😀', label: 'rosto sorridente' }, { emoji: '😃', label: 'rosto feliz' }, { emoji: '😄', label: 'rosto alegre' },
+  { emoji: '😁', label: 'sorridente olhos felizes' }, { emoji: '😆', label: 'rindo' }, { emoji: '😅', label: 'suando sorrindo' },
+  { emoji: '🤣', label: 'rolando de rir' }, { emoji: '😂', label: 'lágrimas de alegria' }, { emoji: '🙂', label: 'sorriso leve' },
+  { emoji: '😉', label: 'piscadela' }, { emoji: '😊', label: 'sorridente tímido' }, { emoji: '🥰', label: 'corações nos olhos' },
+  { emoji: '😍', label: 'olhos de coração' }, { emoji: '🤩', label: 'olhos brilhantes' }, { emoji: '😘', label: 'beijo' },
+  { emoji: '😗', label: 'beicinho' }, { emoji: '😚', label: 'beijo tímido' }, { emoji: '😋', label: 'saboroso' },
+  { emoji: '😛', label: 'língua de fora' }, { emoji: '😜', label: 'piscadela língua' }, { emoji: '🤪', label: 'doido' },
+  { emoji: '😝', label: 'língua olhos fechados' }, { emoji: '🤑', label: 'dinheiro' }, { emoji: '🤗', label: 'abraço' },
+  { emoji: '🤭', label: 'mão na boca' }, { emoji: '🤫', label: 'silêncio' }, { emoji: '🤔', label: 'pensando' },
+  { emoji: '🤐', label: 'boca fechada' }, { emoji: '🤨', label: 'sobrancelha levantada' }, { emoji: '😐', label: 'neutro' },
+  { emoji: '😑', label: 'sem expressão' }, { emoji: '😶', label: 'sem boca' }, { emoji: '😏', label: 'sorriminho' },
+  { emoji: '😒', label: 'entediado' }, { emoji: '🙄', label: 'olhos revirados' }, { emoji: '😬', label: 'careta' },
+  { emoji: '😮‍💨', label: 'suspiro' }, { emoji: '🤥', label: 'mentiroso' }, { emoji: '😌', label: 'aliviado' },
+  { emoji: '😔', label: 'pensativo triste' }, { emoji: '😪', label: 'sono' }, { emoji: '🤤', label: 'babando' },
+  { emoji: '😴', label: 'dormindo' }, { emoji: '😷', label: 'máscara' }, { emoji: '🤒', label: 'doente' },
+  { emoji: '🤕', label: 'curativo' }, { emoji: '🤢', label: 'náusea' }, { emoji: '🤮', label: 'vomitando' },
+  { emoji: '🥵', label: 'calor' }, { emoji: '🥶', label: 'frio' }, { emoji: '😱', label: 'grito' },
+  { emoji: '😨', label: 'assustado' }, { emoji: '😰', label: 'ansioso' }, { emoji: '😥', label: 'decepcionado' },
+  { emoji: '😢', label: 'chorando' }, { emoji: '😭', label: 'muito triste' }, { emoji: '😤', label: 'bravo' },
+  { emoji: '😡', label: 'furioso' }, { emoji: '🤬', label: 'xingando' }, { emoji: '😈', label: 'diabinho' },
+  { emoji: '👍', label: 'joinha' }, { emoji: '👎', label: 'negativo' }, { emoji: '👊', label: 'soco' },
+  { emoji: '✊', label: 'punho' }, { emoji: '🤛', label: 'punho esquerdo' }, { emoji: '🤜', label: 'punho direito' },
+  { emoji: '👏', label: 'palmas' }, { emoji: '🙌', label: 'mãos levantadas' }, { emoji: '👐', label: 'mãos abertas' },
+  { emoji: '🤲', label: 'palmas juntas' }, { emoji: '🤝', label: 'aperto de mão' }, { emoji: '🙏', label: 'rezando' },
+  { emoji: '✌️', label: 'paz' }, { emoji: '🤟', label: 'te amo' }, { emoji: '🤘', label: 'rock' },
+  { emoji: '👌', label: 'ok' }, { emoji: '🤌', label: 'dedos juntos' }, { emoji: '🤏', label: 'pouquinho' },
+  { emoji: '👈', label: 'apontando esquerda' }, { emoji: '👉', label: 'apontando direita' }, { emoji: '👆', label: 'apontando cima' },
+  { emoji: '👇', label: 'apontando baixo' }, { emoji: '☝️', label: 'indicador cima' }, { emoji: '✋', label: 'mão parada' },
+  { emoji: '🤚', label: 'mão levantada' }, { emoji: '🖐️', label: 'mão aberta' }, { emoji: '👋', label: 'aceno' },
+  { emoji: '💪', label: 'força' }, { emoji: '🦾', label: 'braço mecânico' }, { emoji: '❤️', label: 'coração vermelho' },
+  { emoji: '🧡', label: 'coração laranja' }, { emoji: '💛', label: 'coração amarelo' }, { emoji: '💚', label: 'coração verde' },
+  { emoji: '💙', label: 'coração azul' }, { emoji: '💜', label: 'coração roxo' }, { emoji: '🖤', label: 'coração preto' },
+  { emoji: '🤍', label: 'coração branco' }, { emoji: '💔', label: 'coração partido' }, { emoji: '❣️', label: 'exclamação coração' },
+  { emoji: '💕', label: 'dois corações' }, { emoji: '💞', label: 'corações girando' }, { emoji: '💓', label: 'coração pulsando' },
+  { emoji: '💖', label: 'coração brilhando' }, { emoji: '💘', label: 'coração Cupido' }, { emoji: '💝', label: 'coração laço' },
+  { emoji: '🔥', label: 'fogo' }, { emoji: '⭐', label: 'estrela' }, { emoji: '🌟', label: 'estrela brilhando' },
+  { emoji: '✨', label: 'faíscas' }, { emoji: '💫', label: 'tontura' }, { emoji: '🎉', label: 'festa' },
+  { emoji: '🎊', label: 'confete' }, { emoji: '🎈', label: 'balão' }, { emoji: '🎁', label: 'presente' },
+  { emoji: '🏆', label: 'troféu' }, { emoji: '🥇', label: 'medalha ouro' }, { emoji: '💰', label: 'dinheiro' },
+  { emoji: '💵', label: 'nota dólar' }, { emoji: '💎', label: 'diamante' }, { emoji: '📌', label: 'alfinete' },
+  { emoji: '📎', label: 'clipe' }, { emoji: '🔗', label: 'link' }, { emoji: '📞', label: 'telefone' },
+  { emoji: '📱', label: 'celular' }, { emoji: '💬', label: 'balão fala' }, { emoji: '💭', label: 'pensamento' },
+  { emoji: '🕐', label: 'relógio' }, { emoji: '⚡', label: 'raio' }, { emoji: '🚀', label: 'foguete' },
+  { emoji: '🎯', label: 'alvo' }, { emoji: '✅', label: 'check verde' }, { emoji: '❌', label: 'X vermelho' },
+  { emoji: '⚠️', label: 'aviso' }, { emoji: '📢', label: 'megafone' }, { emoji: '🔔', label: 'sino' },
+  { emoji: '🏷️', label: 'etiqueta' }, { emoji: '📋', label: 'prancheta' }, { emoji: '📅', label: 'calendário' },
+  { emoji: '🟢', label: 'círculo verde' }, { emoji: '🔴', label: 'círculo vermelho' }, { emoji: '🟡', label: 'círculo amarelo' },
+  { emoji: '💯', label: 'cem' }, { emoji: '🔝', label: 'topo' }, { emoji: '🆕', label: 'novo' },
+  { emoji: '🆓', label: 'grátis' }, { emoji: '🟩', label: 'quadrado verde' }, { emoji: '🏳️', label: 'bandeira branca' },
+  { emoji: '🇧🇷', label: 'brasil' }, { emoji: '🤖', label: 'robô' }, { emoji: '👋', label: 'aceno' },
+]
+
 // Helper: parse {{KEY: var1 | var2 | var3}} blocks from text
 function parseKeyBlocksFromText(text: string): Array<{ fullMatch: string; variations: string[] }> {
   const blocks: Array<{ fullMatch: string; variations: string[] }> = []
@@ -2281,6 +2335,8 @@ function MessageBuilder({ value, onChange, messageKeys, templates, contactVariab
   const [previewSeed, setPreviewSeed] = useState(0)
   const [templatePickerOpen, setTemplatePickerOpen] = useState(false)
   const [templateSearch, setTemplateSearch] = useState('')
+  const [emojiPickerOpen, setEmojiPickerOpen] = useState(false)
+  const [emojiSearch, setEmojiSearch] = useState('')
 
   // Parse KEY blocks from current text
   const keyBlocks = parseKeyBlocksFromText(value)
@@ -2550,15 +2606,59 @@ function MessageBuilder({ value, onChange, messageKeys, templates, contactVariab
         </div>
       </div>
 
-      {/* Main text area */}
-      <Textarea
-        ref={textareaRef}
-        placeholder="Texto da mensagem... Use {{nome}}, {{KEY: var1 | var2}} para variações"
-        value={value}
-        onChange={e => onChange(e.target.value)}
-        rows={rows}
-        className="text-sm font-mono"
-      />
+      {/* Main text area with emoji button */}
+      <div className="relative">
+        <Textarea
+          ref={textareaRef}
+          placeholder="Texto da mensagem... Use {{nome}}, {{KEY: var1 | var2}} para variações"
+          value={value}
+          onChange={e => onChange(e.target.value)}
+          rows={rows}
+          className="text-sm font-mono pr-10"
+        />
+        <Popover open={emojiPickerOpen} onOpenChange={setEmojiPickerOpen}>
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              className="absolute top-2 right-2 size-7 rounded-md hover:bg-muted/80 flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
+              title="Inserir emoji"
+            >
+              <Smile className="size-4" />
+            </button>
+          </PopoverTrigger>
+          <PopoverContent className="w-72 p-2" side="bottom" align="end" sideOffset={5}>
+            <div className="space-y-2">
+              <div className="flex items-center gap-1.5">
+                <Input
+                  placeholder="Buscar emoji..."
+                  value={emojiSearch}
+                  onChange={e => setEmojiSearch(e.target.value)}
+                  className="h-7 text-xs"
+                />
+              </div>
+              <div className="grid grid-cols-8 gap-0.5 max-h-[200px] overflow-y-auto">
+                {EMOJI_LIST
+                  .filter(e => !emojiSearch || e.label.toLowerCase().includes(emojiSearch.toLowerCase()) || e.emoji.includes(emojiSearch))
+                  .map((e, i) => (
+                    <button
+                      key={i}
+                      type="button"
+                      className="size-8 rounded hover:bg-muted/80 flex items-center justify-center text-lg transition-colors"
+                      title={e.label}
+                      onClick={() => {
+                        insertAtCursor(e.emoji)
+                        setEmojiPickerOpen(false)
+                        setEmojiSearch('')
+                      }}
+                    >
+                      {e.emoji}
+                    </button>
+                  ))}
+              </div>
+            </div>
+          </PopoverContent>
+        </Popover>
+      </div>
 
       {/* Char/line count only - preview is now in the right panel */}
       {value.trim() && (
@@ -3293,9 +3393,9 @@ function CampanhasTab() {
                     <p className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5"><Eye className="size-3" /> Pré-visualização</p>
                     <span className="text-[10px] text-muted-foreground">6.7"</span>
                   </div>
-                  <div className="flex-1 flex flex-col items-center justify-start p-3 overflow-y-auto">
+                  <div className="flex-1 flex flex-col items-center justify-start p-3 overflow-y-auto min-h-0">
                     {/* Phone frame - 6.7" aspect ratio (~19.5:9) */}
-                    <div className="w-full max-w-[340px] rounded-2xl border-4 border-zinc-800 dark:border-zinc-600 overflow-hidden shadow-2xl bg-[#0b141a]">
+                    <div className="w-full max-w-[340px] rounded-2xl border-4 border-zinc-800 dark:border-zinc-600 shadow-2xl bg-[#0b141a] flex flex-col" style={{ height: '90%', maxHeight: 'calc(90vh - 140px)' }}>
                       {/* WhatsApp status bar */}
                       <div className="flex items-center justify-between px-3 py-1 bg-[#1f2c34] text-white/60 text-[9px]">
                         <span>{new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</span>
@@ -3317,8 +3417,8 @@ function CampanhasTab() {
                           <MoreVertical className="size-4" />
                         </div>
                       </div>
-                      {/* Chat body - 6.7" proportional height */}
-                      <div className="bg-[#0b141a] p-3 space-y-2" style={{ backgroundImage: 'url("data:image/svg+xml,%3Csvg width=\'60\' height=\'60\' viewBox=\'0 0 60 60\' xmlns=\'http://www.w3.org/2000/svg\'%3E%3Cg fill=\'none\' fill-rule=\'evenodd\'%3E%3Cg fill=\'%23ffffff\' fill-opacity=\'0.02\'%3E%3Cpath d=\'M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z\'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")' }}>
+                      {/* Chat body - scrollable */}
+                      <div className="flex-1 bg-[#0b141a] p-3 space-y-2 overflow-y-auto min-h-0" style={{ backgroundImage: 'url("data:image/svg+xml,%3Csvg width=\'60\' height=\'60\' viewBox=\'0 0 60 60\' xmlns=\'http://www.w3.org/2000/svg\'%3E%3Cg fill=\'none\' fill-rule=\'evenodd\'%3E%3Cg fill=\'%23ffffff\' fill-opacity=\'0.02\'%3E%3Cpath d=\'M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z\'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")' }}>
                         {newCampaign.steps.map((step, idx) => {
                           const previewContent = step.content
                             .replace(/\{\{nome\}\}/gi, 'João')
@@ -3438,7 +3538,7 @@ function CampanhasTab() {
                         )}
                       </div>
                       {/* Input bar mockup */}
-                      <div className="flex items-center gap-2 px-3 py-2 bg-[#1f2c34]">
+                      <div className="shrink-0 flex items-center gap-2 px-3 py-2 bg-[#1f2c34]">
                         <div className="flex-1 flex items-center bg-[#2a3942] rounded-full px-3 py-1.5">
                           <span className="text-[11px] text-white/30">Mensagem</span>
                         </div>
