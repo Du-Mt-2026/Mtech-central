@@ -230,8 +230,6 @@ const NAV_ITEMS = [
 const CONTACT_VARIABLES = [
   { tag: '{{nome}}', label: 'Nome', icon: '👤' },
   { tag: '{{telefone}}', label: 'Telefone', icon: '📱' },
-  { tag: '{{email}}', label: 'E-mail', icon: '📧' },
-  { tag: '{{cidade}}', label: 'Cidade', icon: '📍' },
   { tag: '{{empresa}}', label: 'Empresa', icon: '🏢' },
   { tag: '{{vendedor}}', label: 'Vendedor', icon: '🧑‍💼' },
 ]
@@ -2420,8 +2418,6 @@ function CampanhasTab() {
                         let previewText = step.content
                           .replace(/\{\{nome\}\}/g, 'João')
                           .replace(/\{\{telefone\}\}/g, '11999990001')
-                          .replace(/\{\{email\}\}/g, 'joao@email.com')
-                          .replace(/\{\{cidade\}\}/g, 'São Paulo')
                           .replace(/\{\{empresa\}\}/g, 'Tech Corp')
                           .replace(/\{\{vendedor\}\}/g, 'Renato')
                         // Replace key tags with their first variation for preview
@@ -2881,8 +2877,6 @@ function CampanhasTab() {
                       let previewText = step.content
                         .replace(/\{\{nome\}\}/g, 'João')
                         .replace(/\{\{telefone\}\}/g, '11999990001')
-                        .replace(/\{\{email\}\}/g, 'joao@email.com')
-                        .replace(/\{\{cidade\}\}/g, 'São Paulo')
                         .replace(/\{\{empresa\}\}/g, 'Tech Corp')
                         .replace(/\{\{vendedor\}\}/g, 'Renato')
                       // Replace key tags with their first variation for preview
@@ -3170,7 +3164,7 @@ function TemplatesTab() {
     setEditForm(prev => ({ ...prev, content: prev.content + v }))
   }
 
-  const TEMPLATE_VARS = ['{{nome}}', '{{saudacao}}', '{{telefone}}', '{{email}}', '{{cidade}}', '{{empresa}}', '{{vendedor}}']
+  const TEMPLATE_VARS = ['{{nome}}', '{{saudacao}}', '{{telefone}}', '{{empresa}}', '{{vendedor}}']
 
   const openEditTemplate = (t: MessageTemplate) => {
     setEditTemplate(t)
