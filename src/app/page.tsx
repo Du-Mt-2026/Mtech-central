@@ -231,19 +231,10 @@ const NAV_ITEMS = [
 // Variables from contact spreadsheet (planilha)
 const CONTACT_VARIABLES = [
   { tag: '{{nome}}', label: 'Nome', icon: '👤' },
-  { tag: '{{saudacao}}', label: 'Saudação', icon: '👋' },
   { tag: '{{telefone}}', label: 'Telefone', icon: '📱' },
   { tag: '{{empresa}}', label: 'Empresa', icon: '🏢' },
-  { tag: '{{vendedor}}', label: 'Vendedor', icon: '🧑‍💼' },
+  { tag: '{{vendedora}}', label: 'Vendedora', icon: '🧑‍💼' },
 ]
-
-// Smart greeting: returns "Bom dia", "Boa tarde" or "Boa noite" based on current hour
-function getSmartGreeting(): string {
-  const hour = new Date().getHours()
-  if (hour < 12) return 'Bom dia'
-  if (hour < 18) return 'Boa tarde'
-  return 'Boa noite'
-}
 
 // ===== Status Helpers =====
 function statusColor(status: string) {
@@ -2062,7 +2053,7 @@ function ContatosTab() {
             </div>
             <div className="p-3 bg-muted/50 rounded-lg text-xs space-y-3">
               <p className="font-medium">Formato da planilha:</p>
-              <p className="text-muted-foreground">A coluna <strong>Telefone</strong> é obrigatória. As demais colunas ficam disponíveis como variáveis {'{{nome}}'}, {'{{empresa}}'}, {'{{vendedor}}'} etc. no texto da mensagem. Adicione quantas colunas quiser!</p>
+              <p className="text-muted-foreground">A coluna <strong>Telefone</strong> é obrigatória. As demais colunas ficam disponíveis como variáveis {'{{nome}}'}, {'{{empresa}}'}, {'{{vendedora}}'} etc. no texto da mensagem. Adicione quantas colunas quiser!</p>
               <code className="block bg-muted p-2 rounded text-[11px]">Empresa,Nome,Telefone,Vendedor,Nota{'\n'}Tech Corp,João,11999990001,Renato,VIP{'\n'}Info Ltda,Maria,21988880002,Carlos,</code>
             </div>
           </div>
@@ -2243,17 +2234,13 @@ function generatePreviewText(text: string, messageKeys: Array<{ id: string; name
     } catch { /* ignore */ }
   })
 
-  // Replace {{saudacao}} with smart greeting based on current hour
-  preview = preview.replace(/\{\{saudacao\}\}/gi, getSmartGreeting())
-
   // Replace contact variables dynamically
   // Sample data for preview
   const sampleData: Record<string, string> = {
     nome: 'João',
-    saudacao: getSmartGreeting(),
     telefone: '11999990001',
     empresa: 'Tech Corp',
-    vendedor: 'Renato',
+    vendedora: 'Ana',
     nota: 'VIP',
   }
 
@@ -2272,7 +2259,7 @@ function generatePreviewText(text: string, messageKeys: Array<{ id: string; name
       .replace(/\{\{nome\}\}/g, 'João')
       .replace(/\{\{telefone\}\}/g, '11999990001')
       .replace(/\{\{empresa\}\}/g, 'Tech Corp')
-      .replace(/\{\{vendedor\}\}/g, 'Renato')
+      .replace(/\{\{vendedora\}\}/g, 'Ana')
   }
 
   // Strip WhatsApp bold markers
@@ -3334,11 +3321,10 @@ function CampanhasTab() {
                       <div className="bg-[#0b141a] p-3 space-y-2" style={{ backgroundImage: 'url("data:image/svg+xml,%3Csvg width=\'60\' height=\'60\' viewBox=\'0 0 60 60\' xmlns=\'http://www.w3.org/2000/svg\'%3E%3Cg fill=\'none\' fill-rule=\'evenodd\'%3E%3Cg fill=\'%23ffffff\' fill-opacity=\'0.02\'%3E%3Cpath d=\'M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z\'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")' }}>
                         {newCampaign.steps.map((step, idx) => {
                           const previewContent = step.content
-                            .replace(/\{\{saudacao\}\}/gi, getSmartGreeting())
                             .replace(/\{\{nome\}\}/gi, 'João')
                             .replace(/\{\{telefone\}\}/gi, '48999999999')
                             .replace(/\{\{empresa\}\}/gi, 'M-Tech')
-                            .replace(/\{\{vendedor\}\}/gi, 'Artur')
+                            .replace(/\{\{vendedora\}\}/gi, 'Ana')
                             .replace(/\{\{KEY:\s*([^}]+)\}\}/g, (_: string, vars: string) => {
                               const options = vars.split('|').map((s: string) => s.trim())
                               return options[0] || 'variação'
@@ -3358,7 +3344,7 @@ function CampanhasTab() {
                                 {step.mediatype === 'image' && (step.mediaFile ? (
                                   <div className="relative">
                                     <img src={URL.createObjectURL(step.mediaFile)} alt="Preview" className="w-full max-h-[200px] object-cover" />
-                                    {step.caption && <p className="text-[12px] text-white/90 px-2.5 pt-1.5 whitespace-pre-wrap break-words">{step.caption.replace(/\{\{saudacao\}\}/gi, getSmartGreeting()).replace(/\{\{nome\}\}/gi, 'João').replace(/\{\{telefone\}\}/gi, '48999999999').replace(/\{\{empresa\}\}/gi, 'M-Tech').replace(/\{\{vendedor\}\}/gi, 'Artur').replace(/\*([^*]+)\*/g, '$1')}</p>}
+                                    {step.caption && <p className="text-[12px] text-white/90 px-2.5 pt-1.5 whitespace-pre-wrap break-words">{step.caption.replace(/\{\{nome\}\}/gi, 'João').replace(/\{\{telefone\}\}/gi, '48999999999').replace(/\{\{empresa\}\}/gi, 'M-Tech').replace(/\{\{vendedora\}\}/gi, 'Ana').replace(/\*([^*]+)\*/g, '$1')}</p>}
                                   </div>
                                 ) : (
                                   <div className="flex items-center justify-center bg-[#1a3a2a] h-[140px] w-full">
@@ -3961,8 +3947,7 @@ function TemplatesTab() {
     setEditForm(prev => ({ ...prev, content: prev.content + v }))
   }
 
-  const TEMPLATE_VARS = ['{{nome}}', '{{saudacao}}', '{{telefone}}', '{{empresa}}', '{{vendedor}}']
-  // {{saudacao}} is a smart variable: automatically becomes "Bom dia", "Boa tarde" or "Boa noite" based on the time the message is sent
+  const TEMPLATE_VARS = ['{{nome}}', '{{telefone}}', '{{empresa}}', '{{vendedora}}']
 
   const openEditTemplate = (t: MessageTemplate) => {
     setEditTemplate(t)
