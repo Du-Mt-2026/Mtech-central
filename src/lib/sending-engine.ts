@@ -552,6 +552,93 @@ async function checkForWarnings(chipId: string): Promise<boolean> {
 // ============================================================
 
 /**
+ * Resolve {{KEY: var1 | var2 | var3}} blocks in text.
+ * For each KEY block, pick a random variation.
+ * Supports nested {{variable}} inside variations (e.g., {{KEY: Meu nome é {{vendedor}}... | ...}})
+ */
+function resolveKeyBlocks(text: string): string {
+  // Use a custom parser to handle nested {{ }} inside KEY blocks
+  let result = ''
+  let i = 0
+  while (i < text.length) {
+    // Look for {{KEY:
+    if (text.slice(i, i + 7) === '{{KEY: ') {
+      // Find the matching }}
+      let depth = 0
+      let j = i + 7
+      let found = false
+      for (; j < text.length - 1; j++) {
+        if (text[j] === '{' && text[j + 1] === '{') {
+          depth++
+          j++ // skip next {
+        } else if (text[j] === '}' && text[j + 1] === '}') {
+          if (depth > 0) {
+            depth--
+            j++ // skip next }
+          } else {
+            // Found the closing }}
+            const innerContent = text.slice(i + 7, j)
+            const variations = innerContent.split('|').map(s => s.trim()).filter(Boolean)
+            if (variations.length > 0) {
+              result += variations[Math.floor(Math.random() * variations.length)]
+            }
+            i = j + 2
+            found = true
+            break
+          }
+        }
+      }
+      if (!found) {
+        // No matching }}, keep as-is
+        result += text[i]
+        i++
+      }
+    } else {
+      result += text[i]
+      i++
+    }
+  }
+  return result
+}
+
+/**
+ * Resolve old-style {{KEY_NAME}} markers using MessageKey records from the database.
+ * Each key has variations stored as JSON; pick a random one.
+ */
+async function resolveMessageKeyMarkers(text: string): Promise<string> {
+  // Find all {{SOME_NAME}} patterns that are NOT {{KEY:...}}, {{nome}}, {{telefone}}, {{empresa}}, {{vendedor}}
+  const contactVars = ['nome', 'telefone', 'empresa', 'vendedor']
+  const markerRegex = /\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}/g
+  let match
+  const markers = new Set<string>()
+  while ((match = markerRegex.exec(text)) !== null) {
+    const name = match[1]
+    if (!name.startsWith('KEY:') && !contactVars.includes(name)) {
+      markers.add(name)
+    }
+  }
+
+  if (markers.size === 0) return text
+
+  // Look up message keys from the database
+  const keys = await db.messageKey.findMany({
+    where: { name: { in: Array.from(markers) } },
+  })
+
+  let result = text
+  for (const key of keys) {
+    try {
+      const variations: string[] = JSON.parse(key.variations)
+      if (variations.length > 0) {
+        const chosen = variations[Math.floor(Math.random() * variations.length)]
+        result = result.replace(new RegExp(`\\{\\{${key.name}\\}\\}`, 'g'), chosen)
+      }
+    } catch { /* ignore */ }
+  }
+  return result
+}
+
+/**
  * Start a campaign: create pending messages and set status to running
  */
 export async function startCampaign(campaignId: string): Promise<{ messageCount: number }> {
@@ -649,11 +736,26 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
     const itemsPool = isMultiStep ? step1Items : singleStepItems
     const messageItem = itemsPool[Math.floor(Math.random() * itemsPool.length)]
 
-    // Replace template variables — DO NOT pre-substitute here when Key system is active
-    // For now, keep existing variable substitution
-    const content = messageItem.content
+    // Replace template variables — resolve KEY blocks first, then contact variables, then message key markers
+    // Step 1: Resolve inline {{KEY: var1 | var2 | var3}} blocks (random variation per contact)
+    let content = resolveKeyBlocks(messageItem.content)
+
+    // Step 2: Replace contact variables (double-brace format {{nome}}, etc.)
+    content = content
+      .replace(/\{\{nome\}\}/g, contact.name)
+      .replace(/\{\{telefone\}\}/g, contact.phone)
+      .replace(/\{\{empresa\}\}/g, contact.empresa || '')
+      .replace(/\{\{vendedor\}\}/g, (contact as any).vendedor || '')
+
+    // Step 2b: Replace contact variables (single-brace format {nome}, etc.) — legacy
+    content = content
       .replace(/\{nome\}/g, contact.name)
       .replace(/\{telefone\}/g, contact.phone)
+      .replace(/\{empresa\}/g, contact.empresa || '')
+      .replace(/\{vendedor\}/g, (contact as any).vendedor || '')
+
+    // Step 3: Resolve old-style {{KEY_NAME}} markers (from Chaves/MessageKey system)
+    content = await resolveMessageKeyMarkers(content)
 
     messagesToCreate.push({
       campaignId: campaign.id,

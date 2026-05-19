@@ -30,6 +30,7 @@ import { Switch } from '@/components/ui/switch'
 import { Slider } from '@/components/ui/slider'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -1957,6 +1958,332 @@ type StepForm = {
   variations: { content: string; mediaFile: File | null; mediaUrl: string; mediatype: string; caption: string; linkUrl: string; linkPreview: boolean; contactName: string; contactPhone: string; locationLat: string; locationLng: string; locationName: string }[]
 }
 
+// ===== MessageBuilder Component =====
+// Visual message editor with inline KEY blocks, variable chips, and WhatsApp preview
+
+// Helper: parse {{KEY: var1 | var2 | var3}} blocks from text
+function parseKeyBlocksFromText(text: string): Array<{ fullMatch: string; variations: string[] }> {
+  const blocks: Array<{ fullMatch: string; variations: string[] }> = []
+  // Match {{KEY: ...}} but handle nested {{variable}} inside
+  // Strategy: find {{KEY: then match until the matching }}
+  const regex = /\{\{KEY:\s*/g
+  let match
+  while ((match = regex.exec(text)) !== null) {
+    const startIdx = match.index
+    let depth = 0
+    let i = startIdx + match[0].length
+    // Skip past "KEY:" part, now find the closing }}
+    // We need to find the matching }} accounting for nested {{ }}
+    for (; i < text.length - 1; i++) {
+      if (text[i] === '{' && text[i + 1] === '{') {
+        depth++
+        i++ // skip next {
+      } else if (text[i] === '}' && text[i + 1] === '}') {
+        if (depth > 0) {
+          depth--
+          i++ // skip next }
+        } else {
+          // Found the closing }}
+          const innerContent = text.slice(startIdx + match[0].length, i)
+          const fullMatch = text.slice(startIdx, i + 2)
+          const variations = innerContent.split('|').map(s => s.trim()).filter(Boolean)
+          blocks.push({ fullMatch, variations })
+          break
+        }
+      }
+    }
+    // Prevent infinite loop
+    if (match.index === regex.lastIndex) regex.lastIndex++
+  }
+  return blocks
+}
+
+// Helper: generate preview text replacing KEY blocks and contact variables
+function generatePreviewText(text: string, messageKeys: Array<{ id: string; name: string; label: string; category: string; variations: string }>, seed: number): string {
+  // First, resolve {{KEY: ...}} blocks — pick a deterministic variation based on seed
+  let preview = text.replace(/\{\{KEY:\s*((?:[^{}]|\{\{[^}]*\}\})*)\}\}/g, (_, inner) => {
+    const options = inner.split('|').map((s: string) => s.trim()).filter(Boolean)
+    if (options.length === 0) return ''
+    const idx = seed % options.length
+    return options[idx]
+  })
+
+  // Replace old-style {{KEY_NAME}} with first variation from messageKeys (backward compat)
+  messageKeys.forEach(k => {
+    try {
+      const vars = JSON.parse(k.variations)
+      if (vars?.length) preview = preview.replace(new RegExp(`\\{\\{${k.name}\\}\\}`, 'g'), vars[0])
+    } catch { /* ignore */ }
+  })
+
+  // Replace contact variables
+  preview = preview
+    .replace(/\{\{nome\}\}/g, 'João')
+    .replace(/\{\{telefone\}\}/g, '11999990001')
+    .replace(/\{\{empresa\}\}/g, 'Tech Corp')
+    .replace(/\{\{vendedor\}\}/g, 'Renato')
+
+  // Strip WhatsApp bold markers
+  preview = preview.replace(/\*([^*]+)\*/g, '$1')
+  return preview
+}
+
+function MessageBuilder({ value, onChange, messageKeys }: {
+  value: string
+  onChange: (v: string) => void
+  messageKeys: Array<{ id: string; name: string; label: string; category: string; variations: string }>
+}) {
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const [newBlockOpen, setNewBlockOpen] = useState(false)
+  const [newBlockVariations, setNewBlockVariations] = useState('')
+  const [previewSeed, setPreviewSeed] = useState(0)
+
+  // Parse KEY blocks from current text
+  const keyBlocks = parseKeyBlocksFromText(value)
+
+  // Insert text at cursor position
+  const insertAtCursor = (text: string) => {
+    const textarea = textareaRef.current
+    if (textarea) {
+      const start = textarea.selectionStart
+      const end = textarea.selectionEnd
+      const newValue = value.substring(0, start) + text + value.substring(end)
+      onChange(newValue)
+      setTimeout(() => {
+        textarea.selectionStart = textarea.selectionEnd = start + text.length
+        textarea.focus()
+      }, 0)
+    } else {
+      onChange(value + text)
+    }
+  }
+
+  // Insert new KEY block
+  const insertNewBlock = () => {
+    const lines = newBlockVariations.split('\n').map(l => l.trim()).filter(Boolean)
+    // Also support | separator within lines
+    const allVariations: string[] = []
+    lines.forEach(line => {
+      line.split('|').forEach(v => {
+        const trimmed = v.trim()
+        if (trimmed) allVariations.push(trimmed)
+      })
+    })
+    if (allVariations.length < 2) {
+      toast.error('Adicione pelo menos 2 variações separadas por | ou uma por linha')
+      return
+    }
+    const keyBlock = `{{KEY: ${allVariations.join(' | ')}}}`
+    insertAtCursor(keyBlock)
+    setNewBlockVariations('')
+    setNewBlockOpen(false)
+  }
+
+  const previewText = generatePreviewText(value, messageKeys, previewSeed)
+  const charCount = previewText.length
+  const lineCount = value.split('\n').length
+
+  return (
+    <div className="space-y-2">
+      {/* Variable chips bar */}
+      <div className="space-y-1.5 p-2 bg-muted/30 rounded-lg border">
+        {/* Contact variables */}
+        <div className="flex flex-wrap gap-1">
+          <span className="text-[10px] text-muted-foreground font-medium w-full">📋 Dados do Contato</span>
+          {CONTACT_VARIABLES.map(v => (
+            <Button key={v.tag} variant="outline" size="sm"
+              className="h-6 text-[11px] gap-1 px-2 text-emerald-600 border-emerald-200 hover:bg-emerald-50 dark:text-emerald-400 dark:border-emerald-800 dark:hover:bg-emerald-900/30"
+              onClick={() => insertAtCursor(v.tag)}>
+              {v.icon} {v.label}
+            </Button>
+          ))}
+        </div>
+        {/* KEY block chips */}
+        <div className="flex flex-wrap gap-1">
+          <span className="text-[10px] text-muted-foreground font-medium w-full">🔀 Blocos de Variação</span>
+          {keyBlocks.map((block, idx) => {
+            const firstVar = block.variations[0] || ''
+            const extraCount = block.variations.length - 1
+            const truncated = firstVar.length > 25 ? firstVar.slice(0, 25) + '…' : firstVar
+            return (
+              <Popover key={idx}>
+                <PopoverTrigger asChild>
+                  <button
+                    className="inline-flex items-center gap-1 h-6 px-2 text-[11px] rounded-md border border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100 dark:border-amber-700 dark:bg-amber-900/30 dark:text-amber-300 dark:hover:bg-amber-900/50 transition-colors cursor-pointer"
+                  >
+                    <Shuffle className="size-2.5" />
+                    <span className="truncate max-w-[120px]">{truncated}</span>
+                    {extraCount > 0 && (
+                      <span className="inline-flex items-center justify-center size-4 rounded-full bg-amber-200 text-amber-700 text-[9px] font-bold dark:bg-amber-800 dark:text-amber-200">
+                        +{extraCount}
+                      </span>
+                    )}
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent className="w-72 p-3" side="bottom" align="start">
+                  <div className="space-y-2">
+                    <p className="text-xs font-semibold flex items-center gap-1">
+                      <Shuffle className="size-3 text-amber-500" /> Bloco de Variação ({block.variations.length} variações)
+                    </p>
+                    <div className="space-y-1 max-h-40 overflow-y-auto">
+                      {block.variations.map((v, vi) => (
+                        <div key={vi} className="flex items-start gap-2 text-xs p-1.5 rounded bg-muted/50">
+                          <span className="text-muted-foreground font-mono shrink-0">{vi + 1}.</span>
+                          <span className="break-words">{v}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </PopoverContent>
+              </Popover>
+            )
+          })}
+          {/* Saved keys from Chaves tab */}
+          {messageKeys.map(k => {
+            let varCount = 0
+            try { varCount = JSON.parse(k.variations).length } catch { /* ignore */ }
+            return (
+              <Popover key={k.id}>
+                <PopoverTrigger asChild>
+                  <button
+                    className="inline-flex items-center gap-1 h-6 px-2 text-[11px] rounded-md border border-violet-300 bg-violet-50 text-violet-700 hover:bg-violet-100 dark:border-violet-700 dark:bg-violet-900/30 dark:text-violet-300 dark:hover:bg-violet-900/50 transition-colors cursor-pointer"
+                  >
+                    <Key className="size-2.5" />
+                    <span className="truncate max-w-[100px]">{k.label}</span>
+                    <span className="inline-flex items-center justify-center size-4 rounded-full bg-violet-200 text-violet-700 text-[9px] font-bold dark:bg-violet-800 dark:text-violet-200">
+                      {varCount}
+                    </span>
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent className="w-72 p-3" side="bottom" align="start">
+                  <div className="space-y-2">
+                    <p className="text-xs font-semibold flex items-center gap-1">
+                      <Key className="size-3 text-violet-500" /> {k.label} ({varCount} variações)
+                    </p>
+                    <p className="text-[10px] text-muted-foreground">Clique para inserir como bloco inline ou como marcador</p>
+                    <div className="space-y-1.5">
+                      <Button size="sm" className="w-full h-7 text-[11px] gap-1" variant="outline"
+                        onClick={() => {
+                          try {
+                            const vars = JSON.parse(k.variations)
+                            if (vars?.length) {
+                              insertAtCursor(`{{KEY: ${vars.join(' | ')}}}`)
+                            }
+                          } catch { /* ignore */ }
+                        }}>
+                        <Shuffle className="size-3" /> Inserir como Bloco Inline
+                      </Button>
+                      <Button size="sm" className="w-full h-7 text-[11px] gap-1" variant="outline"
+                        onClick={() => insertAtCursor(`{{${k.name}}}`)}>
+                        <Key className="size-3" /> Inserir como Marcador
+                      </Button>
+                    </div>
+                    <div className="space-y-1 max-h-32 overflow-y-auto">
+                      {(() => {
+                        try {
+                          return JSON.parse(k.variations).map((v: string, vi: number) => (
+                            <div key={vi} className="flex items-start gap-2 text-xs p-1.5 rounded bg-muted/50">
+                              <span className="text-muted-foreground font-mono shrink-0">{vi + 1}.</span>
+                              <span className="break-words">{v}</span>
+                            </div>
+                          ))
+                        } catch { return null }
+                      })()}
+                    </div>
+                  </div>
+                </PopoverContent>
+              </Popover>
+            )
+          })}
+          {/* + Novo Bloco button */}
+          <Popover open={newBlockOpen} onOpenChange={setNewBlockOpen}>
+            <PopoverTrigger asChild>
+              <Button variant="outline" size="sm"
+                className="h-6 text-[11px] gap-1 px-2 text-amber-600 border-amber-200 hover:bg-amber-50 dark:text-amber-400 dark:border-amber-800 dark:hover:bg-amber-900/30 border-dashed">
+                <Plus className="size-2.5" /> Novo Bloco
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-80 p-3" side="bottom" align="start">
+              <div className="space-y-2">
+                <p className="text-xs font-semibold flex items-center gap-1">
+                  <Shuffle className="size-3 text-amber-500" /> Novo Bloco de Variação
+                </p>
+                <p className="text-[10px] text-muted-foreground">
+                  Digite as variações separadas por <code className="bg-muted px-1 rounded">|</code> ou uma por linha. Pode usar variáveis como {'{{nome}}'} dentro das variações.
+                </p>
+                <Textarea
+                  placeholder={"Oi, bom dia... tudo bem? | Olá, tudo bem? Bom dia... | Bom dia! Tudo bem?"}
+                  value={newBlockVariations}
+                  onChange={e => setNewBlockVariations(e.target.value)}
+                  rows={3}
+                  className="text-xs"
+                />
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-muted-foreground">
+                    {(() => {
+                      const lines = newBlockVariations.split('\n').map(l => l.trim()).filter(Boolean)
+                      const allVars: string[] = []
+                      lines.forEach(line => {
+                        line.split('|').forEach(v => {
+                          const t = v.trim()
+                          if (t) allVars.push(t)
+                        })
+                      })
+                      return allVars.length > 0 ? `${allVars.length} variação(ões) detectada(s)` : 'Separe variações com | ou Enter'
+                    })()}
+                  </span>
+                  <Button size="sm" className="h-7 text-[11px] gap-1 bg-amber-600 hover:bg-amber-700 text-white"
+                    onClick={insertNewBlock}
+                    disabled={!newBlockVariations.trim()}>
+                    <Plus className="size-3" /> Inserir
+                  </Button>
+                </div>
+              </div>
+            </PopoverContent>
+          </Popover>
+        </div>
+      </div>
+
+      {/* Main text area */}
+      <Textarea
+        ref={textareaRef}
+        placeholder="Texto da mensagem... Use {{nome}}, {{KEY: var1 | var2}} para variações"
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        rows={3}
+        className="text-sm font-mono"
+      />
+
+      {/* WhatsApp Preview */}
+      {value.trim() && (
+        <div className="border rounded-lg overflow-hidden">
+          <div className="bg-[#0b141a] px-3 py-2">
+            <div className="flex items-center gap-1.5 mb-1.5">
+              <Smartphone className="size-3 text-emerald-400" />
+              <span className="text-[10px] text-emerald-400 font-medium">Preview 6.7"</span>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-5 w-5 p-0 ml-1 text-white/40 hover:text-white/80 hover:bg-transparent"
+                onClick={() => setPreviewSeed(s => s + 1)}
+                title="Alternar variação"
+              >
+                <RefreshCw className="size-3" />
+              </Button>
+              <span className="text-[10px] text-white/30 ml-auto">{charCount} chars · {lineCount} linha(s)</span>
+            </div>
+            <div className="flex justify-end">
+              <div className="max-w-[80%] bg-[#005c4b] rounded-lg rounded-tr-none px-2.5 py-1.5">
+                <p className="text-[12px] text-white/90 whitespace-pre-wrap break-words leading-[1.3]">{previewText}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function CampanhasTab() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
   const [loading, setLoading] = useState(true)
@@ -2392,61 +2719,7 @@ function CampanhasTab() {
                           </Button>
                         )}
                       </div>
-                      <Textarea placeholder="Texto da mensagem..." value={step.content} onChange={e => updateStep(idx, 'content', e.target.value)} rows={2} />
-                      <div className="space-y-1.5">
-                        <div className="flex flex-wrap gap-1">
-                          <span className="text-[10px] text-muted-foreground font-medium w-full">📋 Contato (planilha)</span>
-                          {CONTACT_VARIABLES.map(v => (
-                            <Button key={v.tag} variant="outline" size="sm" className="h-6 text-[11px] gap-1 px-2 text-emerald-600 border-emerald-200 hover:bg-emerald-50" onClick={() => updateStep(idx, 'content', step.content + v.tag)}>
-                              {v.icon} {v.label}
-                            </Button>
-                          ))}
-                        </div>
-                        {messageKeys.length > 0 && (
-                          <div className="flex flex-wrap gap-1">
-                            <span className="text-[10px] text-muted-foreground font-medium w-full">🔑 Chaves (marcadores editáveis)</span>
-                            {messageKeys.map(k => (
-                              <Button key={k.id} variant="outline" size="sm" className="h-6 text-[11px] gap-1 px-2 text-violet-600 border-violet-200 hover:bg-violet-50" onClick={() => updateStep(idx, 'content', step.content + `{{${k.name}}}`)} title={`${k.label} — ${(() => { try { const v = JSON.parse(k.variations); return v.length + ' variações' } catch { return '' } })()}`}>
-                                <Key className="size-2.5" /> {k.label}
-                              </Button>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                      {/* Mini Preview WhatsApp */}
-                      {step.content.trim() && (() => {
-                        let previewText = step.content
-                          .replace(/\{\{nome\}\}/g, 'João')
-                          .replace(/\{\{telefone\}\}/g, '11999990001')
-                          .replace(/\{\{empresa\}\}/g, 'Tech Corp')
-                          .replace(/\{\{vendedor\}\}/g, 'Renato')
-                        // Replace key tags with their first variation for preview
-                        messageKeys.forEach(k => {
-                          try {
-                            const vars = JSON.parse(k.variations)
-                            if (vars?.length) previewText = previewText.replace(new RegExp(`\\{\\{${k.name}\\}\\}`, 'g'), vars[0])
-                          } catch { /* ignore */ }
-                        })
-                        previewText = previewText.replace(/\*([^*]+)\*/g, '$1')
-                        const charCount = previewText.length
-                        const lineCount = Math.ceil(step.content.replace(/\{\{[^}]+\}\}/g, 'XxX').length / 38)
-                        return (
-                          <div className="border rounded-lg overflow-hidden">
-                            <div className="bg-[#0b141a] px-3 py-2">
-                              <div className="flex items-center gap-1.5 mb-1.5">
-                                <Smartphone className="size-3 text-emerald-400" />
-                                <span className="text-[10px] text-emerald-400 font-medium">Preview 6.7"</span>
-                                <span className="text-[10px] text-white/30 ml-auto">{charCount} chars · ~{lineCount} linhas</span>
-                              </div>
-                              <div className="flex justify-end">
-                                <div className="max-w-[80%] bg-[#005c4b] rounded-lg rounded-tr-none px-2.5 py-1.5">
-                                  <p className="text-[12px] text-white/90 whitespace-pre-wrap break-words leading-[1.3]">{previewText}</p>
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        )
-                      })()}
+                      <MessageBuilder value={step.content} onChange={v => updateStep(idx, 'content', v)} messageKeys={messageKeys} />
                       {idx > 0 && (
                         <div className="mt-2">
                           <Label className="text-xs">Atraso antes desta mensagem (minutos)</Label>
@@ -2543,21 +2816,32 @@ function CampanhasTab() {
                               <div className="flex flex-wrap gap-1">
                                 <span className="text-[10px] text-muted-foreground font-medium w-full">📋 Contato</span>
                                 {CONTACT_VARIABLES.map(cv => (
-                                  <Button key={cv.tag} variant="outline" size="sm" className="h-6 text-[11px] gap-1 px-2 text-emerald-600 border-emerald-200 hover:bg-emerald-50" onClick={() => updateVariation(idx, vIdx, 'content', v.content + cv.tag)}>
+                                  <Button key={cv.tag} variant="outline" size="sm" className="h-6 text-[11px] gap-1 px-2 text-emerald-600 border-emerald-200 hover:bg-emerald-50 dark:text-emerald-400 dark:border-emerald-800 dark:hover:bg-emerald-900/30" onClick={() => updateVariation(idx, vIdx, 'content', v.content + cv.tag)}>
                                     {cv.icon} {cv.label}
                                   </Button>
                                 ))}
                               </div>
-                              {messageKeys.length > 0 && (
-                                <div className="flex flex-wrap gap-1">
-                                  <span className="text-[10px] text-muted-foreground font-medium w-full">🔑 Chaves</span>
-                                  {messageKeys.map(k => (
-                                    <Button key={k.id} variant="outline" size="sm" className="h-6 text-[11px] gap-1 px-2 text-violet-600 border-violet-200 hover:bg-violet-50" onClick={() => updateVariation(idx, vIdx, 'content', v.content + `{{${k.name}}}`)}>
-                                      <Key className="size-2.5" /> {k.label}
+                              <div className="flex flex-wrap gap-1">
+                                <span className="text-[10px] text-muted-foreground font-medium w-full">🔀 Blocos de Variação</span>
+                                {messageKeys.map(k => {
+                                  let varCount = 0
+                                  try { varCount = JSON.parse(k.variations).length } catch { /* ignore */ }
+                                  return (
+                                    <Button key={k.id} variant="outline" size="sm" className="h-6 text-[11px] gap-1 px-2 text-violet-600 border-violet-200 hover:bg-violet-50 dark:text-violet-400 dark:border-violet-800 dark:hover:bg-violet-900/30" onClick={() => {
+                                      try {
+                                        const vars = JSON.parse(k.variations)
+                                        if (vars?.length) {
+                                          updateVariation(idx, vIdx, 'content', v.content + `{{KEY: ${vars.join(' | ')}}}`)
+                                        }
+                                      } catch {
+                                        updateVariation(idx, vIdx, 'content', v.content + `{{${k.name}}}`)
+                                      }
+                                    }} title={`${k.label} — ${varCount} variações`}>
+                                      <Shuffle className="size-2.5" /> {k.label}
                                     </Button>
-                                  ))}
-                                </div>
-                              )}
+                                  )
+                                })}
+                              </div>
                             </div>
                             <p className="text-xs text-muted-foreground">Se tiver mídia, o texto será a legenda/descrição</p>
                             {/* Anexar (variation) */}
@@ -2851,61 +3135,7 @@ function CampanhasTab() {
                         </Button>
                       )}
                     </div>
-                    <Textarea placeholder="Texto da mensagem..." value={step.content} onChange={e => editUpdateStep(idx, 'content', e.target.value)} rows={2} />
-                    <div className="space-y-1.5">
-                      <div className="flex flex-wrap gap-1">
-                        <span className="text-[10px] text-muted-foreground font-medium w-full">📋 Contato (planilha)</span>
-                        {CONTACT_VARIABLES.map(v => (
-                          <Button key={v.tag} variant="outline" size="sm" className="h-6 text-[11px] gap-1 px-2 text-emerald-600 border-emerald-200 hover:bg-emerald-50" onClick={() => editUpdateStep(idx, 'content', step.content + v.tag)}>
-                            {v.icon} {v.label}
-                          </Button>
-                        ))}
-                      </div>
-                      {messageKeys.length > 0 && (
-                        <div className="flex flex-wrap gap-1">
-                          <span className="text-[10px] text-muted-foreground font-medium w-full">🔑 Chaves (marcadores editáveis)</span>
-                          {messageKeys.map(k => (
-                            <Button key={k.id} variant="outline" size="sm" className="h-6 text-[11px] gap-1 px-2 text-violet-600 border-violet-200 hover:bg-violet-50" onClick={() => editUpdateStep(idx, 'content', step.content + `{{${k.name}}}`)}>
-                              <Key className="size-2.5" /> {k.label}
-                            </Button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                    {/* Mini Preview WhatsApp */}
-                    {step.content.trim() && (() => {
-                      let previewText = step.content
-                        .replace(/\{\{nome\}\}/g, 'João')
-                        .replace(/\{\{telefone\}\}/g, '11999990001')
-                        .replace(/\{\{empresa\}\}/g, 'Tech Corp')
-                        .replace(/\{\{vendedor\}\}/g, 'Renato')
-                      // Replace key tags with their first variation for preview
-                      messageKeys.forEach(k => {
-                        try {
-                          const vars = JSON.parse(k.variations)
-                          if (vars?.length) previewText = previewText.replace(new RegExp(`\\{\\{${k.name}\\}\\}`, 'g'), vars[0])
-                        } catch { /* ignore */ }
-                      })
-                      previewText = previewText.replace(/\*([^*]+)\*/g, '$1')
-                      const charCount = previewText.length
-                      const lineCount = Math.ceil(step.content.replace(/\{\{[^}]+\}\}/g, 'XxX').length / 38)
-                      return (
-                        <div className="border rounded-lg overflow-hidden">
-                          <div className="bg-[#0b141a] px-3 py-2">
-                            <div className="flex items-center gap-1.5 mb-1.5">
-                              <Smartphone className="size-3 text-emerald-400" />
-                              <span className="text-[10px] text-emerald-400 font-medium">Preview 6.7"</span>
-                              <span className="text-[10px] text-white/30 ml-auto">{charCount} chars · ~{lineCount} linhas</span>
-                            </div>
-                            <div className="flex justify-end">
-                              <div className="max-w-[80%] bg-[#005c4b] rounded-lg rounded-tr-none px-2.5 py-1.5">
-                                <p className="text-[12px] text-white/90 whitespace-pre-wrap break-words leading-[1.3]">{previewText}</p>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      )
-                    })()}
+                    <MessageBuilder value={step.content} onChange={v => editUpdateStep(idx, 'content', v)} messageKeys={messageKeys} />
                     {idx > 0 && (
                       <div className="mt-2">
                         <Label className="text-xs">Atraso antes desta mensagem (minutos)</Label>
@@ -3000,21 +3230,32 @@ function CampanhasTab() {
                             <div className="flex flex-wrap gap-1">
                               <span className="text-[10px] text-muted-foreground font-medium w-full">📋 Contato</span>
                               {CONTACT_VARIABLES.map(cv => (
-                                <Button key={cv.tag} variant="outline" size="sm" className="h-6 text-[11px] gap-1 px-2 text-emerald-600 border-emerald-200 hover:bg-emerald-50" onClick={() => editUpdateVariation(idx, vIdx, 'content', v.content + cv.tag)}>
+                                <Button key={cv.tag} variant="outline" size="sm" className="h-6 text-[11px] gap-1 px-2 text-emerald-600 border-emerald-200 hover:bg-emerald-50 dark:text-emerald-400 dark:border-emerald-800 dark:hover:bg-emerald-900/30" onClick={() => editUpdateVariation(idx, vIdx, 'content', v.content + cv.tag)}>
                                   {cv.icon} {cv.label}
                                 </Button>
                               ))}
                             </div>
-                            {messageKeys.length > 0 && (
-                              <div className="flex flex-wrap gap-1">
-                                <span className="text-[10px] text-muted-foreground font-medium w-full">🔑 Chaves</span>
-                                {messageKeys.map(k => (
-                                  <Button key={k.id} variant="outline" size="sm" className="h-6 text-[11px] gap-1 px-2 text-violet-600 border-violet-200 hover:bg-violet-50" onClick={() => editUpdateVariation(idx, vIdx, 'content', v.content + `{{${k.name}}}`)}>
-                                    <Key className="size-2.5" /> {k.label}
+                            <div className="flex flex-wrap gap-1">
+                              <span className="text-[10px] text-muted-foreground font-medium w-full">🔀 Blocos de Variação</span>
+                              {messageKeys.map(k => {
+                                let varCount = 0
+                                try { varCount = JSON.parse(k.variations).length } catch { /* ignore */ }
+                                return (
+                                  <Button key={k.id} variant="outline" size="sm" className="h-6 text-[11px] gap-1 px-2 text-violet-600 border-violet-200 hover:bg-violet-50 dark:text-violet-400 dark:border-violet-800 dark:hover:bg-violet-900/30" onClick={() => {
+                                    try {
+                                      const vars = JSON.parse(k.variations)
+                                      if (vars?.length) {
+                                        editUpdateVariation(idx, vIdx, 'content', v.content + `{{KEY: ${vars.join(' | ')}}}`)
+                                      }
+                                    } catch {
+                                      editUpdateVariation(idx, vIdx, 'content', v.content + `{{${k.name}}}`)
+                                    }
+                                  }} title={`${k.label} — ${varCount} variações`}>
+                                    <Shuffle className="size-2.5" /> {k.label}
                                   </Button>
-                                ))}
-                              </div>
-                            )}
+                                )
+                              })}
+                            </div>
                           </div>
                           <div className="space-y-2">
                             <div className="flex gap-2">
