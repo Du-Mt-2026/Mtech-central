@@ -51,7 +51,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ ch
     const allowedFields = [
       'name', 'phoneNumber', 'status', 'wireguardIp', 'wireguardPrivKey', 'wireguardPubKey',
       'socksPort', 'lastSeen', 'dailyLimit', 'sentToday', 'lastResetAt',
-      'warmingEnabled', 'warmingStage', 'isQrPaired', 'qrPairingCode',
+      'warmingEnabled', 'warmingStage', 'warmingPhase', 'prewarmStartedAt', 'isQrPaired', 'qrPairingCode',
       'proxyMode', 'socks5Host', 'socks5Port', 'socks5User', 'socks5Pass',
     ]
     const data: Record<string, unknown> = {}

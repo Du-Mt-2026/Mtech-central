@@ -30,7 +30,47 @@ interface AntiBanConfig {
   timezone: string            // fuso horário, default 'America/Sao_Paulo'
 }
 
-// Warming schedule: stage -> daily limit
+// ============================================================
+// TWO-PHASE WARMING SCHEDULE
+// ============================================================
+// Phase 1: Nursery (Berçário) — chip novo, 14 dias
+// Phase 2: Prewarm (Pré-aquecido) — chip já passou pelo berçário, 20 dias
+// After both phases: chip is "ready" with no limit restriction
+
+export const NURSERY_SCHEDULE: { dayRange: string; days: [number, number]; limit: number }[] = [
+  { dayRange: '1-2',   days: [1, 2],   limit: 2 },
+  { dayRange: '3-4',   days: [3, 4],   limit: 3 },
+  { dayRange: '5-6',   days: [5, 6],   limit: 3 },
+  { dayRange: '7-8',   days: [7, 8],   limit: 5 },
+  { dayRange: '9-10',  days: [9, 10],  limit: 5 },
+  { dayRange: '11-12', days: [11, 12], limit: 6 },
+  { dayRange: '13-14', days: [13, 14], limit: 10 },
+]
+
+export const PREWARM_SCHEDULE: { dayRange: string; days: [number, number]; limit: number }[] = [
+  { dayRange: '1',   days: [1, 1],   limit: 11 },
+  { dayRange: '2',   days: [2, 2],   limit: 15 },
+  { dayRange: '3',   days: [3, 3],   limit: 20 },
+  { dayRange: '4',   days: [4, 4],   limit: 25 },
+  { dayRange: '5',   days: [5, 5],   limit: 30 },
+  { dayRange: '6',   days: [6, 6],   limit: 35 },
+  { dayRange: '7',   days: [7, 7],   limit: 40 },
+  { dayRange: '8',   days: [8, 8],   limit: 45 },
+  { dayRange: '9',   days: [9, 9],   limit: 50 },
+  { dayRange: '10',  days: [10, 10], limit: 60 },
+  { dayRange: '11',  days: [11, 11], limit: 70 },
+  { dayRange: '12',  days: [12, 12], limit: 80 },
+  { dayRange: '13',  days: [13, 13], limit: 90 },
+  { dayRange: '14',  days: [14, 14], limit: 100 },
+  { dayRange: '15',  days: [15, 15], limit: 120 },
+  { dayRange: '16',  days: [16, 16], limit: 140 },
+  { dayRange: '17',  days: [17, 17], limit: 160 },
+  { dayRange: '18',  days: [18, 18], limit: 180 },
+  { dayRange: '19',  days: [19, 19], limit: 190 },
+  { dayRange: '20',  days: [20, 20], limit: 200 },
+]
+
+// Legacy warming schedule (kept for backward compat with old chips)
 const WARMING_LIMITS = [10, 30, 80, 150, 200]
 
 // Warming mode multipliers
@@ -212,16 +252,63 @@ function isWithinSendingWindow(settings: AntiBanConfig): boolean {
 // ANTI-BAN LOGIC
 // ============================================================
 
+/**
+ * Get the warming limit for a chip based on its current phase and day.
+ * Uses the two-phase warming schedule (nursery + prewarm).
+ */
+function getWarmingLimitForDay(
+  phase: string,
+  day: number
+): number {
+  const schedule = phase === 'nursery' ? NURSERY_SCHEDULE : PREWARM_SCHEDULE
+  for (const entry of schedule) {
+    if (day >= entry.days[0] && day <= entry.days[1]) {
+      return entry.limit
+    }
+  }
+  // Beyond schedule: return the max limit from the last entry
+  return schedule[schedule.length - 1].limit
+}
+
 function getEffectiveDailyLimit(
-  chip: { dailyLimit: number; warmingEnabled: boolean; warmingStage: number },
+  chip: { dailyLimit: number; warmingEnabled: boolean; warmingStage: number; warmingPhase?: string; prewarmStartedAt?: Date | null; createdAt: string },
   settings: AntiBanConfig,
   warmingMode?: string
 ): number {
   if (!chip.warmingEnabled || !settings.warmingEnabled) {
     return chip.dailyLimit || settings.dailyLimitPerChip
   }
-  const stage = Math.min(chip.warmingStage, WARMING_LIMITS.length - 1)
-  let limit = Math.min(WARMING_LIMITS[stage], chip.dailyLimit || settings.dailyLimitPerChip)
+
+  // New two-phase warming logic
+  const phase = (chip as any).warmingPhase || 'nursery'
+  
+  if (phase === 'ready') {
+    // Chip is fully warmed — use configured daily limit
+    let limit = chip.dailyLimit || settings.dailyLimitPerChip
+    const modeMultiplier = WARMING_MODE_MULTIPLIERS[warmingMode || 'normal']
+    if (modeMultiplier) {
+      limit = Math.round(limit * modeMultiplier.limitMultiplier)
+    }
+    return limit
+  }
+
+  // Calculate current day within the phase
+  let dayInPhase: number
+  const now = new Date()
+  
+  if (phase === 'nursery') {
+    const createdAt = new Date(chip.createdAt)
+    dayInPhase = Math.floor((now.getTime() - createdAt.getTime()) / (1000 * 60 * 60 * 24)) + 1
+  } else {
+    // prewarm phase
+    const prewarmStart = (chip as any).prewarmStartedAt ? new Date((chip as any).prewarmStartedAt) : new Date(chip.createdAt)
+    dayInPhase = Math.floor((now.getTime() - prewarmStart.getTime()) / (1000 * 60 * 60 * 24)) + 1
+  }
+  
+  dayInPhase = Math.max(1, dayInPhase)
+  
+  let limit = getWarmingLimitForDay(phase, dayInPhase)
+  limit = Math.min(limit, chip.dailyLimit || settings.dailyLimitPerChip)
 
   // Apply warming mode multiplier
   const modeMultiplier = WARMING_MODE_MULTIPLIERS[warmingMode || 'normal']
@@ -292,38 +379,62 @@ async function resetDailyIfNeeded(chipId: string, timezone: string = 'America/Sa
 }
 
 /**
- * Auto-advance warming stage based on days since chip creation or last stage change.
- * This is the fix for the critical bug where warmingStage was stuck at 0 forever.
+ * Auto-advance warming phase based on days since chip creation.
+ * Two-phase system:
+ *   1. Nursery (14 days) — chip novo, limite muito baixo
+ *   2. Prewarm (20 days) — chip pré-aquecido, ramp-up progressivo
+ *   3. Ready — chip pronto, sem restrição de aquecimento
  */
-async function advanceWarmingStage(chipId: string, settings: AntiBanConfig): Promise<void> {
+async function advanceWarmingPhase(chipId: string, settings: AntiBanConfig): Promise<void> {
   if (!settings.warmingEnabled) return
 
   const chip = await db.chip.findUnique({ where: { id: chipId } })
   if (!chip || !chip.warmingEnabled) return
 
-  const currentStage = chip.warmingStage
-  if (currentStage >= WARMING_LIMITS.length - 1) return // Already at max stage
+  const phase = (chip as any).warmingPhase || 'nursery'
+  
+  if (phase === 'ready') return // Already fully warmed
 
-  // Calculate days since chip was created
-  const createdAt = new Date(chip.createdAt)
   const now = new Date()
-  const daysSinceCreation = Math.floor((now.getTime() - createdAt.getTime()) / (1000 * 60 * 60 * 24))
+  const createdAt = new Date(chip.createdAt)
+  const daysSinceCreation = Math.floor((now.getTime() - createdAt.getTime()) / (1000 * 60 * 60 * 24)) + 1
 
-  // Calculate what stage the chip SHOULD be at
-  // Each stage lasts (warmingDays / number of stages) days
-  const daysPerStage = Math.ceil(settings.warmingDays / WARMING_LIMITS.length)
-  const expectedStage = Math.min(
-    Math.floor(daysSinceCreation / daysPerStage),
-    WARMING_LIMITS.length - 1
-  )
-
-  if (expectedStage > currentStage) {
-    await db.chip.update({
-      where: { id: chipId },
-      data: { warmingStage: expectedStage },
-    })
-    console.log(`[SendingEngine] Chip ${chip.name} advanced from stage ${currentStage} to ${expectedStage} (day ${daysSinceCreation}, ${daysPerStage} days/stage)`)
+  if (phase === 'nursery') {
+    // Check if nursery period is complete (14 days)
+    if (daysSinceCreation > 14) {
+      // Transition to prewarm phase
+      await db.chip.update({
+        where: { id: chipId },
+        data: {
+          warmingPhase: 'prewarm',
+          prewarmStartedAt: now,
+          warmingStage: 5, // Legacy compat
+        },
+      })
+      console.log(`[SendingEngine] Chip ${chip.name} graduated from NURSERY → PREWARM (day ${daysSinceCreation})`)
+    }
+  } else if (phase === 'prewarm') {
+    // Check if prewarm period is complete (20 days from prewarmStartedAt)
+    const prewarmStart = (chip as any).prewarmStartedAt ? new Date((chip as any).prewarmStartedAt) : createdAt
+    const daysSincePrewarm = Math.floor((now.getTime() - prewarmStart.getTime()) / (1000 * 60 * 60 * 24)) + 1
+    
+    if (daysSincePrewarm > 20) {
+      // Transition to ready
+      await db.chip.update({
+        where: { id: chipId },
+        data: {
+          warmingPhase: 'ready',
+          warmingStage: 6, // Legacy compat — beyond old max
+        },
+      })
+      console.log(`[SendingEngine] Chip ${chip.name} graduated from PREWARM → READY (prewarm day ${daysSincePrewarm})`)
+    }
   }
+}
+
+// Legacy function kept for backward compat — now delegates to advanceWarmingPhase
+async function advanceWarmingStage(chipId: string, settings: AntiBanConfig): Promise<void> {
+  return advanceWarmingPhase(chipId, settings)
 }
 
 /**

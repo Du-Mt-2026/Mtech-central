@@ -13,7 +13,8 @@ import {
   Download, Filter, ArrowRight, QrCode, Globe, Lock, Server,
   Sparkles, Heart, Star, AlertTriangle, Info, ChevronDown,
   Pencil, LayoutList, Database, WifiOff, ArrowDownToLine, Save, XCircle,
-  Inbox, LogOut, RotateCcw, Film, Music, File, Webhook, ImageIcon, Key, Paperclip, MapPin, Link2
+  Inbox, LogOut, RotateCcw, Film, Music, File, Webhook, ImageIcon, Key, Paperclip, MapPin, Link2,
+  Baby, CheckCircle2
 } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardAction } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -59,6 +60,8 @@ interface Chip {
   lastResetAt: string
   warmingEnabled: boolean
   warmingStage: number
+  warmingPhase?: string
+  prewarmStartedAt?: string | null
   isQrPaired: boolean
   qrPairingCode: string | null
   proxyMode: string
@@ -1149,7 +1152,13 @@ function ChipsTab() {
                         <div className="flex justify-between items-center">
                           <span className="text-muted-foreground">Aquecimento</span>
                           <Badge variant="secondary" className="gap-1 text-xs">
-                            <Flame className="size-3" /> Estágio {chip.warmingStage}/4
+                            {(chip as any).warmingPhase === 'ready' ? (
+                              <><CheckCircle2 className="size-3" /> Pronto</>
+                            ) : (chip as any).warmingPhase === 'prewarm' ? (
+                              <><Flame className="size-3" /> Pré-aquecido</>
+                            ) : (
+                              <><Baby className="size-3" /> Berçário</>
+                            )}
                           </Badge>
                         </div>
                       )}
@@ -3591,12 +3600,39 @@ function AntiBanTab() {
   if (loading) return <div className="flex items-center justify-center py-20"><RefreshCw className="size-6 animate-spin text-muted-foreground" /></div>
   if (!settings) return null
 
-  const warmingStages = [
-    { day: '1-2', msgs: 20, pct: 10 },
-    { day: '3-4', msgs: 50, pct: 25 },
-    { day: '5-7', msgs: 100, pct: 50 },
-    { day: '8+', msgs: settings.dailyLimitPerChip, pct: 100 },
+  // Two-phase warming schedules (matching sending-engine.ts)
+  const NURSERY_SCHEDULE = [
+    { dayRange: '1-2',   limit: 2 },
+    { dayRange: '3-4',   limit: 3 },
+    { dayRange: '5-6',   limit: 3 },
+    { dayRange: '7-8',   limit: 5 },
+    { dayRange: '9-10',  limit: 5 },
+    { dayRange: '11-12', limit: 6 },
+    { dayRange: '13-14', limit: 10 },
   ]
+  const PREWARM_SCHEDULE = [
+    { dayRange: '1',   limit: 11 },
+    { dayRange: '2',   limit: 15 },
+    { dayRange: '3',   limit: 20 },
+    { dayRange: '4',   limit: 25 },
+    { dayRange: '5',   limit: 30 },
+    { dayRange: '6',   limit: 35 },
+    { dayRange: '7',   limit: 40 },
+    { dayRange: '8',   limit: 45 },
+    { dayRange: '9',   limit: 50 },
+    { dayRange: '10',  limit: 60 },
+    { dayRange: '11',  limit: 70 },
+    { dayRange: '12',  limit: 80 },
+    { dayRange: '13',  limit: 90 },
+    { dayRange: '14',  limit: 100 },
+    { dayRange: '15',  limit: 120 },
+    { dayRange: '16',  limit: 140 },
+    { dayRange: '17',  limit: 160 },
+    { dayRange: '18',  limit: 180 },
+    { dayRange: '19',  limit: 190 },
+    { dayRange: '20',  limit: 200 },
+  ]
+  const maxPrewarm = PREWARM_SCHEDULE[PREWARM_SCHEDULE.length - 1].limit
 
   const tips = [
     { icon: Clock, title: 'Varie os horários de envio', desc: 'Não envie sempre no mesmo horário' },
@@ -3767,9 +3803,9 @@ function AntiBanTab() {
         </Card>
       </div>
 
-      {/* Row 2: Progressive Warming + Cooldown & Limits */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Progressive Warming */}
+      {/* Row 2: Progressive Warming (full width) + Cooldown & Limits */}
+      <div className="grid grid-cols-1 gap-4">
+        {/* Progressive Warming — Full Width with Two Phases */}
         <Card className="shadow-lg border-0 hover:shadow-xl transition-all duration-200">
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
@@ -3788,46 +3824,151 @@ function AntiBanTab() {
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between">
-                <Label className="text-xs">Período de aquecimento</Label>
-                <Button variant="ghost" size="icon" className="size-5 text-muted-foreground hover:text-orange-600" onClick={() => resetField('warmingDays')} title={`Padrão: ${DEFAULTS.warmingDays} dias`}>
-                  <RotateCcw className="size-2.5" />
-                </Button>
+            {/* Phase Overview */}
+            <div className="grid grid-cols-3 gap-2">
+              <div className="flex items-center gap-2 p-2.5 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
+                <Baby className="size-4 text-amber-600 shrink-0" />
+                <div>
+                  <p className="text-xs font-semibold text-amber-700 dark:text-amber-400">Berçário</p>
+                  <p className="text-[10px] text-muted-foreground">14 dias • Até 10 msg/dia</p>
+                </div>
               </div>
-              <div className="flex gap-1.5">
-                {[3, 5, 7, 14, 30].map(d => (
-                  <Button key={d} variant={settings.warmingDays === d ? 'default' : 'outline'} size="sm"
-                    className={`h-7 text-xs ${settings.warmingDays === d ? 'bg-emerald-600 hover:bg-emerald-700' : ''}`}
-                    onClick={() => updateSetting('warmingDays', d)}>
-                    {d}d
-                  </Button>
-                ))}
+              <div className="flex items-center gap-2 p-2.5 rounded-lg bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800">
+                <Flame className="size-4 text-orange-600 shrink-0" />
+                <div>
+                  <p className="text-xs font-semibold text-orange-700 dark:text-orange-400">Pré-aquecido</p>
+                  <p className="text-[10px] text-muted-foreground">20 dias • 11→200 msg/dia</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 p-2.5 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800">
+                <CheckCircle2 className="size-4 text-emerald-600 shrink-0" />
+                <div>
+                  <p className="text-xs font-semibold text-emerald-700 dark:text-emerald-400">Pronto</p>
+                  <p className="text-[10px] text-muted-foreground">Sem limite de aquecimento</p>
+                </div>
               </div>
             </div>
-            <div className="space-y-2">
-              {warmingStages.map((stage, i) => (
-                <div key={i} className="flex items-center gap-3">
-                  <span className="text-[11px] text-muted-foreground w-10 shrink-0">Dia {stage.day}</span>
-                  <div className="flex-1">
-                    <div className="h-5 bg-muted rounded-full overflow-hidden">
-                      <motion.div
-                        className="h-full bg-gradient-to-r from-emerald-400 to-teal-500 rounded-full flex items-center justify-end pr-1.5"
-                        initial={{ width: 0 }}
-                        animate={{ width: `${stage.pct}%` }}
-                        transition={{ duration: 0.8, delay: i * 0.2 }}
-                      >
-                        <span className="text-[10px] font-semibold text-white">{stage.msgs}/dia</span>
-                      </motion.div>
-                    </div>
+
+            {/* Two-phase schedule tables side by side */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              {/* Phase 1: Nursery (Berçário) */}
+              <div>
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="flex size-5 items-center justify-center rounded bg-amber-100 dark:bg-amber-900/30">
+                    <Baby className="size-3 text-amber-600" />
                   </div>
+                  <span className="text-xs font-semibold text-amber-700 dark:text-amber-400">Fase 1: Berçário (Chip Novo)</span>
                 </div>
-              ))}
+                <div className="space-y-1.5">
+                  {NURSERY_SCHEDULE.map((entry, i) => {
+                    const pct = Math.max(5, (entry.limit / 10) * 100)
+                    return (
+                      <div key={i} className="flex items-center gap-2">
+                        <span className="text-[10px] text-muted-foreground w-10 shrink-0 text-right">Dia {entry.dayRange}</span>
+                        <div className="flex-1 h-4 bg-muted rounded-full overflow-hidden">
+                          <motion.div
+                            className="h-full bg-gradient-to-r from-amber-400 to-amber-500 rounded-full flex items-center justify-end pr-1"
+                            initial={{ width: 0 }}
+                            animate={{ width: `${pct}%` }}
+                            transition={{ duration: 0.6, delay: i * 0.1 }}
+                          >
+                            <span className="text-[9px] font-bold text-white">{entry.limit}</span>
+                          </motion.div>
+                        </div>
+                        <span className="text-[10px] text-muted-foreground w-10 shrink-0">msg/dia</span>
+                      </div>
+                    )
+                  })}
+                </div>
+                <p className="text-[10px] text-muted-foreground mt-2 italic">Após 14 dias → chip pré-aquecido</p>
+              </div>
+
+              {/* Phase 2: Prewarm (Pré-aquecido) */}
+              <div>
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="flex size-5 items-center justify-center rounded bg-orange-100 dark:bg-orange-900/30">
+                    <Flame className="size-3 text-orange-600" />
+                  </div>
+                  <span className="text-xs font-semibold text-orange-700 dark:text-orange-400">Fase 2: Pré-aquecido (Ramp-up)</span>
+                </div>
+                <div className="space-y-1">
+                  {PREWARM_SCHEDULE.map((entry, i) => {
+                    const pct = Math.max(5, (entry.limit / maxPrewarm) * 100)
+                    return (
+                      <div key={i} className="flex items-center gap-2">
+                        <span className="text-[10px] text-muted-foreground w-7 shrink-0 text-right">D{entry.dayRange}</span>
+                        <div className="flex-1 h-3.5 bg-muted rounded-full overflow-hidden">
+                          <motion.div
+                            className="h-full bg-gradient-to-r from-orange-400 to-emerald-500 rounded-full flex items-center justify-end pr-1"
+                            initial={{ width: 0 }}
+                            animate={{ width: `${pct}%` }}
+                            transition={{ duration: 0.5, delay: i * 0.05 }}
+                          >
+                            {pct > 15 && <span className="text-[8px] font-bold text-white">{entry.limit}</span>}
+                          </motion.div>
+                        </div>
+                        <span className="text-[9px] text-muted-foreground w-7 shrink-0">{entry.limit} msg</span>
+                      </div>
+                    )
+                  })}
+                </div>
+                <p className="text-[10px] text-muted-foreground mt-2 italic">Após 20 dias → chip pronto (sem restrição)</p>
+              </div>
+            </div>
+
+            {/* Timeline visual */}
+            <div className="p-3 bg-muted/50 rounded-lg">
+              <p className="text-[11px] font-medium mb-2">Timeline completa do aquecimento</p>
+              <div className="flex items-center gap-0.5">
+                {/* Nursery phase: 14 days */}
+                {Array.from({ length: 14 }, (_, i) => {
+                  const day = i + 1
+                  const limit = NURSERY_SCHEDULE.find(s => {
+                    const [from, to] = s.dayRange.split('-').map(Number)
+                    return day >= from && day <= to
+                  })?.limit || 2
+                  return (
+                    <div
+                      key={`n-${i}`}
+                      className="flex-1 h-5 rounded-sm bg-amber-400 flex items-center justify-center"
+                      title={`Berçário Dia ${day}: ${limit} msg/dia`}
+                    >
+                      <span className="text-[7px] font-bold text-white">{limit}</span>
+                    </div>
+                  )
+                })}
+                {/* Prewarm phase: 20 days */}
+                {Array.from({ length: 20 }, (_, i) => {
+                  const day = i + 1
+                  const entry = PREWARM_SCHEDULE.find(s => {
+                    const [from, to] = s.dayRange.split('-').map(Number)
+                    return day >= from && day <= to
+                  })
+                  const limit = entry?.limit || 11
+                  const intensity = limit / 200
+                  return (
+                    <div
+                      key={`p-${i}`}
+                      className="flex-1 h-5 rounded-sm flex items-center justify-center"
+                      style={{ backgroundColor: `rgba(16, 185, 129, ${0.2 + intensity * 0.8})` }}
+                      title={`Pré-aquecido Dia ${day}: ${limit} msg/dia`}
+                    >
+                      <span className="text-[7px] font-bold text-white">{limit}</span>
+                    </div>
+                  )
+                })}
+              </div>
+              <div className="flex justify-between mt-1">
+                <span className="text-[9px] text-amber-600 font-medium">← Berçário (14 dias)</span>
+                <span className="text-[9px] text-orange-600 font-medium">Pré-aquecido (20 dias) →</span>
+              </div>
             </div>
           </CardContent>
         </Card>
+      </div>
 
-        {/* Cooldown & Limits */}
+      {/* Row 2.5: Cooldown & Limits + Sending Window */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card className="shadow-lg border-0 hover:shadow-xl transition-all duration-200">
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between">
@@ -3895,10 +4036,7 @@ function AntiBanTab() {
             </div>
           </CardContent>
         </Card>
-      </div>
 
-      {/* Row 3: Sending Window + Tips */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Sending Window */}
         <Card className="shadow-lg border-0 hover:shadow-xl transition-all duration-200">
           <CardHeader className="pb-3">
