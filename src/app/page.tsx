@@ -1650,6 +1650,10 @@ function ContatosTab() {
   const [editContact, setEditContact] = useState<ContactItem | null>(null)
   const [editContactForm, setEditContactForm] = useState({ name: '', phone: '' })
   const [deleteContactConfirm, setDeleteContactConfirm] = useState<string | null>(null)
+  const [quickImportOpen, setQuickImportOpen] = useState(false)
+  const [quickImportName, setQuickImportName] = useState('')
+  const [quickImportFile, setQuickImportFile] = useState<File | null>(null)
+  const [quickImporting, setQuickImporting] = useState(false)
 
   const fetchLists = useCallback(async () => {
     try {
@@ -1749,6 +1753,45 @@ function ContatosTab() {
     } catch { toast.error('Erro ao remover contato') }
   }
 
+  // Quick import: create list + import file in one step
+  const handleQuickImport = async () => {
+    if (!quickImportName.trim() || !quickImportFile) return
+    setQuickImporting(true)
+    try {
+      // 1. Create list
+      const listRes = await fetch('/api/contact-lists', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: quickImportName.trim() }),
+      })
+      const listData = await listRes.json()
+      if (!listRes.ok) throw new Error(listData.error || 'Erro ao criar lista')
+
+      // 2. Import file into the new list
+      const formData = new FormData()
+      formData.append('file', quickImportFile)
+      const importRes = await fetch(`/api/contact-lists/${listData.id}/import`, {
+        method: 'POST',
+        body: formData,
+      })
+      const importData = await importRes.json()
+      if (!importRes.ok) throw new Error(importData.error || 'Erro ao importar')
+
+      const colInfo = importData.detectedColumns ? ` | Colunas: ${importData.detectedColumns.map((c: any) => c.name).join(', ')}` : ''
+      toast.success(`Lista "${quickImportName}" criada com ${importData.imported} contatos!${colInfo}`)
+      setQuickImportOpen(false)
+      setQuickImportName('')
+      setQuickImportFile(null)
+      fetchLists()
+      setSelectedList(listData)
+      fetchContacts(listData.id)
+    } catch (err: any) {
+      toast.error(err.message || 'Erro na importação')
+    } finally {
+      setQuickImporting(false)
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -1756,10 +1799,39 @@ function ContatosTab() {
           <h2 className="text-2xl font-bold">Contatos</h2>
           <p className="text-sm text-muted-foreground">Gerencie suas listas e contatos</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
+          <Button variant="outline" className="gap-2" onClick={() => {
+            const a = document.createElement('a')
+            a.href = '/templates/modelo_contatos.xlsx'
+            a.download = 'modelo_contatos_octupuszap.xlsx'
+            a.click()
+            toast.success('Planilha XLSX baixada!')
+          }}>
+            <Download className="size-4" /> Baixar Modelo
+          </Button>
+          <Button variant="outline" className="gap-2" onClick={async () => {
+            try {
+              const res = await fetch('/api/templates/download?format=csv')
+              const csv = await res.text()
+              const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+              const url = URL.createObjectURL(blob)
+              window.open('https://docs.google.com/spreadsheets/create', '_blank')
+              const a = document.createElement('a')
+              a.href = url
+              a.download = 'modelo_contatos_octupuszap.csv'
+              a.click()
+              URL.revokeObjectURL(url)
+              toast.success('CSV baixado! No Google Sheets: Arquivo → Importar → Enviar', { duration: 8000 })
+            } catch { toast.error('Erro ao gerar CSV') }
+          }}>
+            <FileSpreadsheet className="size-4" /> Google Sheets
+          </Button>
+          <Button className="gap-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 shadow-lg" onClick={() => setQuickImportOpen(true)}>
+            <Upload className="size-4" /> Importar Planilha
+          </Button>
           <Dialog open={addListDialog} onOpenChange={setAddListDialog}>
             <DialogTrigger asChild>
-              <Button className="gap-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 shadow-lg">
+              <Button variant="outline" className="gap-2">
                 <Plus className="size-4" /> Nova Lista
               </Button>
             </DialogTrigger>
@@ -1922,7 +1994,7 @@ function ContatosTab() {
         </DialogContent>
       </Dialog>
 
-      {/* Import Dialog */}
+      {/* Import Dialog (inside a list) */}
       <Dialog open={importDialogOpen} onOpenChange={setImportDialogOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>Importar Planilha</DialogTitle><DialogDescription>Importe contatos de um arquivo CSV, Excel ou ODS</DialogDescription></DialogHeader>
@@ -1937,49 +2009,80 @@ function ContatosTab() {
               <p className="font-medium">Formato da planilha:</p>
               <p className="text-muted-foreground">A coluna <strong>Telefone</strong> é obrigatória. As demais colunas ficam disponíveis como variáveis {'{{nome}}'}, {'{{empresa}}'}, {'{{vendedor}}'} etc. no texto da mensagem. Adicione quantas colunas quiser!</p>
               <code className="block bg-muted p-2 rounded text-[11px]">Empresa,Nome,Telefone,Vendedor,Nota{'\n'}Tech Corp,João,11999990001,Renato,VIP{'\n'}Info Ltda,Maria,21988880002,Carlos,</code>
-              <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="flex-1 h-8 text-xs gap-2"
-                  onClick={() => {
-                    const a = document.createElement('a')
-                    a.href = '/templates/modelo_contatos.xlsx'
-                    a.download = 'modelo_contatos_octupuszap.xlsx'
-                    a.click()
-                    toast.success('Planilha XLSX baixada!')
-                  }}>
-                  <Download className="size-3.5" /> Baixar XLSX
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Quick Import Dialog — create list + import in one step */}
+      <Dialog open={quickImportOpen} onOpenChange={(open) => { setQuickImportOpen(open); if (!open) { setQuickImportName(''); setQuickImportFile(null) } }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Importar Planilha</DialogTitle><DialogDescription>Crie uma lista e importe contatos em um passo só</DialogDescription></DialogHeader>
+          <div className="py-4 space-y-4">
+            <div className="space-y-2">
+              <Label>Nome da Lista</Label>
+              <Input placeholder="Ex: Leads Black Friday" value={quickImportName} onChange={e => setQuickImportName(e.target.value)} />
+            </div>
+            <div className="border-2 border-dashed rounded-xl p-6 text-center hover:border-emerald-400 transition-colors">
+              {quickImportFile ? (
+                <div className="flex items-center gap-3 justify-center">
+                  <FileSpreadsheet className="size-8 text-emerald-500" />
+                  <div className="text-left">
+                    <p className="font-medium text-sm">{quickImportFile.name}</p>
+                    <p className="text-xs text-muted-foreground">{(quickImportFile.size / 1024).toFixed(1)} KB</p>
+                  </div>
+                  <Button variant="ghost" size="sm" className="ml-2" onClick={() => setQuickImportFile(null)}>
+                    <X className="size-4" />
+                  </Button>
+                </div>
+              ) : (
+                <>
+                  <Upload className="size-8 mx-auto text-muted-foreground mb-3" />
+                  <p className="font-medium">Selecione o arquivo</p>
+                  <p className="text-sm text-muted-foreground mb-3">CSV, Excel (.xlsx, .xls) ou LibreOffice (.ods)</p>
+                </>
+              )}
+              <Input type="file" accept=".csv,.xlsx,.xls,.ods" onChange={e => setQuickImportFile(e.target.files?.[0] || null)} className="max-w-xs mx-auto" />
+            </div>
+            <div className="p-3 bg-muted/50 rounded-lg text-xs space-y-2">
+              <p className="font-medium">Não tem uma planilha?</p>
+              <p className="text-muted-foreground">Baixe o modelo, preencha com seus dados e importe. Qualquer coluna que você adicionar vira uma variável automática!</p>
+              <div className="flex gap-2 mt-2">
+                <Button variant="outline" size="sm" className="flex-1 h-7 text-[11px] gap-1" onClick={() => {
+                  const a = document.createElement('a')
+                  a.href = '/templates/modelo_contatos.xlsx'
+                  a.download = 'modelo_contatos_octupuszap.xlsx'
+                  a.click()
+                  toast.success('Modelo XLSX baixado!')
+                }}>
+                  <Download className="size-3" /> Baixar XLSX
                 </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="flex-1 h-8 text-xs gap-2"
-                  onClick={async () => {
-                    try {
-                      // Download CSV from our API
-                      const res = await fetch('/api/templates/download?format=csv')
-                      const csv = await res.text()
-                      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
-                      const url = URL.createObjectURL(blob)
-                      // Open Google Sheets import page
-                      window.open('https://docs.google.com/spreadsheets/create', '_blank')
-                      // Also download the CSV so user can drag-drop import
-                      const a = document.createElement('a')
-                      a.href = url
-                      a.download = 'modelo_contatos_octupuszap.csv'
-                      a.click()
-                      URL.revokeObjectURL(url)
-                      toast.success('CSV baixado! No Google Sheets: Arquivo → Importar → Enviar e selecione o arquivo baixado', { duration: 8000 })
-                    } catch {
-                      toast.error('Erro ao gerar CSV')
-                    }
-                  }}>
-                  <FileSpreadsheet className="size-3.5" /> Google Sheets
+                <Button variant="outline" size="sm" className="flex-1 h-7 text-[11px] gap-1" onClick={async () => {
+                  try {
+                    const res = await fetch('/api/templates/download?format=csv')
+                    const csv = await res.text()
+                    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+                    const url = URL.createObjectURL(blob)
+                    window.open('https://docs.google.com/spreadsheets/create', '_blank')
+                    const a = document.createElement('a')
+                    a.href = url
+                    a.download = 'modelo_contatos_octupuszap.csv'
+                    a.click()
+                    URL.revokeObjectURL(url)
+                    toast.success('CSV baixado! No Google Sheets: Arquivo → Importar → Enviar', { duration: 8000 })
+                  } catch { toast.error('Erro ao gerar CSV') }
+                }}>
+                  <FileSpreadsheet className="size-3" /> Google Sheets
                 </Button>
               </div>
             </div>
           </div>
+          <DialogFooter>
+            <DialogClose asChild><Button variant="outline" disabled={quickImporting}>Cancelar</Button></DialogClose>
+            <Button onClick={handleQuickImport} disabled={!quickImportName.trim() || !quickImportFile || quickImporting} className="bg-emerald-600 hover:bg-emerald-700 gap-2">
+              {quickImporting ? <><RefreshCw className="size-4 animate-spin" /> Importando...</> : <><Upload className="size-4" /> Criar Lista e Importar</>}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
