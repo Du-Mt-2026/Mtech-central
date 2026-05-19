@@ -2272,6 +2272,8 @@ function parseKeyBlocksFromText(text: string): Array<{ fullMatch: string; variat
 }
 
 // Helper: generate preview text replacing KEY blocks and contact variables
+// Logic: {{anything}} pulls from the linked contact list's first contact data
+// If the variable exists in the contact's data, show the real value; if not, leave {{name}} as-is
 function generatePreviewText(text: string, messageKeys: Array<{ id: string; name: string; label: string; category: string; variations: string }>, seed: number, contactVariables?: Array<{ tag: string; label: string; source: string }>, previewContactData?: { name: string; phone: string; customFields?: string } | null): string {
   // First, resolve {{KEY: ...}} blocks — pick a deterministic variation based on seed
   let preview = text.replace(/\{\{KEY:\s*((?:[^{}]|\{\{[^}]*\}\})*)\}\}/g, (_, inner) => {
@@ -2289,61 +2291,31 @@ function generatePreviewText(text: string, messageKeys: Array<{ id: string; name
     } catch { /* ignore */ }
   })
 
-  // Replace contact variables dynamically
-  // Use real contact data if available, otherwise use fallback sample data
-  const sampleData: Record<string, string> = {}
+  // Build replacement data from the first contact of the linked list
+  const replaceData: Record<string, string> = {}
 
-  // Populate from real contact data if available
   if (previewContactData) {
-    sampleData['nome'] = previewContactData.name
-    sampleData['name'] = previewContactData.name
-    sampleData['telefone'] = previewContactData.phone
-    sampleData['phone'] = previewContactData.phone
-    sampleData['whatsapp'] = previewContactData.phone
-    sampleData['celular'] = previewContactData.phone
-    // Parse customFields from the real contact
+    // customFields has ALL columns from the spreadsheet: {"nome":"Maria","whatsapp":"55119...","empresa":"Tech Corp"}
     if (previewContactData.customFields) {
       try {
         const customData = JSON.parse(previewContactData.customFields)
         for (const [key, value] of Object.entries(customData)) {
-          sampleData[key] = String(value)
+          replaceData[key.toLowerCase()] = String(value)
         }
-      } catch { /* ignore invalid JSON */ }
+      } catch { /* ignore */ }
     }
-  } else {
-    // Fallback sample data when no contact is selected
-    sampleData['nome'] = 'João'
-    sampleData['telefone'] = '11999990001'
+    // Fallback core fields
+    if (!replaceData['nome']) replaceData['nome'] = previewContactData.name
+    if (!replaceData['telefone']) replaceData['telefone'] = previewContactData.phone
   }
 
-  // Ensure custom variables from contact list also have sample data
-  if (contactVariables && contactVariables.length > 0) {
-    for (const cv of contactVariables) {
-      const key = cv.tag.replace(/\{\{|\}\}/g, '').toLowerCase()
-      if (!sampleData[key]) {
-        // Use the label as sample value for custom fields that don't have real data
-        sampleData[key] = cv.label
-      }
-    }
-  }
-
-  // Use contactVariables if available, otherwise fallback to hardcoded
-  if (contactVariables && contactVariables.length > 0) {
-    preview = preview.replace(/\{\{([a-zA-Z_][a-zA-Z0-9_]*)\}\}/g, (match, varName) => {
-      const key = varName.toLowerCase()
-      if (sampleData[key]) return sampleData[key]
-      // For unknown custom variables, show the label
-      const cv = contactVariables.find(v => v.tag === `{{${key}}}`)
-      return cv ? cv.label : match
-    })
-  } else {
-    // Fallback: only replace known variables
-    preview = preview
-      .replace(/\{\{nome\}\}/g, 'João')
-      .replace(/\{\{telefone\}\}/g, '11999990001')
-      .replace(/\{\{empresa\}\}/g, 'Tech Corp')
-      .replace(/\{\{vendedora\}\}/g, 'Ana')
-  }
+  // Replace ALL {{variable}} patterns: if found in data, replace; if not, leave as-is
+  preview = preview.replace(/\{\{([a-zA-ZÀ-ÿ_][a-zA-ZÀ-ÿ0-9_]*)\}\}/g, (match, varName) => {
+    const key = varName.toLowerCase()
+    if (replaceData[key]) return replaceData[key]
+    // Variable not found in contact data — leave {{varName}} as-is
+    return match
+  })
 
   // Strip WhatsApp bold markers
   preview = preview.replace(/\*([^*]+)\*/g, '$1')

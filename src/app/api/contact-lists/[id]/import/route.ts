@@ -6,9 +6,9 @@ import { normalizePhone } from '@/lib/phone-utils'
 const ACCEPTED_EXTENSIONS = ['.csv', '.xlsx', '.xls', '.ods']
 const ACCEPTED_MIMES = [
   'text/csv',
-  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
-  'application/vnd.ms-excel', // .xls
-  'application/vnd.oasis.opendocument.spreadsheet', // .ods
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.ms-excel',
+  'application/vnd.oasis.opendocument.spreadsheet',
 ]
 
 function getFileExtension(filename: string): string {
@@ -16,14 +16,22 @@ function getFileExtension(filename: string): string {
   return idx >= 0 ? filename.substring(idx).toLowerCase() : ''
 }
 
-// Column name aliases for core fields (case-insensitive)
+// Column name aliases for name/phone (case-insensitive)
 const NAME_ALIASES = ['nome', 'name', 'nombre', 'cliente']
 const PHONE_ALIASES = ['telefone', 'phone', 'tel', 'numero', 'número', 'celular', 'whatsapp']
-// empresa is also a common column but goes into customFields like everything else
 
-function findColumnAlias(header: string, aliases: string[]): boolean {
-  const h = header.toLowerCase().trim()
-  return aliases.includes(h)
+function isAlias(header: string, aliases: string[]): boolean {
+  return aliases.includes(header.toLowerCase().trim())
+}
+
+// Convert header name to variable key: "Vendedora Responsável" → "vendedora_responsável"
+function toVarKey(header: string): string {
+  return header
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-zA-Z0-9À-ÿ]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_|_$/g, '')
 }
 
 export async function POST(
@@ -54,7 +62,7 @@ export async function POST(
       return NextResponse.json({ error: 'Lista não encontrada' }, { status: 404 })
     }
 
-    // Parse the file using SheetJS (handles CSV, XLSX, XLS, ODS)
+    // Parse the file using SheetJS
     const buffer = Buffer.from(await file.arrayBuffer())
     const workbook = XLSX.read(buffer, { type: 'buffer' })
     const sheetName = workbook.SheetNames[0]
@@ -64,7 +72,6 @@ export async function POST(
       return NextResponse.json({ error: 'Arquivo vazio ou sem planilha válida' }, { status: 400 })
     }
 
-    // Convert sheet to array of objects
     const rows: Record<string, string>[] = XLSX.utils.sheet_to_json(sheet, { defval: '' })
 
     if (rows.length === 0) {
@@ -74,9 +81,9 @@ export async function POST(
     // Detect all headers from the spreadsheet
     const headers = Object.keys(rows[0])
 
-    // Find name and phone columns (core fields)
-    const nameHeader = headers.find(h => findColumnAlias(h, NAME_ALIASES)) || null
-    const phoneHeader = headers.find(h => findColumnAlias(h, PHONE_ALIASES)) || null
+    // Find which column is name and which is phone
+    const nameHeader = headers.find(h => isAlias(h, NAME_ALIASES)) || null
+    const phoneHeader = headers.find(h => isAlias(h, PHONE_ALIASES)) || null
 
     if (!phoneHeader) {
       return NextResponse.json(
@@ -85,85 +92,54 @@ export async function POST(
       )
     }
 
-    // Extra columns (everything except name and phone) go into customFields
-    const extraHeaders = headers.filter(h => h !== nameHeader && h !== phoneHeader)
-
-    // Generate variable key from header name (normalize accents and special chars)
-    function toVarKey(header: string): string {
-      return header.toLowerCase().replace(/[^a-zA-Z0-9À-ÿ]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '')
-    }
-
-    // Determine the variable key for core fields based on the ORIGINAL header name
-    // This way, if the column is "WhatsApp", the variable will be {{whatsapp}} not {{telefone}}
-    const nameVarKey = nameHeader ? toVarKey(nameHeader) : 'nome'
-    const phoneVarKey = phoneHeader ? toVarKey(phoneHeader) : 'telefone'
-
-    const detectedColumns = [
-      nameHeader ? { name: nameHeader, variable: nameVarKey, type: 'core', coreField: 'name' } : null,
-      { name: phoneHeader, variable: phoneVarKey, type: 'core', coreField: 'phone' },
-      ...extraHeaders.map(h => ({ name: h, variable: toVarKey(h), type: 'custom', coreField: null })),
-    ].filter(Boolean) as Array<{ name: string; variable: string; type: string; coreField: string | null }>
-
-    // Save FULL column mapping to the ContactList (including core fields)
-    // This maps original header name → variable key, for ALL columns
+    // Build column mapping: original header → variable key
+    // This tells the system: column "WhatsApp" → use {{whatsapp}}, column "Vendedora" → use {{vendedora}}
     const columnMapping: Record<string, string> = {}
-    for (const col of detectedColumns) {
-      columnMapping[col.name] = col.variable
+    for (const header of headers) {
+      columnMapping[header] = toVarKey(header)
     }
+
+    // Save column mapping to the ContactList
     await db.contactList.update({
       where: { id },
       data: { columns: JSON.stringify(columnMapping) },
     })
 
-    // Build contacts with customFields
+    // Build contacts
+    // EVERY column value goes into customFields so {{any_column_name}} always resolves
     const contacts: { name: string; phone: string; customFields: string }[] = []
+
     for (const row of rows) {
-      const name = nameHeader ? String(row[nameHeader] || '').trim() : ''
-      const phone = String(row[phoneHeader] || '').trim()
-      if (phone && /\d/.test(phone)) {
-        // Collect ALL columns into customFields JSON (including core field aliases)
-        // This way {{whatsapp}} resolves even though the value is also in the phone core field
-        const customData: Record<string, string> = {}
+      const nameValue = nameHeader ? String(row[nameHeader] || '').trim() : ''
+      const phoneValue = String(row[phoneHeader] || '').trim()
 
-        // Add name column under its original variable key (e.g., {{nome}})
-        if (nameHeader && name) {
-          customData[nameVarKey] = name
-        }
-        // Add phone column under its original variable key (e.g., {{whatsapp}} instead of just {{telefone}})
-        if (phoneHeader && phone) {
-          customData[phoneVarKey] = phone
-          // Always add {{telefone}} as an alias for the phone column too
-          if (phoneVarKey !== 'telefone') {
-            customData['telefone'] = phone
-          }
-        }
-        // Always add {{nome}} as an alias for the name column too
-        if (nameHeader && name && nameVarKey !== 'nome') {
-          customData['nome'] = name
-        }
+      if (!phoneValue || !/\d/.test(phoneValue)) continue
 
-        // Add extra (custom) columns
-        for (const header of extraHeaders) {
-          const value = String(row[header] || '').trim()
-          if (value) {
-            const varKey = toVarKey(header)
-            customData[varKey] = value
-          }
-        }
+      // Store ALL columns in customFields using their variable keys
+      // This is the key: {{nome}}, {{whatsapp}}, {{empresa}}, {{vendedora}} etc.
+      // ALL resolve from customFields
+      const customData: Record<string, string> = {}
 
-        contacts.push({
-          name: name || phone,
-          phone,
-          customFields: Object.keys(customData).length > 0 ? JSON.stringify(customData) : '',
-        })
+      for (const header of headers) {
+        const value = String(row[header] || '').trim()
+        if (value) {
+          const varKey = toVarKey(header)
+          customData[varKey] = value
+        }
       }
+
+      contacts.push({
+        name: nameValue || phoneValue,
+        phone: phoneValue,
+        customFields: Object.keys(customData).length > 0 ? JSON.stringify(customData) : '',
+      })
     }
 
     if (contacts.length === 0) {
       return NextResponse.json({ error: 'Nenhum contato válido encontrado no arquivo' }, { status: 400 })
     }
 
-    // Bulk create contacts (normalize phones)
+    // Bulk create contacts
     let created: { count: number }
     try {
       created = await db.contact.createMany({
@@ -176,7 +152,6 @@ export async function POST(
       })
     } catch (dbError: any) {
       console.error('Import DB error:', dbError.message)
-      // Fallback: insert one by one to find the problematic record
       let importedCount = 0
       for (const c of contacts) {
         try {
@@ -197,8 +172,8 @@ export async function POST(
         success: true,
         imported: importedCount,
         total: contacts.length,
-        detectedColumns,
-        warning: `Alguns contatos podem ter sido pulados (duplicados ou inválidos). ${importedCount} de ${contacts.length} importados.`,
+        columnMapping,
+        warning: `Alguns contatos podem ter sido pulados. ${importedCount} de ${contacts.length} importados.`,
       })
     }
 
@@ -206,7 +181,7 @@ export async function POST(
       success: true,
       imported: created.count,
       total: contacts.length,
-      detectedColumns,
+      columnMapping,
     })
   } catch (error: any) {
     console.error('Import error:', error?.message || error)

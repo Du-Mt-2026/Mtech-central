@@ -606,14 +606,14 @@ function resolveKeyBlocks(text: string): string {
  * Each key has variations stored as JSON; pick a random one.
  */
 async function resolveMessageKeyMarkers(text: string): Promise<string> {
-  // Find all {{SOME_NAME}} patterns that are NOT {{KEY:...}}, contact variables, or common aliases
-  const contactVars = ['nome', 'telefone', 'empresa', 'vendedor', 'vendedora', 'whatsapp', 'celular', 'phone', 'name']
-  const markerRegex = /\{\{([A-Za-z_][A-Za-z0-9_]*)\}\}/g
+  // Find remaining {{SOME_NAME}} patterns that are NOT {{KEY:...}}
+  // After contact variable resolution, any remaining {{var}} is either a MessageKey or an unknown variable
+  const markerRegex = /\{\{([A-Za-zÀ-ÿ_][A-Za-zÀ-ÿ0-9_]*)\}\}/g
   let match
   const markers = new Set<string>()
   while ((match = markerRegex.exec(text)) !== null) {
     const name = match[1]
-    if (!name.startsWith('KEY:') && !contactVars.includes(name)) {
+    if (!name.startsWith('KEY:')) {
       markers.add(name)
     }
   }
@@ -740,8 +740,8 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
     // Step 1: Resolve inline {{KEY: var1 | var2 | var3}} blocks (random variation per contact)
     let content = resolveKeyBlocks(messageItem.content)
 
-    // Step 2: Replace contact variables dynamically
-    // Parse customFields JSON for dynamic column resolution
+    // Step 2: Replace contact variables from customFields
+    // customFields contains ALL spreadsheet columns: {"nome":"Maria","whatsapp":"55119...","empresa":"Tech Corp","vendedora":"Ana"}
     let customData: Record<string, string> = {}
     try {
       if (contact.customFields) {
@@ -749,30 +749,27 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
       }
     } catch { /* ignore invalid JSON */ }
 
-    // Core fields always available — include common aliases so {{whatsapp}}, {{celular}}, etc. resolve
+    // All fields: customFields already has every column from the spreadsheet
+    // If customFields is missing core fields, add them as fallback
     const allFields: Record<string, string> = {
       nome: contact.name,
-      name: contact.name,
       telefone: contact.phone,
-      phone: contact.phone,
-      whatsapp: contact.phone,
-      celular: contact.phone,
-      ...customData, // custom fields like empresa, vendedora, nota, etc.
+      ...customData, // customData overrides everything — it has the real values from the spreadsheet
     }
 
-    // Resolve all {{variable}} patterns dynamically
+    // Resolve all {{variable}} patterns: if found in allFields, replace; if not, leave as-is
     // Match {{any_word_or_underscored_key}} but NOT {{KEY: ...}} (already resolved)
-    content = content.replace(/\{\{([a-zA-Z_][a-zA-Z0-9_]*)\}\}/g, (match, varName) => {
+    content = content.replace(/\{\{([a-zA-ZÀ-ÿ_][a-zA-ZÀ-ÿ0-9_]*)\}\}/g, (match, varName) => {
       const key = varName.toLowerCase()
       if (allFields[key] !== undefined) {
         return allFields[key]
       }
-      // Unknown variable — leave as-is
+      // Variable not found — leave {{varName}} as-is
       return match
     })
 
     // Legacy single-brace format: {nome}, {telefone}, etc.
-    content = content.replace(/\{([a-zA-Z_][a-zA-Z0-9_]*)\}/g, (match, varName) => {
+    content = content.replace(/\{([a-zA-ZÀ-ÿ_][a-zA-ZÀ-ÿ0-9_]*)\}/g, (match, varName) => {
       const key = varName.toLowerCase()
       if (allFields[key] !== undefined) {
         return allFields[key]
