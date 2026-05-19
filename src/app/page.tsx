@@ -1694,6 +1694,17 @@ function ContatosTab() {
   useEffect(() => { fetchLists() }, [fetchLists])
   useEffect(() => { if (selectedList) fetchContacts(selectedList.id) }, [selectedList, fetchContacts])
 
+  // One-time cleanup: remove duplicate nome/telefone keys from customFields (legacy data)
+  useEffect(() => {
+    fetch('/api/contacts/cleanup', { method: 'POST' }).then(r => r.json()).then(data => {
+      if (data.cleaned > 0) {
+        console.log(`CustomFields cleanup: ${data.cleaned} contacts cleaned`)
+        if (selectedList) fetchContacts(selectedList.id) // refresh if viewing a list
+      }
+    }).catch(() => { /* silent */ })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   const createList = async () => {
     try {
       const res = await fetch('/api/contact-lists', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: newListName }) })
@@ -1965,15 +1976,19 @@ function ContatosTab() {
                         <th className="text-left p-3 font-medium">Nome</th>
                         <th className="text-left p-3 font-medium">Telefone</th>
                         <th className="text-left p-3 font-medium">Incluído em</th>
-                        {/* Dynamic custom field columns */}
+                        {/* Dynamic custom field columns — exclude name/phone aliases to avoid duplication */}
                         {contacts.some(c => c.customFields) && (() => {
+                          const NAME_ALIASES = ['nome', 'name', 'nombre', 'cliente']
+                          const PHONE_ALIASES = ['telefone', 'phone', 'tel', 'numero', 'número', 'celular', 'whatsapp']
                           const customKeys = new Set<string>()
                           contacts.forEach(c => {
                             if (c.customFields) {
                               try { Object.keys(JSON.parse(c.customFields)).forEach(k => customKeys.add(k)) } catch {}
                             }
                           })
-                          return Array.from(customKeys).sort().map(k => (
+                          // Filter out name/phone aliases — they are shown in dedicated columns
+                          const filteredKeys = Array.from(customKeys).filter(k => !NAME_ALIASES.includes(k) && !PHONE_ALIASES.includes(k)).sort()
+                          return filteredKeys.map(k => (
                             <th key={k} className="text-left p-3 font-medium capitalize">{k.replace(/_/g, ' ')}</th>
                           ))
                         })()}
@@ -1989,19 +2004,22 @@ function ContatosTab() {
                         return (
                           <tr key={c.id} className="border-t hover:bg-muted/30 transition-colors">
                             <td className="p-3 font-medium">{c.name}</td>
-                            <td className="p-3 text-muted-foreground">
-                              {c.phone}
-                              {c.createdAt && <span className="block text-[10px] text-muted-foreground/60">{new Date(c.createdAt).toLocaleString('pt-BR')}</span>}
+                            <td className="p-3 text-muted-foreground">{c.phone}</td>
+                            <td className="p-3 text-muted-foreground text-xs">
+                              {c.createdAt ? new Date(c.createdAt).toLocaleString('pt-BR') : '—'}
                             </td>
-                            {/* Dynamic custom field values */}
+                            {/* Dynamic custom field values — exclude name/phone aliases */}
                             {contacts.some(c2 => c2.customFields) && (() => {
+                              const NAME_ALIASES = ['nome', 'name', 'nombre', 'cliente']
+                              const PHONE_ALIASES = ['telefone', 'phone', 'tel', 'numero', 'número', 'celular', 'whatsapp']
                               const customKeys = new Set<string>()
                               contacts.forEach(c2 => {
                                 if (c2.customFields) {
                                   try { Object.keys(JSON.parse(c2.customFields)).forEach(k => customKeys.add(k)) } catch {}
                                 }
                               })
-                              return Array.from(customKeys).sort().map(k => (
+                              const filteredKeys = Array.from(customKeys).filter(k => !NAME_ALIASES.includes(k) && !PHONE_ALIASES.includes(k)).sort()
+                              return filteredKeys.map(k => (
                                 <td key={k} className="p-3 text-muted-foreground text-xs">{customData[k] || '-'}</td>
                               ))
                             })()}
@@ -2984,6 +3002,18 @@ function CampanhasTab() {
             break
           }
 
+          // Notify when a chip hits daily limit
+          if (data.lastReason?.includes('daily_limit_')) {
+            const chipMatch = data.lastReason.match(/daily_limit_(?:reassigned_)?(.+)/)
+            const chipName = chipMatch ? chipMatch[1] : 'desconhecido'
+            if (data.lastReason.includes('reassigned')) {
+              toast.warning(`Chip "${chipName}" atingiu o limite diário — mensagens reatribuídas a outros chips`, { duration: 6000 })
+            } else {
+              toast.error(`Chip "${chipName}" atingiu o limite diário e não há outros chips disponíveis`, { duration: 6000 })
+              break
+            }
+          }
+
           // Refresh campaign list to show progress
           fetchCampaigns()
 
@@ -3109,6 +3139,7 @@ function CampanhasTab() {
       warmingMode: campaign.warmingMode || 'normal',
     })
     setDetailDialogOpen(false)
+    setCreateDialogOpen(true)
     setEditing(true) // keep editing flag so createCampaign knows to PATCH instead of POST
   }
 
@@ -3749,7 +3780,7 @@ function CampanhasTab() {
             </div>
             <DialogFooter className="px-6 py-3 border-t shrink-0">
               <DialogClose asChild><Button variant="outline">Cancelar</Button></DialogClose>
-              <Button onClick={createCampaign} disabled={!canCreate} className="bg-emerald-600 hover:bg-emerald-700">Criar Campanha</Button>
+              <Button onClick={createCampaign} disabled={!canCreate} className="bg-emerald-600 hover:bg-emerald-700">{editing ? 'Salvar Alterações' : 'Criar Campanha'}</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
@@ -3818,8 +3849,8 @@ function CampanhasTab() {
 
       {/* Detail Dialog */}
       <Dialog open={detailDialogOpen} onOpenChange={(open) => { setDetailDialogOpen(open); if (!open) setEditing(false) }}>
-        <DialogContent fullWidth className="max-h-[90vh]">
-          <DialogHeader>
+        <DialogContent fullWidth className="max-h-[90vh] !p-0">
+          <DialogHeader className="px-6 pt-5 pb-3 shrink-0 border-b">
             <DialogTitle className="flex items-center gap-3">
               {selectedCampaign?.name}
               {selectedCampaign && ['draft', 'paused', 'scheduled'].includes(selectedCampaign.status) && (
@@ -3845,7 +3876,7 @@ function CampanhasTab() {
             <DialogDescription>Detalhes da campanha</DialogDescription>
           </DialogHeader>
           {selectedCampaign && (
-            <div className="flex gap-4 overflow-hidden p-2">
+            <div className="flex gap-6 overflow-hidden p-6">
               {/* Left panel - Stats */}
               <div className="w-64 shrink-0 space-y-3">
                 {/* Chip daily limit warning */}
@@ -4054,12 +4085,12 @@ function TemplatesTab() {
               <Plus className="size-4" /> Novo Template
             </Button>
           </DialogTrigger>
-          <DialogContent className="max-w-lg max-h-[85vh]">
-            <DialogHeader>
+          <DialogContent className="max-w-lg max-h-[90vh] flex flex-col overflow-hidden !p-0">
+            <DialogHeader className="px-6 pt-6 pb-2 shrink-0">
               <DialogTitle>Criar Template</DialogTitle>
               <DialogDescription>Crie um template de mensagem reutilizável</DialogDescription>
             </DialogHeader>
-            <div className="space-y-4 py-4 overflow-y-auto">
+            <div className="space-y-4 px-6 py-4 overflow-y-auto flex-1 min-h-0">
               <div className="space-y-2">
                 <Label>Nome</Label>
                 <Input placeholder="Ex: Boas-vindas" value={newTemplate.name} onChange={e => setNewTemplate(p => ({ ...p, name: e.target.value }))} />
@@ -4121,7 +4152,7 @@ function TemplatesTab() {
                 </div>
               </div>
             </div>
-            <DialogFooter>
+            <DialogFooter className="px-6 pb-6 pt-2 shrink-0 border-t">
               <DialogClose asChild><Button variant="outline">Cancelar</Button></DialogClose>
               <Button onClick={createTemplate} disabled={!newTemplate.name || !newTemplate.content} className="bg-emerald-600 hover:bg-emerald-700">Criar Template</Button>
             </DialogFooter>
@@ -6650,7 +6681,7 @@ export default function OctupusZapApp() {
         </header>
 
         {/* Page Content */}
-        <main className="flex-1 p-4 lg:p-6 pb-8">
+        <main className="flex-1 p-4 lg:p-6 pb-8 overflow-y-auto">
           <AnimatePresence mode="wait">
             <motion.div key={activeTab} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} transition={{ duration: 0.2 }}>
               {renderContent()}
