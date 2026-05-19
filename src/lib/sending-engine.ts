@@ -114,7 +114,7 @@ const DEFAULT_SETTINGS: AntiBanConfig = {
   cooldownMinutes: 30,
   cooldownAfterMessages: 50,
   stopOnWarning: true,
-  randomLineBreaks: true,
+  randomLineBreaks: false,
   emojiVariation: true,
   sendingWindowStart: 480,  // 8:00 in minutes-from-midnight
   sendingWindowEnd: 1260,   // 21:00 in minutes-from-midnight
@@ -834,10 +834,13 @@ export async function processNextMessage(campaignId: string): Promise<{
   // Get campaign anti-ban settings
   const campaignInfo = await db.campaign.findUnique({
     where: { id: campaignId },
-    select: { antiBanEnabled: true, warmingMode: true },
+    select: { antiBanEnabled: true, warmingMode: true, sendIntervalMin: true, sendIntervalMax: true },
   })
   const antiBanEnabled = campaignInfo?.antiBanEnabled ?? true
   const warmingMode = campaignInfo?.warmingMode || 'normal'
+  // Use campaign-specific interval if available, otherwise fall back to global settings
+  const campaignIntervalMin = campaignInfo?.sendIntervalMin
+  const campaignIntervalMax = campaignInfo?.sendIntervalMax
 
   const settings = await getAntiBanSettings()
 
@@ -1026,7 +1029,7 @@ export async function processNextMessage(campaignId: string): Promise<{
     // ============================================
     let finalContent = message.content
 
-    if (antiBanEnabled && settings.randomLineBreaks) {
+    if (antiBanEnabled && settings.randomLineBreaks && false) { // Line breaks disabled - makes messages ugly
       finalContent = applyRandomLineBreaks(finalContent)
     }
 
@@ -1080,8 +1083,11 @@ export async function processNextMessage(campaignId: string): Promise<{
     // CALCULATE NEXT MESSAGE DELAY
     // ============================================
     // The interval is how long to wait BEFORE processing the next message.
+    // Use campaign-specific interval if available, otherwise global settings.
     // Apply warming mode multiplier to the interval.
-    let nextDelay = randomInt(settings.messageIntervalMin, settings.messageIntervalMax) * 1000
+    const intervalMin = campaignIntervalMin ?? settings.messageIntervalMin
+    const intervalMax = campaignIntervalMax ?? settings.messageIntervalMax
+    let nextDelay = randomInt(intervalMin, intervalMax) * 1000
 
     const modeMultiplier = WARMING_MODE_MULTIPLIERS[warmingMode]
     if (modeMultiplier && antiBanEnabled) {

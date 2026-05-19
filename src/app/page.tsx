@@ -2317,8 +2317,13 @@ function generatePreviewText(text: string, messageKeys: Array<{ id: string; name
     return match
   })
 
-  // Strip WhatsApp bold markers
-  preview = preview.replace(/\*([^*]+)\*/g, '$1')
+  // Convert WhatsApp formatting to HTML for preview
+  // *bold* → <strong>bold</strong>
+  // _italic_ → <em>italic</em>
+  // ~strikethrough~ → <s>strikethrough</s>
+  preview = preview.replace(/\*([^*]+)\*/g, '<strong>$1</strong>')
+  preview = preview.replace(/_([^_]+)_/g, '<em>$1</em>')
+  preview = preview.replace(/~([^~]+)~/g, '<s>$1</s>')
   return preview
 }
 
@@ -3453,9 +3458,15 @@ function CampanhasTab() {
                                 const key = varName.toLowerCase()
                                 return replaceData[key] || match
                               })
-                              .replace(/\*([^*]+)\*/g, '$1')
                           }
                           const previewContent = resolveVars(step.content)
+                          // Convert WhatsApp formatting to HTML for preview
+                          const formatWhatsApp = (text: string) => {
+                            return text
+                              .replace(/\*([^*]+)\*/g, '<strong>$1</strong>')
+                              .replace(/_([^_]+)_/g, '<em>$1</em>')
+                              .replace(/~([^~]+)~/g, '<s>$1</s>')
+                          }
                           if (!step.content && !step.mediaFile && !step.mediatype) return null
                           return (
                             <div key={idx} className="flex justify-end">
@@ -3469,7 +3480,7 @@ function CampanhasTab() {
                                 {step.mediatype === 'image' && (step.mediaFile ? (
                                   <div className="relative">
                                     <img src={URL.createObjectURL(step.mediaFile)} alt="Preview" className="w-full max-h-[200px] object-cover" />
-                                    {step.caption && <p className="text-[12px] text-white/90 px-2.5 pt-1.5 whitespace-pre-wrap break-words">{resolveVars(step.caption)}</p>}
+                                    {step.caption && <p className="text-[12px] text-white/90 px-2.5 pt-1.5 whitespace-pre-wrap break-words" dangerouslySetInnerHTML={{ __html: formatWhatsApp(resolveVars(step.caption)) }} />}
                                   </div>
                                 ) : (
                                   <div className="flex items-center justify-center bg-[#1a3a2a] h-[140px] w-full">
@@ -3545,7 +3556,7 @@ function CampanhasTab() {
                                 )}
                                 {/* Text content */}
                                 {previewContent && (
-                                  <p className="text-[13px] text-white/90 whitespace-pre-wrap break-words leading-[1.5] px-2.5 py-1">{previewContent}</p>
+                                  <p className="text-[13px] text-white/90 whitespace-pre-wrap break-words leading-[1.5] px-2.5 py-1" dangerouslySetInnerHTML={{ __html: formatWhatsApp(previewContent) }} />
                                 )}
                                 {/* Timestamp */}
                                 <div className="flex items-center justify-end gap-0.5 px-2.5 pb-1.5">
@@ -3562,14 +3573,9 @@ function CampanhasTab() {
                           </div>
                         )}
                       </div>
-                      {/* Input bar mockup */}
-                      <div className="shrink-0 flex items-center gap-2 px-3 py-2 bg-[#1f2c34]">
-                        <div className="flex-1 flex items-center bg-[#2a3942] rounded-full px-3 py-1.5">
-                          <span className="text-[11px] text-white/30">Mensagem</span>
-                        </div>
-                        <div className="size-8 rounded-full bg-emerald-600 flex items-center justify-center">
-                          <Mic className="size-4 text-white" />
-                        </div>
+                      {/* Input bar - simulated label */}
+                      <div className="shrink-0 flex items-center justify-center px-3 py-1.5 bg-[#1f2c34]">
+                        <span className="text-[9px] text-white/25 italic">Visualização de mensagem simulada</span>
                       </div>
                     </div>
                   </div>
@@ -3647,7 +3653,7 @@ function CampanhasTab() {
 
       {/* Detail Dialog */}
       <Dialog open={detailDialogOpen} onOpenChange={(open) => { setDetailDialogOpen(open); if (!open) setEditing(false) }}>
-        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+        <DialogContent fullWidth className="max-h-[90vh]">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-3">
               {editing ? 'Editar Campanha' : selectedCampaign?.name}
@@ -3656,83 +3662,106 @@ function CampanhasTab() {
                   <Pencil className="size-3.5" /> Editar
                 </Button>
               )}
+              {!editing && selectedCampaign && (
+                <Button variant="outline" size="sm" className="gap-1.5" onClick={async () => {
+                  if (!selectedCampaign) return
+                  const updated = await fetch(`/api/campaigns/${selectedCampaign.id}`).then(r => r.json())
+                  setSelectedCampaign(updated)
+                  if (updated.status === 'running' || updated.status === 'completed') {
+                    const msgRes = await fetch(`/api/messages?campaignId=${updated.id}`)
+                    setDetailMessages(await msgRes.json())
+                  }
+                  toast.success('Status atualizado!')
+                }}>
+                  <RefreshCw className="size-3.5" /> Atualizar
+                </Button>
+              )}
             </DialogTitle>
             <DialogDescription>{editing ? 'Modifique os dados da campanha' : 'Detalhes da campanha'}</DialogDescription>
           </DialogHeader>
           {selectedCampaign && !editing && (
-            <div className="space-y-4">
-              <div className="flex flex-wrap gap-2">
-                <StatusBadge status={selectedCampaign.status} />
-                {selectedCampaign.antiBanEnabled && <Badge variant="outline" className="gap-1 text-emerald-600"><Shield className="size-3" /> Anti-Ban</Badge>}
-                <Badge variant="outline" className="gap-1">{selectedCampaign.warmingMode === 'stealth' ? <><Snowflake className="size-3" /> Furtivo</> : selectedCampaign.warmingMode === 'agressive' ? <><Flame className="size-3" /> Agressivo</> : <><Shield className="size-3" /> Normal</>}</Badge>
+            <div className="flex gap-4 overflow-hidden">
+              {/* Left panel - Stats */}
+              <div className="w-64 shrink-0 space-y-3">
+                <div className="flex flex-wrap gap-2">
+                  <StatusBadge status={selectedCampaign.status} />
+                  {selectedCampaign.antiBanEnabled && <Badge variant="outline" className="gap-1 text-emerald-600"><Shield className="size-3" /> Anti-Ban</Badge>}
+                  <Badge variant="outline" className="gap-1">{selectedCampaign.warmingMode === 'stealth' ? <><Snowflake className="size-3" /> Furtivo</> : selectedCampaign.warmingMode === 'agressive' ? <><Flame className="size-3" /> Agressivo</> : <><Shield className="size-3" /> Normal</>}</Badge>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <Card className="shadow"><CardContent className="p-2 text-center"><p className="text-[10px] text-muted-foreground">Pendentes</p><p className="text-lg font-bold">{detailMessages.filter(m => m.status === 'pending').length}</p></CardContent></Card>
+                  <Card className="shadow"><CardContent className="p-2 text-center"><p className="text-[10px] text-muted-foreground">Enviadas</p><p className="text-lg font-bold text-sky-600">{detailMessages.filter(m => m.status === 'sent').length}</p></CardContent></Card>
+                  <Card className="shadow"><CardContent className="p-2 text-center"><p className="text-[10px] text-muted-foreground">Entregues</p><p className="text-lg font-bold text-emerald-600">{detailMessages.filter(m => m.status === 'delivered' || m.status === 'read').length}</p></CardContent></Card>
+                  <Card className="shadow"><CardContent className="p-2 text-center"><p className="text-[10px] text-muted-foreground">Falharam</p><p className="text-lg font-bold text-rose-600">{detailMessages.filter(m => m.status === 'failed').length}</p></CardContent></Card>
+                </div>
+                {selectedCampaign.contactList && (
+                  <div className="text-xs text-muted-foreground">
+                    <p>Lista: <span className="font-medium text-foreground">{selectedCampaign.contactList.name}</span></p>
+                    <p>Intervalo: <span className="font-medium text-foreground">{selectedCampaign.sendIntervalMin}-{selectedCampaign.sendIntervalMax}s</span></p>
+                  </div>
+                )}
               </div>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <Card className="shadow-lg"><CardContent className="p-3 text-center"><p className="text-xs text-muted-foreground">Pendentes</p><p className="text-xl font-bold">{detailMessages.filter(m => m.status === 'pending').length}</p></CardContent></Card>
-                <Card className="shadow-lg"><CardContent className="p-3 text-center"><p className="text-xs text-muted-foreground">Enviadas</p><p className="text-xl font-bold text-sky-600">{detailMessages.filter(m => m.status === 'sent').length}</p></CardContent></Card>
-                <Card className="shadow-lg"><CardContent className="p-3 text-center"><p className="text-xs text-muted-foreground">Entregues</p><p className="text-xl font-bold text-emerald-600">{detailMessages.filter(m => m.status === 'delivered' || m.status === 'read').length}</p></CardContent></Card>
-                <Card className="shadow-lg"><CardContent className="p-3 text-center"><p className="text-xs text-muted-foreground">Falharam</p><p className="text-xl font-bold text-rose-600">{detailMessages.filter(m => m.status === 'failed').length}</p></CardContent></Card>
-              </div>
-              {detailMessages.length > 0 && (
-                <div className="space-y-2">
-                  <Label className="text-sm font-semibold">Detalhes das Mensagens</Label>
-                  <ScrollArea className="max-h-[300px]">
-                    <div className="space-y-1.5">
+              {/* Right panel - Messages & Details */}
+              <div className="flex-1 min-w-0 space-y-3 overflow-y-auto max-h-[65vh]">
+                {detailMessages.length > 0 && (
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-semibold">Mensagens</Label>
+                    <div className="space-y-1">
                       {detailMessages.map((m, i) => (
-                        <div key={m.id} className={`p-2.5 rounded-lg text-xs flex items-center gap-3 ${m.status === 'failed' ? 'bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800' : m.status === 'pending' ? 'bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800' : 'bg-muted/50'}`}>
-                          <span className="font-mono text-muted-foreground w-5 text-center">{i + 1}</span>
+                        <div key={m.id} className={`p-2 rounded-lg text-xs flex items-center gap-2 ${m.status === 'failed' ? 'bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800' : m.status === 'pending' ? 'bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800' : 'bg-muted/50'}`}>
+                          <span className="font-mono text-muted-foreground w-4 text-center">{i + 1}</span>
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2">
-                              <span className="font-medium">{m.contact?.name || '—'}</span>
-                              <span className="text-muted-foreground">{m.contact?.phone || ''}</span>
+                              <span className="font-medium truncate">{m.contact?.name || '—'}</span>
+                              <span className="text-muted-foreground truncate">{m.contact?.phone || ''}</span>
                             </div>
                             <div className="flex items-center gap-2 mt-0.5">
                               <StatusBadge status={m.status} />
                               {m.chip?.name && <span className="text-muted-foreground">via {m.chip.name}</span>}
                             </div>
-                            {m.error && <p className="text-rose-600 mt-1 font-medium">Erro: {m.error}</p>}
+                            {m.error && <p className="text-rose-600 mt-0.5 font-medium truncate">Erro: {m.error}</p>}
                           </div>
-                          <div className="text-right shrink-0">
-                            {m.sentAt && <p className="text-muted-foreground">Envio: {new Date(m.sentAt).toLocaleString('pt-BR')}</p>}
-                            {m.deliveredAt && <p className="text-emerald-600">Entrega: {new Date(m.deliveredAt).toLocaleString('pt-BR')}</p>}
-                            {m.readAt && <p className="text-sky-600">Leitura: {new Date(m.readAt).toLocaleString('pt-BR')}</p>}
-                            {m.status === 'pending' && !m.sentAt && <p className="text-amber-600 font-medium">Aguardando envio</p>}
+                          <div className="text-right shrink-0 text-[10px]">
+                            {m.sentAt && <p className="text-muted-foreground">{new Date(m.sentAt).toLocaleString('pt-BR')}</p>}
+                            {m.deliveredAt && <p className="text-emerald-600">{new Date(m.deliveredAt).toLocaleString('pt-BR')}</p>}
+                            {m.status === 'pending' && !m.sentAt && <p className="text-amber-600 font-medium">Aguardando</p>}
                           </div>
                         </div>
                       ))}
                     </div>
-                  </ScrollArea>
-                </div>
-              )}
-              {selectedCampaign.sequenceSteps?.length > 0 && (
-                <div className="space-y-2">
-                  <Label className="text-sm font-semibold">Mensagens & Variações</Label>
-                  {selectedCampaign.sequenceSteps.sort((a, b) => a.stepOrder - b.stepOrder).map((step, idx) => {
-                    let parsedVars: Array<{content: string; mediaUrl?: string; mediatype?: string}> = []
-                    try { parsedVars = JSON.parse(step.variations || '[]') } catch { /* ignore */ }
-                    return (
-                      <div key={step.id} className="p-3 rounded-lg bg-muted/50 space-y-2">
-                        <div className="flex items-center gap-3">
-                          <span className="flex items-center justify-center size-7 rounded-full bg-emerald-600 text-white text-xs font-bold">{step.stepOrder}</span>
-                          <p className="flex-1 text-sm truncate">{step.content}</p>
-                          {step.delayMinutes > 0 && <Badge variant="secondary" className="text-xs gap-1"><Clock className="size-3" />{step.delayMinutes}min</Badge>}
-                        </div>
-                        {parsedVars.length > 0 && (
-                          <div className="ml-10 space-y-1">
-                            <p className="text-xs text-muted-foreground font-medium">Variações ({parsedVars.length}):</p>
-                            {parsedVars.map((v, vi) => (
-                              <div key={vi} className="flex items-center gap-2 text-xs">
-                                <Shuffle className="size-3 text-emerald-500" />
-                                <span className="truncate">{v.content}</span>
-                                {v.mediatype && <Badge variant="outline" className="text-[10px] px-1 py-0">{v.mediatype}</Badge>}
-                              </div>
-                            ))}
+                  </div>
+                )}
+                {selectedCampaign.sequenceSteps?.length > 0 && (
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-semibold">Mensagens & Variações</Label>
+                    {selectedCampaign.sequenceSteps.sort((a, b) => a.stepOrder - b.stepOrder).map((step, idx) => {
+                      let parsedVars: Array<{content: string; mediaUrl?: string; mediatype?: string}> = []
+                      try { parsedVars = JSON.parse(step.variations || '[]') } catch { /* ignore */ }
+                      return (
+                        <div key={step.id} className="p-2.5 rounded-lg bg-muted/50 space-y-1.5">
+                          <div className="flex items-center gap-2">
+                            <span className="flex items-center justify-center size-6 rounded-full bg-emerald-600 text-white text-xs font-bold shrink-0">{step.stepOrder}</span>
+                            <p className="flex-1 text-xs whitespace-pre-wrap break-words min-w-0">{step.content}</p>
+                            {step.delayMinutes > 0 && <Badge variant="secondary" className="text-[10px] gap-1 shrink-0"><Clock className="size-2.5" />{step.delayMinutes}min</Badge>}
                           </div>
-                        )}
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
+                          {parsedVars.length > 0 && (
+                            <div className="ml-8 space-y-0.5">
+                              <p className="text-[10px] text-muted-foreground font-medium">Variações ({parsedVars.length}):</p>
+                              {parsedVars.map((v, vi) => (
+                                <div key={vi} className="flex items-start gap-1.5 text-[11px]">
+                                  <Shuffle className="size-3 text-emerald-500 shrink-0 mt-0.5" />
+                                  <span className="whitespace-pre-wrap break-words min-w-0">{v.content}</span>
+                                  {v.mediatype && <Badge variant="outline" className="text-[9px] px-1 py-0 shrink-0">{v.mediatype}</Badge>}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
             </div>
           )}
           {selectedCampaign && editing && (
