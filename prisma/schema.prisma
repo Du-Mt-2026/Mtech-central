@@ -142,15 +142,10 @@ model Contact {
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
 
-  // Personalization fields (anti-ban)
-  empresa           String?    // Usado na variável {empresa}
-  cidade            String?    // Usado na variável {cidade}
-  email             String?    // Usado na variável {email}
-  profissao         String?    // Usado na variável {profissao}
-  tratamento        String?    // Usado na variável {tratamento} — "Sr", "Sra", "Dr"...
-  produtoInteresse  String?    // Usado na variável {produto}
-  tags              String?    // Tags separadas por vírgula — para segmentação
-  observacoes       String?    // Notas internas (não enviadas)
+  // Dynamic custom fields from spreadsheet (JSON string)
+  // Stores all extra columns: empresa, vendedor, nota, etc.
+  // Accessed via {{column_name}} in message templates
+  customFields      String?    // JSON: {"empresa":"Tech Corp","vendedor":"Renato","nota":"VIP"}
 }
 
 model Campaign {

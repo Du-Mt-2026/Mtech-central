@@ -114,6 +114,7 @@ interface ContactItem {
   phone: string
   contactListId: string | null
   chipId: string | null
+  customFields: string | null
   createdAt: string
 }
 
@@ -1708,12 +1709,16 @@ function ContatosTab() {
     formData.append('file', e.target.files[0])
     try {
       const res = await fetch(`/api/contact-lists/${selectedList.id}/import`, { method: 'POST', body: formData })
-      if (!res.ok) throw new Error()
-      toast.success('Contatos importados!')
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Erro ao importar')
+      const colInfo = data.detectedColumns ? ` | Colunas: ${data.detectedColumns.map((c: any) => c.name).join(', ')}` : ''
+      toast.success(`${data.imported} contatos importados!${colInfo}`)
       setImportDialogOpen(false)
       fetchContacts(selectedList.id)
       fetchLists()
-    } catch { toast.error('Erro ao importar contatos') }
+    } catch (err: any) {
+      toast.error(err.message || 'Erro ao importar contatos')
+    }
   }
 
   const openEditContact = (contact: ContactItem) => {
@@ -1928,9 +1933,27 @@ function ContatosTab() {
               <p className="text-sm text-muted-foreground mb-3">CSV, Excel (.xlsx, .xls) ou LibreOffice (.ods)</p>
               <Input type="file" accept=".csv,.xlsx,.xls,.ods" onChange={handleImport} className="max-w-xs mx-auto" />
             </div>
-            <div className="p-3 bg-muted/50 rounded-lg text-xs text-muted-foreground">
-              <p className="font-medium mb-1">Formato esperado (colunas):</p>
-              <code className="block bg-muted p-2 rounded">nome,telefone{'\n'}João,11999990001{'\n'}Maria,21988880002</code>
+            <div className="p-3 bg-muted/50 rounded-lg text-xs space-y-2">
+              <p className="font-medium">Formato da planilha:</p>
+              <p className="text-muted-foreground">A coluna <strong>Telefone</strong> é obrigatória. As demais colunas ficam disponíveis como variáveis {'{{nome}}'}, {'{{empresa}}'}, {'{{vendedor}}'} etc. no texto da mensagem.</p>
+              <code className="block bg-muted p-2 rounded text-[11px]">Empresa,Nome,Telefone,Vendedor{'\n'}Tech Corp,João,11999990001,Renato{'\n'}Info Ltda,Maria,21988880002,Carlos</code>
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full h-8 text-xs gap-2 mt-1"
+                onClick={() => {
+                  const csv = 'Empresa,Nome,Telefone,Vendedor\nTech Corp,João Silva,11999990001,Renato\nInfo Ltda,Maria Santos,21988880002,Carlos\nDigital Inc,Pedro Lima,31977770003,Ana'
+                  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+                  const url = URL.createObjectURL(blob)
+                  const a = document.createElement('a')
+                  a.href = url
+                  a.download = 'planilha_exemplo_contatos.csv'
+                  a.click()
+                  URL.revokeObjectURL(url)
+                  toast.success('Planilha de exemplo baixada!')
+                }}>
+                <Download className="size-3.5" /> Baixar Planilha de Exemplo
+              </Button>
             </div>
           </div>
         </DialogContent>
@@ -1999,7 +2022,7 @@ function parseKeyBlocksFromText(text: string): Array<{ fullMatch: string; variat
 }
 
 // Helper: generate preview text replacing KEY blocks and contact variables
-function generatePreviewText(text: string, messageKeys: Array<{ id: string; name: string; label: string; category: string; variations: string }>, seed: number): string {
+function generatePreviewText(text: string, messageKeys: Array<{ id: string; name: string; label: string; category: string; variations: string }>, seed: number, contactVariables?: Array<{ tag: string; label: string; source: string }>): string {
   // First, resolve {{KEY: ...}} blocks — pick a deterministic variation based on seed
   let preview = text.replace(/\{\{KEY:\s*((?:[^{}]|\{\{[^}]*\}\})*)\}\}/g, (_, inner) => {
     const options = inner.split('|').map((s: string) => s.trim()).filter(Boolean)
@@ -2016,23 +2039,45 @@ function generatePreviewText(text: string, messageKeys: Array<{ id: string; name
     } catch { /* ignore */ }
   })
 
-  // Replace contact variables
-  preview = preview
-    .replace(/\{\{nome\}\}/g, 'João')
-    .replace(/\{\{telefone\}\}/g, '11999990001')
-    .replace(/\{\{empresa\}\}/g, 'Tech Corp')
-    .replace(/\{\{vendedor\}\}/g, 'Renato')
+  // Replace contact variables dynamically
+  // Sample data for preview
+  const sampleData: Record<string, string> = {
+    nome: 'João',
+    telefone: '11999990001',
+    empresa: 'Tech Corp',
+    vendedor: 'Renato',
+    nota: 'VIP',
+  }
+
+  // Use contactVariables if available, otherwise fallback to hardcoded
+  if (contactVariables && contactVariables.length > 0) {
+    preview = preview.replace(/\{\{([a-zA-Z_][a-zA-Z0-9_]*)\}\}/g, (match, varName) => {
+      const key = varName.toLowerCase()
+      if (sampleData[key]) return sampleData[key]
+      // For unknown custom variables, show the label
+      const cv = contactVariables.find(v => v.tag === `{{${key}}}`)
+      return cv ? cv.label : match
+    })
+  } else {
+    // Fallback: only replace known variables
+    preview = preview
+      .replace(/\{\{nome\}\}/g, 'João')
+      .replace(/\{\{telefone\}\}/g, '11999990001')
+      .replace(/\{\{empresa\}\}/g, 'Tech Corp')
+      .replace(/\{\{vendedor\}\}/g, 'Renato')
+  }
 
   // Strip WhatsApp bold markers
   preview = preview.replace(/\*([^*]+)\*/g, '$1')
   return preview
 }
 
-function MessageBuilder({ value, onChange, messageKeys, templates }: {
+function MessageBuilder({ value, onChange, messageKeys, templates, contactVariables }: {
   value: string
   onChange: (v: string) => void
   messageKeys: Array<{ id: string; name: string; label: string; category: string; variations: string }>
   templates?: MessageTemplate[]
+  contactVariables?: Array<{ tag: string; label: string; source: string }>
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const [newBlockOpen, setNewBlockOpen] = useState(false)
@@ -2082,7 +2127,7 @@ function MessageBuilder({ value, onChange, messageKeys, templates }: {
     setNewBlockOpen(false)
   }
 
-  const previewText = generatePreviewText(value, messageKeys, previewSeed)
+  const previewText = generatePreviewText(value, messageKeys, previewSeed, contactVariables)
   const charCount = previewText.length
   const lineCount = value.split('\n').length
 
@@ -2093,13 +2138,20 @@ function MessageBuilder({ value, onChange, messageKeys, templates }: {
         {/* Contact variables */}
         <div className="flex flex-wrap gap-1">
           <span className="text-[10px] text-muted-foreground font-medium w-full">📋 Dados do Contato</span>
-          {CONTACT_VARIABLES.map(v => (
+          {(contactVariables && contactVariables.length > 0 ? contactVariables : CONTACT_VARIABLES).map(v => (
             <Button key={v.tag} variant="outline" size="sm"
-              className="h-6 text-[11px] gap-1 px-2 text-emerald-600 border-emerald-200 hover:bg-emerald-50 dark:text-emerald-400 dark:border-emerald-800 dark:hover:bg-emerald-900/30"
+              className={`h-6 text-[11px] gap-1 px-2 ${
+                v.source === 'custom'
+                  ? 'text-sky-600 border-sky-200 hover:bg-sky-50 dark:text-sky-400 dark:border-sky-800 dark:hover:bg-sky-900/30'
+                  : 'text-emerald-600 border-emerald-200 hover:bg-emerald-50 dark:text-emerald-400 dark:border-emerald-800 dark:hover:bg-emerald-900/30'
+              }`}
               onClick={() => insertAtCursor(v.tag)}>
-              {v.icon} {v.label}
+              {v.source === 'custom' ? '📎' : v.tag === '{{nome}}' ? '👤' : v.tag === '{{telefone}}' ? '📱' : '📋'} {v.label}
             </Button>
           ))}
+          {(!contactVariables || contactVariables.length === 0) && (
+            <span className="text-[9px] text-muted-foreground italic">Selecione uma lista de contatos para ver as variáveis disponíveis</span>
+          )}
         </div>
         {/* KEY block chips */}
         <div className="flex flex-wrap gap-1">
@@ -2353,6 +2405,7 @@ function CampanhasTab() {
   const [availableLists, setAvailableLists] = useState<ContactList[]>([])
   const [messageKeys, setMessageKeys] = useState<Array<{ id: string; name: string; label: string; category: string; variations: string }>>([])
   const [templates, setTemplates] = useState<MessageTemplate[]>([])
+  const [contactVariables, setContactVariables] = useState<Array<{ tag: string; label: string; source: string }>>([])
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
   const [processing, setProcessing] = useState(false)
   const [editing, setEditing] = useState(false)
@@ -2399,7 +2452,31 @@ function CampanhasTab() {
     try { const res = await fetch('/api/templates'); setTemplates(await res.json()) } catch { /* empty */ }
   }, [])
 
+  // Fetch available variables from the selected contact list
+  const fetchContactVariables = useCallback(async (listId: string) => {
+    try {
+      const res = await fetch(`/api/contact-lists/${listId}/contacts?limit=1`)
+      const data = await res.json()
+      if (data.availableVariables) {
+        setContactVariables(data.availableVariables)
+      } else {
+        setContactVariables([])
+      }
+    } catch {
+      setContactVariables([])
+    }
+  }, [])
+
   useEffect(() => { fetchCampaigns(); fetchChips(); fetchLists(); fetchKeys(); fetchTemplates() }, [fetchCampaigns, fetchChips, fetchLists, fetchKeys, fetchTemplates])
+
+  // When contact list changes, fetch available variables
+  useEffect(() => {
+    if (newCampaign.contactListId) {
+      fetchContactVariables(newCampaign.contactListId)
+    } else {
+      setContactVariables([])
+    }
+  }, [newCampaign.contactListId, fetchContactVariables])
 
   const createCampaign = async () => {
     try {
@@ -2781,7 +2858,7 @@ function CampanhasTab() {
                           </Button>
                         )}
                       </div>
-                      <MessageBuilder value={step.content} onChange={v => updateStep(idx, 'content', v)} messageKeys={messageKeys} templates={templates} />
+                      <MessageBuilder value={step.content} onChange={v => updateStep(idx, 'content', v)} messageKeys={messageKeys} templates={templates} contactVariables={contactVariables} />
                       {idx > 0 && (
                         <div className="mt-2">
                           <Label className="text-xs">Atraso antes desta mensagem (minutos)</Label>
@@ -3197,7 +3274,7 @@ function CampanhasTab() {
                         </Button>
                       )}
                     </div>
-                    <MessageBuilder value={step.content} onChange={v => editUpdateStep(idx, 'content', v)} messageKeys={messageKeys} templates={templates} />
+                    <MessageBuilder value={step.content} onChange={v => editUpdateStep(idx, 'content', v)} messageKeys={messageKeys} templates={templates} contactVariables={contactVariables} />
                     {idx > 0 && (
                       <div className="mt-2">
                         <Label className="text-xs">Atraso antes desta mensagem (minutos)</Label>

@@ -16,6 +16,16 @@ function getFileExtension(filename: string): string {
   return idx >= 0 ? filename.substring(idx).toLowerCase() : ''
 }
 
+// Column name aliases for core fields (case-insensitive)
+const NAME_ALIASES = ['nome', 'name', 'nombre', 'cliente']
+const PHONE_ALIASES = ['telefone', 'phone', 'tel', 'numero', 'número', 'celular', 'whatsapp']
+// empresa is also a common column but goes into customFields like everything else
+
+function findColumnAlias(header: string, aliases: string[]): boolean {
+  const h = header.toLowerCase().trim()
+  return aliases.includes(h)
+}
+
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -61,33 +71,47 @@ export async function POST(
       return NextResponse.json({ error: 'Nenhum dado encontrado no arquivo' }, { status: 400 })
     }
 
-    // Find name and phone columns (case-insensitive)
-    const headers = Object.keys(rows[0]).map(h => h.toLowerCase().trim())
-    const nameIdx = headers.findIndex(h =>
-      h === 'nome' || h === 'name' || h === 'nombre' || h === 'cliente'
-    )
-    const phoneIdx = headers.findIndex(h =>
-      h === 'telefone' || h === 'phone' || h === 'tel' || h === 'numero' || h === 'número' || h === 'celular' || h === 'whatsapp'
-    )
+    // Detect all headers from the spreadsheet
+    const headers = Object.keys(rows[0])
 
-    if (phoneIdx === -1) {
+    // Find name and phone columns (core fields)
+    const nameHeader = headers.find(h => findColumnAlias(h, NAME_ALIASES)) || null
+    const phoneHeader = headers.find(h => findColumnAlias(h, PHONE_ALIASES)) || null
+
+    if (!phoneHeader) {
       return NextResponse.json(
-        { error: 'Arquivo deve ter uma coluna de telefone. Nomes aceitos: telefone, phone, tel, numero, celular, whatsapp' },
+        { error: 'Arquivo deve ter uma coluna de telefone. Nomes aceitos: Telefone, Phone, Tel, Numero, Celular, WhatsApp' },
         { status: 400 }
       )
     }
 
-    const nameHeader = nameIdx >= 0 ? Object.keys(rows[0])[nameIdx] : null
-    const phoneHeader = Object.keys(rows[0])[phoneIdx]
+    // Extra columns (everything except name and phone) go into customFields
+    const extraHeaders = headers.filter(h => h !== nameHeader && h !== phoneHeader)
+    const detectedColumns = [
+      nameHeader ? { name: nameHeader, variable: 'nome', type: 'core' } : null,
+      { name: phoneHeader, variable: 'telefone', type: 'core' },
+      ...extraHeaders.map(h => ({ name: h, variable: h.toLowerCase().replace(/\s+/g, '_'), type: 'custom' })),
+    ].filter(Boolean) as Array<{ name: string; variable: string; type: string }>
 
-    const contacts: { name: string; phone: string }[] = []
+    // Build contacts with customFields
+    const contacts: { name: string; phone: string; customFields: string }[] = []
     for (const row of rows) {
       const name = nameHeader ? String(row[nameHeader] || '').trim() : ''
       const phone = String(row[phoneHeader] || '').trim()
       if (phone && /\d/.test(phone)) {
+        // Collect extra columns into customFields JSON
+        const customData: Record<string, string> = {}
+        for (const header of extraHeaders) {
+          const value = String(row[header] || '').trim()
+          if (value) {
+            customData[header.toLowerCase().replace(/\s+/g, '_')] = value
+          }
+        }
+
         contacts.push({
           name: name || phone,
           phone,
+          customFields: Object.keys(customData).length > 0 ? JSON.stringify(customData) : '',
         })
       }
     }
@@ -102,6 +126,7 @@ export async function POST(
         name: c.name,
         phone: normalizePhone(c.phone),
         contactListId: id,
+        customFields: c.customFields || null,
       })),
       skipDuplicates: true,
     })
@@ -110,6 +135,7 @@ export async function POST(
       success: true,
       imported: created.count,
       total: contacts.length,
+      detectedColumns,
     })
   } catch (error) {
     console.error('Import error:', error)

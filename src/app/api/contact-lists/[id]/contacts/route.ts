@@ -31,7 +31,30 @@ export async function GET(
       db.contact.count({ where }),
     ])
 
-    return NextResponse.json({ contacts, total, page, limit })
+    // Detect available variables from customFields across contacts in this list
+    const customKeys = new Set<string>()
+    const sampleContacts = await db.contact.findMany({
+      where: { contactListId: id },
+      select: { customFields: true },
+      take: 20,
+    })
+    for (const c of sampleContacts) {
+      if (c.customFields) {
+        try {
+          const data = JSON.parse(c.customFields)
+          Object.keys(data).forEach(k => customKeys.add(k))
+        } catch { /* ignore */ }
+      }
+    }
+    const availableVariables = [
+      { tag: '{{nome}}', label: 'Nome', source: 'core' },
+      { tag: '{{telefone}}', label: 'Telefone', source: 'core' },
+      ...Array.from(customKeys).sort().map(k => ({
+        tag: `{{${k}}}`, label: k.charAt(0).toUpperCase() + k.slice(1), source: 'custom'
+      })),
+    ]
+
+    return NextResponse.json({ contacts, total, page, limit, availableVariables })
   } catch (error) {
     console.error('Contacts GET error:', error)
     return NextResponse.json({ error: 'Erro interno' }, { status: 500 })

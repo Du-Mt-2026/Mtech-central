@@ -740,19 +740,41 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
     // Step 1: Resolve inline {{KEY: var1 | var2 | var3}} blocks (random variation per contact)
     let content = resolveKeyBlocks(messageItem.content)
 
-    // Step 2: Replace contact variables (double-brace format {{nome}}, etc.)
-    content = content
-      .replace(/\{\{nome\}\}/g, contact.name)
-      .replace(/\{\{telefone\}\}/g, contact.phone)
-      .replace(/\{\{empresa\}\}/g, contact.empresa || '')
-      .replace(/\{\{vendedor\}\}/g, (contact as any).vendedor || '')
+    // Step 2: Replace contact variables dynamically
+    // Parse customFields JSON for dynamic column resolution
+    let customData: Record<string, string> = {}
+    try {
+      if (contact.customFields) {
+        customData = JSON.parse(contact.customFields)
+      }
+    } catch { /* ignore invalid JSON */ }
 
-    // Step 2b: Replace contact variables (single-brace format {nome}, etc.) — legacy
-    content = content
-      .replace(/\{nome\}/g, contact.name)
-      .replace(/\{telefone\}/g, contact.phone)
-      .replace(/\{empresa\}/g, contact.empresa || '')
-      .replace(/\{vendedor\}/g, (contact as any).vendedor || '')
+    // Core fields always available
+    const allFields: Record<string, string> = {
+      nome: contact.name,
+      telefone: contact.phone,
+      ...customData, // custom fields like empresa, vendedor, nota, etc.
+    }
+
+    // Resolve all {{variable}} patterns dynamically
+    // Match {{any_word_or_underscored_key}} but NOT {{KEY: ...}} (already resolved)
+    content = content.replace(/\{\{([a-zA-Z_][a-zA-Z0-9_]*)\}\}/g, (match, varName) => {
+      const key = varName.toLowerCase()
+      if (allFields[key] !== undefined) {
+        return allFields[key]
+      }
+      // Unknown variable — leave as-is
+      return match
+    })
+
+    // Legacy single-brace format: {nome}, {telefone}, etc.
+    content = content.replace(/\{([a-zA-Z_][a-zA-Z0-9_]*)\}/g, (match, varName) => {
+      const key = varName.toLowerCase()
+      if (allFields[key] !== undefined) {
+        return allFields[key]
+      }
+      return match
+    })
 
     // Step 3: Resolve old-style {{KEY_NAME}} markers (from Chaves/MessageKey system)
     content = await resolveMessageKeyMarkers(content)
