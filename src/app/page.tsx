@@ -2990,23 +2990,25 @@ function CampanhasTab() {
                 <Plus className="size-4" /> Nova Campanha
               </Button>
             </DialogTrigger>
-          <DialogContent className="max-w-[95vw] w-[95vw] max-h-[95vh] p-0 gap-0 overflow-hidden">
+          <DialogContent className="sm:max-w-[95vw] max-w-[95vw] w-[95vw] max-h-[95vh] h-[90vh] p-0 gap-0 overflow-hidden">
             <DialogHeader className="px-6 py-4 border-b shrink-0">
               <DialogTitle>Criar Campanha</DialogTitle>
               <DialogDescription>Configure uma nova campanha de envio</DialogDescription>
             </DialogHeader>
-            <div className="flex min-h-0 flex-1">
-              {/* Left: Configuration Panel */}
-              <div className="w-[35%] border-r overflow-y-auto p-5 space-y-4">
-                <div className="space-y-1.5">
-                  <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5"><Type className="size-3" /> Nome da Campanha</Label>
-                  <Input placeholder="Ex: Campanha Black Friday" value={newCampaign.name} onChange={e => setNewCampaign(prev => ({ ...prev, name: e.target.value }))} className="h-9" />
+            <div className="flex min-h-0 flex-1 overflow-hidden">
+              {/* Left: Configuration Panel - Compact Sidebar */}
+              <div className="w-[30%] min-w-[300px] border-r overflow-y-auto p-4 space-y-3 bg-muted/10">
+                {/* Campaign Name */}
+                <div className="space-y-1">
+                  <Label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1"><Type className="size-3" /> Nome da Campanha</Label>
+                  <Input placeholder="Ex: Campanha Black Friday" value={newCampaign.name} onChange={e => setNewCampaign(prev => ({ ...prev, name: e.target.value }))} className="h-8 text-sm" />
                 </div>
 
-                <div className="space-y-1.5">
-                  <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5"><Users className="size-3" /> Lista de Contatos</Label>
+                {/* Contact List */}
+                <div className="space-y-1">
+                  <Label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1"><Users className="size-3" /> Lista de Contatos</Label>
                   <Select value={newCampaign.contactListId} onValueChange={v => setNewCampaign(prev => ({ ...prev, contactListId: v }))}>
-                    <SelectTrigger className="h-9"><SelectValue placeholder="Selecione uma lista" /></SelectTrigger>
+                    <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="Selecione uma lista" /></SelectTrigger>
                     <SelectContent>
                       {availableLists.map(l => (
                         <SelectItem key={l.id} value={l.id}>
@@ -3017,24 +3019,25 @@ function CampanhasTab() {
                   </Select>
                 </div>
 
-                <div className="space-y-1.5">
-                  <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5"><CalendarDays className="size-3" /> Agendamento</Label>
-                  <Input type="datetime-local" value={newCampaign.scheduledAt} onChange={e => setNewCampaign(prev => ({ ...prev, scheduledAt: e.target.value }))} className="h-9" />
-                  <p className="text-[11px] text-muted-foreground">Deixe vazio para executar imediatamente</p>
+                {/* Scheduling */}
+                <div className="space-y-1">
+                  <Label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1"><CalendarDays className="size-3" /> Agendamento</Label>
+                  <Input type="datetime-local" value={newCampaign.scheduledAt} onChange={e => setNewCampaign(prev => ({ ...prev, scheduledAt: e.target.value }))} className="h-8 text-sm" />
+                  <p className="text-[10px] text-muted-foreground">Deixe vazio para executar imediatamente</p>
                 </div>
 
-                <div className="space-y-1.5">
-                  <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5"><Smartphone className="size-3" /> Chips para envio</Label>
-                  <div className="grid grid-cols-1 gap-1.5">
+                {/* Chips for Sending */}
+                <div className="space-y-1">
+                  <Label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1"><Smartphone className="size-3" /> Chips para envio</Label>
+                  <div className="space-y-1 max-h-[200px] overflow-y-auto">
                     {availableChips.map(chip => (
-                      <label key={chip.id} className={`flex items-center gap-2 p-2 rounded-lg border cursor-pointer transition-all ${newCampaign.chipIds.includes(chip.id) ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20' : 'hover:bg-muted/50'}`}>
-                        <input type="checkbox" checked={newCampaign.chipIds.includes(chip.id)} onChange={() => toggleChip(chip.id)} className="sr-only" />
+                      <label key={chip.id} className={`flex items-center gap-2 p-1.5 rounded-md border cursor-pointer transition-all text-sm ${newCampaign.chipIds.includes(chip.id) ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20' : 'hover:bg-muted/50'}`}>
                         <div className={`size-4 rounded border-2 flex items-center justify-center shrink-0 ${newCampaign.chipIds.includes(chip.id) ? 'bg-emerald-500 border-emerald-500' : 'border-muted-foreground'}`}>
                           {newCampaign.chipIds.includes(chip.id) && <Check className="size-3 text-white" />}
                         </div>
                         <div className="min-w-0">
-                          <p className="text-sm font-medium truncate">{chip.name}</p>
-                          <p className="text-[11px] text-muted-foreground">{chip.phoneNumber}</p>
+                          <p className="text-xs font-medium truncate">{chip.name}</p>
+                          <p className="text-[10px] text-muted-foreground">{chip.phoneNumber}</p>
                         </div>
                       </label>
                     ))}
@@ -3044,28 +3047,28 @@ function CampanhasTab() {
                 <Separator />
 
                 {/* Anti-Ban Section */}
-                <div className="space-y-2">
+                <div className="space-y-1.5">
                   <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Shield className="size-4 text-emerald-500" />
-                      <Label className="text-sm font-semibold">Proteção Anti-Ban</Label>
+                    <div className="flex items-center gap-1.5">
+                      <Shield className="size-3.5 text-emerald-500" />
+                      <Label className="text-xs font-semibold">Proteção Anti-Ban</Label>
                     </div>
                     <Switch checked={newCampaign.antiBanEnabled} onCheckedChange={v => setNewCampaign(prev => ({ ...prev, antiBanEnabled: v }))} />
                   </div>
                   {newCampaign.antiBanEnabled && (
-                    <div className="space-y-2 p-3 bg-muted/50 rounded-lg">
-                      <Label className="text-xs font-medium">Modo de Aquecimento</Label>
-                      <div className="grid grid-cols-3 gap-1.5">
+                    <div className="space-y-1.5 p-2.5 bg-muted/50 rounded-lg">
+                      <Label className="text-[11px] font-medium">Modo de Aquecimento</Label>
+                      <div className="grid grid-cols-3 gap-1">
                         {[
                           { value: 'normal', label: 'Normal', icon: Shield, desc: 'Equilibrado' },
                           { value: 'agressive', label: 'Agressivo', icon: Flame, desc: 'Mais rápido' },
                           { value: 'stealth', label: 'Furtivo', icon: Snowflake, desc: 'Máx. segurança' },
                         ].map(m => (
                           <button key={m.value} type="button" onClick={() => setNewCampaign(prev => ({ ...prev, warmingMode: m.value }))}
-                            className={`p-2 rounded-lg border text-center transition-all ${newCampaign.warmingMode === m.value ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20' : 'hover:bg-muted/50'}`}>
-                            <m.icon className={`size-4 mx-auto mb-0.5 ${newCampaign.warmingMode === m.value ? 'text-emerald-600' : 'text-muted-foreground'}`} />
-                            <p className="text-xs font-medium">{m.label}</p>
-                            <p className="text-[10px] text-muted-foreground">{m.desc}</p>
+                            className={`p-1.5 rounded-md border text-center transition-all ${newCampaign.warmingMode === m.value ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20' : 'hover:bg-muted/50'}`}>
+                            <m.icon className={`size-3.5 mx-auto mb-0.5 ${newCampaign.warmingMode === m.value ? 'text-emerald-600' : 'text-muted-foreground'}`} />
+                            <p className="text-[11px] font-medium">{m.label}</p>
+                            <p className="text-[9px] text-muted-foreground">{m.desc}</p>
                           </button>
                         ))}
                       </div>
@@ -3075,226 +3078,286 @@ function CampanhasTab() {
               </div>
 
               {/* Right: Message Builder + Preview */}
-              <div className="flex-1 flex flex-col min-h-0">
-                {/* Step Tabs */}
-                <div className="flex items-center gap-1 px-5 pt-3 pb-0 border-b shrink-0 bg-muted/20">
-                  {newCampaign.steps.map((step, idx) => (
-                    <button
-                      key={idx}
-                      type="button"
-                      className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-t-lg transition-colors border border-b-0 ${activeStep === idx ? 'bg-background text-emerald-600 border-border' : 'text-muted-foreground hover:text-foreground border-transparent'}`}
-                      onClick={() => setActiveStep(idx)}
-                    >
-                      <span className="flex items-center justify-center size-5 rounded-full bg-emerald-600 text-white text-[10px] font-bold">{idx + 1}</span>
-                      Mensagem {idx + 1}
-                    </button>
-                  ))}
-                  <Button variant="ghost" size="sm" className="gap-1 text-emerald-600 h-8 px-2" onClick={addStep}>
-                    <Plus className="size-3.5" />
-                  </Button>
-                  {newCampaign.steps.length > 1 && activeStep > 0 && (
-                    <Button variant="ghost" size="sm" className="ml-auto text-rose-500 h-8 px-2" onClick={() => { removeStep(activeStep); setActiveStep(Math.max(0, activeStep - 1)) }}>
-                      <Trash2 className="size-3.5" />
+              <div className="flex-1 flex min-h-0 overflow-hidden">
+                {/* Editor Panel */}
+                <div className="flex-1 flex flex-col min-h-0 border-r">
+                  {/* Step Tabs */}
+                  <div className="flex items-center gap-1 px-4 pt-2 pb-0 border-b shrink-0 bg-muted/20">
+                    {newCampaign.steps.map((step, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-t-lg transition-colors border border-b-0 ${activeStep === idx ? 'bg-background text-emerald-600 border-border' : 'text-muted-foreground hover:text-foreground border-transparent'}`}
+                        onClick={() => setActiveStep(idx)}
+                      >
+                        <span className="flex items-center justify-center size-5 rounded-full bg-emerald-600 text-white text-[10px] font-bold">{idx + 1}</span>
+                        Mensagem {idx + 1}
+                      </button>
+                    ))}
+                    <Button variant="ghost" size="sm" className="gap-1 text-emerald-600 h-8 px-2" onClick={addStep}>
+                      <Plus className="size-3.5" />
                     </Button>
-                  )}
-                </div>
+                    {newCampaign.steps.length > 1 && activeStep > 0 && (
+                      <Button variant="ghost" size="sm" className="ml-auto text-rose-500 h-8 px-2" onClick={() => { removeStep(activeStep); setActiveStep(Math.max(0, activeStep - 1)) }}>
+                        <Trash2 className="size-3.5" />
+                      </Button>
+                    )}
+                  </div>
 
-                {/* Active Step Content */}
-                <div className="flex-1 overflow-y-auto p-5 space-y-3">
-                  {newCampaign.steps.map((step, idx) => idx === activeStep && (
-                    <div key={idx} className="space-y-3">
-                      {/* Delay config for steps > 0 */}
-                      {idx > 0 && (
-                        <div className="flex items-center gap-2 text-xs text-muted-foreground bg-muted/40 px-3 py-2 rounded-lg">
-                          <Clock className="size-3.5" />
-                          <span>Atraso antes desta mensagem:</span>
-                          <Input type="number" min={0} value={step.delayMinutes} onChange={e => updateStep(idx, 'delayMinutes', parseInt(e.target.value) || 0)} className="w-20 h-7 text-xs" />
-                          <span>min após mensagem anterior</span>
-                        </div>
-                      )}
+                  {/* Active Step Content */}
+                  <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                    {newCampaign.steps.map((step, idx) => idx === activeStep && (
+                      <div key={idx} className="space-y-3">
+                        {/* Delay config for steps > 0 */}
+                        {idx > 0 && (
+                          <div className="flex items-center gap-2 text-xs text-muted-foreground bg-muted/40 px-3 py-2 rounded-lg">
+                            <Clock className="size-3.5" />
+                            <span>Atraso antes desta mensagem:</span>
+                            <Input type="number" min={0} value={step.delayMinutes} onChange={e => updateStep(idx, 'delayMinutes', parseInt(e.target.value) || 0)} className="w-20 h-7 text-xs" />
+                            <span>min após mensagem anterior</span>
+                          </div>
+                        )}
 
-                      <MessageBuilder value={step.content} onChange={v => updateStep(idx, 'content', v)} messageKeys={messageKeys} templates={templates} contactVariables={contactVariables} rows={10} />
+                        <MessageBuilder value={step.content} onChange={v => updateStep(idx, 'content', v)} messageKeys={messageKeys} templates={templates} contactVariables={contactVariables} rows={10} />
 
-                      {/* Attach media */}
-                      <div className="space-y-2">
-                        <Label className="text-xs font-medium flex items-center gap-1"><Paperclip className="size-3" /> Anexar Mídia</Label>
-                        <div className="flex gap-2">
-                          <Select value={step.mediatype} onValueChange={v => updateStep(idx, 'mediatype', v)}>
-                            <SelectTrigger className="w-32 h-8 text-xs"><SelectValue placeholder="Tipo" /></SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="image">Imagem</SelectItem>
-                              <SelectItem value="video">Vídeo</SelectItem>
-                              <SelectItem value="audio">Áudio</SelectItem>
-                              <SelectItem value="document">Documento</SelectItem>
-                              <SelectItem value="contact">Contato</SelectItem>
-                              <SelectItem value="location">Localização</SelectItem>
-                              <SelectItem value="link">Link</SelectItem>
-                            </SelectContent>
-                          </Select>
-                          {['image','video','audio','document'].includes(step.mediatype) && (
-                            <Input type="file" className="h-8 text-xs flex-1" accept={step.mediatype === 'image' ? 'image/*' : step.mediatype === 'video' ? 'video/*' : step.mediatype === 'audio' ? 'audio/*' : undefined} onChange={e => { const f = e.target.files?.[0] || null; updateStep(idx, 'mediaFile', f) }} />
+                        {/* Attach media */}
+                        <div className="space-y-2">
+                          <Label className="text-xs font-medium flex items-center gap-1"><Paperclip className="size-3" /> Anexar Mídia</Label>
+                          <div className="flex gap-2">
+                            <Select value={step.mediatype} onValueChange={v => updateStep(idx, 'mediatype', v)}>
+                              <SelectTrigger className="w-32 h-8 text-xs"><SelectValue placeholder="Tipo" /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="image">Imagem</SelectItem>
+                                <SelectItem value="video">Vídeo</SelectItem>
+                                <SelectItem value="audio">Áudio</SelectItem>
+                                <SelectItem value="document">Documento</SelectItem>
+                                <SelectItem value="contact">Contato</SelectItem>
+                                <SelectItem value="location">Localização</SelectItem>
+                                <SelectItem value="link">Link</SelectItem>
+                              </SelectContent>
+                            </Select>
+                            {['image','video','audio','document'].includes(step.mediatype) && (
+                              <Input type="file" className="h-8 text-xs flex-1" accept={step.mediatype === 'image' ? 'image/*' : step.mediatype === 'video' ? 'video/*' : step.mediatype === 'audio' ? 'audio/*' : undefined} onChange={e => { const f = e.target.files?.[0] || null; updateStep(idx, 'mediaFile', f) }} />
+                            )}
+                          </div>
+                          {['image','video'].includes(step.mediatype) && (
+                            <div className="space-y-1">
+                              <Label className="text-xs text-muted-foreground">Legenda</Label>
+                              <Input placeholder="Legenda da imagem/vídeo..." value={step.caption} onChange={e => updateStep(idx, 'caption', e.target.value)} className="h-8 text-xs" />
+                            </div>
+                          )}
+                          {step.mediatype === 'contact' && (
+                            <div className="grid grid-cols-2 gap-2">
+                              <Input placeholder="Nome do contato" value={step.contactName} onChange={e => updateStep(idx, 'contactName', e.target.value)} className="h-8 text-xs" />
+                              <Input placeholder="Telefone (5511999999999)" value={step.contactPhone} onChange={e => updateStep(idx, 'contactPhone', e.target.value)} className="h-8 text-xs" />
+                            </div>
+                          )}
+                          {step.mediatype === 'location' && (
+                            <div className="space-y-2">
+                              <Input placeholder="Nome do local" value={step.locationName} onChange={e => updateStep(idx, 'locationName', e.target.value)} className="h-8 text-xs" />
+                              <div className="grid grid-cols-2 gap-2">
+                                <Input placeholder="Latitude" value={step.locationLat} onChange={e => updateStep(idx, 'locationLat', e.target.value)} className="h-8 text-xs" />
+                                <Input placeholder="Longitude" value={step.locationLng} onChange={e => updateStep(idx, 'locationLng', e.target.value)} className="h-8 text-xs" />
+                              </div>
+                            </div>
+                          )}
+                          {step.mediatype === 'link' && (
+                            <div className="space-y-2">
+                              <Input placeholder="https://..." value={step.linkUrl} onChange={e => updateStep(idx, 'linkUrl', e.target.value)} className="h-8 text-xs" />
+                              <div className="flex items-center gap-2">
+                                <Switch checked={step.linkPreview} onCheckedChange={v => updateStep(idx, 'linkPreview', v)} />
+                                <Label className="text-xs">Com visualização (preview)</Label>
+                              </div>
+                            </div>
+                          )}
+                          {step.mediaFile && (
+                            <div className="flex items-center gap-2 p-2 bg-muted/50 rounded-lg text-xs">
+                              {step.mediatype === 'image' ? <ImageIcon className="size-3.5 text-emerald-500" /> : step.mediatype === 'video' ? <Film className="size-3.5 text-sky-500" /> : step.mediatype === 'audio' ? <Music className="size-3.5 text-amber-500" /> : <File className="size-3.5 text-zinc-500" />}
+                              <span className="truncate">{step.mediaFile.name}</span>
+                              <span className="text-muted-foreground">({(step.mediaFile.size / 1024).toFixed(1)}KB)</span>
+                              <Button variant="ghost" size="sm" className="h-5 w-5 p-0 ml-auto" onClick={() => updateStep(idx, 'mediaFile', null)}><X className="size-3" /></Button>
+                            </div>
                           )}
                         </div>
-                        {['image','video'].includes(step.mediatype) && (
-                          <div className="space-y-1">
-                            <Label className="text-xs text-muted-foreground">Legenda</Label>
-                            <Input placeholder="Legenda da imagem/vídeo..." value={step.caption} onChange={e => updateStep(idx, 'caption', e.target.value)} className="h-8 text-xs" />
-                          </div>
-                        )}
-                        {step.mediatype === 'contact' && (
-                          <div className="grid grid-cols-2 gap-2">
-                            <Input placeholder="Nome do contato" value={step.contactName} onChange={e => updateStep(idx, 'contactName', e.target.value)} className="h-8 text-xs" />
-                            <Input placeholder="Telefone (5511999999999)" value={step.contactPhone} onChange={e => updateStep(idx, 'contactPhone', e.target.value)} className="h-8 text-xs" />
-                          </div>
-                        )}
-                        {step.mediatype === 'location' && (
-                          <div className="space-y-2">
-                            <Input placeholder="Nome do local" value={step.locationName} onChange={e => updateStep(idx, 'locationName', e.target.value)} className="h-8 text-xs" />
-                            <div className="grid grid-cols-2 gap-2">
-                              <Input placeholder="Latitude" value={step.locationLat} onChange={e => updateStep(idx, 'locationLat', e.target.value)} className="h-8 text-xs" />
-                              <Input placeholder="Longitude" value={step.locationLng} onChange={e => updateStep(idx, 'locationLng', e.target.value)} className="h-8 text-xs" />
-                            </div>
-                          </div>
-                        )}
-                        {step.mediatype === 'link' && (
-                          <div className="space-y-2">
-                            <Input placeholder="https://..." value={step.linkUrl} onChange={e => updateStep(idx, 'linkUrl', e.target.value)} className="h-8 text-xs" />
+
+                        {/* Variations (collapsible) */}
+                        <details className="group border rounded-lg">
+                          <summary className="flex items-center justify-between px-3 py-2 cursor-pointer select-none hover:bg-muted/30 rounded-lg transition-colors">
                             <div className="flex items-center gap-2">
-                              <Switch checked={step.linkPreview} onCheckedChange={v => updateStep(idx, 'linkPreview', v)} />
-                              <Label className="text-xs">Com visualização (preview)</Label>
+                              <Shuffle className="size-3.5 text-amber-500" />
+                              <Label className="text-xs font-semibold cursor-pointer">Variações da Mensagem {idx + 1}</Label>
+                              {step.variations.length > 1 && (
+                                <Badge variant="secondary" className="h-4 text-[10px] px-1.5">{step.variations.length}</Badge>
+                              )}
                             </div>
+                            <Button variant="ghost" size="sm" className="h-6 text-xs text-emerald-600 gap-1" onClick={(e) => { e.preventDefault(); e.stopPropagation(); addVariation(idx) }}>
+                              <Plus className="size-3" /> Variação
+                            </Button>
+                          </summary>
+                          <div className="px-3 pb-3 space-y-2">
+                            <p className="text-[11px] text-muted-foreground">Uma variação aleatória será escolhida para cada contato (anti-ban)</p>
+                            {step.variations.map((v, vIdx) => (
+                              <div key={vIdx} className="relative p-3 border rounded-lg space-y-2 bg-background/50">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <span className="text-xs font-medium text-muted-foreground">Variação {vIdx + 1}</span>
+                                  {step.variations.length > 1 && (
+                                    <Button variant="ghost" size="sm" className="ml-auto text-rose-500 h-5 w-5 p-0" onClick={() => removeVariation(idx, vIdx)}>
+                                      <X className="size-3" />
+                                    </Button>
+                                  )}
+                                </div>
+                                <Textarea placeholder={`Texto da variação ${vIdx + 1}...`} value={v.content} onChange={e => updateVariation(idx, vIdx, 'content', e.target.value)} rows={2} />
+                                <div className="space-y-1.5">
+                                  <div className="flex flex-wrap gap-1">
+                                    <span className="text-[10px] text-muted-foreground font-medium w-full">📋 Contato</span>
+                                    {CONTACT_VARIABLES.map(cv => (
+                                      <Button key={cv.tag} variant="outline" size="sm" className="h-6 text-[11px] gap-1 px-2 text-emerald-600 border-emerald-200 hover:bg-emerald-50 dark:text-emerald-400 dark:border-emerald-800 dark:hover:bg-emerald-900/30" onClick={() => updateVariation(idx, vIdx, 'content', v.content + cv.tag)}>
+                                        {cv.icon} {cv.label}
+                                      </Button>
+                                    ))}
+                                  </div>
+                                  <div className="flex flex-wrap gap-1">
+                                    <span className="text-[10px] text-muted-foreground font-medium w-full">🔀 Blocos de Variação</span>
+                                    {messageKeys.map(k => {
+                                      let varCount = 0
+                                      try { varCount = JSON.parse(k.variations).length } catch { /* ignore */ }
+                                      return (
+                                        <Button key={k.id} variant="outline" size="sm" className="h-6 text-[11px] gap-1 px-2 text-violet-600 border-violet-200 hover:bg-violet-50 dark:text-violet-400 dark:border-violet-800 dark:hover:bg-violet-900/30" onClick={() => {
+                                          try {
+                                            const vars = JSON.parse(k.variations)
+                                            if (vars?.length) {
+                                              updateVariation(idx, vIdx, 'content', v.content + `{{KEY: ${vars.join(' | ')}}}`)
+                                            }
+                                          } catch {
+                                            updateVariation(idx, vIdx, 'content', v.content + `{{${k.name}}}`)
+                                          }
+                                        }} title={`${k.label} — ${varCount} variações`}>
+                                          <Shuffle className="size-2.5" /> {k.label}
+                                        </Button>
+                                      )
+                                    })}
+                                  </div>
+                                </div>
+                                <p className="text-xs text-muted-foreground">Se tiver mídia, o texto será a legenda/descrição</p>
+                                {/* Anexar (variation) */}
+                                <div className="space-y-2">
+                                  <div className="flex gap-2">
+                                    <Select value={v.mediatype} onValueChange={mt => updateVariation(idx, vIdx, 'mediatype', mt)}>
+                                      <SelectTrigger className="w-28 h-7 text-xs"><SelectValue placeholder="Tipo" /></SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="image">Imagem</SelectItem>
+                                        <SelectItem value="video">Vídeo</SelectItem>
+                                        <SelectItem value="audio">Áudio</SelectItem>
+                                        <SelectItem value="document">Documento</SelectItem>
+                                        <SelectItem value="contact">Contato</SelectItem>
+                                        <SelectItem value="location">Localização</SelectItem>
+                                        <SelectItem value="link">Link</SelectItem>
+                                      </SelectContent>
+                                    </Select>
+                                    {['image','video','audio','document'].includes(v.mediatype) && (
+                                      <Input type="file" className="h-7 text-xs flex-1" accept={v.mediatype === 'image' ? 'image/*' : v.mediatype === 'video' ? 'video/*' : v.mediatype === 'audio' ? 'audio/*' : undefined} onChange={e => { const f = e.target.files?.[0] || null; updateVariation(idx, vIdx, 'mediaFile', f) }} />
+                                    )}
+                                  </div>
+                                  {['image','video'].includes(v.mediatype) && (
+                                    <Input placeholder="Legenda..." value={v.caption} onChange={e => updateVariation(idx, vIdx, 'caption', e.target.value)} className="h-7 text-xs" />
+                                  )}
+                                  {v.mediatype === 'contact' && (
+                                    <div className="grid grid-cols-2 gap-2">
+                                      <Input placeholder="Nome" value={v.contactName} onChange={e => updateVariation(idx, vIdx, 'contactName', e.target.value)} className="h-7 text-xs" />
+                                      <Input placeholder="Telefone" value={v.contactPhone} onChange={e => updateVariation(idx, vIdx, 'contactPhone', e.target.value)} className="h-7 text-xs" />
+                                    </div>
+                                  )}
+                                  {v.mediatype === 'location' && (
+                                    <div className="grid grid-cols-2 gap-2">
+                                      <Input placeholder="Nome do local" value={v.locationName} onChange={e => updateVariation(idx, vIdx, 'locationName', e.target.value)} className="h-7 text-xs" />
+                                      <Input placeholder="Lat, Lng" value={v.locationLat && v.locationLng ? `${v.locationLat}, ${v.locationLng}` : ''} onChange={e => { const [lat, lng] = e.target.value.split(',').map(s => s.trim()); updateVariation(idx, vIdx, 'locationLat', lat || ''); updateVariation(idx, vIdx, 'locationLng', lng || '') }} className="h-7 text-xs" />
+                                    </div>
+                                  )}
+                                  {v.mediatype === 'link' && (
+                                    <div className="space-y-1">
+                                      <Input placeholder="https://..." value={v.linkUrl} onChange={e => updateVariation(idx, vIdx, 'linkUrl', e.target.value)} className="h-7 text-xs" />
+                                      <div className="flex items-center gap-2">
+                                        <Switch checked={v.linkPreview} onCheckedChange={val => updateVariation(idx, vIdx, 'linkPreview', val)} />
+                                        <Label className="text-xs">Preview</Label>
+                                      </div>
+                                    </div>
+                                  )}
+                                  {v.mediaFile && (
+                                    <div className="flex items-center gap-2 p-1.5 bg-muted/50 rounded-lg text-xs">
+                                      {v.mediatype === 'image' ? <ImageIcon className="size-3 text-emerald-500" /> : v.mediatype === 'video' ? <Film className="size-3 text-sky-500" /> : v.mediatype === 'audio' ? <Music className="size-3 text-amber-500" /> : <File className="size-3 text-zinc-500" />}
+                                      <span className="truncate">{v.mediaFile.name}</span>
+                                      <Button variant="ghost" size="sm" className="h-4 w-4 p-0 ml-auto" onClick={() => updateVariation(idx, vIdx, 'mediaFile', null)}><X className="size-2.5" /></Button>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
                           </div>
-                        )}
-                        {step.mediaFile && (
-                          <div className="flex items-center gap-2 p-2 bg-muted/50 rounded-lg text-xs">
-                            {step.mediatype === 'image' ? <ImageIcon className="size-3.5 text-emerald-500" /> : step.mediatype === 'video' ? <Film className="size-3.5 text-sky-500" /> : step.mediatype === 'audio' ? <Music className="size-3.5 text-amber-500" /> : <File className="size-3.5 text-zinc-500" />}
-                            <span className="truncate">{step.mediaFile.name}</span>
-                            <span className="text-muted-foreground">({(step.mediaFile.size / 1024).toFixed(1)}KB)</span>
-                            <Button variant="ghost" size="sm" className="h-5 w-5 p-0 ml-auto" onClick={() => updateStep(idx, 'mediaFile', null)}><X className="size-3" /></Button>
+                        </details>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* WhatsApp Preview Panel */}
+                <div className="w-[320px] shrink-0 flex flex-col bg-muted/10 overflow-y-auto">
+                  <div className="px-3 py-2 border-b bg-muted/20">
+                    <p className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5"><Eye className="size-3" /> Pré-visualização</p>
+                  </div>
+                  <div className="flex-1 p-3 flex flex-col items-center justify-start">
+                    {/* WhatsApp-style chat preview */}
+                    <div className="w-full max-w-[280px]">
+                      {/* Chat header */}
+                      <div className="flex items-center gap-2 px-3 py-2 bg-emerald-700 rounded-t-lg text-white">
+                        <div className="size-8 rounded-full bg-emerald-500/40 flex items-center justify-center text-xs font-bold">C</div>
+                        <div>
+                          <p className="text-xs font-medium">Cliente</p>
+                          <p className="text-[10px] text-emerald-100">online</p>
+                        </div>
+                      </div>
+                      {/* Chat background */}
+                      <div className="bg-[#e5ddd5] dark:bg-[#1a2730] p-3 rounded-b-lg min-h-[200px] space-y-2">
+                        {newCampaign.steps.map((step, idx) => {
+                          const previewContent = step.content
+                            .replace(/\{\{nome\}\}/gi, 'João')
+                            .replace(/\{\{telefone\}\}/gi, '48999999999')
+                            .replace(/\{\{empresa\}\}/gi, 'M-Tech')
+                            .replace(/\{\{vendedor\}\}/gi, 'Artur')
+                            .replace(/\{\{KEY:\s*([^}]+)\}\}/g, (_: string, vars: string) => {
+                              const options = vars.split('|').map((s: string) => s.trim())
+                              return options[0] || 'variação'
+                            })
+                            .replace(/\{\{(\w+)\}\}/g, (_: string, key: string) => `[${key}]`)
+                          if (!step.content) return null
+                          return (
+                            <div key={idx} className="flex justify-end">
+                              <div className="bg-[#dcf8c6] dark:bg-[#005c4b] rounded-lg px-2.5 py-1.5 max-w-[250px] shadow-sm">
+                                {idx > 0 && step.delayMinutes > 0 && (
+                                  <div className="text-[9px] text-muted-foreground mb-0.5 flex items-center gap-0.5">
+                                    <Clock className="size-2" /> +{step.delayMinutes}min
+                                  </div>
+                                )}
+                                <p className="text-[12px] text-gray-800 dark:text-gray-100 whitespace-pre-wrap break-words">{previewContent}</p>
+                                <div className="flex items-center justify-end gap-0.5 mt-0.5">
+                                  <span className="text-[9px] text-gray-500 dark:text-gray-400">{new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</span>
+                                  <svg className="size-3 text-blue-500" viewBox="0 0 16 16" fill="currentColor"><path d="M12.354 4.354a.5.5 0 00-.708-.708L5.5 9.793 3.354 7.646a.5.5 0 10-.708.708l2.5 2.5a.5.5 0 00.708 0l6.5-6.5z"/><path d="M15 8A7 7 0 111 8a7 7 0 0114 0zm-1 0A6 6 0 102 8a6 6 0 0012 0z"/></svg>
+                                </div>
+                              </div>
+                            </div>
+                          )
+                        })}
+                        {newCampaign.steps.every(s => !s.content) && (
+                          <div className="flex items-center justify-center h-[180px]">
+                            <p className="text-xs text-gray-500 dark:text-gray-400 text-center">Comece a digitar sua mensagem<br/>para ver a pré-visualização</p>
                           </div>
                         )}
                       </div>
-
-                      {/* Variations (collapsible) */}
-                      <details className="group border rounded-lg">
-                        <summary className="flex items-center justify-between px-3 py-2 cursor-pointer select-none hover:bg-muted/30 rounded-lg transition-colors">
-                          <div className="flex items-center gap-2">
-                            <Shuffle className="size-3.5 text-amber-500" />
-                            <Label className="text-xs font-semibold cursor-pointer">Variações da Mensagem {idx + 1}</Label>
-                            {step.variations.length > 1 && (
-                              <Badge variant="secondary" className="h-4 text-[10px] px-1.5">{step.variations.length}</Badge>
-                            )}
-                          </div>
-                          <Button variant="ghost" size="sm" className="h-6 text-xs text-emerald-600 gap-1" onClick={(e) => { e.preventDefault(); e.stopPropagation(); addVariation(idx) }}>
-                            <Plus className="size-3" /> Variação
-                          </Button>
-                        </summary>
-                        <div className="px-3 pb-3 space-y-2">
-                          <p className="text-[11px] text-muted-foreground">Uma variação aleatória será escolhida para cada contato (anti-ban)</p>
-                          {step.variations.map((v, vIdx) => (
-                            <div key={vIdx} className="relative p-3 border rounded-lg space-y-2 bg-background/50">
-                              <div className="flex items-center gap-2 mb-1">
-                                <span className="text-xs font-medium text-muted-foreground">Variação {vIdx + 1}</span>
-                                {step.variations.length > 1 && (
-                                  <Button variant="ghost" size="sm" className="ml-auto text-rose-500 h-5 w-5 p-0" onClick={() => removeVariation(idx, vIdx)}>
-                                    <X className="size-3" />
-                                  </Button>
-                                )}
-                              </div>
-                              <Textarea placeholder={`Texto da variação ${vIdx + 1}...`} value={v.content} onChange={e => updateVariation(idx, vIdx, 'content', e.target.value)} rows={2} />
-                              <div className="space-y-1.5">
-                                <div className="flex flex-wrap gap-1">
-                                  <span className="text-[10px] text-muted-foreground font-medium w-full">📋 Contato</span>
-                                  {CONTACT_VARIABLES.map(cv => (
-                                    <Button key={cv.tag} variant="outline" size="sm" className="h-6 text-[11px] gap-1 px-2 text-emerald-600 border-emerald-200 hover:bg-emerald-50 dark:text-emerald-400 dark:border-emerald-800 dark:hover:bg-emerald-900/30" onClick={() => updateVariation(idx, vIdx, 'content', v.content + cv.tag)}>
-                                      {cv.icon} {cv.label}
-                                    </Button>
-                                  ))}
-                                </div>
-                                <div className="flex flex-wrap gap-1">
-                                  <span className="text-[10px] text-muted-foreground font-medium w-full">🔀 Blocos de Variação</span>
-                                  {messageKeys.map(k => {
-                                    let varCount = 0
-                                    try { varCount = JSON.parse(k.variations).length } catch { /* ignore */ }
-                                    return (
-                                      <Button key={k.id} variant="outline" size="sm" className="h-6 text-[11px] gap-1 px-2 text-violet-600 border-violet-200 hover:bg-violet-50 dark:text-violet-400 dark:border-violet-800 dark:hover:bg-violet-900/30" onClick={() => {
-                                        try {
-                                          const vars = JSON.parse(k.variations)
-                                          if (vars?.length) {
-                                            updateVariation(idx, vIdx, 'content', v.content + `{{KEY: ${vars.join(' | ')}}}`)
-                                          }
-                                        } catch {
-                                          updateVariation(idx, vIdx, 'content', v.content + `{{${k.name}}}`)
-                                        }
-                                      }} title={`${k.label} — ${varCount} variações`}>
-                                        <Shuffle className="size-2.5" /> {k.label}
-                                      </Button>
-                                    )
-                                  })}
-                                </div>
-                              </div>
-                              <p className="text-xs text-muted-foreground">Se tiver mídia, o texto será a legenda/descrição</p>
-                              {/* Anexar (variation) */}
-                              <div className="space-y-2">
-                                <div className="flex gap-2">
-                                  <Select value={v.mediatype} onValueChange={mt => updateVariation(idx, vIdx, 'mediatype', mt)}>
-                                    <SelectTrigger className="w-28 h-7 text-xs"><SelectValue placeholder="Tipo" /></SelectTrigger>
-                                    <SelectContent>
-                                      <SelectItem value="image">Imagem</SelectItem>
-                                      <SelectItem value="video">Vídeo</SelectItem>
-                                      <SelectItem value="audio">Áudio</SelectItem>
-                                      <SelectItem value="document">Documento</SelectItem>
-                                      <SelectItem value="contact">Contato</SelectItem>
-                                      <SelectItem value="location">Localização</SelectItem>
-                                      <SelectItem value="link">Link</SelectItem>
-                                    </SelectContent>
-                                  </Select>
-                                  {['image','video','audio','document'].includes(v.mediatype) && (
-                                    <Input type="file" className="h-7 text-xs flex-1" accept={v.mediatype === 'image' ? 'image/*' : v.mediatype === 'video' ? 'video/*' : v.mediatype === 'audio' ? 'audio/*' : undefined} onChange={e => { const f = e.target.files?.[0] || null; updateVariation(idx, vIdx, 'mediaFile', f) }} />
-                                  )}
-                                </div>
-                                {['image','video'].includes(v.mediatype) && (
-                                  <Input placeholder="Legenda..." value={v.caption} onChange={e => updateVariation(idx, vIdx, 'caption', e.target.value)} className="h-7 text-xs" />
-                                )}
-                                {v.mediatype === 'contact' && (
-                                  <div className="grid grid-cols-2 gap-2">
-                                    <Input placeholder="Nome" value={v.contactName} onChange={e => updateVariation(idx, vIdx, 'contactName', e.target.value)} className="h-7 text-xs" />
-                                    <Input placeholder="Telefone" value={v.contactPhone} onChange={e => updateVariation(idx, vIdx, 'contactPhone', e.target.value)} className="h-7 text-xs" />
-                                  </div>
-                                )}
-                                {v.mediatype === 'location' && (
-                                  <div className="grid grid-cols-2 gap-2">
-                                    <Input placeholder="Nome do local" value={v.locationName} onChange={e => updateVariation(idx, vIdx, 'locationName', e.target.value)} className="h-7 text-xs" />
-                                    <Input placeholder="Lat, Lng" value={v.locationLat && v.locationLng ? `${v.locationLat}, ${v.locationLng}` : ''} onChange={e => { const [lat, lng] = e.target.value.split(',').map(s => s.trim()); updateVariation(idx, vIdx, 'locationLat', lat || ''); updateVariation(idx, vIdx, 'locationLng', lng || '') }} className="h-7 text-xs" />
-                                  </div>
-                                )}
-                                {v.mediatype === 'link' && (
-                                  <div className="space-y-1">
-                                    <Input placeholder="https://..." value={v.linkUrl} onChange={e => updateVariation(idx, vIdx, 'linkUrl', e.target.value)} className="h-7 text-xs" />
-                                    <div className="flex items-center gap-2">
-                                      <Switch checked={v.linkPreview} onCheckedChange={val => updateVariation(idx, vIdx, 'linkPreview', val)} />
-                                      <Label className="text-xs">Preview</Label>
-                                    </div>
-                                  </div>
-                                )}
-                                {v.mediaFile && (
-                                  <div className="flex items-center gap-2 p-1.5 bg-muted/50 rounded-lg text-xs">
-                                    {v.mediatype === 'image' ? <ImageIcon className="size-3 text-emerald-500" /> : v.mediatype === 'video' ? <Film className="size-3 text-sky-500" /> : v.mediatype === 'audio' ? <Music className="size-3 text-amber-500" /> : <File className="size-3 text-zinc-500" />}
-                                    <span className="truncate">{v.mediaFile.name}</span>
-                                    <Button variant="ghost" size="sm" className="h-4 w-4 p-0 ml-auto" onClick={() => updateVariation(idx, vIdx, 'mediaFile', null)}><X className="size-2.5" /></Button>
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </details>
                     </div>
-                  ))}
+                  </div>
                 </div>
               </div>
             </div>
-            <DialogFooter className="px-6 py-4 border-t shrink-0">
+            <DialogFooter className="px-6 py-3 border-t shrink-0">
               <DialogClose asChild><Button variant="outline">Cancelar</Button></DialogClose>
               <Button onClick={createCampaign} disabled={!canCreate} className="bg-emerald-600 hover:bg-emerald-700">Criar Campanha</Button>
             </DialogFooter>
