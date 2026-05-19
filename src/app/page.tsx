@@ -1922,11 +1922,10 @@ function ContatosTab() {
               </CardContent>
             </Card>
           ) : (
-            <Card className="shadow-lg border-0 hover:shadow-xl transition-all duration-200">
+            <Card className="shadow-lg border-0">
               <CardContent className="p-0">
-                <ScrollArea className="max-h-[500px]">
                   <table className="w-full text-sm">
-                    <thead className="bg-muted/50 sticky top-0">
+                    <thead className="bg-muted/50">
                       <tr>
                         <th className="text-left p-3 font-medium">Nome</th>
                         <th className="text-left p-3 font-medium">Telefone</th>
@@ -1993,7 +1992,6 @@ function ContatosTab() {
                       })}
                     </tbody>
                   </table>
-                </ScrollArea>
               </CardContent>
             </Card>
           )}
