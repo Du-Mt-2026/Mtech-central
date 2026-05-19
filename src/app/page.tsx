@@ -1,5 +1,5 @@
 'use client'
-
+// v2025.05.19-horizontal-layout
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
