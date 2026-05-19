@@ -14,7 +14,7 @@ import {
   Sparkles, Heart, Star, AlertTriangle, Info, ChevronDown,
   Pencil, LayoutList, Database, WifiOff, ArrowDownToLine, Save, XCircle,
   Inbox, LogOut, RotateCcw, Film, Music, File, Webhook, ImageIcon, Key, Paperclip, MapPin, Link2,
-  Baby, CheckCircle2
+  Baby, CheckCircle2, Video, MoreVertical, Mic, User
 } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardAction } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -231,10 +231,19 @@ const NAV_ITEMS = [
 // Variables from contact spreadsheet (planilha)
 const CONTACT_VARIABLES = [
   { tag: '{{nome}}', label: 'Nome', icon: '👤' },
+  { tag: '{{saudacao}}', label: 'Saudação', icon: '👋' },
   { tag: '{{telefone}}', label: 'Telefone', icon: '📱' },
   { tag: '{{empresa}}', label: 'Empresa', icon: '🏢' },
   { tag: '{{vendedor}}', label: 'Vendedor', icon: '🧑‍💼' },
 ]
+
+// Smart greeting: returns "Bom dia", "Boa tarde" or "Boa noite" based on current hour
+function getSmartGreeting(): string {
+  const hour = new Date().getHours()
+  if (hour < 12) return 'Bom dia'
+  if (hour < 18) return 'Boa tarde'
+  return 'Boa noite'
+}
 
 // ===== Status Helpers =====
 function statusColor(status: string) {
@@ -2234,10 +2243,14 @@ function generatePreviewText(text: string, messageKeys: Array<{ id: string; name
     } catch { /* ignore */ }
   })
 
+  // Replace {{saudacao}} with smart greeting based on current hour
+  preview = preview.replace(/\{\{saudacao\}\}/gi, getSmartGreeting())
+
   // Replace contact variables dynamically
   // Sample data for preview
   const sampleData: Record<string, string> = {
     nome: 'João',
+    saudacao: getSmartGreeting(),
     telefone: '11999990001',
     empresa: 'Tech Corp',
     vendedor: 'Renato',
@@ -2560,31 +2573,19 @@ function MessageBuilder({ value, onChange, messageKeys, templates, contactVariab
         className="text-sm font-mono"
       />
 
-      {/* WhatsApp Preview */}
+      {/* Char/line count only - preview is now in the right panel */}
       {value.trim() && (
-        <div className="border rounded-xl overflow-hidden shadow-sm">
-          <div className="bg-[#0b141a] px-4 py-3">
-            <div className="flex items-center gap-1.5 mb-2.5">
-              <Smartphone className="size-3.5 text-emerald-400" />
-              <span className="text-[11px] text-emerald-400 font-medium">WhatsApp Preview</span>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-5 w-5 p-0 ml-1 text-white/40 hover:text-white/80 hover:bg-transparent"
-                onClick={() => setPreviewSeed(s => s + 1)}
-                title="Alternar variação"
-              >
-                <RefreshCw className="size-3" />
-              </Button>
-              <span className="text-[11px] text-white/30 ml-auto">{charCount} chars · {lineCount} linha(s)</span>
-            </div>
-            <div className="flex justify-end">
-              <div className="max-w-[80%] bg-[#005c4b] rounded-lg rounded-tr-none px-3.5 py-2.5">
-                <p className="text-[13px] text-white/90 whitespace-pre-wrap break-words leading-[1.5]">{previewText}</p>
-                <p className="text-[10px] text-white/40 text-right mt-1">{new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })} ✓✓</p>
-              </div>
-            </div>
-          </div>
+        <div className="flex items-center justify-end gap-2 text-[10px] text-muted-foreground">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-5 w-5 p-0 text-muted-foreground hover:text-foreground"
+            onClick={() => setPreviewSeed(s => s + 1)}
+            title="Alternar variação no preview"
+          >
+            <RefreshCw className="size-3" />
+          </Button>
+          <span>{charCount} chars · {lineCount} linha(s)</span>
         </div>
       )}
     </div>
@@ -3118,7 +3119,7 @@ function CampanhasTab() {
                           </div>
                         )}
 
-                        <MessageBuilder value={step.content} onChange={v => updateStep(idx, 'content', v)} messageKeys={messageKeys} templates={templates} contactVariables={contactVariables} rows={10} />
+                        <MessageBuilder value={step.content} onChange={v => updateStep(idx, 'content', v)} messageKeys={messageKeys} templates={templates} contactVariables={contactVariables} rows={14} />
 
                         {/* Attach media */}
                         <div className="space-y-2">
@@ -3299,26 +3300,41 @@ function CampanhasTab() {
                   </div>
                 </div>
 
-                {/* WhatsApp Preview Panel */}
-                <div className="w-[320px] shrink-0 flex flex-col bg-muted/10 overflow-y-auto">
-                  <div className="px-3 py-2 border-b bg-muted/20">
+                {/* WhatsApp Preview Panel - 6.7" phone simulation */}
+                <div className="w-[380px] shrink-0 flex flex-col bg-muted/10 overflow-hidden">
+                  <div className="px-4 py-2.5 border-b bg-muted/20 flex items-center justify-between">
                     <p className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5"><Eye className="size-3" /> Pré-visualização</p>
+                    <span className="text-[10px] text-muted-foreground">6.7"</span>
                   </div>
-                  <div className="flex-1 p-3 flex flex-col items-center justify-start">
-                    {/* WhatsApp-style chat preview */}
-                    <div className="w-full max-w-[280px]">
-                      {/* Chat header */}
-                      <div className="flex items-center gap-2 px-3 py-2 bg-emerald-700 rounded-t-lg text-white">
-                        <div className="size-8 rounded-full bg-emerald-500/40 flex items-center justify-center text-xs font-bold">C</div>
-                        <div>
-                          <p className="text-xs font-medium">Cliente</p>
-                          <p className="text-[10px] text-emerald-100">online</p>
+                  <div className="flex-1 flex flex-col items-center justify-start p-3 overflow-y-auto">
+                    {/* Phone frame - 6.7" aspect ratio (~19.5:9) */}
+                    <div className="w-full max-w-[340px] rounded-2xl border-4 border-zinc-800 dark:border-zinc-600 overflow-hidden shadow-2xl bg-[#0b141a]">
+                      {/* WhatsApp status bar */}
+                      <div className="flex items-center justify-between px-3 py-1 bg-[#1f2c34] text-white/60 text-[9px]">
+                        <span>{new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</span>
+                        <div className="flex items-center gap-1">
+                          <span>5G</span>
+                          <span>🔋</span>
                         </div>
                       </div>
-                      {/* Chat background */}
-                      <div className="bg-[#e5ddd5] dark:bg-[#1a2730] p-3 rounded-b-lg min-h-[200px] space-y-2">
+                      {/* Chat header */}
+                      <div className="flex items-center gap-2.5 px-3 py-2 bg-[#1f2c34]">
+                        <div className="size-9 rounded-full bg-emerald-600/60 flex items-center justify-center text-white text-xs font-bold">C</div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-[13px] font-medium text-white">Cliente</p>
+                          <p className="text-[10px] text-emerald-200/60">online</p>
+                        </div>
+                        <div className="flex items-center gap-3 text-white/50">
+                          <Video className="size-4" />
+                          <Phone className="size-4" />
+                          <MoreVertical className="size-4" />
+                        </div>
+                      </div>
+                      {/* Chat body - 6.7" proportional height */}
+                      <div className="bg-[#0b141a] p-3 space-y-2" style={{ backgroundImage: 'url("data:image/svg+xml,%3Csvg width=\'60\' height=\'60\' viewBox=\'0 0 60 60\' xmlns=\'http://www.w3.org/2000/svg\'%3E%3Cg fill=\'none\' fill-rule=\'evenodd\'%3E%3Cg fill=\'%23ffffff\' fill-opacity=\'0.02\'%3E%3Cpath d=\'M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z\'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")' }}>
                         {newCampaign.steps.map((step, idx) => {
                           const previewContent = step.content
+                            .replace(/\{\{saudacao\}\}/gi, getSmartGreeting())
                             .replace(/\{\{nome\}\}/gi, 'João')
                             .replace(/\{\{telefone\}\}/gi, '48999999999')
                             .replace(/\{\{empresa\}\}/gi, 'M-Tech')
@@ -3328,29 +3344,121 @@ function CampanhasTab() {
                               return options[0] || 'variação'
                             })
                             .replace(/\{\{(\w+)\}\}/g, (_: string, key: string) => `[${key}]`)
-                          if (!step.content) return null
+                            .replace(/\*([^*]+)\*/g, '$1')
+                          if (!step.content && !step.mediaFile && !step.mediatype) return null
                           return (
                             <div key={idx} className="flex justify-end">
-                              <div className="bg-[#dcf8c6] dark:bg-[#005c4b] rounded-lg px-2.5 py-1.5 max-w-[250px] shadow-sm">
+                              <div className="bg-[#005c4b] rounded-lg rounded-tr-none max-w-[280px] shadow-sm overflow-hidden">
                                 {idx > 0 && step.delayMinutes > 0 && (
-                                  <div className="text-[9px] text-muted-foreground mb-0.5 flex items-center gap-0.5">
+                                  <div className="text-[9px] text-white/40 px-2.5 pt-2 flex items-center gap-0.5">
                                     <Clock className="size-2" /> +{step.delayMinutes}min
                                   </div>
                                 )}
-                                <p className="text-[12px] text-gray-800 dark:text-gray-100 whitespace-pre-wrap break-words">{previewContent}</p>
-                                <div className="flex items-center justify-end gap-0.5 mt-0.5">
-                                  <span className="text-[9px] text-gray-500 dark:text-gray-400">{new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</span>
-                                  <svg className="size-3 text-blue-500" viewBox="0 0 16 16" fill="currentColor"><path d="M12.354 4.354a.5.5 0 00-.708-.708L5.5 9.793 3.354 7.646a.5.5 0 10-.708.708l2.5 2.5a.5.5 0 00.708 0l6.5-6.5z"/><path d="M15 8A7 7 0 111 8a7 7 0 0114 0zm-1 0A6 6 0 102 8a6 6 0 0012 0z"/></svg>
+                                {/* Media attachment preview */}
+                                {step.mediatype === 'image' && (step.mediaFile ? (
+                                  <div className="relative">
+                                    <img src={URL.createObjectURL(step.mediaFile)} alt="Preview" className="w-full max-h-[200px] object-cover" />
+                                    {step.caption && <p className="text-[12px] text-white/90 px-2.5 pt-1.5 whitespace-pre-wrap break-words">{step.caption.replace(/\{\{saudacao\}\}/gi, getSmartGreeting()).replace(/\{\{nome\}\}/gi, 'João').replace(/\{\{telefone\}\}/gi, '48999999999').replace(/\{\{empresa\}\}/gi, 'M-Tech').replace(/\{\{vendedor\}\}/gi, 'Artur').replace(/\*([^*]+)\*/g, '$1')}</p>}
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center justify-center bg-[#1a3a2a] h-[140px] w-full">
+                                    <div className="text-center">
+                                      <ImageIcon className="size-8 text-white/30 mx-auto mb-1" />
+                                      <p className="text-[10px] text-white/40">Imagem</p>
+                                    </div>
+                                  </div>
+                                ))}
+                                {step.mediatype === 'video' && (
+                                  <div className="flex items-center justify-center bg-[#1a3a2a] h-[140px] w-full">
+                                    <div className="text-center">
+                                      <Film className="size-8 text-white/30 mx-auto mb-1" />
+                                      <p className="text-[10px] text-white/40">Vídeo</p>
+                                      <div className="size-10 rounded-full bg-white/20 flex items-center justify-center mx-auto mt-1">
+                                        <div className="size-0 border-t-[6px] border-b-[6px] border-l-[10px] border-transparent border-l-white/70 ml-1" />
+                                      </div>
+                                    </div>
+                                  </div>
+                                )}
+                                {step.mediatype === 'audio' && (
+                                  <div className="flex items-center gap-2 px-3 py-3">
+                                    <div className="size-8 rounded-full bg-white/10 flex items-center justify-center">
+                                      <Play className="size-4 text-white/70 ml-0.5" />
+                                    </div>
+                                    <div className="flex-1 flex items-center gap-0.5">
+                                      {Array.from({ length: 30 }).map((_, i) => (
+                                        <div key={i} className="w-[2px] bg-white/40 rounded-full" style={{ height: `${Math.random() * 16 + 4}px` }} />
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                                {step.mediatype === 'document' && (
+                                  <div className="flex items-center gap-2.5 px-3 py-3 bg-[#1a3a2a]">
+                                    <div className="size-10 rounded bg-blue-500/20 flex items-center justify-center">
+                                      <File className="size-5 text-blue-400" />
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                      <p className="text-[11px] text-white/80 truncate">{step.mediaFile?.name || 'Documento.pdf'}</p>
+                                      <p className="text-[9px] text-white/40">{step.mediaFile ? `${(step.mediaFile.size / 1024).toFixed(0)} KB` : 'PDF'}</p>
+                                    </div>
+                                  </div>
+                                )}
+                                {step.mediatype === 'contact' && (
+                                  <div className="flex items-center gap-2.5 px-3 py-3 bg-[#1a3a2a]">
+                                    <div className="size-10 rounded-full bg-emerald-500/20 flex items-center justify-center">
+                                      <User className="size-5 text-emerald-400" />
+                                    </div>
+                                    <div>
+                                      <p className="text-[11px] text-white/80">{step.contactName || 'Nome do contato'}</p>
+                                      <p className="text-[9px] text-white/40">{step.contactPhone || 'Telefone'}</p>
+                                    </div>
+                                  </div>
+                                )}
+                                {step.mediatype === 'location' && (
+                                  <div className="bg-[#1a3a2a] p-2">
+                                    <div className="h-[100px] rounded bg-emerald-900/30 flex items-center justify-center">
+                                      <MapPin className="size-6 text-emerald-400/60" />
+                                    </div>
+                                    {step.locationName && <p className="text-[11px] text-white/70 mt-1.5 px-1">{step.locationName}</p>}
+                                  </div>
+                                )}
+                                {step.mediatype === 'link' && step.linkPreview && (
+                                  <div className="bg-[#1a3a2a] overflow-hidden">
+                                    <div className="h-[80px] bg-gradient-to-br from-sky-900/40 to-blue-900/40 flex items-center justify-center">
+                                      <Globe className="size-6 text-sky-400/60" />
+                                    </div>
+                                    <div className="px-2.5 py-1.5">
+                                      <p className="text-[9px] text-white/40 truncate">{step.linkUrl || 'https://...'}</p>
+                                      <p className="text-[10px] text-white/60">Preview do link</p>
+                                    </div>
+                                  </div>
+                                )}
+                                {/* Text content */}
+                                {previewContent && (
+                                  <p className="text-[13px] text-white/90 whitespace-pre-wrap break-words leading-[1.5] px-2.5 py-1">{previewContent}</p>
+                                )}
+                                {/* Timestamp */}
+                                <div className="flex items-center justify-end gap-0.5 px-2.5 pb-1.5">
+                                  <span className="text-[9px] text-white/40">{new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</span>
+                                  <svg className="size-3.5 text-blue-400" viewBox="0 0 16 16" fill="currentColor"><path d="M12.354 4.354a.5.5 0 00-.708-.708L5.5 9.793 3.354 7.646a.5.5 0 10-.708.708l2.5 2.5a.5.5 0 00.708 0l6.5-6.5z"/><path d="M15 8A7 7 0 111 8a7 7 0 0114 0zm-1 0A6 6 0 102 8a6 6 0 0012 0z"/></svg>
                                 </div>
                               </div>
                             </div>
                           )
                         })}
-                        {newCampaign.steps.every(s => !s.content) && (
-                          <div className="flex items-center justify-center h-[180px]">
-                            <p className="text-xs text-gray-500 dark:text-gray-400 text-center">Comece a digitar sua mensagem<br/>para ver a pré-visualização</p>
+                        {newCampaign.steps.every(s => !s.content && !s.mediaFile && !s.mediatype) && (
+                          <div className="flex items-center justify-center h-[320px]">
+                            <p className="text-xs text-white/30 text-center">Comece a digitar sua mensagem<br/>para ver a pré-visualização</p>
                           </div>
                         )}
+                      </div>
+                      {/* Input bar mockup */}
+                      <div className="flex items-center gap-2 px-3 py-2 bg-[#1f2c34]">
+                        <div className="flex-1 flex items-center bg-[#2a3942] rounded-full px-3 py-1.5">
+                          <span className="text-[11px] text-white/30">Mensagem</span>
+                        </div>
+                        <div className="size-8 rounded-full bg-emerald-600 flex items-center justify-center">
+                          <Mic className="size-4 text-white" />
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -3854,6 +3962,7 @@ function TemplatesTab() {
   }
 
   const TEMPLATE_VARS = ['{{nome}}', '{{saudacao}}', '{{telefone}}', '{{empresa}}', '{{vendedor}}']
+  // {{saudacao}} is a smart variable: automatically becomes "Bom dia", "Boa tarde" or "Boa noite" based on the time the message is sent
 
   const openEditTemplate = (t: MessageTemplate) => {
     setEditTemplate(t)
