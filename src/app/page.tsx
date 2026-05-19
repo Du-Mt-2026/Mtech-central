@@ -3130,7 +3130,7 @@ function CampanhasTab() {
                   <Label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1"><Smartphone className="size-3" /> Chips para envio</Label>
                   <div className="space-y-1 max-h-[200px] overflow-y-auto">
                     {availableChips.map(chip => (
-                      <label key={chip.id} className={`flex items-center gap-2 p-1.5 rounded-md border cursor-pointer transition-all text-sm ${newCampaign.chipIds.includes(chip.id) ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20' : 'hover:bg-muted/50'}`}>
+                      <div key={chip.id} onClick={() => toggleChip(chip.id)} className={`flex items-center gap-2 p-1.5 rounded-md border cursor-pointer transition-all text-sm ${newCampaign.chipIds.includes(chip.id) ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20' : 'hover:bg-muted/50'}`}>
                         <div className={`size-4 rounded border-2 flex items-center justify-center shrink-0 ${newCampaign.chipIds.includes(chip.id) ? 'bg-emerald-500 border-emerald-500' : 'border-muted-foreground'}`}>
                           {newCampaign.chipIds.includes(chip.id) && <Check className="size-3 text-white" />}
                         </div>
@@ -3138,7 +3138,7 @@ function CampanhasTab() {
                           <p className="text-xs font-medium truncate">{chip.name}</p>
                           <p className="text-[10px] text-muted-foreground">{chip.phoneNumber}</p>
                         </div>
-                      </label>
+                      </div>
                     ))}
                   </div>
                 </div>
@@ -3772,8 +3772,7 @@ function CampanhasTab() {
                 <Label>Chips para envio</Label>
                 <div className="grid grid-cols-2 gap-2">
                   {availableChips.map(chip => (
-                    <label key={chip.id} className={`flex items-center gap-2 p-2.5 rounded-lg border cursor-pointer transition-all ${editForm.chipIds.includes(chip.id) ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20' : 'hover:bg-muted/50'}`}>
-                      <input type="checkbox" checked={editForm.chipIds.includes(chip.id)} onChange={() => editToggleChip(chip.id)} className="sr-only" />
+                    <div key={chip.id} onClick={() => editToggleChip(chip.id)} className={`flex items-center gap-2 p-2.5 rounded-lg border cursor-pointer transition-all ${editForm.chipIds.includes(chip.id) ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20' : 'hover:bg-muted/50'}`}>
                       <div className={`size-4 rounded border-2 flex items-center justify-center ${editForm.chipIds.includes(chip.id) ? 'bg-emerald-500 border-emerald-500' : 'border-muted-foreground'}`}>
                         {editForm.chipIds.includes(chip.id) && <Check className="size-3 text-white" />}
                       </div>
@@ -3781,7 +3780,7 @@ function CampanhasTab() {
                         <p className="text-sm font-medium truncate">{chip.name}</p>
                         <p className="text-xs text-muted-foreground">{chip.phoneNumber}</p>
                       </div>
-                    </label>
+                    </div>
                   ))}
                 </div>
               </div>
