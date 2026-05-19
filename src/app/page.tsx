@@ -3431,17 +3431,31 @@ function CampanhasTab() {
                       {/* Chat body - scrollable */}
                       <div className="flex-1 bg-[#0b141a] p-3 space-y-2 overflow-y-auto min-h-0" style={{ backgroundImage: 'url("data:image/svg+xml,%3Csvg width=\'60\' height=\'60\' viewBox=\'0 0 60 60\' xmlns=\'http://www.w3.org/2000/svg\'%3E%3Cg fill=\'none\' fill-rule=\'evenodd\'%3E%3Cg fill=\'%23ffffff\' fill-opacity=\'0.02\'%3E%3Cpath d=\'M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z\'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")' }}>
                         {newCampaign.steps.map((step, idx) => {
-                          const previewContent = step.content
-                            .replace(/\{\{nome\}\}/gi, 'João')
-                            .replace(/\{\{telefone\}\}/gi, '48999999999')
-                            .replace(/\{\{empresa\}\}/gi, 'M-Tech')
-                            .replace(/\{\{vendedora\}\}/gi, 'Ana')
-                            .replace(/\{\{KEY:\s*([^}]+)\}\}/g, (_: string, vars: string) => {
-                              const options = vars.split('|').map((s: string) => s.trim())
-                              return options[0] || 'variação'
-                            })
-                            .replace(/\{\{(\w+)\}\}/g, (_: string, key: string) => `[${key}]`)
-                            .replace(/\*([^*]+)\*/g, '$1')
+                          // Resolve variables using real contact data from the linked list
+                          const resolveVars = (text: string) => {
+                            const replaceData: Record<string, string> = {}
+                            if (previewContact?.customFields) {
+                              try {
+                                const customData = JSON.parse(previewContact.customFields)
+                                for (const [key, value] of Object.entries(customData)) {
+                                  replaceData[key.toLowerCase()] = String(value)
+                                }
+                              } catch { /* ignore */ }
+                            }
+                            if (!replaceData['nome'] && previewContact) replaceData['nome'] = previewContact.name
+                            if (!replaceData['telefone'] && previewContact) replaceData['telefone'] = previewContact.phone
+                            return text
+                              .replace(/\{\{KEY:\s*([^}]+)\}\}/g, (_: string, vars: string) => {
+                                const options = vars.split('|').map((s: string) => s.trim())
+                                return options[0] || 'variação'
+                              })
+                              .replace(/\{\{([a-zA-ZÀ-ÿ_][a-zA-ZÀ-ÿ0-9_]*)\}\}/g, (match: string, varName: string) => {
+                                const key = varName.toLowerCase()
+                                return replaceData[key] || match
+                              })
+                              .replace(/\*([^*]+)\*/g, '$1')
+                          }
+                          const previewContent = resolveVars(step.content)
                           if (!step.content && !step.mediaFile && !step.mediatype) return null
                           return (
                             <div key={idx} className="flex justify-end">
@@ -3455,7 +3469,7 @@ function CampanhasTab() {
                                 {step.mediatype === 'image' && (step.mediaFile ? (
                                   <div className="relative">
                                     <img src={URL.createObjectURL(step.mediaFile)} alt="Preview" className="w-full max-h-[200px] object-cover" />
-                                    {step.caption && <p className="text-[12px] text-white/90 px-2.5 pt-1.5 whitespace-pre-wrap break-words">{step.caption.replace(/\{\{nome\}\}/gi, 'João').replace(/\{\{telefone\}\}/gi, '48999999999').replace(/\{\{empresa\}\}/gi, 'M-Tech').replace(/\{\{vendedora\}\}/gi, 'Ana').replace(/\*([^*]+)\*/g, '$1')}</p>}
+                                    {step.caption && <p className="text-[12px] text-white/90 px-2.5 pt-1.5 whitespace-pre-wrap break-words">{resolveVars(step.caption)}</p>}
                                   </div>
                                 ) : (
                                   <div className="flex items-center justify-center bg-[#1a3a2a] h-[140px] w-full">
