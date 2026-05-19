@@ -64,7 +64,7 @@ export async function POST(
   const { id } = await params
   try {
     const body = await req.json()
-    const { name, phone } = body
+    const { name, phone, customFields } = body
 
     if (!name || !phone) {
       return NextResponse.json({ error: 'Nome e telefone são obrigatórios' }, { status: 400 })
@@ -75,6 +75,7 @@ export async function POST(
         name,
         phone: normalizePhone(phone),
         contactListId: id,
+        customFields: customFields && Object.keys(customFields).length > 0 ? JSON.stringify(customFields) : null,
       },
     })
 

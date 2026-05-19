@@ -1199,28 +1199,7 @@ export function VerificarSection() {
 
             <Separator />
 
-            {/* Textarea */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <Label className="text-sm font-medium">Números de Telefone</Label>
-                <span className="text-xs text-muted-foreground">
-                  {phoneNumbers.length > 0 ? `${phoneNumbers.length} número(s) carregado(s)` : 'Um por linha'}
-                </span>
-              </div>
-              <Textarea
-                placeholder="Cole os números aqui, um por linha...&#10;Ex:&#10;5511999999999&#10;5511888888888&#10;11977777777"
-                value={phoneInput}
-                onChange={e => {
-                  setPhoneInput(e.target.value)
-                  setPhoneNumbers([])
-                  setResults([])
-                }}
-                rows={6}
-                className="font-mono text-sm resize-none"
-              />
-            </div>
-
-            {/* Action Buttons Row */}
+            {/* Action Buttons Row — ABOVE textarea */}
             <div className="flex items-center gap-2 flex-wrap">
               <Button
                 variant="outline"
@@ -1262,9 +1241,7 @@ export function VerificarSection() {
               )}
             </div>
 
-            <Separator />
-
-            {/* Verification Controls */}
+            {/* Verification Controls — ABOVE textarea */}
             <div className="space-y-3">
               {/* Progress */}
               {(isVerifying || progress.current > 0) && (
@@ -1373,6 +1350,29 @@ export function VerificarSection() {
                   Selecione pelo menos um chip conectado para verificar
                 </p>
               )}
+            </div>
+
+            <Separator />
+
+            {/* Textarea — BELOW controls */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label className="text-sm font-medium">Números de Telefone</Label>
+                <span className="text-xs text-muted-foreground">
+                  {phoneNumbers.length > 0 ? `${phoneNumbers.length} número(s) carregado(s)` : 'Um por linha'}
+                </span>
+              </div>
+              <Textarea
+                placeholder="Cole os números aqui, um por linha...&#10;Ex:&#10;5511999999999&#10;5511888888888&#10;11977777777"
+                value={phoneInput}
+                onChange={e => {
+                  setPhoneInput(e.target.value)
+                  setPhoneNumbers([])
+                  setResults([])
+                }}
+                rows={6}
+                className="font-mono text-sm resize-none"
+              />
             </div>
           </CardContent>
         </Card>

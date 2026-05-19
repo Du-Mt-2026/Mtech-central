@@ -13,7 +13,7 @@ import {
   Download, Filter, ArrowRight, QrCode, Globe, Lock, Server,
   Sparkles, Heart, Star, AlertTriangle, Info, ChevronDown,
   Pencil, LayoutList, Database, WifiOff, ArrowDownToLine, Save, XCircle,
-  Inbox, LogOut, RotateCcw, Film, Music, File, Webhook, ImageIcon, Key, Paperclip, MapPin, Link2,
+  Inbox, LogOut, RotateCcw, Film, Music, File, ImageIcon, Key, Paperclip, MapPin, Link2,
   Baby, CheckCircle2, Video, MoreVertical, Mic, User, Smile
 } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardAction } from '@/components/ui/card'
@@ -122,6 +122,7 @@ interface ContactItem {
 interface ContactList {
   id: string
   name: string
+  columns?: string | null  // JSON: {"Empresa":"empresa","Vendedora":"vendedora"}
   createdAt: string
   updatedAt: string
   _count?: { contacts: number; campaigns: number }
@@ -550,7 +551,7 @@ function ChipsTab() {
   const [instancesLoading, setInstancesLoading] = useState(false)
   const [unlinkedInstances, setUnlinkedInstances] = useState<Array<{ name: string; connectionStatus: string; profileName: string | null; profilePicUrl: string | null; number: string | null; disconnectionReasonCode: number | null }>>([])
   const [selectedInstances, setSelectedInstances] = useState<Set<string>>(new Set())
-  const [webhookConfiguring, setWebhookConfiguring] = useState(false)
+
 
   const fetchChips = useCallback(async () => {
     try {
@@ -916,41 +917,6 @@ function ChipsTab() {
     }
   }
 
-  const configureWebhooks = async () => {
-    const chipsWithInstance = chips.filter(c => c.evolutionInstance)
-    if (chipsWithInstance.length === 0) {
-      toast.error('Nenhum chip com instância Evolution API encontrada')
-      return
-    }
-    setWebhookConfiguring(true)
-    let configured = 0
-    let failed = 0
-    for (let i = 0; i < chipsWithInstance.length; i++) {
-      try {
-        const res = await fetch('/api/whatsapp/setup-webhook', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ chipId: chipsWithInstance[i].id }),
-        })
-        if (res.ok) configured++
-        else failed++
-      } catch {
-        failed++
-      }
-      // Update progress toast
-      if (i < chipsWithInstance.length - 1) {
-        toast.loading(`Configurando webhooks ${i + 1}/${chipsWithInstance.length}...`, { id: 'webhook-progress' })
-      }
-    }
-    toast.dismiss('webhook-progress')
-    if (configured > 0) {
-      toast.success(`${configured} webhook(s) configurado(s) com sucesso!${failed > 0 ? ` — ${failed} falha(s)` : ''}`)
-    } else {
-      toast.error('Falha ao configurar webhooks')
-    }
-    setWebhookConfiguring(false)
-  }
-
   const openImportDialog = async () => {
     setImportDialogOpen(true)
     setInstancesLoading(true)
@@ -1027,10 +993,6 @@ function ChipsTab() {
           <Button variant="outline" className="gap-2" onClick={syncEvolutionApi} disabled={syncing}>
             {syncing ? <RefreshCw className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
             {syncing ? 'Sincronizando...' : 'Sincronizar Evolution API'}
-          </Button>
-          <Button variant="outline" className="gap-2" onClick={configureWebhooks} disabled={webhookConfiguring}>
-            {webhookConfiguring ? <RefreshCw className="size-4 animate-spin" /> : <Webhook className="size-4" />}
-            {webhookConfiguring ? 'Configurando...' : 'Configurar Webhooks'}
           </Button>
           <Button variant="outline" className="gap-2" onClick={openImportDialog} disabled={importLoading}>
             <ArrowDownToLine className="size-4" /> Importar Instâncias
@@ -1170,7 +1132,7 @@ function ChipsTab() {
                                 fetchChips()
                               } catch { toast.error('Erro ao atualizar fase') }
                             }}>
-                              <SelectTrigger className="h-6 w-6 p-0 border-0 bg-transparent"><span className="sr-only">Alterar fase</span></SelectTrigger>
+                              <SelectTrigger className="h-7 rounded-md border border-input bg-background px-2 text-xs gap-1 hover:bg-accent"><Pencil className="size-3" /><span className="sr-only">Alterar fase</span></SelectTrigger>
                               <SelectContent>
                                 <SelectItem value="nursery">Berçário</SelectItem>
                                 <SelectItem value="prewarm">Pré-aquecido</SelectItem>
@@ -1199,18 +1161,7 @@ function ChipsTab() {
                       <Button variant="outline" size="sm" className="gap-1.5 text-xs" onClick={() => openProxyDialog(chip)}>
                         <Globe className="size-3.5" /> Conectar Proxy
                       </Button>
-                      {chip.evolutionInstance && (
-                        <Button variant="outline" size="sm" className="gap-1.5 text-xs" onClick={async () => {
-                          try {
-                            const res = await fetch('/api/whatsapp/setup-webhook', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chipId: chip.id }) })
-                            const data = await res.json()
-                            if (!res.ok) throw new Error(data.error || 'Erro ao configurar webhook')
-                            toast.success('Webhook configurado!')
-                          } catch (err: unknown) { toast.error((err as Error).message || 'Erro ao configurar webhook') }
-                        }}>
-                          <Webhook className="size-3.5" /> Webhook
-                        </Button>
-                      )}
+
                       <Button variant="outline" size="sm" className="text-rose-500 hover:text-rose-600 gap-1.5 text-xs" onClick={() => setDeleteConfirm(chip.id)}>
                         <Trash2 className="size-3.5" />
                       </Button>
@@ -1661,7 +1612,7 @@ function ContatosTab() {
   const [addContactDialog, setAddContactDialog] = useState(false)
   const [importDialogOpen, setImportDialogOpen] = useState(false)
   const [newListName, setNewListName] = useState('')
-  const [newContact, setNewContact] = useState({ name: '', phone: '' })
+  const [newContact, setNewContact] = useState({ name: '', phone: '', customFields: {} as Record<string, string> })
   const [searchQuery, setSearchQuery] = useState('')
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
   const [editContactDialog, setEditContactDialog] = useState(false)
@@ -1726,12 +1677,16 @@ function ContatosTab() {
     try {
       const res = await fetch(`/api/contact-lists/${selectedList.id}/contacts`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newContact),
+        body: JSON.stringify({
+          name: newContact.name,
+          phone: newContact.phone,
+          customFields: newContact.customFields,
+        }),
       })
       if (!res.ok) throw new Error()
       toast.success('Contato adicionado!')
       setAddContactDialog(false)
-      setNewContact({ name: '', phone: '' })
+      setNewContact({ name: '', phone: '', customFields: {} })
       fetchContacts(selectedList.id)
     } catch { toast.error('Erro ao adicionar contato') }
   }
@@ -2101,12 +2056,26 @@ function ContatosTab() {
       </Dialog>
 
       {/* Add Contact Dialog */}
-      <Dialog open={addContactDialog} onOpenChange={setAddContactDialog}>
+      <Dialog open={addContactDialog} onOpenChange={(open) => { setAddContactDialog(open); if (!open) setNewContact({ name: '', phone: '', customFields: {} }) }}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Adicionar Contato</DialogTitle><DialogDescription>Adicione um contato manualmente</DialogDescription></DialogHeader>
-          <div className="space-y-4 py-4">
+          <DialogHeader><DialogTitle>Adicionar Contato</DialogTitle><DialogDescription>Adicione um contato manualmente à lista{selectedList ? ` "${selectedList.name}"` : ''}</DialogDescription></DialogHeader>
+          <div className="space-y-4 py-4 max-h-[60vh] overflow-y-auto">
             <div className="space-y-2"><Label>Nome</Label><Input placeholder="Ex: João Silva" value={newContact.name} onChange={e => setNewContact(p => ({ ...p, name: e.target.value }))} /></div>
             <div className="space-y-2"><Label>Telefone</Label><Input placeholder="Ex: 11999990001" value={newContact.phone} onChange={e => setNewContact(p => ({ ...p, phone: e.target.value }))} /></div>
+            {(() => {
+              let colMapping: Record<string, string> = {}
+              try { colMapping = JSON.parse(selectedList?.columns || '{}') } catch { /* ignore */ }
+              const extraCols = Object.entries(colMapping).filter(([header]) => {
+                const h = header.toLowerCase()
+                return h !== 'nome' && h !== 'name' && h !== 'telefone' && h !== 'phone' && h !== 'tel' && h !== 'whatsapp' && h !== 'celular' && h !== 'numero' && h !== 'número'
+              })
+              return extraCols.map(([headerName, varKey]) => (
+                <div key={varKey} className="space-y-2">
+                  <Label>{headerName}</Label>
+                  <Input placeholder={`Ex: valor para ${headerName}`} value={newContact.customFields[varKey] || ''} onChange={e => setNewContact(p => ({ ...p, customFields: { ...p.customFields, [varKey]: e.target.value } }))} />
+                </div>
+              ))
+            })()}
           </div>
           <DialogFooter>
             <DialogClose asChild><Button variant="outline">Cancelar</Button></DialogClose>
