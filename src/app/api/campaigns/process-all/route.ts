@@ -1,11 +1,13 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { getRunningCampaigns, processNextMessage, startCampaign } from '@/lib/sending-engine'
 
 /**
  * Process messages for running campaigns.
  * Also checks for scheduled campaigns whose time has come and auto-starts them.
- * Called by Vercel Cron every minute.
+ *
+ * TRIGGERED BY: cron-job.org (external free cron service)
+ * SECURITY: Requires CRON_SECRET in header or query param to prevent unauthorized access.
  *
  * KEY IMPROVEMENT: Instead of processing just 1 message per campaign per cron tick,
  * this now uses a time-based approach — it processes messages in a loop
@@ -13,7 +15,32 @@ import { getRunningCampaigns, processNextMessage, startCampaign } from '@/lib/se
  * This means more messages get processed per cron invocation while still
  * respecting anti-ban intervals.
  */
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
+  // Security: Verify CRON_SECRET to prevent unauthorized access
+  const cronSecret = process.env.CRON_SECRET
+  if (cronSecret) {
+    const headerSecret = request.headers.get('x-cron-secret') || request.headers.get('authorization')?.replace('Bearer ', '')
+    const querySecret = new URL(request.url).searchParams.get('cron_secret')
+    const bodySecret: string | undefined = undefined
+
+    // Try to read from body without consuming it
+    let bodyCronSecret: string | undefined
+    try {
+      const clonedRequest = request.clone()
+      const body = await clonedRequest.json()
+      bodyCronSecret = body.cron_secret
+    } catch { /* no body or invalid JSON */ }
+
+    const providedSecret = headerSecret || querySecret || bodyCronSecret
+
+    if (providedSecret !== cronSecret) {
+      return NextResponse.json(
+        { error: 'Unauthorized — invalid or missing cron secret' },
+        { status: 401 }
+      )
+    }
+  }
+
   const FUNCTION_TIMEOUT_MS = 50_000 // Vercel timeout is 60s, leave 10s margin
   const startTime = Date.now()
 
@@ -138,7 +165,7 @@ export async function POST(request: Request) {
   }
 }
 
-// Also support GET for Vercel Cron
-export async function GET(request: Request) {
+// Also support GET for cron-job.org (simpler to configure with URL params)
+export async function GET(request: NextRequest) {
   return POST(request)
 }

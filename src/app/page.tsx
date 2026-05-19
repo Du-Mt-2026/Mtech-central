@@ -3021,7 +3021,7 @@ function CampanhasTab() {
   const processAllCampaigns = async () => {
     setProcessing(true)
     try {
-      const res = await fetch('/api/campaigns/process-all', { method: 'POST' })
+      const res = await fetch('/api/campaigns/process', { method: 'POST' })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Erro ao processar campanhas')
       const processed = data.processed ?? data.startedScheduled ?? 0
@@ -6280,7 +6280,7 @@ export default function OctupusZapApp() {
   useEffect(() => {
     if (!loggedIn) return
     const processCampaigns = () => {
-      fetch('/api/campaigns/process-all', { method: 'POST' }).catch(() => {})
+      fetch('/api/campaigns/process', { method: 'POST' }).catch(() => {})
     }
     // First process after 10 seconds (give time for page to load)
     const timeout = setTimeout(processCampaigns, 10000)

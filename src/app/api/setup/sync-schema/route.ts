@@ -133,6 +133,40 @@ export async function POST(req: NextRequest) {
       results.push(`Erro na migração Chip: ${chipError.message}`)
     }
 
+    // Step 3: Ensure InboxMessage table exists
+    try {
+      const inboxExists = await db.$queryRaw<Array<{ exists: boolean }>>`
+        SELECT EXISTS (
+          SELECT FROM information_schema.tables
+          WHERE table_name = 'InboxMessage'
+        ) as exists
+      `
+
+      if (!inboxExists[0]?.exists) {
+        console.log('[Setup] Creating InboxMessage table...')
+        await db.$executeRawUnsafe(`
+          CREATE TABLE "InboxMessage" (
+            "id" TEXT NOT NULL,
+            "instanceName" TEXT NOT NULL,
+            "remoteJid" TEXT NOT NULL,
+            "fromMe" BOOLEAN NOT NULL DEFAULT false,
+            "messageContent" TEXT NOT NULL,
+            "messageType" TEXT NOT NULL DEFAULT 'text',
+            "pushName" TEXT,
+            "evolutionMsgId" TEXT,
+            "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT "InboxMessage_pkey" PRIMARY KEY ("id"),
+            CONSTRAINT "InboxMessage_evolutionMsgId_key" UNIQUE ("evolutionMsgId")
+          )
+        `)
+        results.push('InboxMessage: tabela criada com sucesso')
+      } else {
+        results.push('InboxMessage: tabela já existe')
+      }
+    } catch (inboxError: any) {
+      results.push(`Erro ao criar InboxMessage: ${inboxError.message}`)
+    }
+
     return NextResponse.json({
       success: true,
       message: 'Migração processada',

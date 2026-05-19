@@ -1,10 +1,4 @@
 {
-  "crons": [
-    {
-      "path": "/api/campaigns/process-all",
-      "schedule": "0 11 * * *"
-    }
-  ],
   "headers": [
     {
       "source": "/(.*)",

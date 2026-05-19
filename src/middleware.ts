@@ -11,8 +11,7 @@ const PUBLIC_API_ROUTES = [
   '/api/auth/',                // Login/logout/session/reset-password/seed-users
   '/api/setup/',               // Schema sync (protected by secret in request body)
   '/api/whatsapp/webhook',     // Evolution API webhook callbacks
-  '/api/campaigns/process-all', // Vercel Cron job (has its own CRON_SECRET check)
-  '/api/campaigns/process',    // Continuous processing endpoint (called by frontend with session cookie — but also needs to work without for testing)
+  '/api/campaigns/process-all', // cron-job.org endpoint (protected by CRON_SECRET in code — NOT session cookie)
 ]
 
 // Role hierarchy: master > admin > operador
