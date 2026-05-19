@@ -223,14 +223,14 @@ const NAV_ITEMS = [
 ]
 
 // ===== Variáveis de Mensagem =====
-const MSG_VARIABLES = [
-  { tag: '{{nome}}', label: 'Nome' },
-  { tag: '{{saudacao}}', label: 'Saudação' },
-  { tag: '{{telefone}}', label: 'Telefone' },
-  { tag: '{{email}}', label: 'E-mail' },
-  { tag: '{{cidade}}', label: 'Cidade' },
-  { tag: '{{empresa}}', label: 'Empresa' },
-  { tag: '{{vendedor}}', label: 'Vendedor' },
+// Variables from contact spreadsheet (planilha)
+const CONTACT_VARIABLES = [
+  { tag: '{{nome}}', label: 'Nome', icon: '👤' },
+  { tag: '{{telefone}}', label: 'Telefone', icon: '📱' },
+  { tag: '{{email}}', label: 'E-mail', icon: '📧' },
+  { tag: '{{cidade}}', label: 'Cidade', icon: '📍' },
+  { tag: '{{empresa}}', label: 'Empresa', icon: '🏢' },
+  { tag: '{{vendedor}}', label: 'Vendedor', icon: '🧑‍💼' },
 ]
 
 // ===== Status Helpers =====
@@ -1959,6 +1959,7 @@ function CampanhasTab() {
   const [detailMessages, setDetailMessages] = useState<MessageItem[]>([])
   const [availableChips, setAvailableChips] = useState<Chip[]>([])
   const [availableLists, setAvailableLists] = useState<ContactList[]>([])
+  const [messageKeys, setMessageKeys] = useState<Array<{ id: string; name: string; label: string; category: string; variations: string }>>([])
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
   const [processing, setProcessing] = useState(false)
   const [editing, setEditing] = useState(false)
@@ -1998,8 +1999,11 @@ function CampanhasTab() {
   const fetchLists = useCallback(async () => {
     try { const res = await fetch('/api/contact-lists'); setAvailableLists(await res.json()) } catch { /* empty */ }
   }, [])
+  const fetchKeys = useCallback(async () => {
+    try { const res = await fetch('/api/keys'); setMessageKeys(await res.json()) } catch { /* empty */ }
+  }, [])
 
-  useEffect(() => { fetchCampaigns(); fetchChips(); fetchLists() }, [fetchCampaigns, fetchChips, fetchLists])
+  useEffect(() => { fetchCampaigns(); fetchChips(); fetchLists(); fetchKeys() }, [fetchCampaigns, fetchChips, fetchLists, fetchKeys])
 
   const createCampaign = async () => {
     try {
@@ -2382,23 +2386,42 @@ function CampanhasTab() {
                         )}
                       </div>
                       <Textarea placeholder="Texto da mensagem..." value={step.content} onChange={e => updateStep(idx, 'content', e.target.value)} rows={2} />
-                      <div className="flex flex-wrap gap-1">
-                        {MSG_VARIABLES.map(v => (
-                          <Button key={v.tag} variant="outline" size="sm" className="h-6 text-[11px] gap-1 px-2 text-emerald-600 border-emerald-200 hover:bg-emerald-50" onClick={() => updateStep(idx, 'content', step.content + v.tag)}>
-                            {v.label}
-                          </Button>
-                        ))}
+                      <div className="space-y-1.5">
+                        <div className="flex flex-wrap gap-1">
+                          <span className="text-[10px] text-muted-foreground font-medium w-full">📋 Contato (planilha)</span>
+                          {CONTACT_VARIABLES.map(v => (
+                            <Button key={v.tag} variant="outline" size="sm" className="h-6 text-[11px] gap-1 px-2 text-emerald-600 border-emerald-200 hover:bg-emerald-50" onClick={() => updateStep(idx, 'content', step.content + v.tag)}>
+                              {v.icon} {v.label}
+                            </Button>
+                          ))}
+                        </div>
+                        {messageKeys.length > 0 && (
+                          <div className="flex flex-wrap gap-1">
+                            <span className="text-[10px] text-muted-foreground font-medium w-full">🔑 Chaves (marcadores editáveis)</span>
+                            {messageKeys.map(k => (
+                              <Button key={k.id} variant="outline" size="sm" className="h-6 text-[11px] gap-1 px-2 text-violet-600 border-violet-200 hover:bg-violet-50" onClick={() => updateStep(idx, 'content', step.content + `{{${k.name}}}`)} title={`${k.label} — ${(() => { try { const v = JSON.parse(k.variations); return v.length + ' variações' } catch { return '' } })()}`}>
+                                <Key className="size-2.5" /> {k.label}
+                              </Button>
+                            ))}
+                          </div>
+                        )}
                       </div>
                       {/* Mini Preview WhatsApp */}
                       {step.content.trim() && (() => {
                         let previewText = step.content
                           .replace(/\{\{nome\}\}/g, 'João')
-                          .replace(/\{\{saudacao\}\}/g, 'Bom dia')
                           .replace(/\{\{telefone\}\}/g, '11999990001')
                           .replace(/\{\{email\}\}/g, 'joao@email.com')
                           .replace(/\{\{cidade\}\}/g, 'São Paulo')
                           .replace(/\{\{empresa\}\}/g, 'Tech Corp')
                           .replace(/\{\{vendedor\}\}/g, 'Renato')
+                        // Replace key tags with their first variation for preview
+                        messageKeys.forEach(k => {
+                          try {
+                            const vars = JSON.parse(k.variations)
+                            if (vars?.length) previewText = previewText.replace(new RegExp(`\\{\\{${k.name}\\}\\}`, 'g'), vars[0])
+                          } catch { /* ignore */ }
+                        })
                         previewText = previewText.replace(/\*([^*]+)\*/g, '$1')
                         const charCount = previewText.length
                         const lineCount = Math.ceil(step.content.replace(/\{\{[^}]+\}\}/g, 'XxX').length / 38)
@@ -2511,12 +2534,25 @@ function CampanhasTab() {
                               )}
                             </div>
                             <Textarea placeholder={`Texto da variação ${vIdx + 1}...`} value={v.content} onChange={e => updateVariation(idx, vIdx, 'content', e.target.value)} rows={2} />
-                            <div className="flex flex-wrap gap-1">
-                              {MSG_VARIABLES.map(vv => (
-                                <Button key={vv.tag} variant="outline" size="sm" className="h-6 text-[11px] gap-1 px-2 text-emerald-600 border-emerald-200 hover:bg-emerald-50" onClick={() => updateVariation(idx, vIdx, 'content', v.content + vv.tag)}>
-                                  {vv.label}
-                                </Button>
-                              ))}
+                            <div className="space-y-1.5">
+                              <div className="flex flex-wrap gap-1">
+                                <span className="text-[10px] text-muted-foreground font-medium w-full">📋 Contato</span>
+                                {CONTACT_VARIABLES.map(cv => (
+                                  <Button key={cv.tag} variant="outline" size="sm" className="h-6 text-[11px] gap-1 px-2 text-emerald-600 border-emerald-200 hover:bg-emerald-50" onClick={() => updateVariation(idx, vIdx, 'content', v.content + cv.tag)}>
+                                    {cv.icon} {cv.label}
+                                  </Button>
+                                ))}
+                              </div>
+                              {messageKeys.length > 0 && (
+                                <div className="flex flex-wrap gap-1">
+                                  <span className="text-[10px] text-muted-foreground font-medium w-full">🔑 Chaves</span>
+                                  {messageKeys.map(k => (
+                                    <Button key={k.id} variant="outline" size="sm" className="h-6 text-[11px] gap-1 px-2 text-violet-600 border-violet-200 hover:bg-violet-50" onClick={() => updateVariation(idx, vIdx, 'content', v.content + `{{${k.name}}}`)}>
+                                      <Key className="size-2.5" /> {k.label}
+                                    </Button>
+                                  ))}
+                                </div>
+                              )}
                             </div>
                             <p className="text-xs text-muted-foreground">Se tiver mídia, o texto será a legenda/descrição</p>
                             {/* Anexar (variation) */}
@@ -2842,23 +2878,42 @@ function CampanhasTab() {
                       )}
                     </div>
                     <Textarea placeholder="Texto da mensagem..." value={step.content} onChange={e => editUpdateStep(idx, 'content', e.target.value)} rows={2} />
-                    <div className="flex flex-wrap gap-1">
-                      {MSG_VARIABLES.map(v => (
-                        <Button key={v.tag} variant="outline" size="sm" className="h-6 text-[11px] gap-1 px-2 text-emerald-600 border-emerald-200 hover:bg-emerald-50" onClick={() => editUpdateStep(idx, 'content', step.content + v.tag)}>
-                          {v.label}
-                        </Button>
-                      ))}
+                    <div className="space-y-1.5">
+                      <div className="flex flex-wrap gap-1">
+                        <span className="text-[10px] text-muted-foreground font-medium w-full">📋 Contato (planilha)</span>
+                        {CONTACT_VARIABLES.map(v => (
+                          <Button key={v.tag} variant="outline" size="sm" className="h-6 text-[11px] gap-1 px-2 text-emerald-600 border-emerald-200 hover:bg-emerald-50" onClick={() => editUpdateStep(idx, 'content', step.content + v.tag)}>
+                            {v.icon} {v.label}
+                          </Button>
+                        ))}
+                      </div>
+                      {messageKeys.length > 0 && (
+                        <div className="flex flex-wrap gap-1">
+                          <span className="text-[10px] text-muted-foreground font-medium w-full">🔑 Chaves (marcadores editáveis)</span>
+                          {messageKeys.map(k => (
+                            <Button key={k.id} variant="outline" size="sm" className="h-6 text-[11px] gap-1 px-2 text-violet-600 border-violet-200 hover:bg-violet-50" onClick={() => editUpdateStep(idx, 'content', step.content + `{{${k.name}}}`)}>
+                              <Key className="size-2.5" /> {k.label}
+                            </Button>
+                          ))}
+                        </div>
+                      )}
                     </div>
                     {/* Mini Preview WhatsApp */}
                     {step.content.trim() && (() => {
                       let previewText = step.content
                         .replace(/\{\{nome\}\}/g, 'João')
-                        .replace(/\{\{saudacao\}\}/g, 'Bom dia')
                         .replace(/\{\{telefone\}\}/g, '11999990001')
                         .replace(/\{\{email\}\}/g, 'joao@email.com')
                         .replace(/\{\{cidade\}\}/g, 'São Paulo')
                         .replace(/\{\{empresa\}\}/g, 'Tech Corp')
                         .replace(/\{\{vendedor\}\}/g, 'Renato')
+                      // Replace key tags with their first variation for preview
+                      messageKeys.forEach(k => {
+                        try {
+                          const vars = JSON.parse(k.variations)
+                          if (vars?.length) previewText = previewText.replace(new RegExp(`\\{\\{${k.name}\\}\\}`, 'g'), vars[0])
+                        } catch { /* ignore */ }
+                      })
                       previewText = previewText.replace(/\*([^*]+)\*/g, '$1')
                       const charCount = previewText.length
                       const lineCount = Math.ceil(step.content.replace(/\{\{[^}]+\}\}/g, 'XxX').length / 38)
@@ -2969,12 +3024,25 @@ function CampanhasTab() {
                             )}
                           </div>
                           <Textarea placeholder={`Texto da variação ${vIdx + 1}...`} value={v.content} onChange={e => editUpdateVariation(idx, vIdx, 'content', e.target.value)} rows={2} />
-                          <div className="flex flex-wrap gap-1">
-                            {MSG_VARIABLES.map(vv => (
-                              <Button key={vv.tag} variant="outline" size="sm" className="h-6 text-[11px] gap-1 px-2 text-emerald-600 border-emerald-200 hover:bg-emerald-50" onClick={() => editUpdateVariation(idx, vIdx, 'content', v.content + vv.tag)}>
-                                {vv.label}
-                              </Button>
-                            ))}
+                          <div className="space-y-1.5">
+                            <div className="flex flex-wrap gap-1">
+                              <span className="text-[10px] text-muted-foreground font-medium w-full">📋 Contato</span>
+                              {CONTACT_VARIABLES.map(cv => (
+                                <Button key={cv.tag} variant="outline" size="sm" className="h-6 text-[11px] gap-1 px-2 text-emerald-600 border-emerald-200 hover:bg-emerald-50" onClick={() => editUpdateVariation(idx, vIdx, 'content', v.content + cv.tag)}>
+                                  {cv.icon} {cv.label}
+                                </Button>
+                              ))}
+                            </div>
+                            {messageKeys.length > 0 && (
+                              <div className="flex flex-wrap gap-1">
+                                <span className="text-[10px] text-muted-foreground font-medium w-full">🔑 Chaves</span>
+                                {messageKeys.map(k => (
+                                  <Button key={k.id} variant="outline" size="sm" className="h-6 text-[11px] gap-1 px-2 text-violet-600 border-violet-200 hover:bg-violet-50" onClick={() => editUpdateVariation(idx, vIdx, 'content', v.content + `{{${k.name}}}`)}>
+                                    <Key className="size-2.5" /> {k.label}
+                                  </Button>
+                                ))}
+                              </div>
+                            )}
                           </div>
                           <div className="space-y-2">
                             <div className="flex gap-2">
@@ -3855,16 +3923,21 @@ function AntiBanTab() {
                     <RotateCcw className="size-2.5" />
                   </Button>
                 </div>
-                <Input
-                  type="time"
-                  step="300"
-                  value={minsToTime(windowStartMins)}
-                  onChange={e => {
-                    const mins = timeToMins(e.target.value)
-                    updateSetting('sendingWindowStart', mins)
-                  }}
-                  className="h-8 text-sm"
-                />
+                <Select
+                  value={String(windowStartMins)}
+                  onValueChange={v => updateSetting('sendingWindowStart', parseInt(v))}
+                >
+                  <SelectTrigger className="h-8 text-sm">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-48">
+                    {Array.from({ length: 289 }, (_, i) => i * 5).map(mins => (
+                      <SelectItem key={mins} value={String(mins)}>
+                        {minsToTime(mins)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
               <div className="space-y-1.5">
                 <div className="flex justify-between items-center">
@@ -3873,16 +3946,21 @@ function AntiBanTab() {
                     <RotateCcw className="size-2.5" />
                   </Button>
                 </div>
-                <Input
-                  type="time"
-                  step="300"
-                  value={minsToTime(windowEndMins)}
-                  onChange={e => {
-                    const mins = timeToMins(e.target.value)
-                    updateSetting('sendingWindowEnd', mins)
-                  }}
-                  className="h-8 text-sm"
-                />
+                <Select
+                  value={String(windowEndMins)}
+                  onValueChange={v => updateSetting('sendingWindowEnd', parseInt(v))}
+                >
+                  <SelectTrigger className="h-8 text-sm">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-48">
+                    {Array.from({ length: 289 }, (_, i) => i * 5).map(mins => (
+                      <SelectItem key={mins} value={String(mins)}>
+                        {minsToTime(mins)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
             </div>
             <div className="p-3 bg-muted/50 rounded-lg">
