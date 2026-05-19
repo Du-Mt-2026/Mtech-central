@@ -2028,15 +2028,18 @@ function generatePreviewText(text: string, messageKeys: Array<{ id: string; name
   return preview
 }
 
-function MessageBuilder({ value, onChange, messageKeys }: {
+function MessageBuilder({ value, onChange, messageKeys, templates }: {
   value: string
   onChange: (v: string) => void
   messageKeys: Array<{ id: string; name: string; label: string; category: string; variations: string }>
+  templates?: MessageTemplate[]
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const [newBlockOpen, setNewBlockOpen] = useState(false)
   const [newBlockVariations, setNewBlockVariations] = useState('')
   const [previewSeed, setPreviewSeed] = useState(0)
+  const [templatePickerOpen, setTemplatePickerOpen] = useState(false)
+  const [templateSearch, setTemplateSearch] = useState('')
 
   // Parse KEY blocks from current text
   const keyBlocks = parseKeyBlocksFromText(value)
@@ -2195,6 +2198,61 @@ function MessageBuilder({ value, onChange, messageKeys }: {
               </Popover>
             )
           })}
+          {/* Usar Template button */}
+          {templates && templates.length > 0 && (
+            <Popover open={templatePickerOpen} onOpenChange={setTemplatePickerOpen}>
+              <PopoverTrigger asChild>
+                <Button variant="outline" size="sm"
+                  className="h-6 text-[11px] gap-1 px-2 text-sky-600 border-sky-200 hover:bg-sky-50 dark:text-sky-400 dark:border-sky-800 dark:hover:bg-sky-900/30 border-dashed">
+                  <FileText className="size-2.5" /> Usar Template
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-80 p-3" side="bottom" align="start">
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold flex items-center gap-1">
+                    <FileText className="size-3 text-sky-500" /> Selecionar Template
+                  </p>
+                  <Input
+                    placeholder="Buscar template..."
+                    value={templateSearch}
+                    onChange={e => setTemplateSearch(e.target.value)}
+                    className="h-7 text-xs"
+                  />
+                  <div className="space-y-1 max-h-48 overflow-y-auto">
+                    {templates
+                      .filter(t => !templateSearch || t.name.toLowerCase().includes(templateSearch.toLowerCase()) || t.content.toLowerCase().includes(templateSearch.toLowerCase()))
+                      .map(t => (
+                        <button
+                          key={t.id}
+                          className="w-full text-left p-2 rounded-md hover:bg-muted/80 transition-colors group"
+                          onClick={() => {
+                            onChange(t.content)
+                            setTemplatePickerOpen(false)
+                            setTemplateSearch('')
+                            toast.success(`Template "${t.name}" carregado!`)
+                          }}
+                        >
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-medium truncate">{t.name}</span>
+                            <span className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[9px] font-medium ${{
+                              'saudação': 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400',
+                              'vendas': 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
+                              'follow-up': 'bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-400',
+                              'pós-venda': 'bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400',
+                              'geral': 'bg-zinc-100 text-zinc-700 dark:bg-zinc-900/30 dark:text-zinc-400',
+                            }[t.category] || 'bg-zinc-100 text-zinc-700 dark:bg-zinc-900/30 dark:text-zinc-400'}`}>{t.category}</span>
+                          </div>
+                          <p className="text-[10px] text-muted-foreground truncate mt-0.5">{t.content}</p>
+                        </button>
+                      ))}
+                    {templates.filter(t => !templateSearch || t.name.toLowerCase().includes(templateSearch.toLowerCase()) || t.content.toLowerCase().includes(templateSearch.toLowerCase())).length === 0 && (
+                      <p className="text-[10px] text-muted-foreground text-center py-2">Nenhum template encontrado</p>
+                    )}
+                  </div>
+                </div>
+              </PopoverContent>
+            </Popover>
+          )}
           {/* + Novo Bloco button */}
           <Popover open={newBlockOpen} onOpenChange={setNewBlockOpen}>
             <PopoverTrigger asChild>
@@ -2294,6 +2352,7 @@ function CampanhasTab() {
   const [availableChips, setAvailableChips] = useState<Chip[]>([])
   const [availableLists, setAvailableLists] = useState<ContactList[]>([])
   const [messageKeys, setMessageKeys] = useState<Array<{ id: string; name: string; label: string; category: string; variations: string }>>([])
+  const [templates, setTemplates] = useState<MessageTemplate[]>([])
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
   const [processing, setProcessing] = useState(false)
   const [editing, setEditing] = useState(false)
@@ -2336,8 +2395,11 @@ function CampanhasTab() {
   const fetchKeys = useCallback(async () => {
     try { const res = await fetch('/api/keys'); setMessageKeys(await res.json()) } catch { /* empty */ }
   }, [])
+  const fetchTemplates = useCallback(async () => {
+    try { const res = await fetch('/api/templates'); setTemplates(await res.json()) } catch { /* empty */ }
+  }, [])
 
-  useEffect(() => { fetchCampaigns(); fetchChips(); fetchLists(); fetchKeys() }, [fetchCampaigns, fetchChips, fetchLists, fetchKeys])
+  useEffect(() => { fetchCampaigns(); fetchChips(); fetchLists(); fetchKeys(); fetchTemplates() }, [fetchCampaigns, fetchChips, fetchLists, fetchKeys, fetchTemplates])
 
   const createCampaign = async () => {
     try {
@@ -2719,7 +2781,7 @@ function CampanhasTab() {
                           </Button>
                         )}
                       </div>
-                      <MessageBuilder value={step.content} onChange={v => updateStep(idx, 'content', v)} messageKeys={messageKeys} />
+                      <MessageBuilder value={step.content} onChange={v => updateStep(idx, 'content', v)} messageKeys={messageKeys} templates={templates} />
                       {idx > 0 && (
                         <div className="mt-2">
                           <Label className="text-xs">Atraso antes desta mensagem (minutos)</Label>
@@ -3135,7 +3197,7 @@ function CampanhasTab() {
                         </Button>
                       )}
                     </div>
-                    <MessageBuilder value={step.content} onChange={v => editUpdateStep(idx, 'content', v)} messageKeys={messageKeys} />
+                    <MessageBuilder value={step.content} onChange={v => editUpdateStep(idx, 'content', v)} messageKeys={messageKeys} templates={templates} />
                     {idx > 0 && (
                       <div className="mt-2">
                         <Label className="text-xs">Atraso antes desta mensagem (minutos)</Label>
