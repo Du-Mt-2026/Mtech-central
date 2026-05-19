@@ -2315,12 +2315,14 @@ function CampanhasTab() {
                 <Plus className="size-4" /> Nova Campanha
               </Button>
             </DialogTrigger>
-          <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+          <DialogContent className="max-w-5xl max-h-[90vh] overflow-hidden flex flex-col">
             <DialogHeader>
               <DialogTitle>Criar Campanha</DialogTitle>
               <DialogDescription>Configure uma nova campanha de envio</DialogDescription>
             </DialogHeader>
-            <div className="space-y-5 py-4">
+            <div className="flex gap-6 overflow-hidden flex-1 min-h-0">
+              {/* LEFT: Form */}
+              <div className="flex-1 overflow-y-auto pr-2 space-y-5 py-2">
               <div className="space-y-2">
                 <Label>Nome da Campanha</Label>
                 <Input placeholder="Ex: Campanha Black Friday" value={newCampaign.name} onChange={e => setNewCampaign(prev => ({ ...prev, name: e.target.value }))} />
@@ -2584,8 +2586,102 @@ function CampanhasTab() {
                   </div>
                 )}
               </div>
-            </div>
-            <DialogFooter>
+              </div>{/* END LEFT: Form */}
+
+              {/* RIGHT: Phone Preview */}
+              <div className="w-[320px] flex-shrink-0 flex flex-col items-center py-2">
+                <Label className="text-xs font-semibold mb-2 flex items-center gap-1"><Smartphone className="size-3.5" /> Preview 6.7"</Label>
+                <div className="w-[280px] bg-zinc-900 rounded-[2rem] p-2 shadow-2xl border border-zinc-700">
+                  <div className="bg-zinc-800 rounded-[1.5rem] overflow-hidden">
+                    {/* WhatsApp header bar */}
+                    <div className="bg-teal-700 px-3 py-2 flex items-center gap-2">
+                      <ArrowLeft className="size-4 text-white" />
+                      <div className="size-8 rounded-full bg-zinc-600" />
+                      <div>
+                        <p className="text-white text-xs font-medium">Contato</p>
+                        <p className="text-teal-100 text-[10px]">online</p>
+                      </div>
+                    </div>
+                    {/* Chat area */}
+                    <div className="bg-[#0b141a] p-2 space-y-1.5 min-h-[320px] max-h-[320px] overflow-y-auto" style={{ backgroundImage: 'url("data:image/svg+xml,%3Csvg width=\'60\' height=\'60\' viewBox=\'0 0 60 60\' xmlns=\'http://www.w3.org/2000/svg\'%3E%3Cg fill=\'none\' fill-rule=\'evenodd\'%3E%3Cg fill=\'%23ffffff\' fill-opacity=\'0.03\'%3E%3Cpath d=\'M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z\'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")' }}>
+                      {newCampaign.steps.map((step, idx) => {
+                        if (!step.content.trim() && step.variations.every(v => !v.content.trim())) return null
+                        const allTexts = [step.content, ...step.variations.map(v => v.content)].filter(t => t.trim())
+                        return (
+                          <div key={idx}>
+                            {allTexts.map((text, tIdx) => {
+                              let previewText = text
+                                .replace(/\{\{nome\}\}/g, 'João')
+                                .replace(/\{\{saudacao\}\}/g, 'Bom dia')
+                                .replace(/\{\{telefone\}\}/g, '11999990001')
+                                .replace(/\{\{email\}\}/g, 'joao@email.com')
+                                .replace(/\{\{cidade\}\}/g, 'São Paulo')
+                                .replace(/\{\{empresa\}\}/g, 'Tech Corp')
+                                .replace(/\{\{vendedor\}\}/g, 'Renato')
+                              previewText = previewText.replace(/\*([^*]+)\*/g, '$1')
+                              const charCount = previewText.length
+                              return (
+                                <div key={tIdx} className="flex justify-end mb-1">
+                                  <div className="max-w-[85%] bg-[#005c4b] rounded-lg rounded-tr-none px-2.5 py-1.5">
+                                    <p className="text-[13px] text-white/90 whitespace-pre-wrap break-words leading-[1.35]">{previewText}</p>
+                                    <div className="flex justify-end items-center gap-1 -mt-0.5">
+                                      <span className="text-[9px] text-white/40">{charCount} chars</span>
+                                    </div>
+                                  </div>
+                                </div>
+                              )
+                            })}
+                            {step.mediatype && step.mediatype !== 'text' && step.mediatype !== 'link' && (
+                              <div className="flex justify-end mb-1">
+                                <div className="max-w-[85%] bg-[#005c4b] rounded-lg rounded-tr-none px-2.5 py-1.5 flex items-center gap-1.5">
+                                  {step.mediatype === 'image' ? <ImageIcon className="size-3.5 text-emerald-300" /> : step.mediatype === 'video' ? <Film className="size-3.5 text-sky-300" /> : step.mediatype === 'audio' ? <Music className="size-3.5 text-amber-300" /> : step.mediatype === 'document' ? <File className="size-3.5 text-violet-300" /> : step.mediatype === 'contact' ? <Users className="size-3.5 text-rose-300" /> : <MapPin className="size-3.5 text-orange-300" />}
+                                  <span className="text-[11px] text-white/50 italic">{step.mediatype === 'image' ? '📷 Imagem' : step.mediatype === 'video' ? '🎬 Vídeo' : step.mediatype === 'audio' ? '🎵 Áudio' : step.mediatype === 'document' ? '📄 Documento' : step.mediatype === 'contact' ? '👤 Contato' : '📍 Localização'}</span>
+                                </div>
+                              </div>
+                            )}
+                            {step.mediatype === 'link' && step.linkUrl && (
+                              <div className="flex justify-end mb-1">
+                                <div className="max-w-[85%] bg-[#005c4b] rounded-lg rounded-tr-none px-2.5 py-1.5">
+                                  <span className="text-[11px] text-sky-300 underline">{step.linkUrl}</span>
+                                  {step.linkPreview && <p className="text-[9px] text-white/30 mt-0.5">com preview</p>}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })}
+                      {newCampaign.steps.every(s => !s.content.trim() && s.variations.every(v => !v.content.trim())) && (
+                        <p className="text-center text-white/20 text-[11px] mt-20">Digite a mensagem para ver o preview</p>
+                      )}
+                    </div>
+                    {/* Input bar */}
+                    <div className="bg-zinc-800 px-2 py-1.5 flex items-center gap-2">
+                      <div className="flex-1 bg-zinc-700 rounded-full px-3 py-1">
+                        <span className="text-zinc-500 text-[11px]">Mensagem</span>
+                      </div>
+                      <div className="size-7 rounded-full bg-teal-600 flex items-center justify-center">
+                        <Send className="size-3.5 text-white" />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                {/* Char info */}
+                <div className="mt-2 text-center">
+                  <p className="text-[10px] text-muted-foreground">~38 chars/linha no WhatsApp</p>
+                  {newCampaign.steps.map((step, idx) => {
+                    const text = step.content || step.variations[0]?.content || ''
+                    if (!text.trim()) return null
+                    const lines = Math.ceil(text.replace(/\{\{[^}]+\}\}/g, 'XxX').length / 38)
+                    return (
+                      <p key={idx} className="text-[10px] text-muted-foreground">
+                        Msg {idx + 1}: ~{lines} linha{lines !== 1 ? 's' : ''}
+                      </p>
+                    )
+                  })}
+                </div>
+              </div>{/* END RIGHT: Phone Preview */}
+            </div>{/* END flex container */}
+            <DialogFooter className="mt-2">
               <DialogClose asChild><Button variant="outline">Cancelar</Button></DialogClose>
               <Button onClick={createCampaign} disabled={!canCreate} className="bg-emerald-600 hover:bg-emerald-700">Criar Campanha</Button>
             </DialogFooter>
@@ -2656,7 +2752,7 @@ function CampanhasTab() {
 
       {/* Detail Dialog */}
       <Dialog open={detailDialogOpen} onOpenChange={(open) => { setDetailDialogOpen(open); if (!open) setEditing(false) }}>
-        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-3">
               {editing ? 'Editar Campanha' : selectedCampaign?.name}
