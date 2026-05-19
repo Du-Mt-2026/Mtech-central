@@ -37,6 +37,7 @@ import {
   AlertDialog, AlertDialogTrigger, AlertDialogContent, AlertDialogHeader,
   AlertDialogFooter, AlertDialogTitle, AlertDialogDescription, AlertDialogAction, AlertDialogCancel,
 } from '@/components/ui/alert-dialog'
+import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert'
 import { toast } from 'sonner'
 import QRCode from 'qrcode'
 import { VerificarSection } from '@/components/verificar-section'
@@ -1152,15 +1153,31 @@ function ChipsTab() {
                       {chip.warmingEnabled && (
                         <div className="flex justify-between items-center">
                           <span className="text-muted-foreground">Aquecimento</span>
-                          <Badge variant="secondary" className="gap-1 text-xs">
-                            {(chip as any).warmingPhase === 'ready' ? (
-                              <><CheckCircle2 className="size-3" /> Pronto</>
-                            ) : (chip as any).warmingPhase === 'prewarm' ? (
-                              <><Flame className="size-3" /> Pré-aquecido</>
-                            ) : (
-                              <><Baby className="size-3" /> Berçário</>
-                            )}
-                          </Badge>
+                          <div className="flex items-center gap-1">
+                            <Badge variant="secondary" className="gap-1 text-xs">
+                              {(chip as any).warmingPhase === 'ready' ? (
+                                <><CheckCircle2 className="size-3" /> Pronto</>
+                              ) : (chip as any).warmingPhase === 'prewarm' ? (
+                                <><Flame className="size-3" /> Pré-aquecido</>
+                              ) : (
+                                <><Baby className="size-3" /> Berçário</>
+                              )}
+                            </Badge>
+                            <Select value={(chip as any).warmingPhase || 'nursery'} onValueChange={async (v) => {
+                              try {
+                                await fetch(`/api/chips/${chip.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ warmingPhase: v }) })
+                                toast.success('Fase de aquecimento atualizada!')
+                                fetchChips()
+                              } catch { toast.error('Erro ao atualizar fase') }
+                            }}>
+                              <SelectTrigger className="h-6 w-6 p-0 border-0 bg-transparent"><span className="sr-only">Alterar fase</span></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="nursery">Berçário</SelectItem>
+                                <SelectItem value="prewarm">Pré-aquecido</SelectItem>
+                                <SelectItem value="ready">Pronto</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
                         </div>
                       )}
                       <div className="flex justify-between items-center">
@@ -1814,7 +1831,7 @@ function ContatosTab() {
           <Button variant="outline" className="gap-2" onClick={() => {
             const a = document.createElement('a')
             a.href = '/templates/modelo_contatos.xlsx'
-            a.download = 'modelo_contatos_octupuszap.xlsx'
+            a.download = 'modelo_contato_octupuszap.xlsx'
             a.click()
             toast.success('Planilha XLSX baixada!')
           }}>
@@ -1829,7 +1846,7 @@ function ContatosTab() {
               window.open('https://docs.google.com/spreadsheets/create', '_blank')
               const a = document.createElement('a')
               a.href = url
-              a.download = 'modelo_contatos_octupuszap.csv'
+              a.download = 'modelo_contato_octupuszap.csv'
               a.click()
               URL.revokeObjectURL(url)
               toast.success('CSV baixado! No Google Sheets: Arquivo → Importar → Enviar', { duration: 8000 })
@@ -1885,6 +1902,41 @@ function ContatosTab() {
             <Button variant="outline" className="gap-1.5" onClick={() => setImportDialogOpen(true)}>
               <Upload className="size-4" /> Importar Planilha
             </Button>
+            <Button variant="outline" className="gap-1.5" onClick={() => {
+              if (!selectedList) return
+              const doExport = async () => {
+                try {
+                  const res = await fetch(`/api/contact-lists/${selectedList.id}/contacts`)
+                  const exportContacts = await res.json()
+                  const list = Array.isArray(exportContacts) ? exportContacts : exportContacts.contacts || []
+                  if (list.length === 0) { toast.error('Nenhum contato para exportar'); return }
+                  const allCustomKeys = new Set<string>()
+                  list.forEach((c: any) => {
+                    if (c.customFields) {
+                      try { Object.keys(JSON.parse(c.customFields)).forEach(k => allCustomKeys.add(k)) } catch {}
+                    }
+                  })
+                  const headers = ['Nome', 'Telefone', ...Array.from(allCustomKeys).sort()]
+                  const rows = list.map((c: any) => {
+                    let cf: Record<string, string> = {}
+                    if (c.customFields) { try { cf = JSON.parse(c.customFields) } catch {} }
+                    return [c.name || '', c.phone || '', ...Array.from(allCustomKeys).sort().map(k => cf[k] || '')]
+                  })
+                  const csvContent = [headers.join(','), ...rows.map(r => r.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))].join('\n')
+                  const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' })
+                  const url = URL.createObjectURL(blob)
+                  const a = document.createElement('a')
+                  a.href = url
+                  a.download = `${selectedList.name}_contatos.csv`
+                  a.click()
+                  URL.revokeObjectURL(url)
+                  toast.success(`${list.length} contatos exportados!`)
+                } catch { toast.error('Erro ao exportar contatos') }
+              }
+              doExport()
+            }}>
+              <Download className="size-4" /> Exportar
+            </Button>
           </div>
 
           {contacts.length === 0 ? (
@@ -1912,6 +1964,7 @@ function ContatosTab() {
                       <tr>
                         <th className="text-left p-3 font-medium">Nome</th>
                         <th className="text-left p-3 font-medium">Telefone</th>
+                        <th className="text-left p-3 font-medium">Incluído em</th>
                         {/* Dynamic custom field columns */}
                         {contacts.some(c => c.customFields) && (() => {
                           const customKeys = new Set<string>()
@@ -1936,7 +1989,10 @@ function ContatosTab() {
                         return (
                           <tr key={c.id} className="border-t hover:bg-muted/30 transition-colors">
                             <td className="p-3 font-medium">{c.name}</td>
-                            <td className="p-3 text-muted-foreground">{c.phone}</td>
+                            <td className="p-3 text-muted-foreground">
+                              {c.phone}
+                              {c.createdAt && <span className="block text-[10px] text-muted-foreground/60">{new Date(c.createdAt).toLocaleString('pt-BR')}</span>}
+                            </td>
                             {/* Dynamic custom field values */}
                             {contacts.some(c2 => c2.customFields) && (() => {
                               const customKeys = new Set<string>()
@@ -2109,7 +2165,7 @@ function ContatosTab() {
                 <Button variant="outline" size="sm" className="flex-1 h-7 text-[11px] gap-1" onClick={() => {
                   const a = document.createElement('a')
                   a.href = '/templates/modelo_contatos.xlsx'
-                  a.download = 'modelo_contatos_octupuszap.xlsx'
+                  a.download = 'modelo_contato_octupuszap.xlsx'
                   a.click()
                   toast.success('Modelo XLSX baixado!')
                 }}>
@@ -2124,7 +2180,7 @@ function ContatosTab() {
                     window.open('https://docs.google.com/spreadsheets/create', '_blank')
                     const a = document.createElement('a')
                     a.href = url
-                    a.download = 'modelo_contatos_octupuszap.csv'
+                    a.download = 'modelo_contato_octupuszap.csv'
                     a.click()
                     URL.revokeObjectURL(url)
                     toast.success('CSV baixado! No Google Sheets: Arquivo → Importar → Enviar', { duration: 8000 })
@@ -2839,10 +2895,19 @@ function CampanhasTab() {
         scheduledAt: newCampaign.scheduledAt ? new Date(newCampaign.scheduledAt).toISOString() : null,
         steps: stepsPayload, antiBanEnabled: newCampaign.antiBanEnabled, warmingMode: newCampaign.warmingMode,
       }
-      const res = await fetch('/api/campaigns', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
-      if (!res.ok) { const data = await res.json(); throw new Error(data.error) }
-      toast.success('Campanha criada com sucesso!')
-      setCreateDialogOpen(false); resetNewCampaign(); fetchCampaigns()
+
+      if (editing && selectedCampaign) {
+        // Edit mode: PATCH the existing campaign
+        const res = await fetch(`/api/campaigns/${selectedCampaign.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+        if (!res.ok) { const data = await res.json(); throw new Error(data.error || 'Erro ao atualizar campanha') }
+        toast.success('Campanha atualizada com sucesso!')
+      } else {
+        // Create mode: POST new campaign
+        const res = await fetch('/api/campaigns', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+        if (!res.ok) { const data = await res.json(); throw new Error(data.error) }
+        toast.success('Campanha criada com sucesso!')
+      }
+      setCreateDialogOpen(false); setEditing(false); resetNewCampaign(); fetchCampaigns()
     } catch (err: unknown) { toast.error((err as Error).message || 'Erro ao criar campanha') }
   }
 
@@ -3031,7 +3096,8 @@ function CampanhasTab() {
     if (steps.length === 0) {
       steps.push({ content: '', delayMinutes: 0, mediaFile: null, mediaUrl: '', mediatype: '', variations: [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '', caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '' }] })
     }
-    setEditForm({
+    // Pre-fill newCampaign and open create dialog instead of editing inside detail dialog
+    setNewCampaign({
       name: campaign.name,
       sendIntervalMin: campaign.sendIntervalMin || 30,
       sendIntervalMax: campaign.sendIntervalMax || 90,
@@ -3042,11 +3108,14 @@ function CampanhasTab() {
       antiBanEnabled: campaign.antiBanEnabled ?? true,
       warmingMode: campaign.warmingMode || 'normal',
     })
-    setEditing(true)
+    setDetailDialogOpen(false)
+    setEditing(true) // keep editing flag so createCampaign knows to PATCH instead of POST
   }
 
   const cancelEditing = () => {
     setEditing(false)
+    setCreateDialogOpen(false)
+    resetNewCampaign()
   }
 
   const saveEdit = async () => {
@@ -3184,7 +3253,7 @@ function CampanhasTab() {
               {processing ? 'Processando...' : 'Processar Campanhas'}
             </Button>
           )}
-          <Dialog open={createDialogOpen} onOpenChange={(o) => { setCreateDialogOpen(o); if (!o) { resetNewCampaign(); setActiveStep(0) } }}>
+          <Dialog open={createDialogOpen} onOpenChange={(o) => { setCreateDialogOpen(o); if (!o) { setEditing(false); resetNewCampaign(); setActiveStep(0) } }}>
             <DialogTrigger asChild>
               <Button className="gap-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 shadow-lg">
                 <Plus className="size-4" /> Nova Campanha
@@ -3192,8 +3261,8 @@ function CampanhasTab() {
             </DialogTrigger>
           <DialogContent fullWidth className="h-[90vh]" showCloseButton>
             <DialogHeader className="px-6 py-4 border-b shrink-0">
-              <DialogTitle>Criar Campanha</DialogTitle>
-              <DialogDescription>Configure uma nova campanha de envio</DialogDescription>
+              <DialogTitle>{editing ? 'Editar Campanha' : 'Criar Campanha'}</DialogTitle>
+              <DialogDescription>{editing ? 'Modifique os dados da campanha' : 'Configure uma nova campanha de envio'}</DialogDescription>
             </DialogHeader>
             <div className="flex min-h-0 flex-1 overflow-hidden">
               {/* Left: Configuration Panel - Compact Sidebar */}
@@ -3728,7 +3797,7 @@ function CampanhasTab() {
                       <TooltipProvider><Tooltip><TooltipTrigger asChild>
                         <Button variant="outline" size="sm" onClick={() => openDetail(c)}><Eye className="size-4" /></Button>
                       </TooltipTrigger><TooltipContent>Detalhes</TooltipContent></Tooltip></TooltipProvider>
-                      {['draft', 'paused', 'scheduled'].includes(c.status) && <Button variant="outline" size="sm" className="gap-1" onClick={() => { setSelectedCampaign(c); startEditing(c); setDetailDialogOpen(true) }}><Pencil className="size-3.5" /> Editar</Button>}
+                      {['draft', 'paused', 'scheduled'].includes(c.status) && <Button variant="outline" size="sm" className="gap-1" onClick={() => { setSelectedCampaign(c); startEditing(c); setCreateDialogOpen(true) }}><Pencil className="size-3.5" /> Editar</Button>}
                       {c.status === 'draft' && <Button size="sm" className="gap-1 bg-emerald-600 hover:bg-emerald-700" onClick={() => startCampaignAction(c.id)}><Play className="size-3.5" /> Iniciar</Button>}
                       {c.status === 'running' && <Button variant="outline" size="sm" className="gap-1" onClick={async () => { try { await fetch(`/api/campaigns/${c.id}/pause`, { method: 'POST' }); toast.success('Campanha pausada!'); fetchCampaigns() } catch { toast.error('Erro ao pausar') } }}><Pause className="size-3.5" /> Pausar</Button>}
                       {c.status === 'paused' && <Button size="sm" className="gap-1 bg-emerald-600 hover:bg-emerald-700" onClick={async () => { try { await fetch(`/api/campaigns/${c.id}/resume`, { method: 'POST' }); toast.success('Campanha retomada!'); fetchCampaigns() } catch { toast.error('Erro ao retomar') } }}><Play className="size-3.5" /> Retomar</Button>}
@@ -3752,13 +3821,13 @@ function CampanhasTab() {
         <DialogContent fullWidth className="max-h-[90vh]">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-3">
-              {editing ? 'Editar Campanha' : selectedCampaign?.name}
-              {!editing && selectedCampaign && ['draft', 'paused', 'scheduled'].includes(selectedCampaign.status) && (
+              {selectedCampaign?.name}
+              {selectedCampaign && ['draft', 'paused', 'scheduled'].includes(selectedCampaign.status) && (
                 <Button variant="outline" size="sm" className="gap-1.5 text-amber-500 border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/20 font-semibold" onClick={() => startEditing(selectedCampaign)}>
                   <Pencil className="size-3.5" /> Editar
                 </Button>
               )}
-              {!editing && selectedCampaign && (
+              {selectedCampaign && (
                 <Button variant="outline" size="sm" className="gap-1.5" onClick={async () => {
                   if (!selectedCampaign) return
                   const updated = await fetch(`/api/campaigns/${selectedCampaign.id}`).then(r => r.json())
@@ -3773,12 +3842,27 @@ function CampanhasTab() {
                 </Button>
               )}
             </DialogTitle>
-            <DialogDescription>{editing ? 'Modifique os dados da campanha' : 'Detalhes da campanha'}</DialogDescription>
+            <DialogDescription>Detalhes da campanha</DialogDescription>
           </DialogHeader>
-          {selectedCampaign && !editing && (
-            <div className="flex gap-4 overflow-hidden">
+          {selectedCampaign && (
+            <div className="flex gap-4 overflow-hidden p-2">
               {/* Left panel - Stats */}
               <div className="w-64 shrink-0 space-y-3">
+                {/* Chip daily limit warning */}
+                {detailMessages.some(m => m.status === 'failed' && m.error && (/limite/i.test(m.error) || /daily_limit/i.test(m.error))) && (
+                  <Alert variant="destructive" className="mb-3">
+                    <AlertCircle className="size-4" />
+                    <AlertTitle>Chip atingiu o limite diário</AlertTitle>
+                    <AlertDescription>Um dos chips atribuídos atingiu o limite de envio do dia. As mensagens pendentes foram reatribuídas a outros chips ou aguardarão até amanhã.</AlertDescription>
+                  </Alert>
+                )}
+                {continuousProcessing && continuousStats.remaining === 0 && continuousStats.processed === 0 && (
+                  <Alert variant="destructive" className="mb-3">
+                    <AlertCircle className="size-4" />
+                    <AlertTitle>Processamento parado</AlertTitle>
+                    <AlertDescription>Nenhuma mensagem está sendo processada. Um chip pode ter atingido o limite diário ou não há chips disponíveis.</AlertDescription>
+                  </Alert>
+                )}
                 <div className="flex flex-wrap gap-2">
                   <StatusBadge status={selectedCampaign.status} />
                   {selectedCampaign.antiBanEnabled && <Badge variant="outline" className="gap-1 text-emerald-600"><Shield className="size-3" /> Anti-Ban</Badge>}
@@ -3857,286 +3941,6 @@ function CampanhasTab() {
                     })}
                   </div>
                 )}
-              </div>
-            </div>
-          )}
-          {selectedCampaign && editing && (
-            <div className="space-y-5 py-4">
-              <div className="space-y-2">
-                <Label>Nome da Campanha</Label>
-                <Input placeholder="Ex: Campanha Black Friday" value={editForm.name} onChange={e => setEditForm(prev => ({ ...prev, name: e.target.value }))} />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Intervalo Mín (seg)</Label>
-                  <Input type="number" min={5} value={editForm.sendIntervalMin} onChange={e => setEditForm(prev => ({ ...prev, sendIntervalMin: parseInt(e.target.value) || 30 }))} />
-                </div>
-                <div className="space-y-2">
-                  <Label>Intervalo Máx (seg)</Label>
-                  <Input type="number" min={10} value={editForm.sendIntervalMax} onChange={e => setEditForm(prev => ({ ...prev, sendIntervalMax: parseInt(e.target.value) || 90 }))} />
-                </div>
-              </div>
-              <div className="space-y-2">
-                <Label>Lista de Contatos</Label>
-                <Select value={editForm.contactListId} onValueChange={v => setEditForm(prev => ({ ...prev, contactListId: v }))}>
-                  <SelectTrigger><SelectValue placeholder="Selecione uma lista de contatos" /></SelectTrigger>
-                  <SelectContent>
-                    {availableLists.map(l => (
-                      <SelectItem key={l.id} value={l.id}>
-                        <div className="flex items-center gap-2"><Users className="size-3.5" />{l.name}<span className="text-xs text-muted-foreground">({l._count?.contacts || 0})</span></div>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label className="flex items-center gap-2"><CalendarDays className="size-4 text-muted-foreground" /> Agendamento (opcional)</Label>
-                <Input type="datetime-local" value={editForm.scheduledAt} onChange={e => setEditForm(prev => ({ ...prev, scheduledAt: e.target.value }))} />
-              </div>
-              <div className="space-y-2">
-                <Label>Chips para envio</Label>
-                <div className="grid grid-cols-2 gap-2">
-                  {availableChips.map(chip => (
-                    <div key={chip.id} onClick={() => editToggleChip(chip.id)} className={`flex items-center gap-2 p-2.5 rounded-lg border cursor-pointer transition-all ${editForm.chipIds.includes(chip.id) ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20' : 'hover:bg-muted/50'}`}>
-                      <div className={`size-4 rounded border-2 flex items-center justify-center ${editForm.chipIds.includes(chip.id) ? 'bg-emerald-500 border-emerald-500' : 'border-muted-foreground'}`}>
-                        {editForm.chipIds.includes(chip.id) && <Check className="size-3 text-white" />}
-                      </div>
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium truncate">{chip.name}</p>
-                        <p className="text-xs text-muted-foreground">{chip.phoneNumber}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-              <div className="space-y-3">
-                {editForm.steps.map((step, idx) => (
-                  <div key={idx} className="relative border rounded-xl p-4 space-y-3 bg-muted/20">
-                    <div className="flex items-center gap-2">
-                      <span className="flex items-center justify-center size-7 rounded-full bg-emerald-600 text-white text-xs font-bold">{idx + 1}</span>
-                      <span className="text-sm font-semibold">Mensagem {idx + 1}</span>
-                      {idx > 0 && (
-                        <div className="flex items-center gap-1 text-xs text-muted-foreground ml-2">
-                          <Clock className="size-3" /> {step.delayMinutes}min após mensagem anterior
-                        </div>
-                      )}
-                      {editForm.steps.length > 1 && (
-                        <Button variant="ghost" size="sm" className="ml-auto text-rose-500 h-6 w-6 p-0" onClick={() => editRemoveStep(idx)}>
-                          <X className="size-3" />
-                        </Button>
-                      )}
-                    </div>
-                    <MessageBuilder value={step.content} onChange={v => editUpdateStep(idx, 'content', v)} messageKeys={messageKeys} templates={templates} contactVariables={contactVariables} previewContactData={previewContact} />
-                    {idx > 0 && (
-                      <div className="mt-2">
-                        <Label className="text-xs">Atraso antes desta mensagem (minutos)</Label>
-                        <Input type="number" min={0} value={step.delayMinutes} onChange={e => editUpdateStep(idx, 'delayMinutes', parseInt(e.target.value) || 0)} className="mt-1 w-40" />
-                      </div>
-                    )}
-                    {/* Anexar */}
-                    <div className="space-y-2">
-                      <Label className="text-xs flex items-center gap-1"><Paperclip className="size-3" /> Anexar</Label>
-                      <div className="flex gap-2">
-                        <Select value={step.mediatype} onValueChange={v => editUpdateStep(idx, 'mediatype', v)}>
-                          <SelectTrigger className="w-32 h-8 text-xs"><SelectValue placeholder="Tipo" /></SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="image">Imagem</SelectItem>
-                            <SelectItem value="video">Vídeo</SelectItem>
-                            <SelectItem value="audio">Áudio</SelectItem>
-                            <SelectItem value="document">Documento</SelectItem>
-                            <SelectItem value="contact">Contato</SelectItem>
-                            <SelectItem value="location">Localização</SelectItem>
-                            <SelectItem value="link">Link</SelectItem>
-                          </SelectContent>
-                        </Select>
-                        {['image','video','audio','document'].includes(step.mediatype) && (
-                          <Input type="file" className="h-8 text-xs flex-1" accept={step.mediatype === 'image' ? 'image/*' : step.mediatype === 'video' ? 'video/*' : step.mediatype === 'audio' ? 'audio/*' : undefined} onChange={e => { const f = e.target.files?.[0] || null; editUpdateStep(idx, 'mediaFile', f) }} />
-                        )}
-                      </div>
-                      {/* Caption for image/video */}
-                      {['image','video'].includes(step.mediatype) && (
-                        <div className="space-y-1">
-                          <Label className="text-xs text-muted-foreground">Legenda</Label>
-                          <Input placeholder="Legenda da imagem/vídeo..." value={step.caption} onChange={e => editUpdateStep(idx, 'caption', e.target.value)} className="h-8 text-xs" />
-                        </div>
-                      )}
-                      {/* Contact fields */}
-                      {step.mediatype === 'contact' && (
-                        <div className="grid grid-cols-2 gap-2">
-                          <Input placeholder="Nome do contato" value={step.contactName} onChange={e => editUpdateStep(idx, 'contactName', e.target.value)} className="h-8 text-xs" />
-                          <Input placeholder="Telefone (5511999999999)" value={step.contactPhone} onChange={e => editUpdateStep(idx, 'contactPhone', e.target.value)} className="h-8 text-xs" />
-                        </div>
-                      )}
-                      {/* Location fields */}
-                      {step.mediatype === 'location' && (
-                        <div className="space-y-2">
-                          <Input placeholder="Nome do local" value={step.locationName} onChange={e => editUpdateStep(idx, 'locationName', e.target.value)} className="h-8 text-xs" />
-                          <div className="grid grid-cols-2 gap-2">
-                            <Input placeholder="Latitude" value={step.locationLat} onChange={e => editUpdateStep(idx, 'locationLat', e.target.value)} className="h-8 text-xs" />
-                            <Input placeholder="Longitude" value={step.locationLng} onChange={e => editUpdateStep(idx, 'locationLng', e.target.value)} className="h-8 text-xs" />
-                          </div>
-                        </div>
-                      )}
-                      {/* Link fields */}
-                      {step.mediatype === 'link' && (
-                        <div className="space-y-2">
-                          <Input placeholder="https://..." value={step.linkUrl} onChange={e => editUpdateStep(idx, 'linkUrl', e.target.value)} className="h-8 text-xs" />
-                          <div className="flex items-center gap-2">
-                            <Switch checked={step.linkPreview} onCheckedChange={v => editUpdateStep(idx, 'linkPreview', v)} />
-                            <Label className="text-xs">Com visualização (preview)</Label>
-                          </div>
-                        </div>
-                      )}
-                      {(step.mediaUrl || step.mediaFile) && (
-                        <div className="flex items-center gap-2 p-2 bg-muted/50 rounded-lg text-xs">
-                          {step.mediatype === 'image' ? <ImageIcon className="size-3.5 text-emerald-500" /> : step.mediatype === 'video' ? <Film className="size-3.5 text-sky-500" /> : step.mediatype === 'audio' ? <Music className="size-3.5 text-amber-500" /> : <File className="size-3.5 text-zinc-500" />}
-                          <span className="truncate">{step.mediaFile ? step.mediaFile.name : step.mediaUrl}</span>
-                          {step.mediaFile && <Button variant="ghost" size="sm" className="h-5 w-5 p-0 ml-auto" onClick={() => editUpdateStep(idx, 'mediaFile', null)}><X className="size-3" /></Button>}
-                        </div>
-                      )}
-                    </div>
-                    {/* Variations for this step */}
-                    <div className="space-y-2 pt-2 border-t">
-                      <div className="flex items-center justify-between">
-                        <Label className="text-xs font-semibold flex items-center gap-1">
-                          <Shuffle className="size-3" /> Variações da Mensagem {idx + 1}
-                        </Label>
-                        <Button variant="ghost" size="sm" className="h-6 text-xs text-emerald-600 gap-1" onClick={() => editAddVariation(idx)}>
-                          <Plus className="size-3" /> Variação
-                        </Button>
-                      </div>
-                      <p className="text-xs text-muted-foreground">Uma variação aleatória será escolhida para cada contato</p>
-                      {step.variations.map((v, vIdx) => (
-                        <div key={vIdx} className="relative p-3 border rounded-lg space-y-2 bg-background/50">
-                          <div className="flex items-center gap-2 mb-1">
-                            <span className="text-xs font-medium text-muted-foreground">Variação {vIdx + 1}</span>
-                            {step.variations.length > 1 && (
-                              <Button variant="ghost" size="sm" className="ml-auto text-rose-500 h-5 w-5 p-0" onClick={() => editRemoveVariation(idx, vIdx)}>
-                                <X className="size-3" />
-                              </Button>
-                            )}
-                          </div>
-                          <Textarea placeholder={`Texto da variação ${vIdx + 1}...`} value={v.content} onChange={e => editUpdateVariation(idx, vIdx, 'content', e.target.value)} rows={2} />
-                          <div className="space-y-1.5">
-                            <div className="flex flex-wrap gap-1">
-                              <span className="text-[10px] text-muted-foreground font-medium w-full">📋 Contato</span>
-                              {CONTACT_VARIABLES.map(cv => (
-                                <Button key={cv.tag} variant="outline" size="sm" className="h-6 text-[11px] gap-1 px-2 text-emerald-600 border-emerald-200 hover:bg-emerald-50 dark:text-emerald-400 dark:border-emerald-800 dark:hover:bg-emerald-900/30" onClick={() => editUpdateVariation(idx, vIdx, 'content', v.content + cv.tag)}>
-                                  {cv.icon} {cv.label}
-                                </Button>
-                              ))}
-                            </div>
-                            <div className="flex flex-wrap gap-1">
-                              <span className="text-[10px] text-muted-foreground font-medium w-full">🔀 Blocos de Variação</span>
-                              {messageKeys.map(k => {
-                                let varCount = 0
-                                try { varCount = JSON.parse(k.variations).length } catch { /* ignore */ }
-                                return (
-                                  <Button key={k.id} variant="outline" size="sm" className="h-6 text-[11px] gap-1 px-2 text-violet-600 border-violet-200 hover:bg-violet-50 dark:text-violet-400 dark:border-violet-800 dark:hover:bg-violet-900/30" onClick={() => {
-                                    try {
-                                      const vars = JSON.parse(k.variations)
-                                      if (vars?.length) {
-                                        editUpdateVariation(idx, vIdx, 'content', v.content + `{{KEY: ${vars.join(' | ')}}}`)
-                                      }
-                                    } catch {
-                                      editUpdateVariation(idx, vIdx, 'content', v.content + `{{${k.name}}}`)
-                                    }
-                                  }} title={`${k.label} — ${varCount} variações`}>
-                                    <Shuffle className="size-2.5" /> {k.label}
-                                  </Button>
-                                )
-                              })}
-                            </div>
-                          </div>
-                          <div className="space-y-2">
-                            <div className="flex gap-2">
-                              <Select value={v.mediatype} onValueChange={mt => editUpdateVariation(idx, vIdx, 'mediatype', mt)}>
-                                <SelectTrigger className="w-28 h-7 text-xs"><SelectValue placeholder="Tipo" /></SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="image">Imagem</SelectItem>
-                                  <SelectItem value="video">Vídeo</SelectItem>
-                                  <SelectItem value="audio">Áudio</SelectItem>
-                                  <SelectItem value="document">Documento</SelectItem>
-                                  <SelectItem value="contact">Contato</SelectItem>
-                                  <SelectItem value="location">Localização</SelectItem>
-                                  <SelectItem value="link">Link</SelectItem>
-                                </SelectContent>
-                              </Select>
-                              {['image','video','audio','document'].includes(v.mediatype) && (
-                                <Input type="file" className="h-7 text-xs flex-1" accept={v.mediatype === 'image' ? 'image/*' : v.mediatype === 'video' ? 'video/*' : v.mediatype === 'audio' ? 'audio/*' : undefined} onChange={e => { const f = e.target.files?.[0] || null; editUpdateVariation(idx, vIdx, 'mediaFile', f) }} />
-                              )}
-                            </div>
-                            {['image','video'].includes(v.mediatype) && (
-                              <Input placeholder="Legenda..." value={v.caption} onChange={e => editUpdateVariation(idx, vIdx, 'caption', e.target.value)} className="h-7 text-xs" />
-                            )}
-                            {v.mediatype === 'contact' && (
-                              <div className="grid grid-cols-2 gap-2">
-                                <Input placeholder="Nome" value={v.contactName} onChange={e => editUpdateVariation(idx, vIdx, 'contactName', e.target.value)} className="h-7 text-xs" />
-                                <Input placeholder="Telefone" value={v.contactPhone} onChange={e => editUpdateVariation(idx, vIdx, 'contactPhone', e.target.value)} className="h-7 text-xs" />
-                              </div>
-                            )}
-                            {v.mediatype === 'location' && (
-                              <div className="grid grid-cols-2 gap-2">
-                                <Input placeholder="Nome do local" value={v.locationName} onChange={e => editUpdateVariation(idx, vIdx, 'locationName', e.target.value)} className="h-7 text-xs" />
-                                <Input placeholder="Lat, Lng" value={v.locationLat && v.locationLng ? `${v.locationLat}, ${v.locationLng}` : ''} onChange={e => { const [lat, lng] = e.target.value.split(',').map(s => s.trim()); editUpdateVariation(idx, vIdx, 'locationLat', lat || ''); editUpdateVariation(idx, vIdx, 'locationLng', lng || '') }} className="h-7 text-xs" />
-                              </div>
-                            )}
-                            {v.mediatype === 'link' && (
-                              <div className="space-y-1">
-                                <Input placeholder="https://..." value={v.linkUrl} onChange={e => editUpdateVariation(idx, vIdx, 'linkUrl', e.target.value)} className="h-7 text-xs" />
-                                <div className="flex items-center gap-2">
-                                  <Switch checked={v.linkPreview} onCheckedChange={val => editUpdateVariation(idx, vIdx, 'linkPreview', val)} />
-                                  <Label className="text-xs">Preview</Label>
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-                <Button variant="outline" size="sm" onClick={editAddStep} className="gap-1.5 w-full">
-                  <Plus className="size-3.5" /> Adicionar Mensagem
-                </Button>
-              </div>
-              {/* Anti-Ban Section */}
-              <Separator />
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Shield className="size-5 text-emerald-500" />
-                    <Label className="text-base font-semibold">Proteção Anti-Ban</Label>
-                  </div>
-                  <Switch checked={editForm.antiBanEnabled} onCheckedChange={v => setEditForm(prev => ({ ...prev, antiBanEnabled: v }))} />
-                </div>
-                {editForm.antiBanEnabled && (
-                  <div className="space-y-3 p-4 bg-muted/50 rounded-xl">
-                    <Label className="text-sm">Modo de Aquecimento</Label>
-                    <div className="grid grid-cols-3 gap-2">
-                      {[
-                        { value: 'normal', label: 'Normal', icon: Shield, desc: 'Equilibrado' },
-                        { value: 'agressive', label: 'Agressivo', icon: Flame, desc: 'Mais rápido' },
-                        { value: 'stealth', label: 'Furtivo', icon: Snowflake, desc: 'Máx. segurança' },
-                      ].map(m => (
-                        <button key={m.value} type="button" onClick={() => setEditForm(prev => ({ ...prev, warmingMode: m.value }))}
-                          className={`p-3 rounded-lg border text-center transition-all ${editForm.warmingMode === m.value ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20' : 'hover:bg-muted/50'}`}>
-                          <m.icon className={`size-5 mx-auto mb-1 ${editForm.warmingMode === m.value ? 'text-emerald-600' : 'text-muted-foreground'}`} />
-                          <p className="text-sm font-medium">{m.label}</p>
-                          <p className="text-xs text-muted-foreground">{m.desc}</p>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-              {/* Save / Cancel buttons */}
-              <div className="flex items-center gap-3 pt-2">
-                <Button variant="outline" onClick={cancelEditing} disabled={saving}>Cancelar</Button>
-                <Button onClick={saveEdit} disabled={!canSaveEdit || saving} className="bg-emerald-600 hover:bg-emerald-700 gap-2">
-                  {saving ? <RefreshCw className="size-4 animate-spin" /> : <Save className="size-4" />}
-                  {saving ? 'Salvando...' : 'Salvar Alterações'}
-                </Button>
               </div>
             </div>
           )}
@@ -4250,12 +4054,12 @@ function TemplatesTab() {
               <Plus className="size-4" /> Novo Template
             </Button>
           </DialogTrigger>
-          <DialogContent className="max-w-lg">
+          <DialogContent className="max-w-lg max-h-[85vh]">
             <DialogHeader>
               <DialogTitle>Criar Template</DialogTitle>
               <DialogDescription>Crie um template de mensagem reutilizável</DialogDescription>
             </DialogHeader>
-            <div className="space-y-4 py-4">
+            <div className="space-y-4 py-4 overflow-y-auto">
               <div className="space-y-2">
                 <Label>Nome</Label>
                 <Input placeholder="Ex: Boas-vindas" value={newTemplate.name} onChange={e => setNewTemplate(p => ({ ...p, name: e.target.value }))} />
@@ -4419,12 +4223,12 @@ function TemplatesTab() {
 
       {/* Edit Template Dialog */}
       <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-lg max-h-[85vh]">
           <DialogHeader>
             <DialogTitle>Editar Template</DialogTitle>
             <DialogDescription>Atualize as informações do template</DialogDescription>
           </DialogHeader>
-          <div className="space-y-4 py-4">
+          <div className="space-y-4 py-4 overflow-y-auto">
             <div className="space-y-2">
               <Label>Nome</Label>
               <Input value={editForm.name} onChange={e => setEditForm(p => ({ ...p, name: e.target.value }))} />
@@ -6846,7 +6650,7 @@ export default function OctupusZapApp() {
         </header>
 
         {/* Page Content */}
-        <main className="flex-1 p-4 lg:p-6">
+        <main className="flex-1 p-4 lg:p-6 pb-8">
           <AnimatePresence mode="wait">
             <motion.div key={activeTab} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} transition={{ duration: 0.2 }}>
               {renderContent()}
@@ -6855,7 +6659,7 @@ export default function OctupusZapApp() {
         </main>
 
         {/* Footer */}
-        <footer className="px-4 lg:px-6 py-2.5 border-t bg-white/80 dark:bg-zinc-900/80 backdrop-blur-sm">
+        <footer className="mt-auto px-4 lg:px-6 py-2.5 border-t bg-white/80 dark:bg-zinc-900/80 backdrop-blur-sm">
           <div className="flex items-center justify-between text-xs text-muted-foreground">
             <p>OctupusZap © {new Date().getFullYear()}</p>
             <p className="flex items-center gap-1">
