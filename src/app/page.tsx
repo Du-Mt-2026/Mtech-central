@@ -228,13 +228,13 @@ const NAV_ITEMS = [
 ]
 
 // ===== Variáveis de Mensagem =====
-// Variables from contact spreadsheet (planilha)
+// Core variables always available (come from dedicated DB columns)
 const CONTACT_VARIABLES = [
-  { tag: '{{nome}}', label: 'Nome', icon: '👤' },
-  { tag: '{{telefone}}', label: 'Telefone', icon: '📱' },
-  { tag: '{{empresa}}', label: 'Empresa', icon: '🏢' },
-  { tag: '{{vendedora}}', label: 'Vendedora', icon: '🧑‍💼' },
+  { tag: '{{nome}}', label: 'Nome', icon: '👤', source: 'core' },
+  { tag: '{{telefone}}', label: 'Telefone', icon: '📱', source: 'core' },
 ]
+// Note: Custom variables from spreadsheet columns (empresa, vendedora, etc.) are loaded dynamically
+// from the selected contact list via the API — see fetchContactVariables()
 
 // ===== Status Helpers =====
 function statusColor(status: string) {
@@ -2053,7 +2053,7 @@ function ContatosTab() {
             </div>
             <div className="p-3 bg-muted/50 rounded-lg text-xs space-y-3">
               <p className="font-medium">Formato da planilha:</p>
-              <p className="text-muted-foreground">A coluna <strong>Telefone</strong> é obrigatória. A coluna <strong>WhatsApp</strong> deve conter o número no formato internacional (ex: 5511999990001). As demais colunas ficam disponíveis como variáveis {'{{nome}}'}, {'{{empresa}}'}, {'{{vendedora}}'} etc. no texto da mensagem. Adicione quantas colunas quiser!</p>
+              <p className="text-muted-foreground">A coluna <strong>Telefone</strong> é obrigatória. A coluna <strong>WhatsApp</strong> deve conter o número no formato internacional (ex: 5511999990001). As demais colunas ficam disponíveis automaticamente como variáveis (ex: coluna "Empresa" vira {'{{empresa}}'}, coluna "Vendedora" vira {'{{vendedora}}'}). Adicione quantas colunas quiser!</p>
               <code className="block bg-muted p-2 rounded text-[11px]">Empresa,Nome,Telefone,WhatsApp,Vendedora,Nota{'\n'}Tech Corp,João,11999990001,5511999990001,Renato,VIP{'\n'}Info Ltda,Maria,21988880002,5521988880002,Carlos,</code>
             </div>
           </div>
@@ -2289,13 +2289,20 @@ function generatePreviewText(text: string, messageKeys: Array<{ id: string; name
   })
 
   // Replace contact variables dynamically
-  // Sample data for preview
+  // Sample data for preview — core fields always available
   const sampleData: Record<string, string> = {
     nome: 'João',
     telefone: '11999990001',
-    empresa: 'Tech Corp',
-    vendedora: 'Ana',
-    nota: 'VIP',
+  }
+  // Add sample data for custom variables from contact list
+  if (contactVariables && contactVariables.length > 0) {
+    for (const cv of contactVariables) {
+      if (cv.source === 'custom') {
+        const key = cv.tag.replace(/\{\{|\}\}/g, '').toLowerCase()
+        // Use the label as sample value for custom fields
+        if (!sampleData[key]) sampleData[key] = cv.label
+      }
+    }
   }
 
   // Use contactVariables if available, otherwise fallback to hardcoded
@@ -4047,7 +4054,7 @@ function TemplatesTab() {
     setEditForm(prev => ({ ...prev, content: prev.content + v }))
   }
 
-  const TEMPLATE_VARS = ['{{nome}}', '{{telefone}}', '{{empresa}}', '{{vendedora}}']
+  const TEMPLATE_VARS = ['{{nome}}', '{{telefone}}']
 
   const openEditTemplate = (t: MessageTemplate) => {
     setEditTemplate(t)

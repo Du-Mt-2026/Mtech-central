@@ -124,6 +124,7 @@ model Vendedor {
 model ContactList {
   id        String   @id @default(cuid())
   name      String
+  columns   String?  @default("{}")  // JSON: {"Empresa":"empresa","Vendedora Responsável":"vendedora_responsável"} — original header → variable key mapping
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   contacts  Contact[]

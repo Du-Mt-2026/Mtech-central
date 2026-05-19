@@ -46,11 +46,25 @@ export async function GET(
         } catch { /* ignore */ }
       }
     }
+
+    // Load column mapping to get original labels
+    const listInfo = await db.contactList.findUnique({ where: { id }, select: { columns: true } })
+    let columnLabels: Record<string, string> = {}
+    try { columnLabels = JSON.parse(listInfo?.columns || '{}') } catch { /* ignore */ }
+
+    // Build reverse mapping: variable key → original header name
+    const keyToLabel: Record<string, string> = {}
+    for (const [originalName, varKey] of Object.entries(columnLabels)) {
+      keyToLabel[varKey] = originalName
+    }
+
     const availableVariables = [
       { tag: '{{nome}}', label: 'Nome', source: 'core' },
       { tag: '{{telefone}}', label: 'Telefone', source: 'core' },
       ...Array.from(customKeys).sort().map(k => ({
-        tag: `{{${k}}}`, label: k.charAt(0).toUpperCase() + k.slice(1), source: 'custom'
+        tag: `{{${k}}}`,
+        label: keyToLabel[k] || k.charAt(0).toUpperCase() + k.slice(1).replace(/_/g, ' '),
+        source: 'custom'
       })),
     ]
 

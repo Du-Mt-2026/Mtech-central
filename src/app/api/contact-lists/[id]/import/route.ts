@@ -90,8 +90,22 @@ export async function POST(
     const detectedColumns = [
       nameHeader ? { name: nameHeader, variable: 'nome', type: 'core' } : null,
       { name: phoneHeader, variable: 'telefone', type: 'core' },
-      ...extraHeaders.map(h => ({ name: h, variable: h.toLowerCase().replace(/\s+/g, '_'), type: 'custom' })),
+      ...extraHeaders.map(h => ({ name: h, variable: h.toLowerCase().replace(/[^a-zA-Z0-9À-ÿ]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, ''), type: 'custom' })),
     ].filter(Boolean) as Array<{ name: string; variable: string; type: string }>
+
+    // Save column mapping to the ContactList so labels are preserved
+    const columnMapping: Record<string, string> = {}
+    for (const col of detectedColumns) {
+      if (col.type === 'custom') {
+        columnMapping[col.name] = col.variable
+      }
+    }
+    if (Object.keys(columnMapping).length > 0) {
+      await db.contactList.update({
+        where: { id },
+        data: { columns: JSON.stringify(columnMapping) },
+      })
+    }
 
     // Build contacts with customFields
     const contacts: { name: string; phone: string; customFields: string }[] = []
@@ -104,7 +118,8 @@ export async function POST(
         for (const header of extraHeaders) {
           const value = String(row[header] || '').trim()
           if (value) {
-            customData[header.toLowerCase().replace(/\s+/g, '_')] = value
+            const varKey = header.toLowerCase().replace(/[^a-zA-Z0-9À-ÿ]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '')
+            customData[varKey] = value
           }
         }
 
