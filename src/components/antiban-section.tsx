@@ -50,8 +50,8 @@ const defaultSettings: AntiBanSettings = {
   cooldownMinutes: 30,
   cooldownAfterMessages: 50,
   stopOnWarning: true,
-  sendingWindowStart: 8,
-  sendingWindowEnd: 21,
+  sendingWindowStart: 480,  // 8:00 in minutes-from-midnight
+  sendingWindowEnd: 1260,   // 21:00 in minutes-from-midnight
   timezone: 'America/Sao_Paulo',
 }
 
@@ -130,9 +130,11 @@ export function AntibanSection() {
     if (settings.messageIntervalMax - settings.messageIntervalMin >= 30) score += 5
     if (settings.messageIntervalMin >= 30 && settings.messageIntervalMax >= 90) score += 5
 
-    // Sending window (0-10 points)
-    if (settings.sendingWindowStart >= 8 && settings.sendingWindowEnd <= 22) score += 10
-    else if (settings.sendingWindowStart >= 7 && settings.sendingWindowEnd <= 23) score += 5
+    // Sending window (0-10 points) - values are minutes-from-midnight
+    const wsStart = settings.sendingWindowStart < 25 ? settings.sendingWindowStart * 60 : settings.sendingWindowStart
+    const wsEnd = settings.sendingWindowEnd < 25 ? settings.sendingWindowEnd * 60 : settings.sendingWindowEnd
+    if (wsStart >= 480 && wsEnd <= 1320) score += 10  // 8:00-22:00
+    else if (wsStart >= 420 && wsEnd <= 1380) score += 5  // 7:00-23:00
 
     // Daily limit (0-10 points)
     if (settings.dailyLimitPerChip <= 150) score += 10

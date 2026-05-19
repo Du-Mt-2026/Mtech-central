@@ -72,8 +72,8 @@ model AntiBanSettings {
   updatedAt             DateTime @updatedAt
 
   // New fields for sending window
-  sendingWindowStart    Int      @default(8)       // Hour 0-23 (default 8h)
-  sendingWindowEnd      Int      @default(21)      // Hour 0-23 (default 21h)
+  sendingWindowStart    Int      @default(480)     // Minutes from midnight (default 480 = 8:00)
+  sendingWindowEnd      Int      @default(1260)    // Minutes from midnight (default 1260 = 21:00)
   timezone              String   @default("America/Sao_Paulo")
 }
 

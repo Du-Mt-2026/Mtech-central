@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 
+// Backward compat: if value is < 25, it's old hour format → convert to minutes-from-midnight
+function toMins(val: number): number {
+  return val < 25 ? val * 60 : val
+}
+
 // GET /api/antiban — Get current anti-ban settings
 export async function GET() {
   try {
@@ -8,6 +13,18 @@ export async function GET() {
     if (!settings) {
       // Create default settings if none exist
       settings = await db.antiBanSettings.create({ data: {} })
+    }
+    // Auto-migrate old hour-based values to minutes-from-midnight
+    const needsMigration = settings.sendingWindowStart < 25 || settings.sendingWindowEnd < 25
+    if (needsMigration) {
+      const migrated = await db.antiBanSettings.update({
+        where: { id: settings.id },
+        data: {
+          sendingWindowStart: toMins(settings.sendingWindowStart),
+          sendingWindowEnd: toMins(settings.sendingWindowEnd),
+        },
+      })
+      return NextResponse.json(migrated)
     }
     return NextResponse.json(settings)
   } catch (error) {
@@ -39,8 +56,8 @@ export async function PATCH(request: NextRequest) {
         cooldownMinutes: 30,
         cooldownAfterMessages: 50,
         stopOnWarning: true,
-        sendingWindowStart: 8,
-        sendingWindowEnd: 21,
+        sendingWindowStart: 480,  // 8:00 in minutes-from-midnight
+        sendingWindowEnd: 1260,    // 21:00 in minutes-from-midnight
         timezone: 'America/Sao_Paulo',
       }
       const updated = await db.antiBanSettings.update({
@@ -70,8 +87,8 @@ export async function PATCH(request: NextRequest) {
         cooldownMinutes: 30,
         cooldownAfterMessages: 50,
         stopOnWarning: true,
-        sendingWindowStart: 8,
-        sendingWindowEnd: 21,
+        sendingWindowStart: 480,  // 8:00 in minutes-from-midnight
+        sendingWindowEnd: 1260,    // 21:00 in minutes-from-midnight
         timezone: 'America/Sao_Paulo',
       }
       const section = body._resetSection as string
@@ -102,8 +119,8 @@ export async function PATCH(request: NextRequest) {
         cooldownMinutes: 30,
         cooldownAfterMessages: 50,
         stopOnWarning: true,
-        sendingWindowStart: 8,
-        sendingWindowEnd: 21,
+        sendingWindowStart: 480,  // 8:00 in minutes-from-midnight
+        sendingWindowEnd: 1260,    // 21:00 in minutes-from-midnight
         timezone: 'America/Sao_Paulo',
       }
       const field = body._resetField as string
@@ -153,15 +170,15 @@ export async function PATCH(request: NextRequest) {
         { status: 400 }
       )
     }
-    if (updateData.sendingWindowStart !== undefined && (Number(updateData.sendingWindowStart) < 0 || Number(updateData.sendingWindowStart) > 23)) {
+    if (updateData.sendingWindowStart !== undefined && (Number(updateData.sendingWindowStart) < 0 || Number(updateData.sendingWindowStart) > 1440)) {
       return NextResponse.json(
-        { error: 'Hora de início deve ser entre 0 e 23' },
+        { error: 'Horário de início deve ser entre 0 e 1440 minutos' },
         { status: 400 }
       )
     }
-    if (updateData.sendingWindowEnd !== undefined && (Number(updateData.sendingWindowEnd) < 1 || Number(updateData.sendingWindowEnd) > 24)) {
+    if (updateData.sendingWindowEnd !== undefined && (Number(updateData.sendingWindowEnd) < 0 || Number(updateData.sendingWindowEnd) > 1440)) {
       return NextResponse.json(
-        { error: 'Hora de término deve ser entre 1 e 24' },
+        { error: 'Horário de término deve ser entre 0 e 1440 minutos' },
         { status: 400 }
       )
     }

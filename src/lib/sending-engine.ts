@@ -25,8 +25,8 @@ interface AntiBanConfig {
   stopOnWarning: boolean
   randomLineBreaks: boolean
   emojiVariation: boolean
-  sendingWindowStart: number  // hora inicial (0-23), default 8
-  sendingWindowEnd: number    // hora final (0-23), default 21
+  sendingWindowStart: number  // minutos desde meia-noite (0-1440), default 480 (8:00)
+  sendingWindowEnd: number    // minutos desde meia-noite (0-1440), default 1260 (21:00)
   timezone: string            // fuso horário, default 'America/Sao_Paulo'
 }
 
@@ -76,8 +76,8 @@ const DEFAULT_SETTINGS: AntiBanConfig = {
   stopOnWarning: true,
   randomLineBreaks: true,
   emojiVariation: true,
-  sendingWindowStart: 8,
-  sendingWindowEnd: 21,
+  sendingWindowStart: 480,  // 8:00 in minutes-from-midnight
+  sendingWindowEnd: 1260,   // 21:00 in minutes-from-midnight
   timezone: 'America/Sao_Paulo',
 }
 
@@ -172,29 +172,39 @@ function escapeRegex(str: string): string {
 /**
  * Get current hour in the configured timezone
  */
-function getCurrentHour(timezone: string): number {
+function getCurrentMinutes(timezone: string): number {
+  const now = new Date()
   const formatter = new Intl.DateTimeFormat('en-US', {
     hour: 'numeric',
+    minute: 'numeric',
     hour12: false,
     timeZone: timezone,
   })
-  return parseInt(formatter.format(new Date()), 10)
+  const parts = formatter.formatToParts(now)
+  const hour = parseInt(parts.find(p => p.type === 'hour')?.value || '0', 10)
+  const minute = parseInt(parts.find(p => p.type === 'minute')?.value || '0', 10)
+  return hour * 60 + minute
+}
+
+// Backward compat: if value is < 25, it's old hour format → convert to minutes
+function toMins(val: number): number {
+  return val < 25 ? val * 60 : val
 }
 
 /**
  * Check if current time is within the sending window
  */
 function isWithinSendingWindow(settings: AntiBanConfig): boolean {
-  const currentHour = getCurrentHour(settings.timezone)
-  const start = settings.sendingWindowStart
-  const end = settings.sendingWindowEnd
+  const currentMins = getCurrentMinutes(settings.timezone)
+  const start = toMins(settings.sendingWindowStart)
+  const end = toMins(settings.sendingWindowEnd)
 
   if (start <= end) {
-    // Same day window: e.g., 8-21
-    return currentHour >= start && currentHour < end
+    // Same day window: e.g., 8:00-21:00
+    return currentMins >= start && currentMins < end
   } else {
-    // Overnight window: e.g., 22-6
-    return currentHour >= start || currentHour < end
+    // Overnight window: e.g., 22:00-06:00
+    return currentMins >= start || currentMins < end
   }
 }
 
@@ -243,8 +253,8 @@ async function getAntiBanSettings(): Promise<AntiBanConfig> {
         randomLineBreaks: saved.randomLineBreaks,
         emojiVariation: saved.emojiVariation,
         // New fields with safe defaults for existing DB rows
-        sendingWindowStart: (saved as any).sendingWindowStart ?? 8,
-        sendingWindowEnd: (saved as any).sendingWindowEnd ?? 21,
+        sendingWindowStart: toMins((saved as any).sendingWindowStart ?? 480),
+        sendingWindowEnd: toMins((saved as any).sendingWindowEnd ?? 1260),
         timezone: (saved as any).timezone ?? 'America/Sao_Paulo',
       }
     }
@@ -597,14 +607,16 @@ export async function processNextMessage(campaignId: string): Promise<{
 
   // CHECK SENDING WINDOW — don't send outside business hours
   if (antiBanEnabled && !isWithinSendingWindow(settings)) {
-    const currentHour = getCurrentHour(settings.timezone)
-    console.log(`[SendingEngine] Outside sending window (${currentHour}h, window: ${settings.sendingWindowStart}-${settings.sendingWindowEnd}). Pausing.`)
+    const currentMins = getCurrentMinutes(settings.timezone)
+    const startMins = toMins(settings.sendingWindowStart)
+    const endMins = toMins(settings.sendingWindowEnd)
+    console.log(`[SendingEngine] Outside sending window (${currentMins}min, window: ${startMins}-${endMins}). Pausing.`)
     return {
       processed: false,
       delayMs: 60 * 1000, // Check again in 1 minute
       remaining: -1,
       completed: false,
-      reason: `outside_sending_window_${currentHour}h`,
+      reason: `outside_sending_window_${Math.floor(currentMins/60)}h${currentMins%60}m`,
     }
   }
 
