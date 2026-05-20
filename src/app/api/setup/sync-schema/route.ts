@@ -369,6 +369,47 @@ export async function POST(req: NextRequest) {
       results.push(`Erro na migração InboxMessage: ${inboxMigrationErr.message}`)
     }
 
+    // Step 6.6: Backfill existing campaign messages into InboxMessage
+    try {
+      // Find campaign messages that are NOT yet in InboxMessage
+      const backfillCount = await db.$executeRawUnsafe(`
+        INSERT INTO "InboxMessage" ("id", "instanceName", "chipId", "remoteJid", "remotePhone", "fromMe", "messageContent", "messageType", "mediaUrl", "pushName", "contactName", "evolutionMsgId", "isRead", "isGroup", "createdAt")
+        SELECT
+          CONCAT('inbox_', m.id) as id,
+          c."evolutionInstance" as "instanceName",
+          m."chipId",
+          CONCAT(ct.phone, '@s.whatsapp.net') as "remoteJid",
+          ct.phone as "remotePhone",
+          true as "fromMe",
+          m.content as "messageContent",
+          COALESCE(m.mediatype, 'text') as "messageType",
+          m."mediaUrl",
+          c."profileName" as "pushName",
+          ct.name as "contactName",
+          m."evolutionMessageId" as "evolutionMsgId",
+          true as "isRead",
+          false as "isGroup",
+          COALESCE(m."sentAt", m."createdAt") as "createdAt"
+        FROM "Message" m
+        JOIN "Chip" c ON c.id = m."chipId"
+        JOIN "Contact" ct ON ct.id = m."contactId"
+        WHERE m.status IN ('sent', 'delivered', 'read')
+        AND c."evolutionInstance" IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM "InboxMessage" im
+          WHERE im."evolutionMsgId" = m."evolutionMessageId"
+          AND m."evolutionMessageId" IS NOT NULL
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM "InboxMessage" im
+          WHERE im.id = CONCAT('inbox_', m.id)
+        )
+      `)
+      results.push(`InboxMessage: backfill inseriu ${backfillCount} mensagens de campanha`)
+    } catch (backfillErr: any) {
+      results.push(`InboxMessage: backfill - ${backfillErr.message}`)
+    }
+
     // Step 7: Sync Campaign table — add statusReason column
     try {
       const campColumns = await db.$queryRaw<Array<{ column_name: string }>>`
