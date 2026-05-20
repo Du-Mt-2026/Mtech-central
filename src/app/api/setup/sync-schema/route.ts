@@ -224,6 +224,25 @@ export async function POST(req: NextRequest) {
       results.push(`Erro ao criar InboxMessage: ${inboxError.message}`)
     }
 
+    // Step 5: Sync Message table — add stepOrder column for multi-step campaigns
+    try {
+      const msgColumns = await db.$queryRaw<Array<{ column_name: string }>>`
+        SELECT column_name FROM information_schema.columns
+        WHERE table_name = 'Message'
+        ORDER BY ordinal_position
+      `
+      const msgColumnNames = msgColumns.map(c => c.column_name)
+
+      if (!msgColumnNames.includes('stepOrder')) {
+        await db.$executeRawUnsafe(`ALTER TABLE "Message" ADD COLUMN IF NOT EXISTS "stepOrder" INTEGER NOT NULL DEFAULT 1`)
+        results.push('Message: adicionada coluna stepOrder')
+      } else {
+        results.push('Message: stepOrder já existe')
+      }
+    } catch (msgError: any) {
+      results.push(`Erro na migração Message: ${msgError.message}`)
+    }
+
     return NextResponse.json({
       success: true,
       message: 'Migração processada',
