@@ -1034,10 +1034,11 @@ export async function processNextMessage(campaignId: string): Promise<{
       })
       if (previousStepSent?.sentAt) {
         const elapsedMs = Date.now() - new Date(previousStepSent.sentAt).getTime()
-        const requiredDelayMs = currentStepConfig.delayMinutes * 60 * 1000
+        const requiredDelayMs = (currentStepConfig.delayUnit === 'seconds' ? currentStepConfig.delayMinutes : currentStepConfig.delayMinutes * 60) * 1000
         if (elapsedMs < requiredDelayMs) {
           const waitMs = requiredDelayMs - elapsedMs
-          console.log(`[SendingEngine] Step ${(message as any).stepOrder} for contact ${message.contactId}: delay not met (${Math.round(elapsedMs/1000)}s/${currentStepConfig.delayMinutes}min) — waiting ${Math.round(waitMs/1000)}s`)
+          const delayUnitLabel = currentStepConfig.delayUnit === 'seconds' ? 'seg' : 'min'
+          console.log(`[SendingEngine] Step ${(message as any).stepOrder} for contact ${message.contactId}: delay not met (${Math.round(elapsedMs/1000)}s/${currentStepConfig.delayMinutes}${delayUnitLabel}) — waiting ${Math.round(waitMs/1000)}s`)
           return {
             processed: false,
             delayMs: Math.min(waitMs, 60000), // Cap at 1 minute (next cron tick will re-check)

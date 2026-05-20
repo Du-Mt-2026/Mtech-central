@@ -58,10 +58,11 @@ export async function POST(request: Request) {
           })),
         },
         sequenceSteps: {
-          create: (steps || []).map((step: { stepOrder: number; content: string; delayMinutes: number; mediaUrl?: string; mediatype?: string; variations?: string }) => ({
+          create: (steps || []).map((step: { stepOrder: number; content: string; delayMinutes: number; delayUnit?: string; mediaUrl?: string; mediatype?: string; variations?: string }) => ({
             stepOrder: step.stepOrder,
             content: step.content,
             delayMinutes: step.delayMinutes ?? 0,
+            delayUnit: step.delayUnit ?? 'minutes',
             mediaUrl: step.mediaUrl || null,
             mediatype: step.mediatype || null,
             variations: step.variations || '[]',

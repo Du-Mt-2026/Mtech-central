@@ -177,6 +177,7 @@ interface SequenceStep {
   stepOrder: number
   content: string
   delayMinutes: number
+  delayUnit?: string
   mediaUrl?: string | null
   mediatype?: string | null
   variations?: string  // JSON: [{content, mediaUrl?, mediatype?}]
@@ -2296,6 +2297,7 @@ function ContatosTab() {
 type StepForm = {
   content: string
   delayMinutes: number
+  delayUnit: 'minutes' | 'seconds'
   mediaFile: File | null
   mediaUrl: string
   mediatype: string
@@ -2891,21 +2893,21 @@ function CampanhasTab() {
   const [editForm, setEditForm] = useState({
     name: '', sendIntervalMin: 30, sendIntervalMax: 90,
     chipIds: [] as string[], contactListId: '', scheduledAt: '',
-    steps: [{ content: '', delayMinutes: 0, mediaFile: null as File | null, mediaUrl: '', mediatype: '', audioMode: 'whatsapp' as const, caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '', variations: [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '', audioMode: 'whatsapp' as const, caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '' }] }] as StepForm[],
+    steps: [{ content: '', delayMinutes: 0, delayUnit: 'minutes' as const, mediaFile: null as File | null, mediaUrl: '', mediatype: '', audioMode: 'whatsapp' as const, caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '', variations: [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '', audioMode: 'whatsapp' as const, caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '' }] }] as StepForm[],
     antiBanEnabled: true, warmingMode: 'normal',
   })
 
   const [newCampaign, setNewCampaign] = useState({
     name: '', sendIntervalMin: 30, sendIntervalMax: 90,
     chipIds: [] as string[], contactListId: '', scheduledAt: '',
-    steps: [{ content: '', delayMinutes: 0, mediaFile: null as File | null, mediaUrl: '', mediatype: '', audioMode: 'whatsapp' as const, caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '', variations: [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '', audioMode: 'whatsapp' as const, caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '' }] }] as StepForm[],
+    steps: [{ content: '', delayMinutes: 0, delayUnit: 'minutes' as const, mediaFile: null as File | null, mediaUrl: '', mediatype: '', audioMode: 'whatsapp' as const, caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '', variations: [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '', audioMode: 'whatsapp' as const, caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '' }] }] as StepForm[],
     antiBanEnabled: true, warmingMode: 'normal',
   })
 
   const resetNewCampaign = () => setNewCampaign({
     name: '', sendIntervalMin: 30, sendIntervalMax: 90,
     chipIds: [], contactListId: '', scheduledAt: '',
-    steps: [{ content: '', delayMinutes: 0, mediaFile: null, mediaUrl: '', mediatype: '', audioMode: 'whatsapp' as const, caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '', variations: [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '', audioMode: 'whatsapp' as const, caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '' }] }] as StepForm[],
+    steps: [{ content: '', delayMinutes: 0, delayUnit: 'minutes' as const, mediaFile: null, mediaUrl: '', mediatype: '', audioMode: 'whatsapp' as const, caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '', variations: [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '', audioMode: 'whatsapp' as const, caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '' }] }] as StepForm[],
     antiBanEnabled: true, warmingMode: 'normal',
   })
 
@@ -2969,7 +2971,7 @@ function CampanhasTab() {
     setSaving(true)
     try {
       // Upload media and build steps payload
-      const stepsPayload: Array<{ stepOrder: number; content: string; delayMinutes: number; mediaUrl?: string; mediatype?: string; variations: string }> = []
+      const stepsPayload: Array<{ stepOrder: number; content: string; delayMinutes: number; delayUnit?: string; mediaUrl?: string; mediatype?: string; variations: string }> = []
 
       for (let i = 0; i < newCampaign.steps.length; i++) {
         const s = newCampaign.steps[i]
@@ -3014,6 +3016,7 @@ function CampanhasTab() {
           stepOrder: i + 1,
           content: s.content,
           delayMinutes: s.delayMinutes,
+          delayUnit: s.delayUnit,
           mediaUrl: mediaUrl || undefined,
           mediatype: mediatype || undefined,
           variations: JSON.stringify(variationsWithMedia),
@@ -3255,7 +3258,7 @@ function CampanhasTab() {
 
   const addStep = () => {
     const newLength = newCampaign.steps.length + 1
-    setNewCampaign(prev => ({ ...prev, steps: [...prev.steps, { content: '', delayMinutes: 60, mediaFile: null, mediaUrl: '', mediatype: '', audioMode: 'whatsapp' as const, caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '', variations: [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '', audioMode: 'whatsapp' as const, caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '' }] }] }))
+    setNewCampaign(prev => ({ ...prev, steps: [...prev.steps, { content: '', delayMinutes: 60, delayUnit: 'minutes' as const, mediaFile: null, mediaUrl: '', mediatype: '', audioMode: 'whatsapp' as const, caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '', variations: [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '', audioMode: 'whatsapp' as const, caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '' }] }] }))
     setActiveStep(newLength - 1) // auto-switch to the new step (0-indexed)
   }
   const removeStep = (idx: number) => setNewCampaign(prev => ({ ...prev, steps: prev.steps.filter((_, i) => i !== idx) }))
@@ -3275,7 +3278,7 @@ function CampanhasTab() {
       moveStep(oldIndex, newIndex)
     }
   }
-  const updateStep = (idx: number, field: 'content' | 'delayMinutes' | 'mediaFile' | 'mediaUrl' | 'mediatype' | 'audioMode' | 'caption' | 'linkUrl' | 'linkPreview' | 'contactName' | 'contactPhone' | 'locationLat' | 'locationLng' | 'locationName', value: string | number | File | boolean | null) => {
+  const updateStep = (idx: number, field: 'content' | 'delayMinutes' | 'delayUnit' | 'mediaFile' | 'mediaUrl' | 'mediatype' | 'audioMode' | 'caption' | 'linkUrl' | 'linkPreview' | 'contactName' | 'contactPhone' | 'locationLat' | 'locationLng' | 'locationName', value: string | number | File | boolean | null) => {
     setNewCampaign(prev => { const steps = [...prev.steps]; steps[idx] = { ...steps[idx], [field]: value }; return { ...prev, steps } })
   }
 
@@ -3320,6 +3323,7 @@ function CampanhasTab() {
         return {
           content: s.content || '',
           delayMinutes: s.delayMinutes || 0,
+          delayUnit: (s.delayUnit || 'minutes') as 'minutes' | 'seconds',
           mediaFile: null as File | null,
           mediaUrl: s.mediaUrl || '',
           mediatype: s.mediatype || '',
@@ -3338,7 +3342,7 @@ function CampanhasTab() {
         }
       })
     if (steps.length === 0) {
-      steps.push({ content: '', delayMinutes: 0, mediaFile: null, mediaUrl: '', mediatype: '', audioMode: 'whatsapp' as const, caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '', variations: [{ ...emptyVariation }] })
+      steps.push({ content: '', delayMinutes: 0, delayUnit: 'minutes' as const, mediaFile: null, mediaUrl: '', mediatype: '', audioMode: 'whatsapp' as const, caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '', variations: [{ ...emptyVariation }] })
     }
     // Pre-fill newCampaign and open create dialog instead of editing inside detail dialog
     setNewCampaign({
@@ -3367,7 +3371,7 @@ function CampanhasTab() {
     if (!selectedCampaign) return
     setSaving(true)
     try {
-      const stepsPayload: Array<{ stepOrder: number; content: string; delayMinutes: number; mediaUrl?: string; mediatype?: string; variations: string }> = []
+      const stepsPayload: Array<{ stepOrder: number; content: string; delayMinutes: number; delayUnit?: string; mediaUrl?: string; mediatype?: string; variations: string }> = []
       for (let i = 0; i < editForm.steps.length; i++) {
         const s = editForm.steps[i]
         let mediaUrl = s.mediaUrl || ''
@@ -3404,6 +3408,7 @@ function CampanhasTab() {
           stepOrder: i + 1,
           content: s.content,
           delayMinutes: s.delayMinutes,
+          delayUnit: s.delayUnit,
           mediaUrl: mediaUrl || undefined,
           mediatype: mediatype || undefined,
           variations: JSON.stringify(variationsWithMedia),
@@ -3448,9 +3453,9 @@ function CampanhasTab() {
       chipIds: prev.chipIds.includes(chipId) ? prev.chipIds.filter(id => id !== chipId) : [...prev.chipIds, chipId],
     }))
   }
-  const editAddStep = () => setEditForm(prev => ({ ...prev, steps: [...prev.steps, { content: '', delayMinutes: 60, mediaFile: null, mediaUrl: '', mediatype: '', audioMode: 'whatsapp' as const, caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '', variations: [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '', audioMode: 'whatsapp' as const, caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '' }] }] }))
+  const editAddStep = () => setEditForm(prev => ({ ...prev, steps: [...prev.steps, { content: '', delayMinutes: 60, delayUnit: 'minutes' as const, mediaFile: null, mediaUrl: '', mediatype: '', audioMode: 'whatsapp' as const, caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '', variations: [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '', audioMode: 'whatsapp' as const, caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '' }] }] }))
   const editRemoveStep = (idx: number) => setEditForm(prev => ({ ...prev, steps: prev.steps.filter((_, i) => i !== idx) }))
-  const editUpdateStep = (idx: number, field: 'content' | 'delayMinutes' | 'mediaFile' | 'mediaUrl' | 'mediatype' | 'caption' | 'linkUrl' | 'linkPreview' | 'contactName' | 'contactPhone' | 'locationLat' | 'locationLng' | 'locationName', value: string | number | File | boolean | null) => {
+  const editUpdateStep = (idx: number, field: 'content' | 'delayMinutes' | 'delayUnit' | 'mediaFile' | 'mediaUrl' | 'mediatype' | 'caption' | 'linkUrl' | 'linkPreview' | 'contactName' | 'contactPhone' | 'locationLat' | 'locationLng' | 'locationName', value: string | number | File | boolean | null) => {
     setEditForm(prev => { const steps = [...prev.steps]; steps[idx] = { ...steps[idx], [field]: value }; return { ...prev, steps } })
   }
   const editAddVariation = (stepIdx: number) => setEditForm(prev => {
@@ -3639,7 +3644,14 @@ function CampanhasTab() {
                             <Clock className="size-3.5" />
                             <span>Atraso antes desta mensagem:</span>
                             <Input type="number" min={0} value={step.delayMinutes} onChange={e => updateStep(idx, 'delayMinutes', parseInt(e.target.value) || 0)} className="w-20 h-7 text-xs" />
-                            <span>min após mensagem anterior</span>
+                            <Select value={step.delayUnit} onValueChange={v => updateStep(idx, 'delayUnit', v)}>
+                              <SelectTrigger className="w-28 h-7 text-xs"><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="minutes">Minutos</SelectItem>
+                                <SelectItem value="seconds">Segundos</SelectItem>
+                              </SelectContent>
+                            </Select>
+                            <span>{step.delayUnit === 'minutes' ? 'min' : 'seg'} após mensagem anterior</span>
                           </div>
                         )}
 
@@ -3712,14 +3724,18 @@ function CampanhasTab() {
                           )}
                           {step.mediaFile ? (
                             <div className="flex items-center gap-2 p-2 bg-muted/50 rounded-lg text-xs">
-                              {step.mediatype === 'image' ? <ImageIcon className="size-3.5 text-emerald-500" /> : step.mediatype === 'video' ? <Film className="size-3.5 text-sky-500" /> : step.mediatype === 'audio' ? <Music className="size-3.5 text-amber-500" /> : <File className="size-3.5 text-zinc-500" />}
+                              {step.mediatype === 'image' ? (
+                                <img src={URL.createObjectURL(step.mediaFile)} alt="Preview" className="size-12 rounded object-cover border shrink-0" />
+                              ) : step.mediatype === 'video' ? <Film className="size-3.5 text-sky-500" /> : step.mediatype === 'audio' ? <Music className="size-3.5 text-amber-500" /> : <File className="size-3.5 text-zinc-500" />}
                               <span className="truncate">{step.mediaFile.name}</span>
                               <span className="text-muted-foreground">({(step.mediaFile.size / 1024).toFixed(1)}KB)</span>
                               <Button variant="ghost" size="sm" className="h-5 w-5 p-0 ml-auto" onClick={() => updateStep(idx, 'mediaFile', null)}><X className="size-3" /></Button>
                             </div>
                           ) : step.mediaUrl ? (
                             <div className="flex items-center gap-2 p-2 bg-emerald-500/10 border border-emerald-500/20 rounded-lg text-xs">
-                              {step.mediatype === 'image' ? <ImageIcon className="size-3.5 text-emerald-500" /> : step.mediatype === 'video' ? <Film className="size-3.5 text-sky-500" /> : step.mediatype === 'audio' ? <Music className="size-3.5 text-amber-500" /> : <File className="size-3.5 text-zinc-500" />}
+                              {step.mediatype === 'image' ? (
+                                <img src={step.mediaUrl} alt="Preview" className="size-12 rounded object-cover border shrink-0" />
+                              ) : step.mediatype === 'video' ? <Film className="size-3.5 text-sky-500" /> : step.mediatype === 'audio' ? <Music className="size-3.5 text-amber-500" /> : <File className="size-3.5 text-zinc-500" />}
                               <span className="truncate text-emerald-600 dark:text-emerald-400">Mídia salva</span>
                               <a href={step.mediaUrl} target="_blank" rel="noopener noreferrer" className="text-muted-foreground hover:text-foreground underline truncate max-w-[120px]">abrir</a>
                               <Button variant="ghost" size="sm" className="h-5 w-5 p-0 ml-auto text-red-500 hover:text-red-400" onClick={() => { updateStep(idx, 'mediaUrl', ''); updateStep(idx, 'mediatype', ''); }}><X className="size-3" /></Button>
@@ -3831,13 +3847,17 @@ function CampanhasTab() {
                                   )}
                                   {v.mediaFile ? (
                                     <div className="flex items-center gap-2 p-1.5 bg-muted/50 rounded-lg text-xs">
-                                      {v.mediatype === 'image' ? <ImageIcon className="size-3 text-emerald-500" /> : v.mediatype === 'video' ? <Film className="size-3 text-sky-500" /> : v.mediatype === 'audio' ? <Music className="size-3 text-amber-500" /> : <File className="size-3 text-zinc-500" />}
+                                      {v.mediatype === 'image' ? (
+                                        <img src={URL.createObjectURL(v.mediaFile)} alt="Preview" className="size-10 rounded object-cover border shrink-0" />
+                                      ) : v.mediatype === 'video' ? <Film className="size-3 text-sky-500" /> : v.mediatype === 'audio' ? <Music className="size-3 text-amber-500" /> : <File className="size-3 text-zinc-500" />}
                                       <span className="truncate">{v.mediaFile.name}</span>
                                       <Button variant="ghost" size="sm" className="h-4 w-4 p-0 ml-auto" onClick={() => updateVariation(idx, vIdx, 'mediaFile', null)}><X className="size-2.5" /></Button>
                                     </div>
                                   ) : v.mediaUrl ? (
                                     <div className="flex items-center gap-2 p-1.5 bg-emerald-500/10 border border-emerald-500/20 rounded-lg text-xs">
-                                      {v.mediatype === 'image' ? <ImageIcon className="size-3 text-emerald-500" /> : v.mediatype === 'video' ? <Film className="size-3 text-sky-500" /> : v.mediatype === 'audio' ? <Music className="size-3 text-amber-500" /> : <File className="size-3 text-zinc-500" />}
+                                      {v.mediatype === 'image' ? (
+                                        <img src={v.mediaUrl} alt="Preview" className="size-10 rounded object-cover border shrink-0" />
+                                      ) : v.mediatype === 'video' ? <Film className="size-3 text-sky-500" /> : v.mediatype === 'audio' ? <Music className="size-3 text-amber-500" /> : <File className="size-3 text-zinc-500" />}
                                       <span className="truncate text-emerald-600 dark:text-emerald-400">Mídia salva</span>
                                       <a href={v.mediaUrl} target="_blank" rel="noopener noreferrer" className="text-muted-foreground hover:text-foreground underline truncate max-w-[80px]">abrir</a>
                                       <Button variant="ghost" size="sm" className="h-4 w-4 p-0 ml-auto text-red-500 hover:text-red-400" onClick={() => { updateVariation(idx, vIdx, 'mediaUrl', ''); updateVariation(idx, vIdx, 'mediatype', ''); }}><X className="size-2.5" /></Button>
@@ -3923,7 +3943,7 @@ function CampanhasTab() {
                               <div className="bg-[#005c4b] rounded-lg rounded-tr-none max-w-[280px] shadow-sm overflow-hidden">
                                 {idx > 0 && step.delayMinutes > 0 && (
                                   <div className="text-[9px] text-white/40 px-2.5 pt-2 flex items-center gap-0.5">
-                                    <Clock className="size-2" /> +{step.delayMinutes}min
+                                    <Clock className="size-2" /> +{step.delayMinutes}{step.delayUnit === 'seconds' ? 'seg' : 'min'}
                                   </div>
                                 )}
                                 {/* Media attachment preview */}
@@ -4228,7 +4248,7 @@ function CampanhasTab() {
                           <div className="flex items-center gap-2">
                             <span className="flex items-center justify-center size-6 rounded-full bg-emerald-600 text-white text-xs font-bold shrink-0">{step.stepOrder}</span>
                             <p className="flex-1 text-xs whitespace-pre-wrap break-words min-w-0">{step.content}</p>
-                            {step.delayMinutes > 0 && <Badge variant="secondary" className="text-[10px] gap-1 shrink-0"><Clock className="size-2.5" />{step.delayMinutes}min</Badge>}
+                            {step.delayMinutes > 0 && <Badge variant="secondary" className="text-[10px] gap-1 shrink-0"><Clock className="size-2.5" />{step.delayMinutes}{step.delayUnit === 'seconds' ? 'seg' : 'min'}</Badge>}
                           </div>
                           {parsedVars.length > 0 && (
                             <div className="ml-8 space-y-0.5">

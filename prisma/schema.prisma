@@ -193,6 +193,7 @@ model SequenceStep {
   stepOrder    Int
   content      String
   delayMinutes Int      @default(0)
+  delayUnit    String   @default("minutes")  // 'minutes' | 'seconds'
   mediaUrl     String?
   mediatype    String?   // 'image' | 'document' | 'video' | 'audio'
   variations   String   @default("[]")  // JSON: [{content, mediaUrl?, mediatype?}]
