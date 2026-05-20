@@ -2914,6 +2914,8 @@ function CampanhasTab() {
   }, [newCampaign.contactListId, fetchContactVariables])
 
   const createCampaign = async () => {
+    if (saving) return // prevent double-click
+    setSaving(true)
     try {
       // Upload media and build steps payload
       const stepsPayload: Array<{ stepOrder: number; content: string; delayMinutes: number; mediaUrl?: string; mediatype?: string; variations: string }> = []
@@ -2966,16 +2968,21 @@ function CampanhasTab() {
       if (editing && selectedCampaign) {
         // Edit mode: PATCH the existing campaign
         const res = await fetch(`/api/campaigns/${selectedCampaign.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
-        if (!res.ok) { const data = await res.json(); throw new Error(data.error || 'Erro ao atualizar campanha') }
+        if (!res.ok) { const data = await res.json().catch(() => ({})); throw new Error(data.error || `Erro ${res.status} ao atualizar campanha`) }
         toast.success('Campanha atualizada com sucesso!')
       } else {
         // Create mode: POST new campaign
         const res = await fetch('/api/campaigns', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
-        if (!res.ok) { const data = await res.json(); throw new Error(data.error) }
+        if (!res.ok) { const data = await res.json().catch(() => ({})); throw new Error(data.error || `Erro ${res.status} ao criar campanha`) }
         toast.success('Campanha criada com sucesso!')
       }
-      setCreateDialogOpen(false); setEditing(false); resetNewCampaign(); fetchCampaigns()
-    } catch (err: unknown) { toast.error((err as Error).message || 'Erro ao criar campanha') }
+      setCreateDialogOpen(false); setEditing(false); resetNewCampaign(); setActiveStep(0); fetchCampaigns()
+    } catch (err: unknown) {
+      console.error('[createCampaign] Error:', err)
+      toast.error((err as Error).message || 'Erro ao criar campanha')
+    } finally {
+      setSaving(false)
+    }
   }
 
   const startCampaignAction = async (id: string) => {
@@ -3181,7 +3188,11 @@ function CampanhasTab() {
     }))
   }
 
-  const addStep = () => setNewCampaign(prev => ({ ...prev, steps: [...prev.steps, { content: '', delayMinutes: 60, mediaFile: null, mediaUrl: '', mediatype: '', audioMode: 'whatsapp' as const, caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '', variations: [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '', audioMode: 'whatsapp' as const, caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '' }] }] }))
+  const addStep = () => {
+    const newLength = newCampaign.steps.length + 1
+    setNewCampaign(prev => ({ ...prev, steps: [...prev.steps, { content: '', delayMinutes: 60, mediaFile: null, mediaUrl: '', mediatype: '', audioMode: 'whatsapp' as const, caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '', variations: [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '', audioMode: 'whatsapp' as const, caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '' }] }] }))
+    setActiveStep(newLength - 1) // auto-switch to the new step (0-indexed)
+  }
   const removeStep = (idx: number) => setNewCampaign(prev => ({ ...prev, steps: prev.steps.filter((_, i) => i !== idx) }))
   const updateStep = (idx: number, field: 'content' | 'delayMinutes' | 'mediaFile' | 'mediaUrl' | 'mediatype' | 'audioMode' | 'caption' | 'linkUrl' | 'linkPreview' | 'contactName' | 'contactPhone' | 'locationLat' | 'locationLng' | 'locationName', value: string | number | File | boolean | null) => {
     setNewCampaign(prev => { const steps = [...prev.steps]; steps[idx] = { ...steps[idx], [field]: value }; return { ...prev, steps } })
@@ -3392,7 +3403,7 @@ function CampanhasTab() {
               {processing ? 'Processando...' : 'Processar Campanhas'}
             </Button>
           )}
-          <Dialog open={createDialogOpen} onOpenChange={(o) => { setCreateDialogOpen(o); if (!o) { setEditing(false); resetNewCampaign(); setActiveStep(0) } }}>
+          <Dialog open={createDialogOpen} onOpenChange={(o) => { setCreateDialogOpen(o); if (!o) { setEditing(false); setSaving(false); resetNewCampaign(); setActiveStep(0) } }}>
             <DialogTrigger asChild>
               <Button className="gap-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 shadow-lg">
                 <Plus className="size-4" /> Nova Campanha
@@ -3901,9 +3912,19 @@ function CampanhasTab() {
                 </div>
               </div>
             </div>
-            <DialogFooter className="px-6 py-3 border-t shrink-0">
-              <DialogClose asChild><Button variant="outline">Cancelar</Button></DialogClose>
-              <Button onClick={createCampaign} disabled={!canCreate} className="bg-emerald-600 hover:bg-emerald-700">{editing ? 'Salvar Alterações' : 'Criar Campanha'}</Button>
+            <DialogFooter className="px-6 py-3 border-t shrink-0 flex-col items-stretch sm:flex-row sm:items-center">
+              {!canCreate && !saving && (
+                <p className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1 mb-1 sm:mb-0 sm:mr-auto">
+                  <AlertCircle className="size-3" />
+                  {!newCampaign.name.trim() ? 'Informe o nome da campanha' : newCampaign.chipIds.length === 0 ? 'Selecione pelo menos 1 chip para envio' : 'Escreva o texto de pelo menos 1 mensagem'}
+                </p>
+              )}
+              <div className="flex gap-2 sm:ml-auto">
+                <DialogClose asChild><Button variant="outline">Cancelar</Button></DialogClose>
+                <Button onClick={createCampaign} disabled={!canCreate || saving} className="bg-emerald-600 hover:bg-emerald-700">
+                  {saving ? <><RefreshCw className="size-4 animate-spin" /> Salvando...</> : editing ? 'Salvar Alterações' : 'Criar Campanha'}
+                </Button>
+              </div>
             </DialogFooter>
           </DialogContent>
         </Dialog>
