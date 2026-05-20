@@ -68,3 +68,4 @@ worklog.md
 
 # Examples
 /examples/
+.env*.local
