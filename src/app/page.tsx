@@ -1757,17 +1757,6 @@ function ContatosTab() {
   useEffect(() => { fetchLists() }, [fetchLists])
   useEffect(() => { if (selectedList) fetchContacts(selectedList.id) }, [selectedList, fetchContacts])
 
-  // One-time cleanup: remove duplicate nome/telefone keys from customFields (legacy data)
-  useEffect(() => {
-    fetch('/api/contacts/cleanup', { method: 'POST' }).then(r => r.json()).then(data => {
-      if (data.cleaned > 0) {
-        console.log(`CustomFields cleanup: ${data.cleaned} contacts cleaned`)
-        if (selectedList) fetchContacts(selectedList.id) // refresh if viewing a list
-      }
-    }).catch(() => { /* silent */ })
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
   const createList = async () => {
     try {
       const res = await fetch('/api/contact-lists', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: newListName }) })

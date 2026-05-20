@@ -117,13 +117,11 @@ export async function POST(
 
       // Store ALL columns in customFields using their variable keys
       // This is the key: {{nome}}, {{whatsapp}}, {{empresa}}, {{vendedora}} etc.
-      // ALL resolve from customFields
-      // EXCEPT: skip name/phone columns since they are stored in dedicated fields
+      // ALL resolve from customFields — including name and phone columns!
+      // e.g., if the phone column is "WhatsApp", {{whatsapp}} will resolve to the contact's number
       const customData: Record<string, string> = {}
 
       for (const header of headers) {
-        // Skip name and phone columns - they're stored in dedicated `name` and `phone` fields
-        if (isAlias(header, NAME_ALIASES) || isAlias(header, PHONE_ALIASES)) continue
         const value = String(row[header] || '').trim()
         if (value) {
           const varKey = toVarKey(header)
