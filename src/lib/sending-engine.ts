@@ -1440,24 +1440,45 @@ export async function processNextMessage(campaignId: string): Promise<{
     const formattedPhone = formatPhoneNumber(message.contact.phone)
 
     // ============================================
-    // ANTI-BAN: REALISTIC TYPING SIMULATION
+    // ANTI-BAN: REALISTIC PRESENCE SIMULATION
     // ============================================
     if (antiBanEnabled) {
-      // Calculate typing duration proportional to message length
-      const typingDurationMs = calculateTypingDuration(message.content)
+      // Determine presence type based on message content
+      const hasMedia = !!(message.mediaUrl && message.mediatype)
+      const validMediaTypes = ['image', 'document', 'video', 'audio']
+      const isMediaType = hasMedia && validMediaTypes.includes(message.mediatype as string)
+      const isAudio = message.mediatype === 'audio'
 
-      console.log(`[SendingEngine] Typing for ${typingDurationMs}ms (${message.content.length} chars) to ${formattedPhone}`)
+      if (isMediaType) {
+        // Media messages: use "recording" presence (shows 📷/🎙️ indicator, NOT "digitando...")
+        // Short duration: simulates time to attach/select a media file
+        const mediaDurationMs = isAudio
+          ? calculateTypingDuration(message.content) // Audio: longer "recording" time proportional to content
+          : randomInt(2000, 4000) // Image/video/document: 2-4 seconds to "attach"
 
-      // Send "composing" presence with the calculated delay
-      try {
-        await setPresence(instanceName, `${formattedPhone}@s.whatsapp.net`, 'composing', typingDurationMs)
-      } catch {
-        // Non-fatal — some evoGO versions may not support this endpoint
+        console.log(`[SendingEngine] Recording presence for ${mediaDurationMs}ms (${message.mediatype}) to ${formattedPhone}`)
+
+        try {
+          await setPresence(instanceName, `${formattedPhone}@s.whatsapp.net`, 'recording', mediaDurationMs)
+        } catch {
+          // Non-fatal — some evoGO versions may not support this endpoint
+        }
+
+        await new Promise(resolve => setTimeout(resolve, mediaDurationMs))
+      } else {
+        // Text messages: use "composing" presence (shows "digitando...")
+        const typingDurationMs = calculateTypingDuration(message.content)
+
+        console.log(`[SendingEngine] Typing for ${typingDurationMs}ms (${message.content.length} chars) to ${formattedPhone}`)
+
+        try {
+          await setPresence(instanceName, `${formattedPhone}@s.whatsapp.net`, 'composing', typingDurationMs)
+        } catch {
+          // Non-fatal — some evoGO versions may not support this endpoint
+        }
+
+        await new Promise(resolve => setTimeout(resolve, typingDurationMs))
       }
-
-      // ACTUALLY WAIT the typing duration before sending
-      // This is the critical fix: the contact sees "digitando..." for a realistic time
-      await new Promise(resolve => setTimeout(resolve, typingDurationMs))
     }
 
     // ============================================
@@ -1481,10 +1502,33 @@ export async function processNextMessage(campaignId: string): Promise<{
       const validMediaTypes = ['image', 'document', 'video', 'audio']
       const mt = message.mediatype as 'image' | 'document' | 'video' | 'audio'
       if (validMediaTypes.includes(mt)) {
+        // Validate media URL before sending — check if the URL is accessible
+        try {
+          const urlCheck = await fetch(message.mediaUrl, { method: 'HEAD', signal: AbortSignal.timeout(5000) })
+          if (!urlCheck.ok) {
+            console.log(`[SendingEngine] Media URL check failed: ${urlCheck.status} for ${message.mediaUrl}`)
+            await db.message.update({
+              where: { id: message.id },
+              data: { status: 'failed', error: `URL de mídia inacessível (HTTP ${urlCheck.status})` },
+            })
+            const remaining = await db.message.count({ where: { campaignId, status: 'pending' } })
+            return { processed: true, delayMs: 1000, remaining, completed: remaining === 0 }
+          }
+        } catch (urlError: any) {
+          // Timeout or network error — URL is not reachable
+          console.log(`[SendingEngine] Media URL check error: ${urlError.message} for ${message.mediaUrl}`)
+          await db.message.update({
+            where: { id: message.id },
+            data: { status: 'failed', error: `URL de mídia inacessível: ${urlError.message}` },
+          })
+          const remaining = await db.message.count({ where: { campaignId, status: 'pending' } })
+          return { processed: true, delayMs: 1000, remaining, completed: remaining === 0 }
+        }
+
         const caption = mt === 'audio' ? '' : (finalContent || '')
         result = await sendMediaMessage(instanceName, formattedPhone, message.mediaUrl, mt, {
           caption,
-          delay: 0, // We already handled delay via typing simulation
+          delay: 0, // We already handled delay via presence simulation
         })
       } else {
         result = await sendTextMessage(instanceName, formattedPhone, finalContent, {
@@ -1493,7 +1537,7 @@ export async function processNextMessage(campaignId: string): Promise<{
       }
     } else {
       result = await sendTextMessage(instanceName, formattedPhone, finalContent, {
-        delay: 0, // Delay is already handled by typing simulation + interval
+        delay: 0, // Delay is already handled by presence simulation + interval
       })
     }
 
