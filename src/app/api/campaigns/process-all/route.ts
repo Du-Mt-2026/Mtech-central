@@ -41,7 +41,7 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  const FUNCTION_TIMEOUT_MS = 50_000 // Vercel timeout is 60s, leave 10s margin
+  const FUNCTION_TIMEOUT_MS = 25_000 // cron-job.org timeout is 30s, leave 5s margin
   const startTime = Date.now()
 
   try {
