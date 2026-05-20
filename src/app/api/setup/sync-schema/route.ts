@@ -262,6 +262,61 @@ export async function POST(req: NextRequest) {
       results.push(`Erro na migração MessageTemplate: ${mtError.message}`)
     }
 
+    // Step 7: Sync Campaign table — add statusReason column
+    try {
+      const campColumns = await db.$queryRaw<Array<{ column_name: string }>>`
+        SELECT column_name FROM information_schema.columns
+        WHERE table_name = 'Campaign'
+        ORDER BY ordinal_position
+      `
+      const campColumnNames = campColumns.map(c => c.column_name)
+
+      if (!campColumnNames.includes('statusReason')) {
+        await db.$executeRawUnsafe(`ALTER TABLE "Campaign" ADD COLUMN IF NOT EXISTS "statusReason" TEXT`)
+        results.push('Campaign: adicionada coluna statusReason')
+      } else {
+        results.push('Campaign: statusReason já existe')
+      }
+
+      if (!campColumnNames.includes('mediaUrl')) {
+        await db.$executeRawUnsafe(`ALTER TABLE "Campaign" ADD COLUMN IF NOT EXISTS "mediaUrl" TEXT`)
+        results.push('Campaign: adicionada coluna mediaUrl')
+      } else {
+        results.push('Campaign: mediaUrl já existe')
+      }
+
+      if (!campColumnNames.includes('mediatype')) {
+        await db.$executeRawUnsafe(`ALTER TABLE "Campaign" ADD COLUMN IF NOT EXISTS "mediatype" TEXT`)
+        results.push('Campaign: adicionada coluna mediatype')
+      } else {
+        results.push('Campaign: mediatype já existe')
+      }
+
+      // Also ensure Message table has mediaUrl and mediatype
+      const msgColumns2 = await db.$queryRaw<Array<{ column_name: string }>>`
+        SELECT column_name FROM information_schema.columns
+        WHERE table_name = 'Message'
+        ORDER BY ordinal_position
+      `
+      const msgColumnNames2 = msgColumns2.map(c => c.column_name)
+
+      if (!msgColumnNames2.includes('mediaUrl')) {
+        await db.$executeRawUnsafe(`ALTER TABLE "Message" ADD COLUMN IF NOT EXISTS "mediaUrl" TEXT`)
+        results.push('Message: adicionada coluna mediaUrl')
+      } else {
+        results.push('Message: mediaUrl já existe')
+      }
+
+      if (!msgColumnNames2.includes('mediatype')) {
+        await db.$executeRawUnsafe(`ALTER TABLE "Message" ADD COLUMN IF NOT EXISTS "mediatype" TEXT`)
+        results.push('Message: adicionada coluna mediatype')
+      } else {
+        results.push('Message: mediatype já existe')
+      }
+    } catch (campError: any) {
+      results.push(`Erro na migração Campaign: ${campError.message}`)
+    }
+
     return NextResponse.json({
       success: true,
       message: 'Migração processada',
