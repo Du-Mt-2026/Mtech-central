@@ -6,15 +6,19 @@ import path from 'path'
 /**
  * POST /api/upload
  * Upload a media file for use in campaigns.
- * 
+ *
+ * Storage strategy:
+ * - On Vercel: Uses Vercel Blob for persistent cloud storage (BLOB_READ_WRITE_TOKEN auto-provisioned)
+ * - On local dev: Falls back to writing to public/uploads/ directory
+ *
  * For audio files:
  * - If audioMode === 'whatsapp': the client-side code already converts to OGG/Opus before uploading
  *   (using @ffmpeg/ffmpeg WASM in the browser), so the file arrives already in the correct format
  * - If audioMode === 'original': keeps the original file format as-is
- * 
+ *
  * If the client couldn't convert (WASM not supported), the file is saved as-is and
  * we attempt server-side conversion with ffmpeg-static or system ffmpeg as a fallback.
- * 
+ *
  * Returns: { mediaUrl, mediatype, originalName, converted }
  */
 
@@ -31,6 +35,32 @@ import { execFile } from 'child_process'
 import { promisify } from 'util'
 const execFileAsync = promisify(execFile)
 
+// Check if we're on Vercel (has blob token) or local dev
+const isVercel = !!process.env.VERCEL || !!process.env.BLOB_READ_WRITE_TOKEN
+
+// Lazy-load @vercel/blob only on Vercel to avoid bundling issues in dev
+async function uploadToVercelBlob(buffer: Buffer, fileName: string, contentType: string): Promise<string> {
+  const { put } = await import('@vercel/blob')
+  const blob = await put(`campaigns/${fileName}`, buffer, {
+    contentType,
+    access: 'public',
+  })
+  return blob.url
+}
+
+// Local filesystem upload (for dev)
+async function uploadToLocal(buffer: Buffer, fileName: string): Promise<string> {
+  const uploadDir = path.join(process.cwd(), 'public', 'uploads')
+  if (!existsSync(uploadDir)) {
+    await mkdir(uploadDir, { recursive: true })
+  }
+  const filePath = path.join(uploadDir, fileName)
+  await writeFile(filePath, buffer)
+
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
+  return `${baseUrl}/uploads/${fileName}`
+}
+
 export async function POST(request: Request) {
   try {
     const formData = await request.formData()
@@ -43,23 +73,19 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Nenhum arquivo enviado' }, { status: 400 })
     }
 
-    // Ensure upload directory exists
-    const uploadDir = path.join(process.cwd(), 'public', 'uploads')
-    if (!existsSync(uploadDir)) {
-      await mkdir(uploadDir, { recursive: true })
-    }
-
     // Generate unique filename
     const ext = path.extname(file.name).toLowerCase()
     const baseName = path.basename(file.name, ext).replace(/[^a-zA-Z0-9_-]/g, '_')
     const uniqueId = Date.now().toString(36) + Math.random().toString(36).substring(2, 7)
     const safeFileName = `${baseName}_${uniqueId}`
 
-    // Save the file
+    // Read file content
     const arrayBuffer = await file.arrayBuffer()
     const buffer = Buffer.from(arrayBuffer)
 
     let finalFileName: string
+    let finalBuffer: Buffer = buffer
+    let finalContentType: string = file.type || 'application/octet-stream'
     let finalMediatype = mediatype
     let converted = false
 
@@ -68,18 +94,22 @@ export async function POST(request: Request) {
       const isOgg = ext === '.ogg' || ext === '.oga' || file.type === 'audio/ogg' || file.type === 'audio/opus'
 
       if (isOgg) {
-        // Already in WhatsApp-compatible format, just save
+        // Already in WhatsApp-compatible format, no conversion needed
         finalFileName = `${safeFileName}${ext}`
-        const filePath = path.join(uploadDir, finalFileName)
-        await writeFile(filePath, buffer)
+        finalContentType = 'audio/ogg'
       } else {
-        // Try server-side conversion as fallback
+        // Need server-side conversion - use /tmp for temporary files
+        const tmpDir = '/tmp/audio-conversions'
+        if (!existsSync(tmpDir)) {
+          await mkdir(tmpDir, { recursive: true })
+        }
+
         const tempFileName = `${safeFileName}${ext}`
-        const tempFilePath = path.join(uploadDir, tempFileName)
+        const tempFilePath = path.join(tmpDir, tempFileName)
         await writeFile(tempFilePath, buffer)
 
         finalFileName = `${safeFileName}.ogg`
-        const outputFilePath = path.join(uploadDir, finalFileName)
+        const outputFilePath = path.join(tmpDir, finalFileName)
 
         const ffmpegBin = ffmpegPath || 'ffmpeg'
         const ffmpegSource = ffmpegPath ? 'ffmpeg-static' : 'system'
@@ -99,11 +129,14 @@ export async function POST(request: Request) {
           ], { timeout: 30000 })
 
           converted = true
+          finalBuffer = await import('fs/promises').then(fs => fs.readFile(outputFilePath))
+          finalContentType = 'audio/ogg'
           try { await unlink(tempFilePath) } catch { /* ignore */ }
+          try { await unlink(outputFilePath) } catch { /* ignore */ }
           console.log(`[Upload] Server-side conversion successful (${ffmpegSource})`)
         } catch (ffmpegErr: any) {
           console.error(`[Upload] Server-side conversion failed (${ffmpegSource}):`, ffmpegErr?.message)
-          
+
           // Try system ffmpeg as fallback if ffmpeg-static failed
           if (ffmpegPath) {
             try {
@@ -118,7 +151,10 @@ export async function POST(request: Request) {
                 outputFilePath,
               ], { timeout: 30000 })
               converted = true
+              finalBuffer = await import('fs/promises').then(fs => fs.readFile(outputFilePath))
+              finalContentType = 'audio/ogg'
               try { await unlink(tempFilePath) } catch { /* ignore */ }
+              try { await unlink(outputFilePath) } catch { /* ignore */ }
             } catch {
               finalFileName = tempFileName
               converted = false
@@ -132,16 +168,23 @@ export async function POST(request: Request) {
     } else {
       // No conversion needed (non-audio, original mode, or client already converted)
       finalFileName = `${safeFileName}${ext}`
-      const filePath = path.join(uploadDir, finalFileName)
-      await writeFile(filePath, buffer)
       converted = clientConverted
     }
 
-    // Build the public URL
-    const baseUrl = process.env.VERCEL_URL
-      ? `https://${process.env.VERCEL_URL}`
-      : process.env.NEXT_PUBLIC_APP_URL || ''
-    const mediaUrl = `${baseUrl}/uploads/${finalFileName}`
+    // Upload to appropriate storage
+    let mediaUrl: string
+    if (isVercel) {
+      try {
+        mediaUrl = await uploadToVercelBlob(finalBuffer, finalFileName, finalContentType)
+        console.log(`[Upload] Uploaded to Vercel Blob: ${mediaUrl}`)
+      } catch (blobErr: any) {
+        console.error('[Upload] Vercel Blob upload failed, falling back to local:', blobErr?.message)
+        // Fallback to local if blob fails (shouldn't happen on Vercel but just in case)
+        mediaUrl = await uploadToLocal(finalBuffer, finalFileName)
+      }
+    } else {
+      mediaUrl = await uploadToLocal(finalBuffer, finalFileName)
+    }
 
     return NextResponse.json({
       mediaUrl,

@@ -1,6 +1,6 @@
 'use client'
 // v2025.05.19-horizontal-layout
-import React, { useState, useEffect, useCallback, useRef } from 'react'
+import React, { useState, useEffect, useCallback, useRef, CSSProperties } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Smartphone, Send, Shield, BarChart3, Plus, Trash2,
@@ -14,7 +14,7 @@ import {
   Sparkles, Heart, Star, AlertTriangle, Info, ChevronDown,
   Pencil, LayoutList, Database, WifiOff, ArrowDownToLine, Save, XCircle,
   Inbox, LogOut, RotateCcw, Film, Music, File, ImageIcon, Key, Paperclip, MapPin, Link2,
-  Baby, CheckCircle2, Video, MoreVertical, Mic, User, Smile, BookmarkPlus
+  Baby, CheckCircle2, Video, MoreVertical, Mic, User, Smile, BookmarkPlus, GripVertical
 } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardAction } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -43,6 +43,9 @@ import QRCode from 'qrcode'
 import { VerificarSection } from '@/components/verificar-section'
 import { KeysSection } from '@/components/keys-section'
 import { VendedoresSection } from '@/components/vendedores-section'
+import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core'
+import { SortableContext, useSortable, horizontalListSortingStrategy, arrayMove } from '@dnd-kit/sortable'
+import { restrictToHorizontalAxis } from '@dnd-kit/modifiers'
 
 // ===== Client-side Audio Conversion (OGG/Opus for WhatsApp) =====
 let ffmpegInstance: any = null
@@ -2817,6 +2820,54 @@ function MessageBuilder({ value, onChange, messageKeys, templates, contactVariab
   )
 }
 
+// ===== Sortable Tab Component for Drag & Drop =====
+function SortableTab({ id, idx, isActive, canClose, onClick, onClose }: {
+  id: string; idx: number; isActive: boolean; canClose: boolean; onClick: () => void; onClose: () => void
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
+  const style: CSSProperties = {
+    transform: transform ? `translate3d(${transform.x}px, ${transform.y}px, 0)` : undefined,
+    transition,
+    zIndex: isDragging ? 10 : undefined,
+    opacity: isDragging ? 0.8 : 1,
+  }
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={`flex items-center gap-0.5 pl-2 pr-0.5 py-1.5 text-sm font-medium rounded-t-lg transition-colors border border-b-0 shrink-0 group ${
+        isActive ? 'bg-background text-emerald-600 border-border' : 'text-muted-foreground hover:text-foreground border-transparent bg-muted/30'
+      }`}
+    >
+      {/* Drag handle */}
+      <span
+        className="cursor-grab active:cursor-grabbing text-muted-foreground/40 hover:text-muted-foreground mr-0.5"
+        {...attributes}
+        {...listeners}
+      >
+        <GripVertical className="size-3" />
+      </span>
+      {/* Tab label - clicking switches tab */}
+      <button type="button" className="flex items-center gap-1.5" onClick={onClick}>
+        <span className="flex items-center justify-center size-5 rounded-full bg-emerald-600 text-white text-[10px] font-bold">{idx + 1}</span>
+        <span className="whitespace-nowrap">Mensagem {idx + 1}</span>
+      </button>
+      {/* Close X button - like browser tabs */}
+      {canClose && (
+        <button
+          type="button"
+          className="ml-0.5 flex items-center justify-center size-4 rounded-sm text-muted-foreground/50 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/20 transition-colors opacity-0 group-hover:opacity-100"
+          onClick={(e) => { e.stopPropagation(); onClose() }}
+          title="Fechar mensagem"
+        >
+          <X className="size-3" />
+        </button>
+      )}
+    </div>
+  )
+}
+
 function CampanhasTab() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
   const [loading, setLoading] = useState(true)
@@ -2927,22 +2978,33 @@ function CampanhasTab() {
 
         // Upload step media if present
         if (s.mediaFile && mediatype) {
-          const uploadData = await uploadMediaFile(s.mediaFile, mediatype, s.audioMode)
-          mediaUrl = uploadData.mediaUrl
-          mediatype = uploadData.mediatype
+          try {
+            const uploadData = await uploadMediaFile(s.mediaFile, mediatype, s.audioMode)
+            mediaUrl = uploadData.mediaUrl
+            mediatype = uploadData.mediatype
+          } catch (uploadErr: any) {
+            console.error(`[createCampaign] Upload failed for step ${i + 1}:`, uploadErr?.message)
+            toast.error(`Erro no upload da mídia da mensagem ${i + 1}: ${uploadErr?.message || 'erro desconhecido'}`, { duration: 6000 })
+            throw uploadErr
+          }
         }
 
         // Upload media for each variation
         const variationsWithMedia: Array<{ content: string; mediaUrl?: string; mediatype?: string }> = []
         for (const v of s.variations) {
-          if (!v.content.trim()) continue
+          if (!v.content.trim() && !v.mediaFile && !v.mediaUrl && !v.mediatype) continue
           let vMediaUrl = v.mediaUrl || ''
           let vMediatype = v.mediatype || ''
 
           if (v.mediaFile && vMediatype) {
-            const uploadData = await uploadMediaFile(v.mediaFile, vMediatype, v.audioMode)
-            vMediaUrl = uploadData.mediaUrl
-            vMediatype = uploadData.mediatype
+            try {
+              const uploadData = await uploadMediaFile(v.mediaFile, vMediatype, v.audioMode)
+              vMediaUrl = uploadData.mediaUrl
+              vMediatype = uploadData.mediatype
+            } catch (uploadErr: any) {
+              console.error(`[createCampaign] Upload failed for variation in step ${i + 1}:`, uploadErr?.message)
+              throw uploadErr
+            }
           }
 
           variationsWithMedia.push({ content: v.content, mediaUrl: vMediaUrl || undefined, mediatype: vMediatype || undefined })
@@ -2965,6 +3027,8 @@ function CampanhasTab() {
         steps: stepsPayload, antiBanEnabled: newCampaign.antiBanEnabled, warmingMode: newCampaign.warmingMode,
       }
 
+      console.log('[createCampaign] Saving campaign:', { name: payload.name, stepsCount: stepsPayload.length, editing, campaignId: selectedCampaign?.id })
+
       if (editing && selectedCampaign) {
         // Edit mode: PATCH the existing campaign
         const res = await fetch(`/api/campaigns/${selectedCampaign.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
@@ -2979,7 +3043,8 @@ function CampanhasTab() {
       setCreateDialogOpen(false); setEditing(false); resetNewCampaign(); setActiveStep(0); fetchCampaigns()
     } catch (err: unknown) {
       console.error('[createCampaign] Error:', err)
-      toast.error((err as Error).message || 'Erro ao criar campanha')
+      const errMsg = (err as Error).message || 'Erro ao salvar campanha'
+      toast.error(errMsg, { duration: 6000 })
     } finally {
       setSaving(false)
     }
@@ -3194,6 +3259,22 @@ function CampanhasTab() {
     setActiveStep(newLength - 1) // auto-switch to the new step (0-indexed)
   }
   const removeStep = (idx: number) => setNewCampaign(prev => ({ ...prev, steps: prev.steps.filter((_, i) => i !== idx) }))
+  const moveStep = (fromIdx: number, toIdx: number) => {
+    setNewCampaign(prev => {
+      const steps = arrayMove(prev.steps, fromIdx, toIdx)
+      return { ...prev, steps }
+    })
+    setActiveStep(toIdx)
+  }
+  const dndSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event
+    if (over && active.id !== over.id) {
+      const oldIndex = Number(active.id)
+      const newIndex = Number(over.id)
+      moveStep(oldIndex, newIndex)
+    }
+  }
   const updateStep = (idx: number, field: 'content' | 'delayMinutes' | 'mediaFile' | 'mediaUrl' | 'mediatype' | 'audioMode' | 'caption' | 'linkUrl' | 'linkPreview' | 'contactName' | 'contactPhone' | 'locationLat' | 'locationLng' | 'locationName', value: string | number | File | boolean | null) => {
     setNewCampaign(prev => { const steps = [...prev.steps]; steps[idx] = { ...steps[idx], [field]: value }; return { ...prev, steps } })
   }
@@ -3220,7 +3301,13 @@ function CampanhasTab() {
   }
 
   const canCreate = newCampaign.name.trim() && newCampaign.chipIds.length > 0 &&
-    newCampaign.steps.some(s => s.content.trim() || s.variations.some(v => v.content.trim()))
+    newCampaign.steps.some(s =>
+      s.content.trim() ||
+      s.mediaFile ||
+      s.mediaUrl ||
+      s.mediatype ||
+      s.variations.some(v => v.content.trim() || v.mediaFile || v.mediaUrl || v.mediatype)
+    )
 
   // ─── Edit Campaign Helpers ──────────────────────────────────
   const startEditing = (campaign: Campaign) => {
@@ -3286,19 +3373,30 @@ function CampanhasTab() {
         let mediaUrl = s.mediaUrl || ''
         let mediatype = s.mediatype || ''
         if (s.mediaFile && mediatype) {
-          const uploadData = await uploadMediaFile(s.mediaFile, mediatype, s.audioMode)
-          mediaUrl = uploadData.mediaUrl
-          mediatype = uploadData.mediatype
+          try {
+            const uploadData = await uploadMediaFile(s.mediaFile, mediatype, s.audioMode)
+            mediaUrl = uploadData.mediaUrl
+            mediatype = uploadData.mediatype
+          } catch (uploadErr: any) {
+            console.error(`[saveEdit] Upload failed for step ${i + 1}:`, uploadErr?.message)
+            toast.error(`Erro no upload da mídia da mensagem ${i + 1}: ${uploadErr?.message || 'erro desconhecido'}`, { duration: 6000 })
+            throw uploadErr
+          }
         }
         const variationsWithMedia: Array<{ content: string; mediaUrl?: string; mediatype?: string }> = []
         for (const v of s.variations) {
-          if (!v.content.trim()) continue
+          if (!v.content.trim() && !v.mediaFile && !v.mediaUrl && !v.mediatype) continue
           let vMediaUrl = v.mediaUrl || ''
           let vMediatype = v.mediatype || ''
           if (v.mediaFile && vMediatype) {
-            const uploadData = await uploadMediaFile(v.mediaFile, vMediatype, v.audioMode)
-            vMediaUrl = uploadData.mediaUrl
-            vMediatype = uploadData.mediatype
+            try {
+              const uploadData = await uploadMediaFile(v.mediaFile, vMediatype, v.audioMode)
+              vMediaUrl = uploadData.mediaUrl
+              vMediatype = uploadData.mediatype
+            } catch (uploadErr: any) {
+              console.error(`[saveEdit] Upload failed for variation in step ${i + 1}:`, uploadErr?.message)
+              throw uploadErr
+            }
           }
           variationsWithMedia.push({ content: v.content, mediaUrl: vMediaUrl || undefined, mediatype: vMediatype || undefined })
         }
@@ -3322,6 +3420,7 @@ function CampanhasTab() {
         antiBanEnabled: editForm.antiBanEnabled,
         warmingMode: editForm.warmingMode,
       }
+      console.log('[saveEdit] Saving campaign:', { name: payload.name, stepsCount: stepsPayload.length, campaignId: selectedCampaign.id })
       const res = await fetch(`/api/campaigns/${selectedCampaign.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -3335,7 +3434,9 @@ function CampanhasTab() {
       const updated = await fetch(`/api/campaigns/${selectedCampaign.id}`).then(r => r.json())
       setSelectedCampaign(updated)
     } catch (err: unknown) {
-      toast.error((err as Error).message || 'Erro ao atualizar campanha')
+      console.error('[saveEdit] Error:', err)
+      const errMsg = (err as Error).message || 'Erro ao atualizar campanha'
+      toast.error(errMsg, { duration: 6000 })
     } finally {
       setSaving(false)
     }
@@ -3373,7 +3474,13 @@ function CampanhasTab() {
   }
 
   const canSaveEdit = editForm.name.trim() && editForm.chipIds.length > 0 &&
-    editForm.steps.some(s => s.content.trim() || s.variations.some(v => v.content.trim()))
+    editForm.steps.some(s =>
+      s.content.trim() ||
+      s.mediaFile ||
+      s.mediaUrl ||
+      s.mediatype ||
+      s.variations.some(v => v.content.trim() || v.mediaFile || v.mediaUrl || v.mediatype)
+    )
 
   return (
     <div className="space-y-6">
@@ -3500,28 +3607,27 @@ function CampanhasTab() {
               <div className="flex-1 flex min-h-0 overflow-hidden">
                 {/* Editor Panel */}
                 <div className="flex-1 flex flex-col min-h-0 border-r">
-                  {/* Step Tabs */}
-                  <div className="flex items-center gap-1 px-4 pt-2 pb-0 border-b shrink-0 bg-muted/20">
-                    {newCampaign.steps.map((step, idx) => (
-                      <button
-                        key={idx}
-                        type="button"
-                        className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-t-lg transition-colors border border-b-0 ${activeStep === idx ? 'bg-background text-emerald-600 border-border' : 'text-muted-foreground hover:text-foreground border-transparent'}`}
-                        onClick={() => setActiveStep(idx)}
-                      >
-                        <span className="flex items-center justify-center size-5 rounded-full bg-emerald-600 text-white text-[10px] font-bold">{idx + 1}</span>
-                        Mensagem {idx + 1}
-                      </button>
-                    ))}
-                    <Button variant="ghost" size="sm" className="gap-1 text-emerald-600 h-8 px-2" onClick={addStep}>
-                      <Plus className="size-3.5" />
-                    </Button>
-                    {newCampaign.steps.length > 1 && activeStep > 0 && (
-                      <Button variant="ghost" size="sm" className="ml-auto text-rose-500 h-8 px-2" onClick={() => { removeStep(activeStep); setActiveStep(Math.max(0, activeStep - 1)) }}>
-                        <Trash2 className="size-3.5" />
-                      </Button>
-                    )}
-                  </div>
+                  {/* Message Tabs with Drag & Drop */}
+                  <DndContext sensors={dndSensors} collisionDetection={closestCenter} modifiers={[restrictToHorizontalAxis]} onDragEnd={handleDragEnd}>
+                    <SortableContext items={newCampaign.steps.map((_, i) => String(i))} strategy={horizontalListSortingStrategy}>
+                      <div className="flex items-center gap-0.5 px-4 pt-2 pb-0 border-b shrink-0 bg-muted/20 overflow-x-auto">
+                        {newCampaign.steps.map((step, idx) => (
+                          <SortableTab
+                            key={idx}
+                            id={String(idx)}
+                            idx={idx}
+                            isActive={activeStep === idx}
+                            canClose={newCampaign.steps.length > 1}
+                            onClick={() => setActiveStep(idx)}
+                            onClose={() => { removeStep(idx); setActiveStep(Math.max(0, idx > 0 ? idx - 1 : 0)) }}
+                          />
+                        ))}
+                        <Button variant="ghost" size="sm" className="gap-1 text-emerald-600 h-8 px-2 shrink-0" onClick={addStep}>
+                          <Plus className="size-3.5" />
+                        </Button>
+                      </div>
+                    </SortableContext>
+                  </DndContext>
 
                   {/* Active Step Content */}
                   <div className="flex-1 overflow-y-auto p-4 space-y-3">
@@ -3916,7 +4022,7 @@ function CampanhasTab() {
               {!canCreate && !saving && (
                 <p className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1 mb-1 sm:mb-0 sm:mr-auto">
                   <AlertCircle className="size-3" />
-                  {!newCampaign.name.trim() ? 'Informe o nome da campanha' : newCampaign.chipIds.length === 0 ? 'Selecione pelo menos 1 chip para envio' : 'Escreva o texto de pelo menos 1 mensagem'}
+                  {!newCampaign.name.trim() ? 'Informe o nome da campanha' : newCampaign.chipIds.length === 0 ? 'Selecione pelo menos 1 chip para envio' : 'Preencha pelo menos 1 mensagem (texto ou mídia)'}
                 </p>
               )}
               <div className="flex gap-2 sm:ml-auto">
@@ -3965,7 +4071,7 @@ function CampanhasTab() {
                         <span className="flex items-center gap-1"><Smartphone className="size-3" /> {c.chips?.length || 0} chips</span>
                         {c.contactList && <span className="flex items-center gap-1"><Users className="size-3" /> {c.contactList.name}</span>}
                         {c.scheduledAt && <span className="flex items-center gap-1"><CalendarDays className="size-3" /> {new Date(c.scheduledAt).toLocaleDateString('pt-BR')}</span>}
-                        {c.sequenceSteps?.length > 0 && <span className="flex items-center gap-1"><ArrowRight className="size-3" /> {c.sequenceSteps.length} etapas</span>}
+                        {c.sequenceSteps?.length > 0 && <span className="flex items-center gap-1"><ArrowRight className="size-3" /> {c.sequenceSteps.length} mensagens</span>}
                       </div>
                     </div>
                     <div className="flex gap-2">
@@ -5454,7 +5560,7 @@ function MensagensTab() {
                     <th className="text-left p-3 font-medium">Contato</th>
                     <th className="text-left p-3 font-medium">Telefone</th>
                     <th className="text-left p-3 font-medium">Chip</th>
-                    <th className="text-left p-3 font-medium">Etapa</th>
+                    <th className="text-left p-3 font-medium">Msg</th>
                     <th className="text-left p-3 font-medium">Mensagem</th>
                     <th className="text-left p-3 font-medium">Status</th>
                     <th className="text-left p-3 font-medium">Data/Hora</th>
@@ -5467,7 +5573,7 @@ function MensagensTab() {
                       <td className="p-3 font-medium">{m.contact?.name || '—'}</td>
                       <td className="p-3 text-muted-foreground">{m.contact?.phone || '—'}</td>
                       <td className="p-3 text-muted-foreground">{m.chip?.name || '—'}</td>
-                      <td className="p-3">{(m as any).stepOrder > 1 ? <Badge variant="outline" className="text-xs">Etapa {(m as any).stepOrder}</Badge> : <Badge variant="secondary" className="text-xs">Etapa 1</Badge>}</td>
+                      <td className="p-3">{(m as any).stepOrder > 1 ? <Badge variant="outline" className="text-xs">Msg {(m as any).stepOrder}</Badge> : <Badge variant="secondary" className="text-xs">Msg 1</Badge>}</td>
                       <td className="p-3 max-w-[200px] truncate text-muted-foreground">{m.content}</td>
                       <td className="p-3"><StatusBadge status={m.status} /></td>
                       <td className="p-3 text-xs text-muted-foreground">{m.createdAt ? new Date(m.createdAt).toLocaleString('pt-BR') : '—'}</td>
