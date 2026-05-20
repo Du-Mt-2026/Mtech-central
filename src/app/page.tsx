@@ -2854,7 +2854,7 @@ function CampanhasTab() {
   const resetNewCampaign = () => setNewCampaign({
     name: '', sendIntervalMin: 30, sendIntervalMax: 90,
     chipIds: [], contactListId: '', scheduledAt: '',
-    steps: [{ content: '', delayMinutes: 0, mediaFile: null, mediaUrl: '', mediatype: '', audioMode: 'whatsapp' as const, variations: [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '', audioMode: 'whatsapp' as const, caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '' }] }] as StepForm[],
+    steps: [{ content: '', delayMinutes: 0, mediaFile: null, mediaUrl: '', mediatype: '', audioMode: 'whatsapp' as const, caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '', variations: [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '', audioMode: 'whatsapp' as const, caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '' }] }] as StepForm[],
     antiBanEnabled: true, warmingMode: 'normal',
   })
 
@@ -3213,6 +3213,7 @@ function CampanhasTab() {
 
   // ─── Edit Campaign Helpers ──────────────────────────────────
   const startEditing = (campaign: Campaign) => {
+    const emptyVariation = { content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '', audioMode: 'whatsapp' as const, caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '' }
     const steps: StepForm[] = (campaign.sequenceSteps || [])
       .sort((a, b) => a.stepOrder - b.stepOrder)
       .map(s => {
@@ -3225,13 +3226,21 @@ function CampanhasTab() {
           mediaUrl: s.mediaUrl || '',
           mediatype: s.mediatype || '',
           audioMode: 'whatsapp' as const,
+          caption: '',
+          linkUrl: '',
+          linkPreview: true,
+          contactName: '',
+          contactPhone: '',
+          locationLat: '',
+          locationLng: '',
+          locationName: '',
           variations: parsedVars.length > 0
-            ? parsedVars.map(v => ({ content: v.content, mediaFile: null as File | null, mediaUrl: v.mediaUrl || '', mediatype: v.mediatype || '', audioMode: 'whatsapp' as const }))
-            : [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '', audioMode: 'whatsapp' as const, caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '' }],
+            ? parsedVars.map(v => ({ content: v.content, mediaFile: null as File | null, mediaUrl: v.mediaUrl || '', mediatype: v.mediatype || '', audioMode: 'whatsapp' as const, caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '' }))
+            : [{ ...emptyVariation }],
         }
       })
     if (steps.length === 0) {
-      steps.push({ content: '', delayMinutes: 0, mediaFile: null, mediaUrl: '', mediatype: '', audioMode: 'whatsapp' as const, variations: [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '', audioMode: 'whatsapp' as const, caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '' }] })
+      steps.push({ content: '', delayMinutes: 0, mediaFile: null, mediaUrl: '', mediatype: '', audioMode: 'whatsapp' as const, caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '', variations: [{ ...emptyVariation }] })
     }
     // Pre-fill newCampaign and open create dialog instead of editing inside detail dialog
     setNewCampaign({
