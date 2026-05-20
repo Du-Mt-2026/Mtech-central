@@ -799,31 +799,8 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
     throw new Error('Campanha não tem mensagens configuradas. Adicione etapas com mensagens.')
   }
 
-  // Build all possible message items grouped by step
-  type MessageItem = { content: string; mediaUrl: string | null; mediatype: string | null; stepOrder: number }
-  const stepsMap = new Map<number, MessageItem[]>()
-  for (const step of parsedSteps) {
-    if (!stepsMap.has(step.stepOrder)) stepsMap.set(step.stepOrder, [])
-    const items = stepsMap.get(step.stepOrder)!
-
-    if (step.variations.length > 0) {
-      for (const v of step.variations) {
-        items.push({
-          content: v.content,
-          mediaUrl: v.mediaUrl || step.mediaUrl || null,
-          mediatype: v.mediatype || step.mediatype || null,
-          stepOrder: step.stepOrder,
-        })
-      }
-    } else {
-      items.push({
-        content: step.content,
-        mediaUrl: step.mediaUrl || null,
-        mediatype: step.mediatype || null,
-        stepOrder: step.stepOrder,
-      })
-    }
-  }
+  // Sort steps by stepOrder to ensure correct ordering
+  parsedSteps.sort((a, b) => a.stepOrder - b.stepOrder)
 
   const contacts = campaign.contactList.contacts
   const chips = campaign.chips.map(cc => cc.chip).filter(c => c.evolutionInstance)
@@ -831,72 +808,90 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
   if (chips.length === 0) throw new Error('Nenhum chip com instância WhatsApp conectada')
   if (contacts.length === 0) throw new Error('Lista de contatos vazia')
 
-  // Create messages: for single-step campaigns, random variation selection
-  // For multi-step campaigns, start with step 1 only
-  const isMultiStep = stepsMap.size > 1
-  const step1Items = stepsMap.get(1) || []
-  const singleStepItems = Array.from(stepsMap.values()).flat()
-
+  // Create messages for ALL steps in the sequence
+  // For multi-step: each contact gets one message per step, processed in order
   const messagesToCreate = []
   for (let i = 0; i < contacts.length; i++) {
     const contact = contacts[i]
     const chip = chips[i % chips.length]
-    const itemsPool = isMultiStep ? step1Items : singleStepItems
-    const messageItem = itemsPool[Math.floor(Math.random() * itemsPool.length)]
 
-    // Replace template variables — resolve KEY blocks first, then contact variables, then message key markers
-    // Step 1: Resolve inline {{KEY: var1 | var2 | var3}} blocks (random variation per contact)
-    let content = resolveKeyBlocks(messageItem.content)
-
-    // Step 2: Replace contact variables from customFields
-    // customFields contains ALL spreadsheet columns: {"nome":"Maria","whatsapp":"55119...","empresa":"Tech Corp","vendedora":"Ana"}
-    let customData: Record<string, string> = {}
-    try {
-      if (contact.customFields) {
-        customData = JSON.parse(contact.customFields)
+    for (const step of parsedSteps) {
+      // Build the items pool for this step (main content + variations)
+      const stepItems: { content: string; mediaUrl: string | null; mediatype: string | null }[] = []
+      if (step.variations.length > 0) {
+        for (const v of step.variations) {
+          stepItems.push({
+            content: v.content,
+            mediaUrl: v.mediaUrl || step.mediaUrl || null,
+            mediatype: v.mediatype || step.mediatype || null,
+          })
+        }
+      } else {
+        stepItems.push({
+          content: step.content,
+          mediaUrl: step.mediaUrl || null,
+          mediatype: step.mediatype || null,
+        })
       }
-    } catch { /* ignore invalid JSON */ }
 
-    // All fields: customFields already has every column from the spreadsheet
-    // If customFields is missing core fields, add them as fallback
-    const allFields: Record<string, string> = {
-      nome: contact.name,
-      telefone: contact.phone,
-      ...customData, // customData overrides everything — it has the real values from the spreadsheet
+      // Pick a random variation for this contact
+      const messageItem = stepItems[Math.floor(Math.random() * stepItems.length)]
+
+      // Replace template variables — resolve KEY blocks first, then contact variables, then message key markers
+      // Step 1: Resolve inline {{KEY: var1 | var2 | var3}} blocks (random variation per contact)
+      let content = resolveKeyBlocks(messageItem.content)
+
+      // Step 2: Replace contact variables from customFields
+      // customFields contains ALL spreadsheet columns: {"nome":"Maria","whatsapp":"55119...","empresa":"Tech Corp","vendedora":"Ana"}
+      let customData: Record<string, string> = {}
+      try {
+        if (contact.customFields) {
+          customData = JSON.parse(contact.customFields)
+        }
+      } catch { /* ignore invalid JSON */ }
+
+      // All fields: customFields already has every column from the spreadsheet
+      // If customFields is missing core fields, add them as fallback
+      const allFields: Record<string, string> = {
+        nome: contact.name,
+        telefone: contact.phone,
+        ...customData, // customData overrides everything — it has the real values from the spreadsheet
+      }
+
+      // Resolve all {{variable}} patterns: if found in allFields, replace; if not, leave as-is
+      // Match {{any_word_or_underscored_key}} but NOT {{KEY: ...}} (already resolved)
+      content = content.replace(/\{\{([a-zA-ZÀ-ÿ_][a-zA-ZÀ-ÿ0-9_]*)\}\}/g, (match, varName) => {
+        const key = varName.toLowerCase()
+        if (allFields[key] !== undefined) {
+          return allFields[key]
+        }
+        // Variable not found — leave {{varName}} as-is
+        return match
+      })
+
+      // Legacy single-brace format: {nome}, {telefone}, etc.
+      content = content.replace(/\{([a-zA-ZÀ-ÿ_][a-zA-ZÀ-ÿ0-9_]*)\}/g, (match, varName) => {
+        const key = varName.toLowerCase()
+        if (allFields[key] !== undefined) {
+          return allFields[key]
+        }
+        return match
+      })
+
+      // Step 3: Resolve old-style {{KEY_NAME}} markers (from Chaves/MessageKey system)
+      content = await resolveMessageKeyMarkers(content)
+
+      messagesToCreate.push({
+        campaignId: campaign.id,
+        chipId: chip.id,
+        contactId: contact.id,
+        content,
+        status: 'pending' as const,
+        stepOrder: step.stepOrder,
+        mediaUrl: messageItem.mediaUrl,
+        mediatype: messageItem.mediatype,
+      })
     }
-
-    // Resolve all {{variable}} patterns: if found in allFields, replace; if not, leave as-is
-    // Match {{any_word_or_underscored_key}} but NOT {{KEY: ...}} (already resolved)
-    content = content.replace(/\{\{([a-zA-ZÀ-ÿ_][a-zA-ZÀ-ÿ0-9_]*)\}\}/g, (match, varName) => {
-      const key = varName.toLowerCase()
-      if (allFields[key] !== undefined) {
-        return allFields[key]
-      }
-      // Variable not found — leave {{varName}} as-is
-      return match
-    })
-
-    // Legacy single-brace format: {nome}, {telefone}, etc.
-    content = content.replace(/\{([a-zA-ZÀ-ÿ_][a-zA-ZÀ-ÿ0-9_]*)\}/g, (match, varName) => {
-      const key = varName.toLowerCase()
-      if (allFields[key] !== undefined) {
-        return allFields[key]
-      }
-      return match
-    })
-
-    // Step 3: Resolve old-style {{KEY_NAME}} markers (from Chaves/MessageKey system)
-    content = await resolveMessageKeyMarkers(content)
-
-    messagesToCreate.push({
-      campaignId: campaign.id,
-      chipId: chip.id,
-      contactId: contact.id,
-      content,
-      status: 'pending' as const,
-      mediaUrl: messageItem.mediaUrl,
-      mediatype: messageItem.mediatype,
-    })
   }
 
   await db.message.createMany({ data: messagesToCreate })
@@ -968,11 +963,92 @@ export async function processNextMessage(campaignId: string): Promise<{
   }
 
   // Find the next pending message
+  // For multi-step campaigns: process step 1 first, then step 2, etc. per contact
+  // We order by stepOrder so that step 1 messages are processed before step 2
+  // This ensures the sequence is respected for each contact
   const message = await db.message.findFirst({
     where: { campaignId, status: 'pending' },
     include: { chip: true, contact: true },
-    orderBy: { createdAt: 'asc' },
+    orderBy: [
+      { stepOrder: 'asc' },  // Process step 1 before step 2
+      { createdAt: 'asc' },  // Then by creation order (FIFO)
+    ],
   })
+
+  // For multi-step: check if this contact's previous step has been sent
+  // If step > 1 and the previous step for this contact hasn't been sent yet, skip
+  if (message && (message as any).stepOrder > 1) {
+    const previousStep = await db.message.findFirst({
+      where: {
+        campaignId,
+        contactId: message.contactId,
+        stepOrder: (message as any).stepOrder - 1,
+        status: { not: 'sent' },
+      },
+    })
+    if (previousStep) {
+      // Previous step not yet sent — skip this message and try another
+      // Mark it temporarily or just pick the next eligible message
+      const alternativeMessage = await db.message.findFirst({
+        where: {
+          campaignId,
+          status: 'pending',
+          contactId: { not: message.contactId },
+        },
+        include: { chip: true, contact: true },
+        orderBy: [
+          { stepOrder: 'asc' },
+          { createdAt: 'asc' },
+        ],
+      })
+      if (alternativeMessage) {
+        // Use the alternative message instead
+        Object.assign(message, alternativeMessage)
+      } else {
+        // No alternative — wait for previous step to be processed
+        const remaining = await db.message.count({ where: { campaignId, status: 'pending' } })
+        return { processed: false, delayMs: 5000, remaining, completed: false, reason: 'waiting_for_previous_step' }
+      }
+    }
+
+    // Check delay between steps: if delayMinutes is configured, wait the appropriate time
+    const campaignSteps = await db.campaign.findUnique({
+      where: { id: campaignId },
+      include: { sequenceSteps: true },
+    })
+    const currentStepConfig = campaignSteps?.sequenceSteps.find(
+      (s: any) => s.stepOrder === (message as any).stepOrder
+    )
+    if (currentStepConfig && currentStepConfig.delayMinutes > 0) {
+      // Find when the previous step for this contact was sent
+      const previousStepSent = await db.message.findFirst({
+        where: {
+          campaignId,
+          contactId: message.contactId,
+          stepOrder: (message as any).stepOrder - 1,
+          status: 'sent',
+          sentAt: { not: null },
+        },
+        orderBy: { sentAt: 'desc' },
+        select: { sentAt: true },
+      })
+      if (previousStepSent?.sentAt) {
+        const elapsedMs = Date.now() - new Date(previousStepSent.sentAt).getTime()
+        const requiredDelayMs = currentStepConfig.delayMinutes * 60 * 1000
+        if (elapsedMs < requiredDelayMs) {
+          const waitMs = requiredDelayMs - elapsedMs
+          console.log(`[SendingEngine] Step ${(message as any).stepOrder} for contact ${message.contactId}: delay not met (${Math.round(elapsedMs/1000)}s/${currentStepConfig.delayMinutes}min) — waiting ${Math.round(waitMs/1000)}s`)
+          return {
+            processed: false,
+            delayMs: Math.min(waitMs, 60000), // Cap at 1 minute (next cron tick will re-check)
+            remaining: -1,
+            completed: false,
+            reason: `step_delay_${(message as any).stepOrder}`,
+          }
+        }
+      }
+    }
+  }
 
   if (!message) {
     const stillPending = await db.message.count({

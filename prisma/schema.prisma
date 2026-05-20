@@ -219,6 +219,7 @@ model Message {
   contactId           String
   content             String
   status              String    @default("pending")
+  stepOrder           Int       @default(1)  // Which step in the campaign sequence (1, 2, 3...)
   sentAt              DateTime?
   deliveredAt         DateTime?
   readAt              DateTime?

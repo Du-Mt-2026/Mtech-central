@@ -226,6 +226,7 @@ interface MessageItem {
   contactId: string
   content: string
   status: string
+  stepOrder: number
   sentAt: string | null
   deliveredAt: string | null
   readAt: string | null
@@ -5445,6 +5446,7 @@ function MensagensTab() {
                     <th className="text-left p-3 font-medium">Contato</th>
                     <th className="text-left p-3 font-medium">Telefone</th>
                     <th className="text-left p-3 font-medium">Chip</th>
+                    <th className="text-left p-3 font-medium">Etapa</th>
                     <th className="text-left p-3 font-medium">Mensagem</th>
                     <th className="text-left p-3 font-medium">Status</th>
                     <th className="text-left p-3 font-medium">Data/Hora</th>
@@ -5457,6 +5459,7 @@ function MensagensTab() {
                       <td className="p-3 font-medium">{m.contact?.name || '—'}</td>
                       <td className="p-3 text-muted-foreground">{m.contact?.phone || '—'}</td>
                       <td className="p-3 text-muted-foreground">{m.chip?.name || '—'}</td>
+                      <td className="p-3">{(m as any).stepOrder > 1 ? <Badge variant="outline" className="text-xs">Etapa {(m as any).stepOrder}</Badge> : <Badge variant="secondary" className="text-xs">Etapa 1</Badge>}</td>
                       <td className="p-3 max-w-[200px] truncate text-muted-foreground">{m.content}</td>
                       <td className="p-3"><StatusBadge status={m.status} /></td>
                       <td className="p-3 text-xs text-muted-foreground">{m.createdAt ? new Date(m.createdAt).toLocaleString('pt-BR') : '—'}</td>
