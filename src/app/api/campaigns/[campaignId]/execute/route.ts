@@ -107,9 +107,17 @@ async function processMessagesInline(campaignId: string): Promise<{
       break
     }
 
-    // Wait the anti-ban interval before the next message
-    if (result.processed && result.delayMs > 0) {
-      await new Promise(resolve => setTimeout(resolve, result.delayMs))
+    // Wait the delay before the next message
+    // IMPORTANT: Wait delayMs regardless of processed status!
+    // When processed=false with step_delay or waiting_for_previous_step,
+    // the delayMs is the time we need to wait before the next step is ready.
+    if (result.delayMs > 0) {
+      // Cap wait time to remaining function time to avoid timeout
+      const remainingTime = FUNCTION_TIMEOUT_MS - (Date.now() - startTime)
+      const waitTime = Math.min(result.delayMs, remainingTime - 2000) // leave 2s margin
+      if (waitTime > 0) {
+        await new Promise(resolve => setTimeout(resolve, waitTime))
+      }
     }
 
     // If no pending messages found and no specific reason, stop

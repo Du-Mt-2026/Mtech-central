@@ -964,17 +964,46 @@ export async function processNextMessage(campaignId: string): Promise<{
     }
   }
 
-  // Find the next pending message
-  // CONTACT-BY-CONTACT processing: process ALL steps for one contact before moving to the next.
-  // Messages are created in contact-step order (contact1-step1, contact1-step2, contact2-step1, ...),
-  // so ordering by createdAt first ensures we process contact-by-contact.
-  const message = await db.message.findFirst({
+  // ============================================================
+  // CONTACT-BY-CONTACT PROCESSING
+  // ============================================================
+  // Process ALL steps for one contact before moving to the next.
+  // Messages are created in order: A-step1, A-step2, B-step1, B-step2, ...
+  // Using 'id' (auto-increment) preserves creation order even when createdAt is identical.
+  //
+  // Step 1: Find the NEXT CONTACT to process (earliest pending message by ID)
+  // Step 2: Find the NEXT STEP for that contact (lowest stepOrder)
+  // This guarantees contact-by-contact ordering: A1→A2→A3 → B1→B2→B3 → ...
+
+  const earliestPending = await db.message.findFirst({
     where: { campaignId, status: 'pending' },
+    orderBy: { id: 'asc' },  // id preserves creation order (A1, A2, B1, B2, ...)
+    select: { contactId: true },
+  })
+
+  if (!earliestPending) {
+    const stillSending = await db.message.count({
+      where: { campaignId, status: 'sending' },
+    })
+
+    if (stillSending === 0) {
+      await db.campaign.update({
+        where: { id: campaignId },
+        data: { status: 'completed', completedAt: new Date() },
+      })
+      return { processed: false, delayMs: 0, remaining: 0, completed: true }
+    }
+
+    return { processed: false, delayMs: 3000, remaining: stillSending, completed: false, reason: 'message_in_sending_state' }
+  }
+
+  const targetContactId = earliestPending.contactId
+
+  // Find the next pending step for THIS contact (lowest stepOrder first)
+  const message = await db.message.findFirst({
+    where: { campaignId, contactId: targetContactId, status: 'pending' },
     include: { chip: true, contact: true },
-    orderBy: [
-      { createdAt: 'asc' },  // Process in creation order (contact-by-contact)
-      { stepOrder: 'asc' },  // Within same contact, process steps in order
-    ],
+    orderBy: { stepOrder: 'asc' },
   })
 
   // For multi-step campaigns: check if this contact's previous step has been sent
@@ -991,6 +1020,16 @@ export async function processNextMessage(campaignId: string): Promise<{
     })
 
     if (!previousStepSent) {
+      // Check if previous step is currently being sent (status: 'sending')
+      const previousStepSending = await db.message.findFirst({
+        where: {
+          campaignId,
+          contactId: message.contactId,
+          stepOrder: (message as any).stepOrder - 1,
+          status: 'sending',
+        },
+      })
+
       // Check if previous step FAILED — if so, fail this step too (skip this contact entirely)
       const previousStepFailed = await db.message.findFirst({
         where: {
@@ -1000,6 +1039,7 @@ export async function processNextMessage(campaignId: string): Promise<{
           status: 'failed',
         },
       })
+
       if (previousStepFailed) {
         // Previous step failed — mark this step and all subsequent steps for this contact as failed
         const failedCount = await db.message.updateMany({
@@ -1016,8 +1056,13 @@ export async function processNextMessage(campaignId: string): Promise<{
         return { processed: true, delayMs: 1000, remaining, completed: remaining === 0 }
       }
 
-      // Previous step still pending (not sent yet) — wait for it to be processed first
-      // This is the key to contact-by-contact processing: DON'T skip to other contacts
+      if (previousStepSending) {
+        // Previous step is currently being sent — wait briefly and retry
+        const remaining = await db.message.count({ where: { campaignId, status: 'pending' } })
+        return { processed: false, delayMs: 2000, remaining, completed: false, reason: 'waiting_for_sending_step' }
+      }
+
+      // Previous step not found at all (shouldn't happen) — wait
       const remaining = await db.message.count({ where: { campaignId, status: 'pending' } })
       return { processed: false, delayMs: 3000, remaining, completed: false, reason: 'waiting_for_previous_step' }
     }
@@ -1052,7 +1097,7 @@ export async function processNextMessage(campaignId: string): Promise<{
           console.log(`[SendingEngine] Step ${(message as any).stepOrder} for contact ${message.contactId}: delay not met (${Math.round(elapsedMs/1000)}s/${currentStepConfig.delayMinutes}${delayUnitLabel}) — waiting ${Math.round(waitMs/1000)}s`)
           return {
             processed: false,
-            delayMs: Math.min(waitMs, 60000), // Cap at 1 minute (next cron tick will re-check)
+            delayMs: waitMs, // Return actual remaining delay — callers MUST wait this
             remaining: -1,
             completed: false,
             reason: `step_delay_${(message as any).stepOrder}`,

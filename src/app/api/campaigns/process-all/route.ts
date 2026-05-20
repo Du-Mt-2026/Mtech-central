@@ -130,7 +130,11 @@ export async function POST(request: NextRequest) {
         // This applies BOTH when a message was processed (anti-ban interval)
         // AND when we're waiting for a step delay (contact-by-contact sequential)
         if (result.delayMs > 0) {
-          await new Promise(resolve => setTimeout(resolve, result.delayMs))
+          const remainingTime = FUNCTION_TIMEOUT_MS - (Date.now() - startTime)
+          const waitTime = Math.min(result.delayMs, remainingTime - 2000)
+          if (waitTime > 0) {
+            await new Promise(resolve => setTimeout(resolve, waitTime))
+          }
         }
 
         // If campaign is complete, stop processing it
