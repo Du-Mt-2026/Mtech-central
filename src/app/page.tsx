@@ -1718,7 +1718,7 @@ function ContatosTab() {
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
   const [editContactDialog, setEditContactDialog] = useState(false)
   const [editContact, setEditContact] = useState<ContactItem | null>(null)
-  const [editContactForm, setEditContactForm] = useState({ name: '', phone: '' })
+  const [editContactForm, setEditContactForm] = useState({ name: '', phone: '', customFields: {} as Record<string, string> })
   const [deleteContactConfirm, setDeleteContactConfirm] = useState<string | null>(null)
   const [quickImportOpen, setQuickImportOpen] = useState(false)
   const [quickImportName, setQuickImportName] = useState('')
@@ -1732,6 +1732,16 @@ function ContatosTab() {
       setContactLists(data)
     } catch { toast.error('Erro ao carregar listas') }
     finally { setLoading(false) }
+  }, [])
+
+  const refreshSelectedList = useCallback(async (listId: string) => {
+    try {
+      const listRes = await fetch(`/api/contact-lists/${listId}`)
+      if (listRes.ok) {
+        const freshList = await listRes.json()
+        setSelectedList(prev => prev?.id === listId ? freshList : prev)
+      }
+    } catch { /* ignore */ }
   }, [])
 
   const fetchContacts = useCallback(async (listId: string) => {
@@ -1800,9 +1810,11 @@ function ContatosTab() {
       const res = await fetch(`/api/contact-lists/${selectedList.id}/import`, { method: 'POST', body: formData })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Erro ao importar')
-      const colInfo = data.detectedColumns ? ` | Colunas: ${data.detectedColumns.map((c: any) => c.name).join(', ')}` : ''
+      const colInfo = data.columnMapping ? ` | Colunas: ${Object.keys(data.columnMapping).join(', ')}` : ''
       toast.success(`${data.imported} contatos importados!${colInfo}`)
       setImportDialogOpen(false)
+      // Refresh the selected list to get updated columns mapping
+      await refreshSelectedList(selectedList.id)
       fetchContacts(selectedList.id)
       fetchLists()
     } catch (err: any) {
@@ -1812,7 +1824,11 @@ function ContatosTab() {
 
   const openEditContact = (contact: ContactItem) => {
     setEditContact(contact)
-    setEditContactForm({ name: contact.name, phone: contact.phone })
+    let cf: Record<string, string> = {}
+    if (contact.customFields) {
+      try { cf = JSON.parse(contact.customFields) } catch { /* ignore */ }
+    }
+    setEditContactForm({ name: contact.name, phone: contact.phone, customFields: cf })
     setEditContactDialog(true)
   }
 
@@ -1821,7 +1837,11 @@ function ContatosTab() {
     try {
       const res = await fetch(`/api/contacts/${editContact.id}`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(editContactForm),
+        body: JSON.stringify({
+          name: editContactForm.name,
+          phone: editContactForm.phone,
+          customFields: Object.keys(editContactForm.customFields).length > 0 ? editContactForm.customFields : undefined,
+        }),
       })
       if (!res.ok) throw new Error()
       toast.success('Contato atualizado!')
@@ -1870,13 +1890,15 @@ function ContatosTab() {
         throw new Error(importData.error || 'Erro ao importar')
       }
 
-      const colInfo = importData.detectedColumns ? ` | Colunas: ${importData.detectedColumns.map((c: any) => c.name).join(', ')}` : ''
+      const colInfo = importData.columnMapping ? ` | Colunas: ${Object.keys(importData.columnMapping).join(', ')}` : ''
       toast.success(`Lista "${quickImportName}" criada com ${importData.imported} contatos!${colInfo}`, { id: 'quick-import', duration: 5000 })
       setQuickImportOpen(false)
       setQuickImportName('')
       setQuickImportFile(null)
       await fetchLists()
-      setSelectedList(listData)
+      // Re-fetch the list to get updated columns mapping after import
+      await refreshSelectedList(listData.id)
+      if (!selectedList) setSelectedList(listData)
       // Small delay to ensure DB is synced before fetching contacts
       setTimeout(() => fetchContacts(listData.id), 500)
     } catch (err: any) {
@@ -2031,20 +2053,38 @@ function ContatosTab() {
                         <th className="text-left p-3 font-medium">Nome</th>
                         <th className="text-left p-3 font-medium">Telefone</th>
                         <th className="text-left p-3 font-medium">Incluído em</th>
-                        {/* Dynamic custom field columns — exclude name/phone aliases to avoid duplication */}
-                        {contacts.some(c => c.customFields) && (() => {
+                        {/* Dynamic custom field columns — use original header names from columns mapping */}
+                        {(() => {
                           const NAME_ALIASES = ['nome', 'name', 'nombre', 'cliente']
                           const PHONE_ALIASES = ['telefone', 'phone', 'tel', 'numero', 'número', 'celular', 'whatsapp']
-                          const customKeys = new Set<string>()
-                          contacts.forEach(c => {
-                            if (c.customFields) {
-                              try { Object.keys(JSON.parse(c.customFields)).forEach(k => customKeys.add(k)) } catch {}
+                          // Parse columns mapping from selectedList: {"Empresa":"empresa","Vendedora Responsável":"vendedora_responsável"}
+                          let colMapping: Record<string, string> = {}
+                          try { colMapping = JSON.parse(selectedList?.columns || '{}') } catch { /* ignore */ }
+                          // Build reverse mapping: varKey → original header name
+                          const varToHeader: Record<string, string> = {}
+                          const extraEntries: [string, string][] = [] // [varKey, originalHeader]
+                          for (const [headerName, varKey] of Object.entries(colMapping)) {
+                            const h = headerName.toLowerCase().trim()
+                            if (!NAME_ALIASES.includes(h) && !PHONE_ALIASES.includes(h)) {
+                              varToHeader[varKey] = headerName
+                              extraEntries.push([varKey, headerName])
                             }
-                          })
-                          // Filter out name/phone aliases — they are shown in dedicated columns
-                          const filteredKeys = Array.from(customKeys).filter(k => !NAME_ALIASES.includes(k) && !PHONE_ALIASES.includes(k)).sort()
-                          return filteredKeys.map(k => (
-                            <th key={k} className="text-left p-3 font-medium capitalize">{k.replace(/_/g, ' ')}</th>
+                          }
+                          // If no columns mapping, fall back to extracting keys from customFields
+                          if (extraEntries.length === 0 && contacts.some(c => c.customFields)) {
+                            const customKeys = new Set<string>()
+                            contacts.forEach(c => {
+                              if (c.customFields) {
+                                try { Object.keys(JSON.parse(c.customFields)).forEach(k => customKeys.add(k)) } catch {}
+                              }
+                            })
+                            const filteredKeys = Array.from(customKeys).filter(k => !NAME_ALIASES.includes(k) && !PHONE_ALIASES.includes(k)).sort()
+                            return filteredKeys.map(k => (
+                              <th key={k} className="text-left p-3 font-medium capitalize">{k.replace(/_/g, ' ')}</th>
+                            ))
+                          }
+                          return extraEntries.map(([varKey, headerName]) => (
+                            <th key={varKey} className="text-left p-3 font-medium">{headerName}</th>
                           ))
                         })()}
                         <th className="text-left p-3 font-medium">Ações</th>
@@ -2063,19 +2103,34 @@ function ContatosTab() {
                             <td className="p-3 text-muted-foreground text-xs">
                               {c.createdAt ? new Date(c.createdAt).toLocaleString('pt-BR') : '—'}
                             </td>
-                            {/* Dynamic custom field values — exclude name/phone aliases */}
-                            {contacts.some(c2 => c2.customFields) && (() => {
+                            {/* Dynamic custom field values — use original header names from columns mapping */}
+                            {(() => {
                               const NAME_ALIASES = ['nome', 'name', 'nombre', 'cliente']
                               const PHONE_ALIASES = ['telefone', 'phone', 'tel', 'numero', 'número', 'celular', 'whatsapp']
-                              const customKeys = new Set<string>()
-                              contacts.forEach(c2 => {
-                                if (c2.customFields) {
-                                  try { Object.keys(JSON.parse(c2.customFields)).forEach(k => customKeys.add(k)) } catch {}
+                              let colMapping: Record<string, string> = {}
+                              try { colMapping = JSON.parse(selectedList?.columns || '{}') } catch { /* ignore */ }
+                              const extraEntries: [string, string][] = [] // [varKey, originalHeader]
+                              for (const [headerName, varKey] of Object.entries(colMapping)) {
+                                const h = headerName.toLowerCase().trim()
+                                if (!NAME_ALIASES.includes(h) && !PHONE_ALIASES.includes(h)) {
+                                  extraEntries.push([varKey, headerName])
                                 }
-                              })
-                              const filteredKeys = Array.from(customKeys).filter(k => !NAME_ALIASES.includes(k) && !PHONE_ALIASES.includes(k)).sort()
-                              return filteredKeys.map(k => (
-                                <td key={k} className="p-3 text-muted-foreground text-xs">{customData[k] || '-'}</td>
+                              }
+                              // If no columns mapping, fall back to extracting keys from customFields
+                              if (extraEntries.length === 0 && contacts.some(c2 => c2.customFields)) {
+                                const customKeys = new Set<string>()
+                                contacts.forEach(c2 => {
+                                  if (c2.customFields) {
+                                    try { Object.keys(JSON.parse(c2.customFields)).forEach(k => customKeys.add(k)) } catch {}
+                                  }
+                                })
+                                const filteredKeys = Array.from(customKeys).filter(k => !NAME_ALIASES.includes(k) && !PHONE_ALIASES.includes(k)).sort()
+                                return filteredKeys.map(k => (
+                                  <td key={k} className="p-3 text-muted-foreground text-xs">{customData[k] || '-'}</td>
+                                ))
+                              }
+                              return extraEntries.map(([varKey]) => (
+                                <td key={varKey} className="p-3 text-muted-foreground text-xs">{customData[varKey] || '-'}</td>
                               ))
                             })()}
                             <td className="p-3">
@@ -2143,9 +2198,26 @@ function ContatosTab() {
       <Dialog open={editContactDialog} onOpenChange={setEditContactDialog}>
         <DialogContent>
           <DialogHeader><DialogTitle>Editar Contato</DialogTitle><DialogDescription>Atualize as informações do contato</DialogDescription></DialogHeader>
-          <div className="space-y-4 py-4">
+          <div className="space-y-4 py-4 max-h-[60vh] overflow-y-auto">
             <div className="space-y-2"><Label>Nome</Label><Input value={editContactForm.name} onChange={e => setEditContactForm(p => ({ ...p, name: e.target.value }))} /></div>
             <div className="space-y-2"><Label>Telefone</Label><Input value={editContactForm.phone} onChange={e => setEditContactForm(p => ({ ...p, phone: e.target.value }))} /></div>
+            {/* Custom fields from column mapping */}
+            {(() => {
+              const NAME_ALIASES = ['nome', 'name', 'nombre', 'cliente']
+              const PHONE_ALIASES = ['telefone', 'phone', 'tel', 'numero', 'número', 'celular', 'whatsapp']
+              let colMapping: Record<string, string> = {}
+              try { colMapping = JSON.parse(selectedList?.columns || '{}') } catch { /* ignore */ }
+              const extraCols = Object.entries(colMapping).filter(([header]) => {
+                const h = header.toLowerCase()
+                return !NAME_ALIASES.includes(h) && !PHONE_ALIASES.includes(h)
+              })
+              return extraCols.map(([headerName, varKey]) => (
+                <div key={varKey} className="space-y-2">
+                  <Label>{headerName}</Label>
+                  <Input value={editContactForm.customFields[varKey] || ''} onChange={e => setEditContactForm(p => ({ ...p, customFields: { ...p.customFields, [varKey]: e.target.value } }))} />
+                </div>
+              ))
+            })()}
           </div>
           <DialogFooter>
             <DialogClose asChild><Button variant="outline">Cancelar</Button></DialogClose>

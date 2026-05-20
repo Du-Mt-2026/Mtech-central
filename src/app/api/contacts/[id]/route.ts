@@ -34,7 +34,7 @@ export async function PATCH(
   try {
     const { id } = await params
     const body = await request.json()
-    const { name, phone } = body
+    const { name, phone, customFields } = body
 
     // Check contact exists
     const existing = await db.contact.findUnique({ where: { id } })
@@ -42,10 +42,13 @@ export async function PATCH(
       return NextResponse.json({ error: 'Contato não encontrado' }, { status: 404 })
     }
 
-    // Build update data — only allow name and phone
+    // Build update data — allow name, phone, and customFields
     const updateData: Record<string, unknown> = {}
     if (name !== undefined) updateData.name = name
     if (phone !== undefined) updateData.phone = normalizePhone(phone)
+    if (customFields !== undefined) {
+      updateData.customFields = Object.keys(customFields).length > 0 ? JSON.stringify(customFields) : null
+    }
 
     if (Object.keys(updateData).length === 0) {
       return NextResponse.json({ error: 'Nenhum campo para atualizar' }, { status: 400 })
