@@ -21,13 +21,19 @@ export async function GET(request: NextRequest) {
     const search = searchParams.get('search') || undefined
     const showGroups = searchParams.get('showGroups') === 'true'
 
-    // Build where clause for messages
-    const messageWhere: Record<string, unknown> = {}
-    if (chipId) messageWhere.chipId = chipId
-    if (!showGroups) messageWhere.isGroup = false
+    if (!chipId) {
+      return NextResponse.json({ conversations: [] })
+    }
+
+    // Build where clause
+    const where: Record<string, unknown> = {
+      chipId,
+      isGroup: showGroups ? undefined : false,
+    }
+    if (!showGroups) where.isGroup = false
 
     if (search) {
-      messageWhere.OR = [
+      where.OR = [
         { contactName: { contains: search, mode: 'insensitive' } },
         { pushName: { contains: search, mode: 'insensitive' } },
         { remotePhone: { contains: search, mode: 'insensitive' } },
@@ -35,79 +41,109 @@ export async function GET(request: NextRequest) {
       ]
     }
 
-    // Get distinct conversations (grouped by chipId + remoteJid)
-    // Use raw SQL for efficient grouping
-    const conversations = await db.$queryRaw<
-      Array<{
-        chipId: string | null
-        remoteJid: string
-        remotePhone: string
-        contactName: string | null
-        pushName: string | null
-        lastMessageContent: string
-        lastMessageType: string
-        lastMessageFromMe: boolean
-        lastMessageAt: Date
-        unreadCount: bigint
-        totalMessages: bigint
-        isGroup: boolean
-      }>
-    >`
-      SELECT
-        im."chipId",
-        im."remoteJid",
-        im."remotePhone",
-        MAX(im."contactName") as "contactName",
-        MAX(im."pushName") as "pushName",
-        (SELECT im2."messageContent" FROM "InboxMessage" im2
-         WHERE im2."chipId" = im."chipId" AND im2."remoteJid" = im."remoteJid"
-         ORDER BY im2."createdAt" DESC LIMIT 1) as "lastMessageContent",
-        (SELECT im3."messageType" FROM "InboxMessage" im3
-         WHERE im3."chipId" = im."chipId" AND im3."remoteJid" = im."remoteJid"
-         ORDER BY im3."createdAt" DESC LIMIT 1) as "lastMessageType",
-        (SELECT im4."fromMe" FROM "InboxMessage" im4
-         WHERE im4."chipId" = im."chipId" AND im4."remoteJid" = im."remoteJid"
-         ORDER BY im4."createdAt" DESC LIMIT 1) as "lastMessageFromMe",
-        MAX(im."createdAt") as "lastMessageAt",
-        COUNT(CASE WHEN im."isRead" = false AND im."fromMe" = false THEN 1 END) as "unreadCount",
-        COUNT(*) as "totalMessages"
-      FROM "InboxMessage" im
-      WHERE 1=1
-        ${chipId ? `AND im."chipId" = '${chipId}'` : ''}
-        ${!showGroups ? `AND im."isGroup" = false` : ''}
-      GROUP BY im."chipId", im."remoteJid", im."remotePhone"
-      ORDER BY MAX(im."createdAt") DESC
-      LIMIT 100
-    `
+    // Step 1: Get all messages for this chip, ordered by most recent first
+    const allMessages = await db.inboxMessage.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        chipId: true,
+        remoteJid: true,
+        remotePhone: true,
+        fromMe: true,
+        messageContent: true,
+        messageType: true,
+        mediaUrl: true,
+        pushName: true,
+        contactName: true,
+        isRead: true,
+        isGroup: true,
+        createdAt: true,
+      },
+      take: 500, // Limit to avoid huge queries
+    })
 
-    // Get chip info for all chipIds in conversations
-    const chipIds = [...new Set(conversations.map(c => c.chipId).filter(Boolean))] as string[]
-    const chips = chipIds.length > 0
-      ? await db.chip.findMany({
-          where: { id: { in: chipIds } },
-          select: { id: true, name: true, phoneNumber: true, profilePicUrl: true, status: true },
+    // Step 2: Group by remoteJid to build conversation list
+    const conversationMap = new Map<string, {
+      chipId: string | null
+      remoteJid: string
+      remotePhone: string
+      contactName: string | null
+      pushName: string | null
+      lastMessage: { content: string; type: string; fromMe: boolean }
+      lastMessageAt: Date
+      unreadCount: number
+      totalMessages: number
+      isGroup: boolean
+    }>()
+
+    for (const msg of allMessages) {
+      const key = msg.remoteJid
+      const existing = conversationMap.get(key)
+
+      if (!existing) {
+        // First message for this remoteJid = it's the most recent (since ordered desc)
+        conversationMap.set(key, {
+          chipId: msg.chipId,
+          remoteJid: msg.remoteJid,
+          remotePhone: msg.remotePhone,
+          contactName: msg.contactName || msg.pushName,
+          pushName: msg.pushName,
+          lastMessage: {
+            content: (msg.messageContent || '').substring(0, 100),
+            type: msg.messageType,
+            fromMe: msg.fromMe,
+          },
+          lastMessageAt: msg.createdAt,
+          unreadCount: (!msg.isRead && !msg.fromMe) ? 1 : 0,
+          totalMessages: 1,
+          isGroup: msg.isGroup,
         })
-      : []
+      } else {
+        // Additional message for this remoteJid
+        existing.totalMessages++
+        if (!msg.isRead && !msg.fromMe) {
+          existing.unreadCount++
+        }
+        // Use the best contact name available
+        if (!existing.contactName && msg.contactName) {
+          existing.contactName = msg.contactName
+        }
+        if (!existing.contactName && msg.pushName) {
+          existing.contactName = msg.pushName
+        }
+      }
+    }
 
-    const chipMap = new Map(chips.map(c => [c.id, c]))
+    // Step 3: Sort by last message time (most recent first)
+    const conversations = Array.from(conversationMap.values())
+      .sort((a, b) => new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime())
 
-    // Format response
+    // Step 4: Get chip info
+    const chip = await db.chip.findUnique({
+      where: { id: chipId },
+      select: { id: true, name: true, phoneNumber: true, profilePicUrl: true, status: true },
+    })
+
+    // Step 5: Format response
     const formatted = conversations.map(c => ({
       chipId: c.chipId,
       remoteJid: c.remoteJid,
       remotePhone: c.remotePhone,
-      contactName: c.contactName || c.pushName || c.remotePhone,
+      contactName: c.contactName || c.pushName || c.remotePhone || 'Desconhecido',
       pushName: c.pushName,
-      lastMessage: {
-        content: c.lastMessageContent?.substring(0, 100) || '',
-        type: c.lastMessageType,
-        fromMe: c.lastMessageFromMe,
-      },
-      lastMessageAt: c.lastMessageAt,
-      unreadCount: Number(c.unreadCount),
-      totalMessages: Number(c.totalMessages),
+      lastMessage: c.lastMessage,
+      lastMessageAt: c.lastMessageAt.toISOString(),
+      unreadCount: c.unreadCount,
+      totalMessages: c.totalMessages,
       isGroup: c.isGroup,
-      chip: c.chipId ? chipMap.get(c.chipId) || null : null,
+      chip: chip ? {
+        id: chip.id,
+        name: chip.name,
+        phoneNumber: chip.phoneNumber,
+        profilePicUrl: chip.profilePicUrl,
+        status: chip.status,
+      } : null,
     }))
 
     return NextResponse.json({ conversations: formatted })

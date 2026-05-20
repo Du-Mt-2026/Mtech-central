@@ -13,13 +13,10 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url)
     const search = searchParams.get('search') || undefined
 
-    // Get all connected chips
+    // Get all chips (not just connected - show all so user can see status)
     const chips = await db.chip.findMany({
-      where: {
-        status: { in: ['connected', 'connecting', 'disconnected', 'banned'] },
-      },
       orderBy: [
-        { status: 'asc' }, // connected first
+        { status: 'asc' },
         { name: 'asc' },
       ],
       select: {
@@ -33,38 +30,52 @@ export async function GET(request: NextRequest) {
       },
     })
 
-    // For each chip, get conversation count and unread count
-    const chipsWithStats = await Promise.all(
-      chips.map(async (chip) => {
-        const [conversationCount, unreadCount, lastMessageAt] = await Promise.all([
-          // Count distinct conversations (remoteJid)
-          db.inboxMessage.groupBy({
-            by: ['remoteJid'],
-            where: { chipId: chip.id, isGroup: false },
-            _count: true,
-          }).then(r => r.length),
+    // Get stats for ALL chips in a single query using groupBy
+    // Conversation count per chip (distinct remoteJid)
+    const conversationsPerChip = await db.inboxMessage.groupBy({
+      by: ['chipId', 'remoteJid'],
+      where: { chipId: { not: null }, isGroup: false },
+    })
+    const convCountMap = new Map<string, number>()
+    for (const row of conversationsPerChip) {
+      if (row.chipId) {
+        convCountMap.set(row.chipId, (convCountMap.get(row.chipId) || 0) + 1)
+      }
+    }
 
-          // Count unread messages
-          db.inboxMessage.count({
-            where: { chipId: chip.id, isRead: false, fromMe: false, isGroup: false },
-          }),
+    // Unread count per chip
+    const unreadPerChip = await db.inboxMessage.groupBy({
+      by: ['chipId'],
+      where: { chipId: { not: null }, isRead: false, fromMe: false, isGroup: false },
+      _count: { id: true },
+    })
+    const unreadMap = new Map<string, number>()
+    for (const row of unreadPerChip) {
+      if (row.chipId) {
+        unreadMap.set(row.chipId, row._count.id)
+      }
+    }
 
-          // Last message timestamp
-          db.inboxMessage.findFirst({
-            where: { chipId: chip.id },
-            orderBy: { createdAt: 'desc' },
-            select: { createdAt: true },
-          }).then(r => r?.createdAt || null),
-        ])
+    // Last message per chip
+    const lastMsgPerChip = await db.inboxMessage.groupBy({
+      by: ['chipId'],
+      where: { chipId: { not: null } },
+      _max: { createdAt: true },
+    })
+    const lastMsgMap = new Map<string, Date>()
+    for (const row of lastMsgPerChip) {
+      if (row.chipId && row._max.createdAt) {
+        lastMsgMap.set(row.chipId, row._max.createdAt)
+      }
+    }
 
-        return {
-          ...chip,
-          conversationCount,
-          unreadCount,
-          lastMessageAt,
-        }
-      })
-    )
+    // Build final result
+    const chipsWithStats = chips.map(chip => ({
+      ...chip,
+      conversationCount: convCountMap.get(chip.id) || 0,
+      unreadCount: unreadMap.get(chip.id) || 0,
+      lastMessageAt: lastMsgMap.get(chip.id)?.toISOString() || null,
+    }))
 
     // Filter by search if provided
     const filtered = search
