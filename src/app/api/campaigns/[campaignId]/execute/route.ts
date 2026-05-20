@@ -101,21 +101,18 @@ async function processMessagesInline(campaignId: string): Promise<{
       break
     }
 
-    // If the delay is longer than the time remaining, stop
-    const remainingTime = FUNCTION_TIMEOUT_MS - (Date.now() - startTime)
-    if (result.delayMs > remainingTime) {
-      break
-    }
-
     // Wait the delay before the next message
     // IMPORTANT: Wait delayMs regardless of processed status!
     // When processed=false with step_delay or waiting_for_previous_step,
     // the delayMs is the time we need to wait before the next step is ready.
+    // We wait as much as we can within the function timeout, then the next
+    // cron tick will continue if needed.
     if (result.delayMs > 0) {
-      // Cap wait time to remaining function time to avoid timeout
       const remainingTime = FUNCTION_TIMEOUT_MS - (Date.now() - startTime)
-      const waitTime = Math.min(result.delayMs, remainingTime - 2000) // leave 2s margin
+      if (remainingTime < 3000) break // Not enough time to wait + process next message
+      const waitTime = Math.min(result.delayMs, remainingTime - 3000)
       if (waitTime > 0) {
+        console.log(`[Execute] Waiting ${Math.round(waitTime/1000)}s (delay: ${Math.round(result.delayMs/1000)}s, reason: ${result.reason || 'interval'})`)
         await new Promise(resolve => setTimeout(resolve, waitTime))
       }
     }

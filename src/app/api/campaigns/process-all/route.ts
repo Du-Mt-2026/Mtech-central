@@ -112,14 +112,6 @@ export async function POST(request: NextRequest) {
           lastReason = result.reason || ''
         }
 
-        // If the delay is longer than the time remaining in this function invocation,
-        // don't wait — let the next cron tick handle it
-        const remainingTime = FUNCTION_TIMEOUT_MS - (Date.now() - startTime)
-        if (result.delayMs > remainingTime) {
-          // The interval says we should wait longer than we have — stop processing this campaign
-          break
-        }
-
         // If no message was processed and the reason is a hard block (ban, window, etc.),
         // don't retry this campaign in this tick
         if (!result.processed && ['cooldown', 'outside_sending_window', 'chip_banned', 'whatsapp_warning_detected'].some(r => lastReason.includes(r))) {
@@ -129,9 +121,12 @@ export async function POST(request: NextRequest) {
         // Wait the delay before processing the next message
         // This applies BOTH when a message was processed (anti-ban interval)
         // AND when we're waiting for a step delay (contact-by-contact sequential)
+        // We wait as much as we can within the function timeout, then the next
+        // cron tick will continue if needed.
         if (result.delayMs > 0) {
           const remainingTime = FUNCTION_TIMEOUT_MS - (Date.now() - startTime)
-          const waitTime = Math.min(result.delayMs, remainingTime - 2000)
+          if (remainingTime < 3000) break // Not enough time to wait + process
+          const waitTime = Math.min(result.delayMs, remainingTime - 3000)
           if (waitTime > 0) {
             await new Promise(resolve => setTimeout(resolve, waitTime))
           }
