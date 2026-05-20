@@ -774,6 +774,7 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
     mediaUrl: string | null
     mediatype: string | null
     delayMinutes: number
+    delayUnit: string
     variations: VariationObj[]
   }
 
@@ -791,6 +792,7 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
       mediaUrl: s.mediaUrl || null,
       mediatype: s.mediatype || null,
       delayMinutes: s.delayMinutes,
+      delayUnit: (s as any).delayUnit || 'minutes',
       variations: stepVariations,
     }
   })
@@ -976,24 +978,25 @@ export async function processNextMessage(campaignId: string): Promise<{
   })
 
   // For multi-step: check if this contact's previous step has been sent
-  // If step > 1 and the previous step for this contact hasn't been sent yet, skip
+  // If step > 1 and the previous step for this contact hasn't been successfully sent yet, skip
   if (message && (message as any).stepOrder > 1) {
-    const previousStep = await db.message.findFirst({
+    // Check if previous step has a successful status (sent, delivered, or read)
+    const previousStepSent = await db.message.findFirst({
       where: {
         campaignId,
         contactId: message.contactId,
         stepOrder: (message as any).stepOrder - 1,
-        status: { not: 'sent' },
+        status: { in: ['sent', 'delivered', 'read'] },
       },
     })
-    if (previousStep) {
-      // Previous step not yet sent — skip this message and try another
-      // Mark it temporarily or just pick the next eligible message
+    if (!previousStepSent) {
+      // Previous step not yet successfully sent — try to find an alternative message to process
+      // (a message whose previous step HAS been sent, or a step 1 message)
       const alternativeMessage = await db.message.findFirst({
         where: {
           campaignId,
           status: 'pending',
-          contactId: { not: message.contactId },
+          id: { not: message.id }, // Don't re-pick the same message
         },
         include: { chip: true, contact: true },
         orderBy: [
@@ -1002,8 +1005,28 @@ export async function processNextMessage(campaignId: string): Promise<{
         ],
       })
       if (alternativeMessage) {
-        // Use the alternative message instead
-        Object.assign(message, alternativeMessage)
+        // Check if this alternative message also has its previous step sent
+        if ((alternativeMessage as any).stepOrder <= 1) {
+          // Step 1 is always safe to process
+          Object.assign(message, alternativeMessage)
+        } else {
+          const altPrevSent = await db.message.findFirst({
+            where: {
+              campaignId,
+              contactId: alternativeMessage.contactId,
+              stepOrder: (alternativeMessage as any).stepOrder - 1,
+              status: { in: ['sent', 'delivered', 'read'] },
+            },
+          })
+          if (altPrevSent) {
+            // This alternative's previous step was sent — safe to process
+            Object.assign(message, alternativeMessage)
+          } else {
+            // No eligible message found — wait for previous steps to be processed
+            const remaining = await db.message.count({ where: { campaignId, status: 'pending' } })
+            return { processed: false, delayMs: 5000, remaining, completed: false, reason: 'waiting_for_previous_step' }
+          }
+        }
       } else {
         // No alternative — wait for previous step to be processed
         const remaining = await db.message.count({ where: { campaignId, status: 'pending' } })
@@ -1026,7 +1049,7 @@ export async function processNextMessage(campaignId: string): Promise<{
           campaignId,
           contactId: message.contactId,
           stepOrder: (message as any).stepOrder - 1,
-          status: 'sent',
+          status: { in: ['sent', 'delivered', 'read'] },
           sentAt: { not: null },
         },
         orderBy: { sentAt: 'desc' },
@@ -1189,7 +1212,7 @@ export async function processNextMessage(campaignId: string): Promise<{
     if (minIntervalSeconds > 0) {
       // Find the last message sent by this chip
       const lastMessage = await db.message.findFirst({
-        where: { chipId: currentChip.id, status: 'sent', sentAt: { not: null } },
+        where: { chipId: currentChip.id, status: { in: ['sent', 'delivered', 'read'] }, sentAt: { not: null } },
         orderBy: { sentAt: 'desc' },
         select: { sentAt: true },
       })
