@@ -23,6 +23,7 @@ model Chip {
   contacts         Contact[]
   messages         Message[]
   campaigns        CampaignChip[]
+  inboxMessages    InboxMessage[]
 
   // Anti-ban fields
   dailyLimit       Int      @default(200)
@@ -265,11 +266,23 @@ model AdminUser {
 model InboxMessage {
   id              String   @id @default(cuid())
   instanceName    String
+  chipId          String?
   remoteJid       String
+  remotePhone     String   @default("")   // Extracted from remoteJid (without @s.whatsapp.net)
   fromMe          Boolean  @default(false)
   messageContent  String   @db.Text
   messageType     String   @default("text")
+  mediaUrl        String?                 // URL da mídia (imagem, vídeo, etc.)
   pushName        String?
+  contactName     String?                 // Nome do contato (do pushName ou tabela Contact)
   evolutionMsgId  String?  @unique
+  isRead          Boolean  @default(false)
+  isGroup         Boolean  @default(false) // Se a mensagem veio de um grupo
   createdAt       DateTime @default(now())
+
+  chip            Chip?    @relation(fields: [chipId], references: [id], onDelete: Cascade)
+
+  @@index([chipId, remoteJid, createdAt])
+  @@index([chipId, isRead])
+  @@index([instanceName, createdAt])
 }

@@ -262,6 +262,113 @@ export async function POST(req: NextRequest) {
       results.push(`Erro na migração MessageTemplate: ${mtError.message}`)
     }
 
+    // Step 6.5: Sync InboxMessage table — add new columns for Chatwoot-like inbox
+    try {
+      const inboxColumns = await db.$queryRaw<Array<{ column_name: string }>>`
+        SELECT column_name FROM information_schema.columns
+        WHERE table_name = 'InboxMessage'
+        ORDER BY ordinal_position
+      `
+      const inboxColumnNames = inboxColumns.map(c => c.column_name)
+
+      if (!inboxColumnNames.includes('chipId')) {
+        await db.$executeRawUnsafe(`ALTER TABLE "InboxMessage" ADD COLUMN IF NOT EXISTS "chipId" TEXT`)
+        results.push('InboxMessage: adicionada coluna chipId')
+      } else {
+        results.push('InboxMessage: chipId já existe')
+      }
+
+      if (!inboxColumnNames.includes('remotePhone')) {
+        await db.$executeRawUnsafe(`ALTER TABLE "InboxMessage" ADD COLUMN IF NOT EXISTS "remotePhone" TEXT NOT NULL DEFAULT ''`)
+        results.push('InboxMessage: adicionada coluna remotePhone')
+      } else {
+        results.push('InboxMessage: remotePhone já existe')
+      }
+
+      if (!inboxColumnNames.includes('mediaUrl')) {
+        await db.$executeRawUnsafe(`ALTER TABLE "InboxMessage" ADD COLUMN IF NOT EXISTS "mediaUrl" TEXT`)
+        results.push('InboxMessage: adicionada coluna mediaUrl')
+      } else {
+        results.push('InboxMessage: mediaUrl já existe')
+      }
+
+      if (!inboxColumnNames.includes('contactName')) {
+        await db.$executeRawUnsafe(`ALTER TABLE "InboxMessage" ADD COLUMN IF NOT EXISTS "contactName" TEXT`)
+        results.push('InboxMessage: adicionada coluna contactName')
+      } else {
+        results.push('InboxMessage: contactName já existe')
+      }
+
+      if (!inboxColumnNames.includes('isRead')) {
+        await db.$executeRawUnsafe(`ALTER TABLE "InboxMessage" ADD COLUMN IF NOT EXISTS "isRead" BOOLEAN NOT NULL DEFAULT false`)
+        results.push('InboxMessage: adicionada coluna isRead')
+      } else {
+        results.push('InboxMessage: isRead já existe')
+      }
+
+      if (!inboxColumnNames.includes('isGroup')) {
+        await db.$executeRawUnsafe(`ALTER TABLE "InboxMessage" ADD COLUMN IF NOT EXISTS "isGroup" BOOLEAN NOT NULL DEFAULT false`)
+        results.push('InboxMessage: adicionada coluna isGroup')
+      } else {
+        results.push('InboxMessage: isGroup já existe')
+      }
+
+      // Add foreign key constraint for chipId if not exists
+      try {
+        await db.$executeRawUnsafe(`
+          ALTER TABLE "InboxMessage"
+          DROP CONSTRAINT IF EXISTS "InboxMessage_chipId_fkey"
+        `)
+        await db.$executeRawUnsafe(`
+          ALTER TABLE "InboxMessage"
+          ADD CONSTRAINT "InboxMessage_chipId_fkey"
+          FOREIGN KEY ("chipId") REFERENCES "Chip"("id") ON DELETE CASCADE ON UPDATE CASCADE
+        `)
+        results.push('InboxMessage: FK chipId configurada')
+      } catch (fkErr: any) {
+        results.push(`InboxMessage: FK chipId - ${fkErr.message}`)
+      }
+
+      // Add indexes for performance
+      try {
+        await db.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "InboxMessage_chipId_remoteJid_createdAt_idx" ON "InboxMessage"("chipId", "remoteJid", "createdAt")`)
+        await db.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "InboxMessage_chipId_isRead_idx" ON "InboxMessage"("chipId", "isRead")`)
+        await db.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "InboxMessage_instanceName_createdAt_idx" ON "InboxMessage"("instanceName", "createdAt")`)
+        results.push('InboxMessage: índices criados')
+      } catch (idxErr: any) {
+        results.push(`InboxMessage: índices - ${idxErr.message}`)
+      }
+
+      // Update existing records: extract remotePhone from remoteJid
+      try {
+        await db.$executeRawUnsafe(`
+          UPDATE "InboxMessage"
+          SET "remotePhone" = SPLIT_PART("remoteJid", '@', 1)
+          WHERE "remotePhone" = '' AND "remoteJid" LIKE '%@%'
+        `)
+        results.push('InboxMessage: remotePhone atualizado para registros existentes')
+      } catch (updErr: any) {
+        results.push(`InboxMessage: remotePhone update - ${updErr.message}`)
+      }
+
+      // Update existing records: link chipId by instanceName
+      try {
+        await db.$executeRawUnsafe(`
+          UPDATE "InboxMessage" im
+          SET "chipId" = c.id
+          FROM "Chip" c
+          WHERE im."instanceName" = c."evolutionInstance"
+          AND im."chipId" IS NULL
+        `)
+        results.push('InboxMessage: chipId vinculado para registros existentes')
+      } catch (linkErr: any) {
+        results.push(`InboxMessage: chipId link - ${linkErr.message}`)
+      }
+
+    } catch (inboxMigrationErr: any) {
+      results.push(`Erro na migração InboxMessage: ${inboxMigrationErr.message}`)
+    }
+
     // Step 7: Sync Campaign table — add statusReason column
     try {
       const campColumns = await db.$queryRaw<Array<{ column_name: string }>>`

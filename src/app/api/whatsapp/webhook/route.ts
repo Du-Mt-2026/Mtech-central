@@ -126,6 +126,39 @@ export async function POST(request: Request) {
                 evolutionMessageId: data.key.id,
               },
             })
+
+            // Also save to InboxMessage for the chatwoot-like inbox
+            try {
+              const chip = await db.chip.findUnique({ where: { id: existing.chipId } })
+              if (chip) {
+                const contact = await db.contact.findUnique({ where: { id: existing.contactId } })
+                const remoteJid = `${contact?.phone || ''}@s.whatsapp.net`
+                const remotePhone = contact?.phone || ''
+
+                await db.inboxMessage.upsert({
+                  where: { evolutionMsgId: data.key.id },
+                  update: {},
+                  create: {
+                    instanceName: chip.evolutionInstance || instance,
+                    chipId: chip.id,
+                    remoteJid,
+                    remotePhone,
+                    fromMe: true,
+                    messageContent: existing.content || '',
+                    messageType: existing.mediatype || 'text',
+                    mediaUrl: existing.mediaUrl,
+                    pushName: chip.profileName || chip.name,
+                    contactName: contact?.name || null,
+                    evolutionMsgId: data.key.id,
+                    isRead: true,
+                    isGroup: remoteJid.includes('@g.us'),
+                  },
+                })
+              }
+            } catch (inboxErr) {
+              // Don't fail the whole handler if inbox save fails
+              console.error('[Webhook] Error saving sent message to inbox:', inboxErr)
+            }
           }
         }
         break
@@ -178,16 +211,21 @@ export async function POST(request: Request) {
       }
 
       case 'MESSAGES_UPSERT': {
-        // Incoming messages — save to InboxMessage table
-        if (data?.key?.remoteJid && !data?.key?.fromMe) {
+        // Incoming AND outgoing messages — save to InboxMessage table
+        if (data?.key?.remoteJid) {
           try {
             const msgId = data.key.id
             const remoteJid = data.key.remoteJid
+            const fromMe = data.key.fromMe === true
             const pushName = data.pushName || null
 
-            // Extract text content from the message
+            // Skip group messages for cleaner inbox
+            const isGroup = remoteJid.includes('@g.us')
+
+            // Extract text content and media URL from the message
             let messageContent = ''
             let messageType = 'text'
+            let mediaUrl: string | null = null
 
             if (data.message) {
               if (data.message.conversation) {
@@ -197,18 +235,23 @@ export async function POST(request: Request) {
               } else if (data.message.imageMessage) {
                 messageContent = data.message.imageMessage.caption || ''
                 messageType = 'image'
+                mediaUrl = data.message.imageMessage.url || null
               } else if (data.message.videoMessage) {
                 messageContent = data.message.videoMessage.caption || ''
                 messageType = 'video'
+                mediaUrl = data.message.videoMessage.url || null
               } else if (data.message.audioMessage) {
                 messageContent = ''
                 messageType = 'audio'
+                mediaUrl = data.message.audioMessage.url || null
               } else if (data.message.documentMessage) {
                 messageContent = data.message.documentMessage.caption || ''
                 messageType = 'document'
+                mediaUrl = data.message.documentMessage.url || null
               } else if (data.message.stickerMessage) {
                 messageContent = ''
                 messageType = 'sticker'
+                mediaUrl = data.message.stickerMessage.url || null
               } else if (data.message.contactMessage) {
                 messageContent = data.message.contactMessage.displayName || ''
                 messageType = 'contact'
@@ -223,22 +266,47 @@ export async function POST(request: Request) {
 
             // Only save if we have content or a media type
             if (messageContent || messageType !== 'text') {
+              // Extract phone number from remoteJid (remove @s.whatsapp.net or @g.us)
+              const remotePhone = remoteJid.split('@')[0]
+
+              // Find the chip by instance name
+              const chip = await db.chip.findFirst({
+                where: { evolutionInstance: instance },
+              })
+
+              // Try to find contact name from pushName or Contact table
+              let contactName: string | null = pushName
+              if (!fromMe && chip) {
+                const contact = await db.contact.findFirst({
+                  where: { phone: { contains: remotePhone.replace(/^55/, '') } },
+                })
+                if (contact?.name) {
+                  contactName = contact.name
+                }
+              }
+
               await db.inboxMessage.upsert({
                 where: { evolutionMsgId: msgId },
                 update: {},
                 create: {
                   instanceName: instance,
+                  chipId: chip?.id || null,
                   remoteJid,
-                  fromMe: false,
+                  remotePhone,
+                  fromMe,
                   messageContent,
                   messageType,
+                  mediaUrl,
                   pushName,
+                  contactName,
                   evolutionMsgId: msgId,
+                  isRead: fromMe, // Messages we sent are automatically "read"
+                  isGroup,
                 },
               })
             }
 
-            console.log(`[Webhook] Saved incoming message from ${remoteJid} on ${instance}`)
+            console.log(`[Webhook] Saved ${fromMe ? 'outgoing' : 'incoming'} message ${isGroup ? '(group) ' : ''}from ${remoteJid} on ${instance}`)
           } catch (inboxErr) {
             console.error('[Webhook] Error saving inbox message:', inboxErr)
           }
