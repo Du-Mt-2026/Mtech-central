@@ -257,6 +257,12 @@ interface Stats {
   chipStatuses: { id: string; name: string; phoneNumber: string; status: string; sentToday: number; dailyLimit: number }[]
 }
 
+interface ScheduleEntry {
+  dayRange: string
+  days: [number, number]
+  limit: number
+}
+
 interface AntiBanSettings {
   id: string
   typingMinDelay: number
@@ -272,6 +278,10 @@ interface AntiBanSettings {
   sendingWindowStart: number
   sendingWindowEnd: number
   timezone: string
+  nurserySchedule: string   // JSON string of ScheduleEntry[]
+  prewarmSchedule: string   // JSON string of ScheduleEntry[]
+  readyDailyLimit: number   // Phase 3 (Aquecido) daily limit
+  hourlyLimit: number       // Max messages per hour per chip
 }
 
 interface MessageTemplate {
@@ -1209,7 +1219,7 @@ function ChipsTab() {
                           <div className="flex items-center gap-1">
                             <Badge variant="secondary" className="gap-1 text-xs">
                               {(chip as any).warmingPhase === 'ready' ? (
-                                <><CheckCircle2 className="size-3" /> Pronto</>
+                                <><CheckCircle2 className="size-3" /> Aquecido</>
                               ) : (chip as any).warmingPhase === 'prewarm' ? (
                                 <><Flame className="size-3" /> Pré-aquecido</>
                               ) : (
@@ -1227,7 +1237,7 @@ function ChipsTab() {
                               <SelectContent>
                                 <SelectItem value="nursery">Berçário</SelectItem>
                                 <SelectItem value="prewarm">Pré-aquecido</SelectItem>
-                                <SelectItem value="ready">Pronto</SelectItem>
+                                <SelectItem value="ready">Aquecido</SelectItem>
                               </SelectContent>
                             </Select>
                           </div>
@@ -4413,6 +4423,10 @@ function AntiBanTab() {
     sendingWindowStart: 480,
     sendingWindowEnd: 1260,
     timezone: 'America/Sao_Paulo',
+    nurserySchedule: '[{"dayRange":"1-2","days":[1,2],"limit":10},{"dayRange":"3-4","days":[3,4],"limit":20},{"dayRange":"5-6","days":[5,6],"limit":30},{"dayRange":"7-8","days":[7,8],"limit":40},{"dayRange":"9-10","days":[9,10],"limit":50},{"dayRange":"11-12","days":[11,12],"limit":60},{"dayRange":"13-14","days":[13,14],"limit":80}]',
+    prewarmSchedule: '[{"dayRange":"1","days":[1,1],"limit":11},{"dayRange":"2","days":[2,2],"limit":15},{"dayRange":"3","days":[3,3],"limit":20},{"dayRange":"4","days":[4,4],"limit":25},{"dayRange":"5","days":[5,5],"limit":30},{"dayRange":"6","days":[6,6],"limit":35},{"dayRange":"7","days":[7,7],"limit":40},{"dayRange":"8","days":[8,8],"limit":45},{"dayRange":"9","days":[9,9],"limit":50},{"dayRange":"10","days":[10,10],"limit":60},{"dayRange":"11","days":[11,11],"limit":70},{"dayRange":"12","days":[12,12],"limit":80},{"dayRange":"13","days":[13,13],"limit":90},{"dayRange":"14","days":[14,14],"limit":100},{"dayRange":"15","days":[15,15],"limit":120},{"dayRange":"16","days":[16,16],"limit":140},{"dayRange":"17","days":[17,17],"limit":160},{"dayRange":"18","days":[18,18],"limit":180},{"dayRange":"19","days":[19,19],"limit":190},{"dayRange":"20","days":[20,20],"limit":200}]',
+    readyDailyLimit: 200,
+    hourlyLimit: 30,
   }
 
   // Convert minutes-from-midnight to HH:MM string
@@ -4489,39 +4503,68 @@ function AntiBanTab() {
   if (loading) return <div className="flex items-center justify-center py-20"><RefreshCw className="size-6 animate-spin text-muted-foreground" /></div>
   if (!settings) return null
 
-  // Two-phase warming schedules (matching sending-engine.ts)
-  const NURSERY_SCHEDULE = [
-    { dayRange: '1-2',   limit: 2 },
-    { dayRange: '3-4',   limit: 3 },
-    { dayRange: '5-6',   limit: 3 },
-    { dayRange: '7-8',   limit: 5 },
-    { dayRange: '9-10',  limit: 5 },
-    { dayRange: '11-12', limit: 6 },
-    { dayRange: '13-14', limit: 10 },
+  // Parse schedules from settings (loaded from DB)
+  const parseScheduleFromSettings = (jsonStr: string | undefined, fallback: ScheduleEntry[]): ScheduleEntry[] => {
+    if (!jsonStr) return fallback
+    try {
+      const parsed = JSON.parse(jsonStr)
+      if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].dayRange) {
+        return parsed.map((e: any) => ({ dayRange: e.dayRange, days: e.days || [1, 1], limit: Number(e.limit) || 1 }))
+      }
+    } catch { /* ignore */ }
+    return fallback
+  }
+
+  const DEFAULT_NURSERY: ScheduleEntry[] = [
+    { dayRange: '1-2', days: [1, 2], limit: 10 },
+    { dayRange: '3-4', days: [3, 4], limit: 20 },
+    { dayRange: '5-6', days: [5, 6], limit: 30 },
+    { dayRange: '7-8', days: [7, 8], limit: 40 },
+    { dayRange: '9-10', days: [9, 10], limit: 50 },
+    { dayRange: '11-12', days: [11, 12], limit: 60 },
+    { dayRange: '13-14', days: [13, 14], limit: 80 },
   ]
-  const PREWARM_SCHEDULE = [
-    { dayRange: '1',   limit: 11 },
-    { dayRange: '2',   limit: 15 },
-    { dayRange: '3',   limit: 20 },
-    { dayRange: '4',   limit: 25 },
-    { dayRange: '5',   limit: 30 },
-    { dayRange: '6',   limit: 35 },
-    { dayRange: '7',   limit: 40 },
-    { dayRange: '8',   limit: 45 },
-    { dayRange: '9',   limit: 50 },
-    { dayRange: '10',  limit: 60 },
-    { dayRange: '11',  limit: 70 },
-    { dayRange: '12',  limit: 80 },
-    { dayRange: '13',  limit: 90 },
-    { dayRange: '14',  limit: 100 },
-    { dayRange: '15',  limit: 120 },
-    { dayRange: '16',  limit: 140 },
-    { dayRange: '17',  limit: 160 },
-    { dayRange: '18',  limit: 180 },
-    { dayRange: '19',  limit: 190 },
-    { dayRange: '20',  limit: 200 },
+  const DEFAULT_PREWARM: ScheduleEntry[] = [
+    { dayRange: '1', days: [1, 1], limit: 11 },
+    { dayRange: '2', days: [2, 2], limit: 15 },
+    { dayRange: '3', days: [3, 3], limit: 20 },
+    { dayRange: '4', days: [4, 4], limit: 25 },
+    { dayRange: '5', days: [5, 5], limit: 30 },
+    { dayRange: '6', days: [6, 6], limit: 35 },
+    { dayRange: '7', days: [7, 7], limit: 40 },
+    { dayRange: '8', days: [8, 8], limit: 45 },
+    { dayRange: '9', days: [9, 9], limit: 50 },
+    { dayRange: '10', days: [10, 10], limit: 60 },
+    { dayRange: '11', days: [11, 11], limit: 70 },
+    { dayRange: '12', days: [12, 12], limit: 80 },
+    { dayRange: '13', days: [13, 13], limit: 90 },
+    { dayRange: '14', days: [14, 14], limit: 100 },
+    { dayRange: '15', days: [15, 15], limit: 120 },
+    { dayRange: '16', days: [16, 16], limit: 140 },
+    { dayRange: '17', days: [17, 17], limit: 160 },
+    { dayRange: '18', days: [18, 18], limit: 180 },
+    { dayRange: '19', days: [19, 19], limit: 190 },
+    { dayRange: '20', days: [20, 20], limit: 200 },
   ]
-  const maxPrewarm = PREWARM_SCHEDULE[PREWARM_SCHEDULE.length - 1].limit
+
+  const nurserySchedule = parseScheduleFromSettings(settings.nurserySchedule, DEFAULT_NURSERY)
+  const prewarmSchedule = parseScheduleFromSettings(settings.prewarmSchedule, DEFAULT_PREWARM)
+  const maxNursery = nurserySchedule[nurserySchedule.length - 1]?.limit || 80
+  const maxPrewarm = prewarmSchedule[prewarmSchedule.length - 1]?.limit || 200
+
+  // Update a single schedule entry limit
+  const updateScheduleEntry = async (scheduleType: 'nurserySchedule' | 'prewarmSchedule', index: number, newLimit: number) => {
+    if (!settings) return
+    const currentSchedule = scheduleType === 'nurserySchedule' ? nurserySchedule : prewarmSchedule
+    const updated = [...currentSchedule]
+    updated[index] = { ...updated[index], limit: newLimit }
+    await updateSetting(scheduleType, updated)
+  }
+
+  // Update readyDailyLimit
+  const updateReadyDailyLimit = async (newLimit: number) => {
+    await updateSetting('readyDailyLimit', newLimit)
+  }
 
   const tips = [
     { icon: Clock, title: 'Varie os horários de envio', desc: 'Não envie sempre no mesmo horário' },
@@ -4713,34 +4756,34 @@ function AntiBanTab() {
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
-            {/* Phase Overview */}
+            {/* Phase Overview — 3 Phases */}
             <div className="grid grid-cols-3 gap-2">
               <div className="flex items-center gap-2 p-2.5 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
                 <Baby className="size-4 text-amber-600 shrink-0" />
                 <div>
                   <p className="text-xs font-semibold text-amber-700 dark:text-amber-400">Berçário</p>
-                  <p className="text-[10px] text-muted-foreground">14 dias • Até 10 msg/dia</p>
+                  <p className="text-[10px] text-muted-foreground">14 dias • Até {maxNursery} msg/dia</p>
                 </div>
               </div>
               <div className="flex items-center gap-2 p-2.5 rounded-lg bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800">
                 <Flame className="size-4 text-orange-600 shrink-0" />
                 <div>
                   <p className="text-xs font-semibold text-orange-700 dark:text-orange-400">Pré-aquecido</p>
-                  <p className="text-[10px] text-muted-foreground">20 dias • 11→200 msg/dia</p>
+                  <p className="text-[10px] text-muted-foreground">20 dias • 11→{maxPrewarm} msg/dia</p>
                 </div>
               </div>
               <div className="flex items-center gap-2 p-2.5 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800">
                 <CheckCircle2 className="size-4 text-emerald-600 shrink-0" />
                 <div>
-                  <p className="text-xs font-semibold text-emerald-700 dark:text-emerald-400">Pronto</p>
-                  <p className="text-[10px] text-muted-foreground">Sem limite de aquecimento</p>
+                  <p className="text-xs font-semibold text-emerald-700 dark:text-emerald-400">Aquecido</p>
+                  <p className="text-[10px] text-muted-foreground">{settings.readyDailyLimit || 200} msg/dia (editável)</p>
                 </div>
               </div>
             </div>
 
-            {/* Two-phase schedule tables side by side */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              {/* Phase 1: Nursery (Berçário) */}
+            {/* Three-phase schedule tables */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+              {/* Phase 1: Nursery (Berçário) — Editable */}
               <div>
                 <div className="flex items-center gap-2 mb-2">
                   <div className="flex size-5 items-center justify-center rounded bg-amber-100 dark:bg-amber-900/30">
@@ -4749,8 +4792,8 @@ function AntiBanTab() {
                   <span className="text-xs font-semibold text-amber-700 dark:text-amber-400">Fase 1: Berçário (Chip Novo)</span>
                 </div>
                 <div className="space-y-1.5">
-                  {NURSERY_SCHEDULE.map((entry, i) => {
-                    const pct = Math.max(5, (entry.limit / 10) * 100)
+                  {nurserySchedule.map((entry, i) => {
+                    const pct = Math.max(5, (entry.limit / maxNursery) * 100)
                     return (
                       <div key={i} className="flex items-center gap-2">
                         <span className="text-[10px] text-muted-foreground w-10 shrink-0 text-right">Dia {entry.dayRange}</span>
@@ -4764,7 +4807,18 @@ function AntiBanTab() {
                             <span className="text-[9px] font-bold text-white">{entry.limit}</span>
                           </motion.div>
                         </div>
-                        <span className="text-[10px] text-muted-foreground w-10 shrink-0">msg/dia</span>
+                        <Input
+                          type="number"
+                          min={1}
+                          max={200}
+                          value={entry.limit}
+                          onChange={e => {
+                            const val = Math.max(1, parseInt(e.target.value) || 1)
+                            updateScheduleEntry('nurserySchedule', i, val)
+                          }}
+                          className="w-14 h-5 text-[10px] px-1 text-center border-amber-200 dark:border-amber-800"
+                          disabled={saving}
+                        />
                       </div>
                     )
                   })}
@@ -4772,7 +4826,7 @@ function AntiBanTab() {
                 <p className="text-[10px] text-muted-foreground mt-2 italic">Após 14 dias → chip pré-aquecido</p>
               </div>
 
-              {/* Phase 2: Prewarm (Pré-aquecido) */}
+              {/* Phase 2: Prewarm (Pré-aquecido) — Editable */}
               <div>
                 <div className="flex items-center gap-2 mb-2">
                   <div className="flex size-5 items-center justify-center rounded bg-orange-100 dark:bg-orange-900/30">
@@ -4780,12 +4834,12 @@ function AntiBanTab() {
                   </div>
                   <span className="text-xs font-semibold text-orange-700 dark:text-orange-400">Fase 2: Pré-aquecido (Ramp-up)</span>
                 </div>
-                <div className="space-y-1">
-                  {PREWARM_SCHEDULE.map((entry, i) => {
+                <div className="space-y-1 max-h-80 overflow-y-auto custom-scrollbar pr-1">
+                  {prewarmSchedule.map((entry, i) => {
                     const pct = Math.max(5, (entry.limit / maxPrewarm) * 100)
                     return (
-                      <div key={i} className="flex items-center gap-2">
-                        <span className="text-[10px] text-muted-foreground w-7 shrink-0 text-right">D{entry.dayRange}</span>
+                      <div key={i} className="flex items-center gap-1.5">
+                        <span className="text-[10px] text-muted-foreground w-6 shrink-0 text-right">D{entry.dayRange}</span>
                         <div className="flex-1 h-3.5 bg-muted rounded-full overflow-hidden">
                           <motion.div
                             className="h-full bg-gradient-to-r from-orange-400 to-emerald-500 rounded-full flex items-center justify-end pr-1"
@@ -4796,12 +4850,72 @@ function AntiBanTab() {
                             {pct > 15 && <span className="text-[8px] font-bold text-white">{entry.limit}</span>}
                           </motion.div>
                         </div>
-                        <span className="text-[9px] text-muted-foreground w-7 shrink-0">{entry.limit} msg</span>
+                        <Input
+                          type="number"
+                          min={1}
+                          max={500}
+                          value={entry.limit}
+                          onChange={e => {
+                            const val = Math.max(1, parseInt(e.target.value) || 1)
+                            updateScheduleEntry('prewarmSchedule', i, val)
+                          }}
+                          className="w-14 h-5 text-[10px] px-1 text-center border-orange-200 dark:border-orange-800"
+                          disabled={saving}
+                        />
                       </div>
                     )
                   })}
                 </div>
-                <p className="text-[10px] text-muted-foreground mt-2 italic">Após 20 dias → chip pronto (sem restrição)</p>
+                <p className="text-[10px] text-muted-foreground mt-2 italic">Após 20 dias → chip aquecido</p>
+              </div>
+
+              {/* Phase 3: Aquecido (Ready) — Editable */}
+              <div>
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="flex size-5 items-center justify-center rounded bg-emerald-100 dark:bg-emerald-900/30">
+                    <CheckCircle2 className="size-3 text-emerald-600" />
+                  </div>
+                  <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-400">Fase 3: Aquecido</span>
+                </div>
+                <div className="p-4 bg-emerald-50 dark:bg-emerald-900/20 rounded-lg border border-emerald-200 dark:border-emerald-800 space-y-3">
+                  <div className="text-center">
+                    <CheckCircle2 className="size-8 text-emerald-500 mx-auto mb-2" />
+                    <p className="text-sm font-semibold text-emerald-700 dark:text-emerald-400">Chip Aquecido</p>
+                    <p className="text-[10px] text-muted-foreground mt-1">Sem restrições de aquecimento. Limite diário configurável.</p>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Limite diário por chip</Label>
+                    <div className="flex items-center gap-1.5">
+                      <Input
+                        type="number"
+                        min={10}
+                        max={5000}
+                        step={10}
+                        value={settings.readyDailyLimit || 200}
+                        onChange={e => updateReadyDailyLimit(Math.max(10, parseInt(e.target.value) || 200))}
+                        className="w-24 h-8 text-sm border-emerald-200 dark:border-emerald-800"
+                        disabled={saving}
+                      />
+                      <span className="text-[11px] text-muted-foreground">msgs/dia</span>
+                    </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Limite por hora por chip</Label>
+                    <div className="flex items-center gap-1.5">
+                      <Input
+                        type="number"
+                        min={5}
+                        max={500}
+                        step={5}
+                        value={settings.hourlyLimit || 30}
+                        onChange={e => updateSetting('hourlyLimit', Math.max(5, parseInt(e.target.value) || 30))}
+                        className="w-24 h-8 text-sm border-emerald-200 dark:border-emerald-800"
+                        disabled={saving}
+                      />
+                      <span className="text-[11px] text-muted-foreground">msgs/hora</span>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -4812,10 +4926,7 @@ function AntiBanTab() {
                 {/* Nursery phase: 14 days */}
                 {Array.from({ length: 14 }, (_, i) => {
                   const day = i + 1
-                  const limit = NURSERY_SCHEDULE.find(s => {
-                    const [from, to] = s.dayRange.split('-').map(Number)
-                    return day >= from && day <= to
-                  })?.limit || 2
+                  const limit = nurserySchedule.find(s => day >= s.days[0] && day <= s.days[1])?.limit || 10
                   return (
                     <div
                       key={`n-${i}`}
@@ -4829,12 +4940,9 @@ function AntiBanTab() {
                 {/* Prewarm phase: 20 days */}
                 {Array.from({ length: 20 }, (_, i) => {
                   const day = i + 1
-                  const entry = PREWARM_SCHEDULE.find(s => {
-                    const [from, to] = s.dayRange.split('-').map(Number)
-                    return day >= from && day <= to
-                  })
+                  const entry = prewarmSchedule.find(s => day >= s.days[0] && day <= s.days[1])
                   const limit = entry?.limit || 11
-                  const intensity = limit / 200
+                  const intensity = limit / maxPrewarm
                   return (
                     <div
                       key={`p-${i}`}
@@ -4849,6 +4957,7 @@ function AntiBanTab() {
               </div>
               <div className="flex justify-between mt-1">
                 <span className="text-[9px] text-amber-600 font-medium">← Berçário (14 dias)</span>
+                <span className="text-[9px] text-emerald-600 font-medium">Aquecido ({settings.readyDailyLimit || 200}/dia) ✓</span>
                 <span className="text-[9px] text-orange-600 font-medium">Pré-aquecido (20 dias) →</span>
               </div>
             </div>

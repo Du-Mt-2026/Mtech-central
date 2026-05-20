@@ -6,6 +6,41 @@ function toMins(val: number): number {
   return val < 25 ? val * 60 : val
 }
 
+// Default nursery schedule (matching sending-engine.ts)
+const DEFAULT_NURSERY_SCHEDULE = JSON.stringify([
+  { dayRange: '1-2', days: [1, 2], limit: 10 },
+  { dayRange: '3-4', days: [3, 4], limit: 20 },
+  { dayRange: '5-6', days: [5, 6], limit: 30 },
+  { dayRange: '7-8', days: [7, 8], limit: 40 },
+  { dayRange: '9-10', days: [9, 10], limit: 50 },
+  { dayRange: '11-12', days: [11, 12], limit: 60 },
+  { dayRange: '13-14', days: [13, 14], limit: 80 },
+])
+
+// Default prewarm schedule (matching sending-engine.ts)
+const DEFAULT_PREWARM_SCHEDULE = JSON.stringify([
+  { dayRange: '1', days: [1, 1], limit: 11 },
+  { dayRange: '2', days: [2, 2], limit: 15 },
+  { dayRange: '3', days: [3, 3], limit: 20 },
+  { dayRange: '4', days: [4, 4], limit: 25 },
+  { dayRange: '5', days: [5, 5], limit: 30 },
+  { dayRange: '6', days: [6, 6], limit: 35 },
+  { dayRange: '7', days: [7, 7], limit: 40 },
+  { dayRange: '8', days: [8, 8], limit: 45 },
+  { dayRange: '9', days: [9, 9], limit: 50 },
+  { dayRange: '10', days: [10, 10], limit: 60 },
+  { dayRange: '11', days: [11, 11], limit: 70 },
+  { dayRange: '12', days: [12, 12], limit: 80 },
+  { dayRange: '13', days: [13, 13], limit: 90 },
+  { dayRange: '14', days: [14, 14], limit: 100 },
+  { dayRange: '15', days: [15, 15], limit: 120 },
+  { dayRange: '16', days: [16, 16], limit: 140 },
+  { dayRange: '17', days: [17, 17], limit: 160 },
+  { dayRange: '18', days: [18, 18], limit: 180 },
+  { dayRange: '19', days: [19, 19], limit: 190 },
+  { dayRange: '20', days: [20, 20], limit: 200 },
+])
+
 // GET /api/antiban — Get current anti-ban settings
 export async function GET() {
   try {
@@ -59,6 +94,10 @@ export async function PATCH(request: NextRequest) {
         sendingWindowStart: 480,  // 8:00 in minutes-from-midnight
         sendingWindowEnd: 1260,    // 21:00 in minutes-from-midnight
         timezone: 'America/Sao_Paulo',
+        nurserySchedule: DEFAULT_NURSERY_SCHEDULE,
+        prewarmSchedule: DEFAULT_PREWARM_SCHEDULE,
+        readyDailyLimit: 200,
+        hourlyLimit: 30,
       }
       const updated = await db.antiBanSettings.update({
         where: { id: settings.id },
@@ -72,7 +111,7 @@ export async function PATCH(request: NextRequest) {
       const sectionFields: Record<string, string[]> = {
         typing: ['typingMinDelay', 'typingMaxDelay'],
         interval: ['messageIntervalMin', 'messageIntervalMax'],
-        warming: ['warmingEnabled', 'warmingDays'],
+        warming: ['warmingEnabled', 'warmingDays', 'nurserySchedule', 'prewarmSchedule', 'readyDailyLimit', 'hourlyLimit'],
         cooldown: ['dailyLimitPerChip', 'cooldownAfterMessages', 'cooldownMinutes', 'stopOnWarning'],
         sendingWindow: ['sendingWindowStart', 'sendingWindowEnd', 'timezone'],
       }
@@ -87,9 +126,13 @@ export async function PATCH(request: NextRequest) {
         cooldownMinutes: 30,
         cooldownAfterMessages: 50,
         stopOnWarning: true,
-        sendingWindowStart: 480,  // 8:00 in minutes-from-midnight
-        sendingWindowEnd: 1260,    // 21:00 in minutes-from-midnight
+        sendingWindowStart: 480,
+        sendingWindowEnd: 1260,
         timezone: 'America/Sao_Paulo',
+        nurserySchedule: DEFAULT_NURSERY_SCHEDULE,
+        prewarmSchedule: DEFAULT_PREWARM_SCHEDULE,
+        readyDailyLimit: 200,
+        hourlyLimit: 30,
       }
       const section = body._resetSection as string
       if (!(section in sectionFields)) {
@@ -119,9 +162,13 @@ export async function PATCH(request: NextRequest) {
         cooldownMinutes: 30,
         cooldownAfterMessages: 50,
         stopOnWarning: true,
-        sendingWindowStart: 480,  // 8:00 in minutes-from-midnight
-        sendingWindowEnd: 1260,    // 21:00 in minutes-from-midnight
+        sendingWindowStart: 480,
+        sendingWindowEnd: 1260,
         timezone: 'America/Sao_Paulo',
+        nurserySchedule: DEFAULT_NURSERY_SCHEDULE,
+        prewarmSchedule: DEFAULT_PREWARM_SCHEDULE,
+        readyDailyLimit: 200,
+        hourlyLimit: 30,
       }
       const field = body._resetField as string
       if (!(field in fieldDefaults)) {
@@ -148,12 +195,21 @@ export async function PATCH(request: NextRequest) {
       'sendingWindowStart',
       'sendingWindowEnd',
       'timezone',
+      'nurserySchedule',
+      'prewarmSchedule',
+      'readyDailyLimit',
+      'hourlyLimit',
     ]
 
     const updateData: Record<string, unknown> = {}
     for (const field of allowedFields) {
       if (body[field] !== undefined) {
-        updateData[field] = body[field]
+        // For schedule fields, store as JSON string
+        if ((field === 'nurserySchedule' || field === 'prewarmSchedule') && typeof body[field] !== 'string') {
+          updateData[field] = JSON.stringify(body[field])
+        } else {
+          updateData[field] = body[field]
+        }
       }
     }
 
@@ -181,6 +237,52 @@ export async function PATCH(request: NextRequest) {
         { error: 'Horário de término deve ser entre 0 e 1440 minutos' },
         { status: 400 }
       )
+    }
+    if (updateData.readyDailyLimit !== undefined && Number(updateData.readyDailyLimit) < 10) {
+      return NextResponse.json(
+        { error: 'Limite diário aquecido deve ser pelo menos 10' },
+        { status: 400 }
+      )
+    }
+    if (updateData.hourlyLimit !== undefined && Number(updateData.hourlyLimit) < 5) {
+      return NextResponse.json(
+        { error: 'Limite por hora deve ser pelo menos 5' },
+        { status: 400 }
+      )
+    }
+
+    // Validate schedule JSON if provided
+    for (const scheduleField of ['nurserySchedule', 'prewarmSchedule']) {
+      if (updateData[scheduleField] !== undefined) {
+        try {
+          const parsed = typeof updateData[scheduleField] === 'string'
+            ? JSON.parse(updateData[scheduleField] as string)
+            : updateData[scheduleField]
+          if (!Array.isArray(parsed) || parsed.length === 0) {
+            return NextResponse.json(
+              { error: `Schedule ${scheduleField} deve ser um array não-vazio` },
+              { status: 400 }
+            )
+          }
+          for (const entry of parsed) {
+            if (!entry.dayRange || entry.limit === undefined || entry.limit < 1) {
+              return NextResponse.json(
+                { error: `Cada entrada do schedule deve ter dayRange e limit >= 1` },
+                { status: 400 }
+              )
+            }
+          }
+          // Ensure it's stored as JSON string
+          if (typeof updateData[scheduleField] !== 'string') {
+            updateData[scheduleField] = JSON.stringify(updateData[scheduleField])
+          }
+        } catch {
+          return NextResponse.json(
+            { error: `Schedule ${scheduleField} inválido` },
+            { status: 400 }
+          )
+        }
+      }
     }
 
     const updated = await db.antiBanSettings.update({

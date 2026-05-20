@@ -12,6 +12,12 @@ import { db } from './db'
 // TYPES & CONSTANTS
 // ============================================================
 
+interface ScheduleEntry {
+  dayRange: string
+  days: [number, number]
+  limit: number
+}
+
 interface AntiBanConfig {
   typingMinDelay: number
   typingMaxDelay: number
@@ -28,6 +34,11 @@ interface AntiBanConfig {
   sendingWindowStart: number  // minutos desde meia-noite (0-1440), default 480 (8:00)
   sendingWindowEnd: number    // minutos desde meia-noite (0-1440), default 1260 (21:00)
   timezone: string            // fuso horário, default 'America/Sao_Paulo'
+  // Editable schedules loaded from DB
+  nurserySchedule: ScheduleEntry[]
+  prewarmSchedule: ScheduleEntry[]
+  readyDailyLimit: number     // Phase 3 (Aquecido) daily limit per chip
+  hourlyLimit: number         // Max messages per hour per chip
 }
 
 // ============================================================
@@ -36,6 +47,7 @@ interface AntiBanConfig {
 // Phase 1: Nursery (Berçário) — chip novo, 14 dias
 // Phase 2: Prewarm (Pré-aquecido) — chip já passou pelo berçário, 20 dias
 // After both phases: chip is "ready" with no limit restriction
+// Phase 3: Ready (Aquecido) — chip fully warmed, configurable daily limit
 
 export const NURSERY_SCHEDULE: { dayRange: string; days: [number, number]; limit: number }[] = [
   { dayRange: '1-2',   days: [1, 2],   limit: 10 },
@@ -119,6 +131,29 @@ const DEFAULT_SETTINGS: AntiBanConfig = {
   sendingWindowStart: 480,  // 8:00 in minutes-from-midnight
   sendingWindowEnd: 1260,   // 21:00 in minutes-from-midnight
   timezone: 'America/Sao_Paulo',
+  nurserySchedule: NURSERY_SCHEDULE,
+  prewarmSchedule: PREWARM_SCHEDULE,
+  readyDailyLimit: 200,
+  hourlyLimit: 30,
+}
+
+/**
+ * Parse a JSON schedule string from the DB, falling back to default schedule
+ */
+function parseSchedule(jsonStr: string | undefined | null, fallback: ScheduleEntry[]): ScheduleEntry[] {
+  if (!jsonStr) return fallback
+  try {
+    const parsed = JSON.parse(jsonStr)
+    if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].dayRange && parsed[0].limit !== undefined) {
+      // Ensure days field exists for each entry
+      return parsed.map((entry: any) => ({
+        dayRange: entry.dayRange,
+        days: entry.days || [1, 1],
+        limit: Number(entry.limit) || 1,
+      }))
+    }
+  } catch { /* ignore */ }
+  return fallback
 }
 
 // ============================================================
@@ -254,13 +289,14 @@ function isWithinSendingWindow(settings: AntiBanConfig): boolean {
 
 /**
  * Get the warming limit for a chip based on its current phase and day.
- * Uses the two-phase warming schedule (nursery + prewarm).
+ * Uses the DB-loaded warming schedules (nursery + prewarm).
  */
 function getWarmingLimitForDay(
   phase: string,
-  day: number
+  day: number,
+  settings: AntiBanConfig
 ): number {
-  const schedule = phase === 'nursery' ? NURSERY_SCHEDULE : PREWARM_SCHEDULE
+  const schedule = phase === 'nursery' ? settings.nurserySchedule : settings.prewarmSchedule
   for (const entry of schedule) {
     if (day >= entry.days[0] && day <= entry.days[1]) {
       return entry.limit
@@ -268,6 +304,46 @@ function getWarmingLimitForDay(
   }
   // Beyond schedule: return the max limit from the last entry
   return schedule[schedule.length - 1].limit
+}
+
+/**
+ * Calculate minimum seconds between messages for a chip based on its phase.
+ * Nursery chips: messages spread evenly across sending window (min 5 min)
+ * Prewarm chips: half the nursery interval (min 2 min)
+ * Ready/Aquecido chips: use normal interval (30-90s from settings)
+ */
+function getMinimumIntervalForChip(
+  chip: { warmingPhase?: string; warmingEnabled: boolean; dailyLimit: number; createdAt: string; prewarmStartedAt?: Date | null },
+  settings: AntiBanConfig
+): number {
+  if (!chip.warmingEnabled || !settings.warmingEnabled) return 0
+
+  const phase = (chip as any).warmingPhase || 'nursery'
+
+  if (phase === 'ready') {
+    // Ready/aquecido: use the normal interval from settings (minimum of intervalMin)
+    return settings.messageIntervalMin
+  }
+
+  // Calculate the sending window duration in minutes
+  const windowStart = toMins(settings.sendingWindowStart)
+  const windowEnd = toMins(settings.sendingWindowEnd)
+  const windowMinutes = windowEnd > windowStart ? windowEnd - windowStart : (1440 - windowStart + windowEnd)
+
+  // Get the effective daily limit for this chip to determine spacing
+  const effectiveLimit = getEffectiveDailyLimit(chip, settings)
+  if (effectiveLimit <= 0) return 300 // safety fallback
+
+  // Calculate minimum minutes between messages
+  const minMinutesBetween = windowMinutes / effectiveLimit
+
+  if (phase === 'nursery') {
+    // Full spreading for nursery chips — minimum 5 minutes (300 seconds)
+    return Math.max(300, Math.round(minMinutesBetween * 60))
+  } else {
+    // Prewarm: half the nursery interval — minimum 2 minutes (120 seconds)
+    return Math.max(120, Math.round(minMinutesBetween * 60 * 0.5))
+  }
 }
 
 function getEffectiveDailyLimit(
@@ -283,8 +359,8 @@ function getEffectiveDailyLimit(
   const phase = (chip as any).warmingPhase || 'nursery'
   
   if (phase === 'ready') {
-    // Chip is fully warmed — use configured daily limit
-    let limit = chip.dailyLimit || settings.dailyLimitPerChip
+    // Phase 3: Aquecido — use readyDailyLimit from settings (editable)
+    let limit = settings.readyDailyLimit || chip.dailyLimit || settings.dailyLimitPerChip
     const modeMultiplier = WARMING_MODE_MULTIPLIERS[warmingMode || 'normal']
     if (modeMultiplier) {
       limit = Math.round(limit * modeMultiplier.limitMultiplier)
@@ -307,7 +383,7 @@ function getEffectiveDailyLimit(
   
   dayInPhase = Math.max(1, dayInPhase)
   
-  let limit = getWarmingLimitForDay(phase, dayInPhase)
+  let limit = getWarmingLimitForDay(phase, dayInPhase, settings)
   limit = Math.min(limit, chip.dailyLimit || settings.dailyLimitPerChip)
 
   // Apply warming mode multiplier
@@ -343,6 +419,11 @@ async function getAntiBanSettings(): Promise<AntiBanConfig> {
         sendingWindowStart: toMins((saved as any).sendingWindowStart ?? 480),
         sendingWindowEnd: toMins((saved as any).sendingWindowEnd ?? 1260),
         timezone: (saved as any).timezone ?? 'America/Sao_Paulo',
+        // Editable warming schedules (loaded from DB, parsed from JSON)
+        nurserySchedule: parseSchedule((saved as any).nurserySchedule, NURSERY_SCHEDULE),
+        prewarmSchedule: parseSchedule((saved as any).prewarmSchedule, PREWARM_SCHEDULE),
+        readyDailyLimit: (saved as any).readyDailyLimit ?? 200,
+        hourlyLimit: (saved as any).hourlyLimit ?? 30,
       }
     }
   } catch {
@@ -373,7 +454,26 @@ async function resetDailyIfNeeded(chipId: string, timezone: string = 'America/Sa
   if (nowDateStr !== lastDateStr) {
     await db.chip.update({
       where: { id: chipId },
-      data: { sentToday: 0, verifiedToday: 0, lastResetAt: now, lastVerifiedResetAt: now },
+      data: { sentToday: 0, verifiedToday: 0, lastResetAt: now, lastVerifiedResetAt: now, hourlySent: 0, lastHourlyResetAt: now },
+    })
+  }
+}
+
+/**
+ * Reset chip hourly counter if an hour has passed since last reset.
+ */
+async function resetHourlyIfNeeded(chipId: string): Promise<void> {
+  const chip = await db.chip.findUnique({ where: { id: chipId } })
+  if (!chip) return
+
+  const now = new Date()
+  const lastHourlyReset = new Date((chip as any).lastHourlyResetAt ?? chip.lastResetAt)
+  const hoursSinceReset = (now.getTime() - lastHourlyReset.getTime()) / (1000 * 60 * 60)
+
+  if (hoursSinceReset >= 1) {
+    await db.chip.update({
+      where: { id: chipId },
+      data: { hourlySent: 0, lastHourlyResetAt: now },
     })
   }
 }
@@ -982,15 +1082,67 @@ export async function processNextMessage(campaignId: string): Promise<{
     return { processed: true, delayMs: 1000, remaining: -1, completed: false }
   }
 
+  // Reset hourly counter if needed
+  if (antiBanEnabled) {
+    await resetHourlyIfNeeded(chip.id)
+  }
+
+  // Re-fetch chip after hourly reset
+  const chipAfterHourly = await db.chip.findUnique({ where: { id: message.chipId } })
+  const currentChip = chipAfterHourly || chip
+
+  // Check hourly limit
+  if (antiBanEnabled && settings.hourlyLimit > 0) {
+    const hourlySent = (currentChip as any).hourlySent ?? 0
+    if (hourlySent >= settings.hourlyLimit) {
+      console.log(`[SendingEngine] Chip ${currentChip.name} hit hourly limit (${hourlySent}/${settings.hourlyLimit}) — waiting`)
+      return {
+        processed: false,
+        delayMs: 60 * 1000, // Check again in 1 minute
+        remaining: -1,
+        completed: false,
+        reason: `hourly_limit_${currentChip.name}`,
+      }
+    }
+  }
+
+  // Check minimum interval for nursery/prewarm chips (smart message spreading)
+  if (antiBanEnabled && settings.warmingEnabled && currentChip.warmingEnabled) {
+    const minIntervalSeconds = getMinimumIntervalForChip(currentChip, settings)
+    if (minIntervalSeconds > 0) {
+      // Find the last message sent by this chip
+      const lastMessage = await db.message.findFirst({
+        where: { chipId: currentChip.id, status: 'sent', sentAt: { not: null } },
+        orderBy: { sentAt: 'desc' },
+        select: { sentAt: true },
+      })
+      if (lastMessage?.sentAt) {
+        const elapsed = (Date.now() - new Date(lastMessage.sentAt).getTime()) / 1000
+        if (elapsed < minIntervalSeconds) {
+          const waitSeconds = Math.ceil(minIntervalSeconds - elapsed)
+          const phase = (currentChip as any).warmingPhase || 'nursery'
+          console.log(`[SendingEngine] Chip ${currentChip.name} (${phase}): minimum interval not reached (${Math.round(elapsed)}s/${minIntervalSeconds}s) — waiting ${waitSeconds}s`)
+          return {
+            processed: false,
+            delayMs: waitSeconds * 1000,
+            remaining: -1,
+            completed: false,
+            reason: `min_interval_${phase}_${currentChip.name}`,
+          }
+        }
+      }
+    }
+  }
+
   // Check daily limit (with warming mode multiplier)
-  const effectiveLimit = getEffectiveDailyLimit(chip, settings, warmingMode)
-  if (antiBanEnabled && chip.sentToday >= effectiveLimit) {
-    console.log(`[SendingEngine] Chip ${chip.name} hit daily limit (${chip.sentToday}/${effectiveLimit}) — reassigning messages to other chips`)
+  const effectiveLimit = getEffectiveDailyLimit(currentChip, settings, warmingMode)
+  if (antiBanEnabled && currentChip.sentToday >= effectiveLimit) {
+    console.log(`[SendingEngine] Chip ${currentChip.name} hit daily limit (${currentChip.sentToday}/${effectiveLimit}) — reassigning messages to other chips`)
 
     // Find messages assigned to this chip and reassign them to other connected chips
     const otherChips = await db.chip.findMany({
       where: {
-        id: { not: chip.id },
+        id: { not: currentChip.id },
         status: 'connected',
         evolutionInstance: { not: null },
       },
@@ -999,7 +1151,7 @@ export async function processNextMessage(campaignId: string): Promise<{
     if (otherChips.length > 0) {
       // Reassign up to 50 pending messages from this chip to other chips (round-robin)
       const pendingMessages = await db.message.findMany({
-        where: { campaignId, chipId: chip.id, status: 'pending' },
+        where: { campaignId, chipId: currentChip.id, status: 'pending' },
         take: 50,
       })
 
@@ -1011,11 +1163,11 @@ export async function processNextMessage(campaignId: string): Promise<{
         })
       }
 
-      console.log(`[SendingEngine] Reassigned ${pendingMessages.length} messages from ${chip.name} to other chips`)
+      console.log(`[SendingEngine] Reassigned ${pendingMessages.length} messages from ${currentChip.name} to other chips`)
 
       // Return with short delay so we can try processing again with the reassigned messages
       const remaining = await db.message.count({ where: { campaignId, status: 'pending' } })
-      return { processed: false, delayMs: 1000, remaining, completed: remaining === 0, reason: `daily_limit_reassigned_${chip.name}` }
+      return { processed: false, delayMs: 1000, remaining, completed: remaining === 0, reason: `daily_limit_reassigned_${currentChip.name}` }
     }
 
     // No other chips available — truly stuck
@@ -1024,7 +1176,7 @@ export async function processNextMessage(campaignId: string): Promise<{
       delayMs: 60 * 1000,
       remaining: -1,
       completed: false,
-      reason: `daily_limit_${chip.name}`,
+      reason: `daily_limit_${currentChip.name}`,
     }
   }
 
@@ -1117,10 +1269,10 @@ export async function processNextMessage(campaignId: string): Promise<{
       },
     })
 
-    // Increment chip counter
+    // Increment chip counter (daily + hourly)
     await db.chip.update({
       where: { id: message.chipId },
-      data: { sentToday: { increment: 1 }, lastSeen: new Date() },
+      data: { sentToday: { increment: 1 }, hourlySent: { increment: 1 }, lastSeen: new Date() },
     })
 
     console.log(`[SendingEngine] Sent message ${message.id} to ${formattedPhone} via ${instanceName}`)

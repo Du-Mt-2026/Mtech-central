@@ -129,11 +129,68 @@ export async function POST(req: NextRequest) {
       } else {
         results.push('Chip: prewarmStartedAt já existe')
       }
+
+      // New columns for hourly limit tracking
+      if (!chipColumnNames.includes('hourlySent')) {
+        await db.$executeRawUnsafe(`ALTER TABLE "Chip" ADD COLUMN IF NOT EXISTS "hourlySent" INTEGER NOT NULL DEFAULT 0`)
+        results.push('Chip: adicionada coluna hourlySent')
+      } else {
+        results.push('Chip: hourlySent já existe')
+      }
+
+      if (!chipColumnNames.includes('lastHourlyResetAt')) {
+        await db.$executeRawUnsafe(`ALTER TABLE "Chip" ADD COLUMN IF NOT EXISTS "lastHourlyResetAt" TIMESTAMP(3) NOT NULL DEFAULT NOW()`)
+        results.push('Chip: adicionada coluna lastHourlyResetAt')
+      } else {
+        results.push('Chip: lastHourlyResetAt já existe')
+      }
     } catch (chipError: any) {
       results.push(`Erro na migração Chip: ${chipError.message}`)
     }
 
-    // Step 3: Ensure InboxMessage table exists
+    // Step 3: Sync AntiBanSettings table — add new schedule columns
+    try {
+      const absColumns = await db.$queryRaw<Array<{ column_name: string }>>`
+        SELECT column_name FROM information_schema.columns
+        WHERE table_name = 'AntiBanSettings'
+        ORDER BY ordinal_position
+      `
+      const absColumnNames = absColumns.map(c => c.column_name)
+
+      if (!absColumnNames.includes('nurserySchedule')) {
+        const defaultNursery = '[{"dayRange":"1-2","days":[1,2],"limit":10},{"dayRange":"3-4","days":[3,4],"limit":20},{"dayRange":"5-6","days":[5,6],"limit":30},{"dayRange":"7-8","days":[7,8],"limit":40},{"dayRange":"9-10","days":[9,10],"limit":50},{"dayRange":"11-12","days":[11,12],"limit":60},{"dayRange":"13-14","days":[13,14],"limit":80}]'
+        await db.$executeRawUnsafe(`ALTER TABLE "AntiBanSettings" ADD COLUMN IF NOT EXISTS "nurserySchedule" TEXT NOT NULL DEFAULT '${defaultNursery}'`)
+        results.push('AntiBanSettings: adicionada coluna nurserySchedule')
+      } else {
+        results.push('AntiBanSettings: nurserySchedule já existe')
+      }
+
+      if (!absColumnNames.includes('prewarmSchedule')) {
+        const defaultPrewarm = '[{"dayRange":"1","days":[1,1],"limit":11},{"dayRange":"2","days":[2,2],"limit":15},{"dayRange":"3","days":[3,3],"limit":20},{"dayRange":"4","days":[4,4],"limit":25},{"dayRange":"5","days":[5,5],"limit":30},{"dayRange":"6","days":[6,6],"limit":35},{"dayRange":"7","days":[7,7],"limit":40},{"dayRange":"8","days":[8,8],"limit":45},{"dayRange":"9","days":[9,9],"limit":50},{"dayRange":"10","days":[10,10],"limit":60},{"dayRange":"11","days":[11,11],"limit":70},{"dayRange":"12","days":[12,12],"limit":80},{"dayRange":"13","days":[13,13],"limit":90},{"dayRange":"14","days":[14,14],"limit":100},{"dayRange":"15","days":[15,15],"limit":120},{"dayRange":"16","days":[16,16],"limit":140},{"dayRange":"17","days":[17,17],"limit":160},{"dayRange":"18","days":[18,18],"limit":180},{"dayRange":"19","days":[19,19],"limit":190},{"dayRange":"20","days":[20,20],"limit":200}]'
+        await db.$executeRawUnsafe(`ALTER TABLE "AntiBanSettings" ADD COLUMN IF NOT EXISTS "prewarmSchedule" TEXT NOT NULL DEFAULT '${defaultPrewarm}'`)
+        results.push('AntiBanSettings: adicionada coluna prewarmSchedule')
+      } else {
+        results.push('AntiBanSettings: prewarmSchedule já existe')
+      }
+
+      if (!absColumnNames.includes('readyDailyLimit')) {
+        await db.$executeRawUnsafe(`ALTER TABLE "AntiBanSettings" ADD COLUMN IF NOT EXISTS "readyDailyLimit" INTEGER NOT NULL DEFAULT 200`)
+        results.push('AntiBanSettings: adicionada coluna readyDailyLimit')
+      } else {
+        results.push('AntiBanSettings: readyDailyLimit já existe')
+      }
+
+      if (!absColumnNames.includes('hourlyLimit')) {
+        await db.$executeRawUnsafe(`ALTER TABLE "AntiBanSettings" ADD COLUMN IF NOT EXISTS "hourlyLimit" INTEGER NOT NULL DEFAULT 30`)
+        results.push('AntiBanSettings: adicionada coluna hourlyLimit')
+      } else {
+        results.push('AntiBanSettings: hourlyLimit já existe')
+      }
+    } catch (absError: any) {
+      results.push(`Erro na migração AntiBanSettings: ${absError.message}`)
+    }
+
+    // Step 4: Ensure InboxMessage table exists
     try {
       const inboxExists = await db.$queryRaw<Array<{ exists: boolean }>>`
         SELECT EXISTS (

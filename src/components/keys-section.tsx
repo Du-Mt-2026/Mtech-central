@@ -348,16 +348,11 @@ export function KeysSection() {
                         </CardHeader>
                         <CardContent className="pt-0">
                           <div className="space-y-1">
-                            {parsedVariations.slice(0, 3).map((v: string, i: number) => (
+                            {parsedVariations.map((v: string, i: number) => (
                               <p key={i} className="text-xs text-muted-foreground truncate pl-3 border-l-2 border-emerald-500/30">
                                 {v}
                               </p>
                             ))}
-                            {parsedVariations.length > 3 && (
-                              <p className="text-xs text-muted-foreground pl-3 border-l-2 border-zinc-500/30">
-                                +{parsedVariations.length - 3} variações...
-                              </p>
-                            )}
                           </div>
                           <div className="flex items-center justify-between mt-3 pt-2 border-t border-border">
                             <span className="text-xs text-muted-foreground">
