@@ -44,6 +44,97 @@ import { VerificarSection } from '@/components/verificar-section'
 import { KeysSection } from '@/components/keys-section'
 import { VendedoresSection } from '@/components/vendedores-section'
 
+// ===== Client-side Audio Conversion (OGG/Opus for WhatsApp) =====
+let ffmpegInstance: any = null
+let ffmpegLoaded = false
+
+async function convertAudioToOgg(file: File): Promise<File> {
+  try {
+    // Dynamic import of @ffmpeg/ffmpeg and @ffmpeg/util
+    const { FFmpeg } = await import('@ffmpeg/ffmpeg')
+    const { fetchFile } = await import('@ffmpeg/util')
+
+    if (!ffmpegInstance) {
+      ffmpegInstance = new FFmpeg()
+    }
+
+    if (!ffmpegLoaded) {
+      await ffmpegInstance.load()
+      ffmpegLoaded = true
+    }
+
+    const inputExt = file.name.split('.').pop()?.toLowerCase() || 'mp3'
+    const inputName = `input.${inputExt}`
+    const outputName = 'output.ogg'
+
+    // Write input file to ffmpeg virtual filesystem
+    await ffmpegInstance.writeFile(inputName, await fetchFile(file))
+
+    // Convert to OGG/Opus (WhatsApp native format)
+    await ffmpegInstance.exec([
+      '-i', inputName,
+      '-c:a', 'libopus',
+      '-b:a', '64k',
+      '-ar', '48000',
+      '-ac', '1',
+      '-vn',
+      '-y',
+      outputName,
+    ])
+
+    // Read the converted file
+    const data = await ffmpegInstance.readFile(outputName)
+    const blob = new Blob([data], { type: 'audio/ogg' })
+    const oggName = file.name.replace(/\.[^/.]+$/, '') + '.ogg'
+
+    // Cleanup
+    try { await ffmpegInstance.deleteFile(inputName) } catch { /* ignore */ }
+    try { await ffmpegInstance.deleteFile(outputName) } catch { /* ignore */ }
+
+    return new File([blob], oggName, { type: 'audio/ogg' })
+  } catch (err) {
+    console.error('[AudioConverter] Client-side conversion failed:', err)
+    throw err
+  }
+}
+
+async function uploadMediaFile(
+  file: File,
+  mediatype: string,
+  audioMode?: 'whatsapp' | 'original'
+): Promise<{ mediaUrl: string; mediatype: string; originalName: string; converted: boolean }> {
+  let uploadFile = file
+  let clientConverted = false
+
+  // If audio in WhatsApp mode, try client-side conversion first
+  if (mediatype === 'audio' && audioMode === 'whatsapp') {
+    const isOgg = file.name.endsWith('.ogg') || file.name.endsWith('.oga') || file.type === 'audio/ogg' || file.type === 'audio/opus'
+
+    if (!isOgg) {
+      try {
+        uploadFile = await convertAudioToOgg(file)
+        clientConverted = true
+        toast.success('Áudio convertido para OGG (WhatsApp)')
+      } catch {
+        console.warn('[Upload] Client-side conversion failed, server will try as fallback')
+        toast.warning('Conversão no navegador falhou, tentando no servidor...')
+      }
+    }
+  }
+
+  const uploadForm = new FormData()
+  uploadForm.append('file', uploadFile)
+  uploadForm.append('mediatype', mediatype)
+  if (mediatype === 'audio') uploadForm.append('audioMode', audioMode || 'whatsapp')
+  if (clientConverted) uploadForm.append('clientConverted', 'true')
+
+  const uploadRes = await fetch('/api/upload', { method: 'POST', body: uploadForm })
+  const uploadData = await uploadRes.json()
+  if (!uploadRes.ok) throw new Error(uploadData.error || 'Erro ao fazer upload da mídia')
+
+  return uploadData
+}
+
 // ===== Types =====
 interface Chip {
   id: string
@@ -2836,13 +2927,7 @@ function CampanhasTab() {
 
         // Upload step media if present
         if (s.mediaFile && mediatype) {
-          const uploadForm = new FormData()
-          uploadForm.append('file', s.mediaFile)
-          uploadForm.append('mediatype', mediatype)
-          if (mediatype === 'audio') uploadForm.append('audioMode', s.audioMode || 'whatsapp')
-          const uploadRes = await fetch('/api/upload', { method: 'POST', body: uploadForm })
-          const uploadData = await uploadRes.json()
-          if (!uploadRes.ok) throw new Error(uploadData.error || 'Erro ao fazer upload da mídia')
+          const uploadData = await uploadMediaFile(s.mediaFile, mediatype, s.audioMode)
           mediaUrl = uploadData.mediaUrl
           mediatype = uploadData.mediatype
         }
@@ -2855,13 +2940,7 @@ function CampanhasTab() {
           let vMediatype = v.mediatype || ''
 
           if (v.mediaFile && vMediatype) {
-            const uploadForm = new FormData()
-            uploadForm.append('file', v.mediaFile)
-            uploadForm.append('mediatype', vMediatype)
-            if (vMediatype === 'audio') uploadForm.append('audioMode', v.audioMode || 'whatsapp')
-            const uploadRes = await fetch('/api/upload', { method: 'POST', body: uploadForm })
-            const uploadData = await uploadRes.json()
-            if (!uploadRes.ok) throw new Error(uploadData.error || 'Erro ao fazer upload da mídia')
+            const uploadData = await uploadMediaFile(v.mediaFile, vMediatype, v.audioMode)
             vMediaUrl = uploadData.mediaUrl
             vMediatype = uploadData.mediatype
           }
@@ -3132,13 +3211,7 @@ function CampanhasTab() {
         let mediaUrl = s.mediaUrl || ''
         let mediatype = s.mediatype || ''
         if (s.mediaFile && mediatype) {
-          const uploadForm = new FormData()
-          uploadForm.append('file', s.mediaFile)
-          uploadForm.append('mediatype', mediatype)
-          if (mediatype === 'audio') uploadForm.append('audioMode', s.audioMode || 'whatsapp')
-          const uploadRes = await fetch('/api/upload', { method: 'POST', body: uploadForm })
-          const uploadData = await uploadRes.json()
-          if (!uploadRes.ok) throw new Error(uploadData.error || 'Erro ao fazer upload da mídia')
+          const uploadData = await uploadMediaFile(s.mediaFile, mediatype, s.audioMode)
           mediaUrl = uploadData.mediaUrl
           mediatype = uploadData.mediatype
         }
@@ -3148,13 +3221,7 @@ function CampanhasTab() {
           let vMediaUrl = v.mediaUrl || ''
           let vMediatype = v.mediatype || ''
           if (v.mediaFile && vMediatype) {
-            const uploadForm = new FormData()
-            uploadForm.append('file', v.mediaFile)
-            uploadForm.append('mediatype', vMediatype)
-            if (vMediatype === 'audio') uploadForm.append('audioMode', v.audioMode || 'whatsapp')
-            const uploadRes = await fetch('/api/upload', { method: 'POST', body: uploadForm })
-            const uploadData = await uploadRes.json()
-            if (!uploadRes.ok) throw new Error(uploadData.error || 'Erro ao fazer upload da mídia')
+            const uploadData = await uploadMediaFile(v.mediaFile, vMediatype, v.audioMode)
             vMediaUrl = uploadData.mediaUrl
             vMediatype = uploadData.mediatype
           }
