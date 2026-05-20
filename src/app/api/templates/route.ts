@@ -16,7 +16,7 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const body = await request.json()
-    const { name, content, category, mediatype, mediaDescription, linkUrl, linkPreview } = body
+    const { name, content, category, mediatype, mediaDescription, linkUrl, linkPreview, steps } = body
 
     if (!name || !content) {
       return NextResponse.json({ error: 'Nome e conteúdo são obrigatórios' }, { status: 400 })
@@ -31,6 +31,7 @@ export async function POST(request: Request) {
         mediaDescription: mediaDescription || '',
         linkUrl: linkUrl || '',
         linkPreview: linkPreview !== undefined ? linkPreview : true,
+        steps: steps || null,
       },
     })
     return NextResponse.json(template, { status: 201 })

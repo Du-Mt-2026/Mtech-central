@@ -14,7 +14,7 @@ import {
   Sparkles, Heart, Star, AlertTriangle, Info, ChevronDown,
   Pencil, LayoutList, Database, WifiOff, ArrowDownToLine, Save, XCircle,
   Inbox, LogOut, RotateCcw, Film, Music, File, ImageIcon, Key, Paperclip, MapPin, Link2,
-  Baby, CheckCircle2, Video, MoreVertical, Mic, User, Smile
+  Baby, CheckCircle2, Video, MoreVertical, Mic, User, Smile, BookmarkPlus
 } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardAction } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -2040,43 +2040,10 @@ function ContatosTab() {
                   <table className="w-full text-sm">
                     <thead className="bg-muted/50">
                       <tr>
-                        <th className="text-left p-3 font-medium">Nome</th>
-                        <th className="text-left p-3 font-medium">Telefone</th>
+                        {STANDARD_CONTACT_FIELDS.map(f => (
+                          <th key={f.key} className="text-left p-3 font-medium">{f.header}</th>
+                        ))}
                         <th className="text-left p-3 font-medium">Incluído em</th>
-                        {/* Dynamic custom field columns — use original header names from columns mapping */}
-                        {(() => {
-                          const NAME_ALIASES = ['nome', 'name', 'nombre', 'cliente']
-                          const PHONE_ALIASES = ['telefone', 'phone', 'tel', 'numero', 'número', 'celular', 'whatsapp']
-                          // Parse columns mapping from selectedList: {"Empresa":"empresa","Vendedora Responsável":"vendedora_responsável"}
-                          let colMapping: Record<string, string> = {}
-                          try { colMapping = JSON.parse(selectedList?.columns || '{}') } catch { /* ignore */ }
-                          // Build reverse mapping: varKey → original header name
-                          const varToHeader: Record<string, string> = {}
-                          const extraEntries: [string, string][] = [] // [varKey, originalHeader]
-                          for (const [headerName, varKey] of Object.entries(colMapping)) {
-                            const h = headerName.toLowerCase().trim()
-                            if (!NAME_ALIASES.includes(h) && !PHONE_ALIASES.includes(h)) {
-                              varToHeader[varKey] = headerName
-                              extraEntries.push([varKey, headerName])
-                            }
-                          }
-                          // If no columns mapping, fall back to extracting keys from customFields
-                          if (extraEntries.length === 0 && contacts.some(c => c.customFields)) {
-                            const customKeys = new Set<string>()
-                            contacts.forEach(c => {
-                              if (c.customFields) {
-                                try { Object.keys(JSON.parse(c.customFields)).forEach(k => customKeys.add(k)) } catch {}
-                              }
-                            })
-                            const filteredKeys = Array.from(customKeys).filter(k => !NAME_ALIASES.includes(k) && !PHONE_ALIASES.includes(k)).sort()
-                            return filteredKeys.map(k => (
-                              <th key={k} className="text-left p-3 font-medium capitalize">{k.replace(/_/g, ' ')}</th>
-                            ))
-                          }
-                          return extraEntries.map(([varKey, headerName]) => (
-                            <th key={varKey} className="text-left p-3 font-medium">{headerName}</th>
-                          ))
-                        })()}
                         <th className="text-left p-3 font-medium">Ações</th>
                       </tr>
                     </thead>
@@ -2088,41 +2055,19 @@ function ContatosTab() {
                         }
                         return (
                           <tr key={c.id} className="border-t hover:bg-muted/30 transition-colors">
-                            <td className="p-3 font-medium">{c.name}</td>
-                            <td className="p-3 text-muted-foreground">{c.phone}</td>
+                            {STANDARD_CONTACT_FIELDS.map(f => {
+                              const value = f.core
+                                ? (f.key === 'nome' ? c.name : c.phone)
+                                : (customData[f.key] || '-')
+                              return (
+                                <td key={f.key} className={`p-3 ${f.core ? 'font-medium' : 'text-muted-foreground text-xs'}`}>
+                                  {value}
+                                </td>
+                              )
+                            })}
                             <td className="p-3 text-muted-foreground text-xs">
                               {c.createdAt ? new Date(c.createdAt).toLocaleString('pt-BR') : '—'}
                             </td>
-                            {/* Dynamic custom field values — use original header names from columns mapping */}
-                            {(() => {
-                              const NAME_ALIASES = ['nome', 'name', 'nombre', 'cliente']
-                              const PHONE_ALIASES = ['telefone', 'phone', 'tel', 'numero', 'número', 'celular', 'whatsapp']
-                              let colMapping: Record<string, string> = {}
-                              try { colMapping = JSON.parse(selectedList?.columns || '{}') } catch { /* ignore */ }
-                              const extraEntries: [string, string][] = [] // [varKey, originalHeader]
-                              for (const [headerName, varKey] of Object.entries(colMapping)) {
-                                const h = headerName.toLowerCase().trim()
-                                if (!NAME_ALIASES.includes(h) && !PHONE_ALIASES.includes(h)) {
-                                  extraEntries.push([varKey, headerName])
-                                }
-                              }
-                              // If no columns mapping, fall back to extracting keys from customFields
-                              if (extraEntries.length === 0 && contacts.some(c2 => c2.customFields)) {
-                                const customKeys = new Set<string>()
-                                contacts.forEach(c2 => {
-                                  if (c2.customFields) {
-                                    try { Object.keys(JSON.parse(c2.customFields)).forEach(k => customKeys.add(k)) } catch {}
-                                  }
-                                })
-                                const filteredKeys = Array.from(customKeys).filter(k => !NAME_ALIASES.includes(k) && !PHONE_ALIASES.includes(k)).sort()
-                                return filteredKeys.map(k => (
-                                  <td key={k} className="p-3 text-muted-foreground text-xs">{customData[k] || '-'}</td>
-                                ))
-                              }
-                              return extraEntries.map(([varKey]) => (
-                                <td key={varKey} className="p-3 text-muted-foreground text-xs">{customData[varKey] || '-'}</td>
-                              ))
-                            })()}
                             <td className="p-3">
                               <div className="flex gap-1">
                                 <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-emerald-600" onClick={() => openEditContact(c)}>
@@ -2191,23 +2136,12 @@ function ContatosTab() {
           <div className="space-y-4 py-4 max-h-[60vh] overflow-y-auto">
             <div className="space-y-2"><Label>Nome</Label><Input value={editContactForm.name} onChange={e => setEditContactForm(p => ({ ...p, name: e.target.value }))} /></div>
             <div className="space-y-2"><Label>Telefone</Label><Input value={editContactForm.phone} onChange={e => setEditContactForm(p => ({ ...p, phone: e.target.value }))} /></div>
-            {/* Custom fields from column mapping */}
-            {(() => {
-              const NAME_ALIASES = ['nome', 'name', 'nombre', 'cliente']
-              const PHONE_ALIASES = ['telefone', 'phone', 'tel', 'numero', 'número', 'celular', 'whatsapp']
-              let colMapping: Record<string, string> = {}
-              try { colMapping = JSON.parse(selectedList?.columns || '{}') } catch { /* ignore */ }
-              const extraCols = Object.entries(colMapping).filter(([header]) => {
-                const h = header.toLowerCase()
-                return !NAME_ALIASES.includes(h) && !PHONE_ALIASES.includes(h)
-              })
-              return extraCols.map(([headerName, varKey]) => (
-                <div key={varKey} className="space-y-2">
-                  <Label>{headerName}</Label>
-                  <Input value={editContactForm.customFields[varKey] || ''} onChange={e => setEditContactForm(p => ({ ...p, customFields: { ...p.customFields, [varKey]: e.target.value } }))} />
-                </div>
-              ))
-            })()}
+            {STANDARD_CONTACT_FIELDS.filter(f => !f.core).map(f => (
+              <div key={f.key} className="space-y-2">
+                <Label>{f.header}</Label>
+                <Input value={editContactForm.customFields[f.key] || ''} onChange={e => setEditContactForm(p => ({ ...p, customFields: { ...p.customFields, [f.key]: e.target.value } }))} />
+              </div>
+            ))}
           </div>
           <DialogFooter>
             <DialogClose asChild><Button variant="outline">Cancelar</Button></DialogClose>
@@ -2222,21 +2156,13 @@ function ContatosTab() {
           <DialogHeader><DialogTitle>Adicionar Contato</DialogTitle><DialogDescription>Adicione um contato manualmente à lista{selectedList ? ` "${selectedList.name}"` : ''}</DialogDescription></DialogHeader>
           <div className="space-y-4 py-4 max-h-[60vh] overflow-y-auto">
             <div className="space-y-2"><Label>Nome</Label><Input placeholder="Ex: João Silva" value={newContact.name} onChange={e => setNewContact(p => ({ ...p, name: e.target.value }))} /></div>
-            <div className="space-y-2"><Label>Telefone</Label><Input placeholder="Ex: 11999990001" value={newContact.phone} onChange={e => setNewContact(p => ({ ...p, phone: e.target.value }))} /></div>
-            {(() => {
-              let colMapping: Record<string, string> = {}
-              try { colMapping = JSON.parse(selectedList?.columns || '{}') } catch { /* ignore */ }
-              const extraCols = Object.entries(colMapping).filter(([header]) => {
-                const h = header.toLowerCase()
-                return h !== 'nome' && h !== 'name' && h !== 'telefone' && h !== 'phone' && h !== 'tel' && h !== 'whatsapp' && h !== 'celular' && h !== 'numero' && h !== 'número'
-              })
-              return extraCols.map(([headerName, varKey]) => (
-                <div key={varKey} className="space-y-2">
-                  <Label>{headerName}</Label>
-                  <Input placeholder={`Ex: valor para ${headerName}`} value={newContact.customFields[varKey] || ''} onChange={e => setNewContact(p => ({ ...p, customFields: { ...p.customFields, [varKey]: e.target.value } }))} />
-                </div>
-              ))
-            })()}
+            <div className="space-y-2"><Label>Telefone</Label><Input placeholder="Ex: 48999990001" value={newContact.phone} onChange={e => setNewContact(p => ({ ...p, phone: e.target.value }))} /></div>
+            {STANDARD_CONTACT_FIELDS.filter(f => !f.core).map(f => (
+              <div key={f.key} className="space-y-2">
+                <Label>{f.header}</Label>
+                <Input placeholder={`Ex: valor para ${f.header}`} value={newContact.customFields[f.key] || ''} onChange={e => setNewContact(p => ({ ...p, customFields: { ...p.customFields, [f.key]: e.target.value } }))} />
+              </div>
+            ))}
           </div>
           <DialogFooter>
             <DialogClose asChild><Button variant="outline">Cancelar</Button></DialogClose>
@@ -3169,6 +3095,63 @@ function CampanhasTab() {
     catch { toast.error('Erro ao remover campanha') }
   }
 
+  const duplicateCampaign = async (c: Campaign) => {
+    try {
+      const steps = (c.sequenceSteps || []).map((s: SequenceStep) => ({
+        stepOrder: s.stepOrder,
+        content: s.content,
+        delayMinutes: s.delayMinutes,
+        mediaUrl: s.mediaUrl || '',
+        mediatype: s.mediatype || 'text',
+        variations: s.variations || '[]',
+      }))
+      const chipIds = (c.chips || []).map((cc: { chipId: string }) => cc.chipId)
+      const res = await fetch('/api/campaigns', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: `${c.name} (Cópia)`,
+          contactListId: c.contactListId,
+          sendIntervalMin: c.sendIntervalMin,
+          sendIntervalMax: c.sendIntervalMax,
+          antiBanEnabled: c.antiBanEnabled,
+          warmingMode: c.warmingMode,
+          chipIds,
+          steps,
+        }),
+      })
+      if (!res.ok) throw new Error()
+      toast.success('Campanha duplicada!')
+      fetchCampaigns()
+    } catch { toast.error('Erro ao duplicar campanha') }
+  }
+
+  const saveCampaignAsTemplate = async (c: Campaign) => {
+    try {
+      const steps = (c.sequenceSteps || []).map((s: SequenceStep) => ({
+        stepOrder: s.stepOrder,
+        content: s.content,
+        delayMinutes: s.delayMinutes,
+        mediaUrl: s.mediaUrl || '',
+        mediatype: s.mediatype || 'text',
+        variations: s.variations || '[]',
+      }))
+      const res = await fetch('/api/templates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: c.name,
+          category: 'campanha',
+          content: steps.length === 1 ? steps[0].content : '',
+          mediatype: steps.length === 1 ? steps[0].mediatype : 'text',
+          steps: JSON.stringify(steps),
+        }),
+      })
+      if (!res.ok) throw new Error()
+      toast.success('Template salvo com sucesso!')
+    } catch { toast.error('Erro ao salvar template') }
+  }
+
   const processAllCampaigns = async () => {
     setProcessing(true)
     try {
@@ -3959,6 +3942,12 @@ function CampanhasTab() {
                       <TooltipProvider><Tooltip><TooltipTrigger asChild>
                         <Button variant="outline" size="sm" onClick={() => openDetail(c)}><Eye className="size-4" /></Button>
                       </TooltipTrigger><TooltipContent>Detalhes</TooltipContent></Tooltip></TooltipProvider>
+                      <TooltipProvider><Tooltip><TooltipTrigger asChild>
+                        <Button variant="outline" size="sm" className="gap-1" onClick={() => duplicateCampaign(c)}><Copy className="size-3.5" /> Duplicar</Button>
+                      </TooltipTrigger><TooltipContent>Criar cópia desta campanha</TooltipContent></Tooltip></TooltipProvider>
+                      <TooltipProvider><Tooltip><TooltipTrigger asChild>
+                        <Button variant="outline" size="sm" className="gap-1" onClick={() => saveCampaignAsTemplate(c)}><BookmarkPlus className="size-3.5" /> Template</Button>
+                      </TooltipTrigger><TooltipContent>Salvar como template</TooltipContent></Tooltip></TooltipProvider>
                       {['draft', 'paused', 'scheduled'].includes(c.status) && <Button variant="outline" size="sm" className="gap-1" onClick={() => { setSelectedCampaign(c); startEditing(c); setCreateDialogOpen(true) }}><Pencil className="size-3.5" /> Editar</Button>}
                       {c.status === 'draft' && <Button size="sm" className="gap-1 bg-emerald-600 hover:bg-emerald-700" onClick={() => startCampaignAction(c.id)}><Play className="size-3.5" /> Iniciar</Button>}
                       {c.status === 'running' && <Button variant="outline" size="sm" className="gap-1" onClick={async () => { try { await fetch(`/api/campaigns/${c.id}/pause`, { method: 'POST' }); toast.success('Campanha pausada!'); fetchCampaigns() } catch { toast.error('Erro ao pausar') } }}><Pause className="size-3.5" /> Pausar</Button>}
@@ -6471,6 +6460,17 @@ function UsuariosTab() {
     </div>
   )
 }
+
+// ===== Standard Contact Fields (always shown) =====
+const STANDARD_CONTACT_FIELDS = [
+  { header: 'Nome', key: 'nome', core: true },       // maps to contact.name
+  { header: 'Telefone', key: 'telefone', core: true }, // maps to contact.phone
+  { header: 'Codigo', key: 'codigo', core: false },
+  { header: 'Empresa', key: 'empresa', core: false },
+  { header: 'Vendedora', key: 'vendedora', core: false },
+  { header: 'Whatsapp', key: 'whatsapp', core: false },
+  { header: 'Nota', key: 'nota', core: false },
+] as const
 
 // ===== Main App =====
 export default function OctupusZapApp() {

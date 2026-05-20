@@ -243,6 +243,25 @@ export async function POST(req: NextRequest) {
       results.push(`Erro na migração Message: ${msgError.message}`)
     }
 
+    // Step 6: Sync MessageTemplate table — add steps column for campaign templates
+    try {
+      const mtColumns = await db.$queryRaw<Array<{ column_name: string }>>`
+        SELECT column_name FROM information_schema.columns
+        WHERE table_name = 'MessageTemplate'
+        ORDER BY ordinal_position
+      `
+      const mtColumnNames = mtColumns.map(c => c.column_name)
+
+      if (!mtColumnNames.includes('steps')) {
+        await db.$executeRawUnsafe(`ALTER TABLE "MessageTemplate" ADD COLUMN IF NOT EXISTS "steps" TEXT`)
+        results.push('MessageTemplate: adicionada coluna steps')
+      } else {
+        results.push('MessageTemplate: steps já existe')
+      }
+    } catch (mtError: any) {
+      results.push(`Erro na migração MessageTemplate: ${mtError.message}`)
+    }
+
     return NextResponse.json({
       success: true,
       message: 'Migração processada',
