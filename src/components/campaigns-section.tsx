@@ -41,6 +41,7 @@ interface Campaign {
   sendIntervalMax: number
   antiBanEnabled: boolean
   warmingMode: string
+  statusReason?: string | null
   vendedorId: string | null
   vendedor?: { id: string; nome: string; treatAs: string | null } | null
   _count?: { messages: number; chips: number }
