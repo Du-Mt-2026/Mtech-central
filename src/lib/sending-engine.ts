@@ -308,9 +308,14 @@ function getWarmingLimitForDay(
 
 /**
  * Calculate minimum seconds between messages for a chip based on its phase.
- * Nursery chips: messages spread evenly across sending window (min 5 min)
- * Prewarm chips: half the nursery interval (min 2 min)
- * Ready/Aquecido chips: use normal interval (30-90s from settings)
+ * 
+ * IMPORTANT: The daily limit is already enforced separately (check daily limit below).
+ * This function only sets a MINIMUM floor interval to prevent sending too fast.
+ * It does NOT spread messages evenly across the window — that made intervals way too long.
+ * 
+ * Nursery chips: minimum 2 minutes between messages (safety floor)
+ * Prewarm chips: minimum 1 minute between messages (safety floor)
+ * Ready/Aquecido chips: use normal interval from settings (30-90s)
  */
 function getMinimumIntervalForChip(
   chip: { warmingPhase?: string; warmingEnabled: boolean; dailyLimit: number; createdAt: string; prewarmStartedAt?: Date | null },
@@ -325,24 +330,17 @@ function getMinimumIntervalForChip(
     return settings.messageIntervalMin
   }
 
-  // Calculate the sending window duration in minutes
-  const windowStart = toMins(settings.sendingWindowStart)
-  const windowEnd = toMins(settings.sendingWindowEnd)
-  const windowMinutes = windowEnd > windowStart ? windowEnd - windowStart : (1440 - windowStart + windowEnd)
-
-  // Get the effective daily limit for this chip to determine spacing
-  const effectiveLimit = getEffectiveDailyLimit(chip, settings)
-  if (effectiveLimit <= 0) return 300 // safety fallback
-
-  // Calculate minimum minutes between messages
-  const minMinutesBetween = windowMinutes / effectiveLimit
+  // The daily limit already controls HOW MANY messages can be sent per day.
+  // This minimum interval is just a safety floor to prevent burst sending.
+  // Use the user's configured interval, but with a minimum floor for warming chips.
+  const userInterval = settings.messageIntervalMin
 
   if (phase === 'nursery') {
-    // Full spreading for nursery chips — minimum 5 minutes (300 seconds)
-    return Math.max(300, Math.round(minMinutesBetween * 60))
+    // Nursery: minimum 2 minutes (120 seconds) — but respect user interval if higher
+    return Math.max(120, userInterval)
   } else {
-    // Prewarm: half the nursery interval — minimum 2 minutes (120 seconds)
-    return Math.max(120, Math.round(minMinutesBetween * 60 * 0.5))
+    // Prewarm: minimum 60 seconds — but respect user interval if higher
+    return Math.max(60, userInterval)
   }
 }
 
