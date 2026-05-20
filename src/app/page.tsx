@@ -3710,14 +3710,21 @@ function CampanhasTab() {
                               </div>
                             </div>
                           )}
-                          {step.mediaFile && (
+                          {step.mediaFile ? (
                             <div className="flex items-center gap-2 p-2 bg-muted/50 rounded-lg text-xs">
                               {step.mediatype === 'image' ? <ImageIcon className="size-3.5 text-emerald-500" /> : step.mediatype === 'video' ? <Film className="size-3.5 text-sky-500" /> : step.mediatype === 'audio' ? <Music className="size-3.5 text-amber-500" /> : <File className="size-3.5 text-zinc-500" />}
                               <span className="truncate">{step.mediaFile.name}</span>
                               <span className="text-muted-foreground">({(step.mediaFile.size / 1024).toFixed(1)}KB)</span>
                               <Button variant="ghost" size="sm" className="h-5 w-5 p-0 ml-auto" onClick={() => updateStep(idx, 'mediaFile', null)}><X className="size-3" /></Button>
                             </div>
-                          )}
+                          ) : step.mediaUrl ? (
+                            <div className="flex items-center gap-2 p-2 bg-emerald-500/10 border border-emerald-500/20 rounded-lg text-xs">
+                              {step.mediatype === 'image' ? <ImageIcon className="size-3.5 text-emerald-500" /> : step.mediatype === 'video' ? <Film className="size-3.5 text-sky-500" /> : step.mediatype === 'audio' ? <Music className="size-3.5 text-amber-500" /> : <File className="size-3.5 text-zinc-500" />}
+                              <span className="truncate text-emerald-600 dark:text-emerald-400">Mídia salva</span>
+                              <a href={step.mediaUrl} target="_blank" rel="noopener noreferrer" className="text-muted-foreground hover:text-foreground underline truncate max-w-[120px]">abrir</a>
+                              <Button variant="ghost" size="sm" className="h-5 w-5 p-0 ml-auto text-red-500 hover:text-red-400" onClick={() => { updateStep(idx, 'mediaUrl', ''); updateStep(idx, 'mediatype', ''); }}><X className="size-3" /></Button>
+                            </div>
+                          ) : null}
                         </div>
 
                         {/* Variations (collapsible) */}
@@ -3822,13 +3829,20 @@ function CampanhasTab() {
                                       </div>
                                     </div>
                                   )}
-                                  {v.mediaFile && (
+                                  {v.mediaFile ? (
                                     <div className="flex items-center gap-2 p-1.5 bg-muted/50 rounded-lg text-xs">
                                       {v.mediatype === 'image' ? <ImageIcon className="size-3 text-emerald-500" /> : v.mediatype === 'video' ? <Film className="size-3 text-sky-500" /> : v.mediatype === 'audio' ? <Music className="size-3 text-amber-500" /> : <File className="size-3 text-zinc-500" />}
                                       <span className="truncate">{v.mediaFile.name}</span>
                                       <Button variant="ghost" size="sm" className="h-4 w-4 p-0 ml-auto" onClick={() => updateVariation(idx, vIdx, 'mediaFile', null)}><X className="size-2.5" /></Button>
                                     </div>
-                                  )}
+                                  ) : v.mediaUrl ? (
+                                    <div className="flex items-center gap-2 p-1.5 bg-emerald-500/10 border border-emerald-500/20 rounded-lg text-xs">
+                                      {v.mediatype === 'image' ? <ImageIcon className="size-3 text-emerald-500" /> : v.mediatype === 'video' ? <Film className="size-3 text-sky-500" /> : v.mediatype === 'audio' ? <Music className="size-3 text-amber-500" /> : <File className="size-3 text-zinc-500" />}
+                                      <span className="truncate text-emerald-600 dark:text-emerald-400">Mídia salva</span>
+                                      <a href={v.mediaUrl} target="_blank" rel="noopener noreferrer" className="text-muted-foreground hover:text-foreground underline truncate max-w-[80px]">abrir</a>
+                                      <Button variant="ghost" size="sm" className="h-4 w-4 p-0 ml-auto text-red-500 hover:text-red-400" onClick={() => { updateVariation(idx, vIdx, 'mediaUrl', ''); updateVariation(idx, vIdx, 'mediatype', ''); }}><X className="size-2.5" /></Button>
+                                    </div>
+                                  ) : null}
                                 </div>
                               </div>
                             ))}
@@ -3903,7 +3917,7 @@ function CampanhasTab() {
                               .replace(/_([^_]+)_/g, '<em>$1</em>')
                               .replace(/~([^~]+)~/g, '<s>$1</s>')
                           }
-                          if (!step.content && !step.mediaFile && !step.mediatype) return null
+                          if (!step.content && !step.mediaFile && !step.mediatype && !step.mediaUrl) return null
                           return (
                             <div key={idx} className="flex justify-end">
                               <div className="bg-[#005c4b] rounded-lg rounded-tr-none max-w-[280px] shadow-sm overflow-hidden">
@@ -3916,6 +3930,11 @@ function CampanhasTab() {
                                 {step.mediatype === 'image' && (step.mediaFile ? (
                                   <div className="relative">
                                     <img src={URL.createObjectURL(step.mediaFile)} alt="Preview" className="w-full max-h-[200px] object-cover" />
+                                    {step.caption && <p className="text-[12px] text-white/90 px-2.5 pt-1.5 whitespace-pre-wrap break-words" dangerouslySetInnerHTML={{ __html: formatWhatsApp(resolveVars(step.caption)) }} />}
+                                  </div>
+                                ) : step.mediaUrl ? (
+                                  <div className="relative">
+                                    <img src={step.mediaUrl} alt="Preview" className="w-full max-h-[200px] object-cover" />
                                     {step.caption && <p className="text-[12px] text-white/90 px-2.5 pt-1.5 whitespace-pre-wrap break-words" dangerouslySetInnerHTML={{ __html: formatWhatsApp(resolveVars(step.caption)) }} />}
                                   </div>
                                 ) : (
@@ -4003,7 +4022,7 @@ function CampanhasTab() {
                             </div>
                           )
                         })}
-                        {newCampaign.steps.every(s => !s.content && !s.mediaFile && !s.mediatype) && (
+                        {newCampaign.steps.every(s => !s.content && !s.mediaFile && !s.mediatype && !s.mediaUrl) && (
                           <div className="flex items-center justify-center h-[320px]">
                             <p className="text-xs text-white/30 text-center">Comece a digitar sua mensagem<br/>para ver a pré-visualização</p>
                           </div>
