@@ -57,9 +57,18 @@ export async function POST(request: Request) {
 
             // Log disconnection reason if available
             const reason = data?.reason || data?.disconnectReason || ''
+            const disconnectionCode = data?.code || data?.statusCode || null
             if (reason) {
               console.log(`[Webhook] Instance ${instance} disconnected. Reason: ${reason}`)
-              updateData.disconnectionReasonCode = data?.code || data?.statusCode || null
+              updateData.disconnectionReasonCode = disconnectionCode
+            }
+
+            // Check if the disconnection code indicates a ban
+            // WhatsApp ban codes: 401 (logged out), 403 (banned), 428 (replaced), 440 (device removed)
+            const BAN_CODES = [401, 403, 428, 440]
+            if (disconnectionCode && BAN_CODES.includes(disconnectionCode)) {
+              updateData.status = 'banned'
+              console.log(`[Webhook] Chip ${chip.name} marked as BANNED — disconnection code: ${disconnectionCode}`)
             }
           }
 
@@ -68,7 +77,7 @@ export async function POST(request: Request) {
             data: updateData,
           })
 
-          console.log(`[Webhook] Chip ${chip.name} status updated: ${chip.status} → ${newStatus}`)
+          console.log(`[Webhook] Chip ${chip.name} status updated: ${chip.status} → ${updateData.status || newStatus}`)
         }
         break
       }

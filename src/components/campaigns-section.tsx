@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { motion } from 'framer-motion'
-import { Plus, Play, Pause, Trash2, Loader2, Users, MessageSquare, UserCircle, Shield, Key } from 'lucide-react'
+import { Plus, Play, Pause, Trash2, Loader2, Users, MessageSquare, UserCircle, Shield, Key, AlertTriangle } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -715,6 +715,12 @@ export function CampaignsSection() {
 
                     {/* Anti-ban badges */}
                     <div className="flex flex-wrap gap-1.5">
+                      {campaign.statusReason && (
+                        <Badge variant="outline" className="text-[10px] bg-amber-500/10 text-amber-400 border-amber-500/30">
+                          <AlertTriangle className="w-2.5 h-2.5 mr-1" />
+                          {campaign.statusReason}
+                        </Badge>
+                      )}
                       {campaign.antiBanEnabled && (
                         <Badge variant="outline" className="text-[10px] bg-emerald-500/10 text-emerald-400 border-emerald-500/30">
                           <Shield className="w-2.5 h-2.5 mr-1" />

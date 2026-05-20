@@ -181,6 +181,9 @@ model Campaign {
   antiBanEnabled   Boolean  @default(true)
   warmingMode      String   @default("normal")  // "normal" | "agressive" | "stealth"
 
+  // Status reason — explains why a campaign was paused/stopped (e.g., chip banned, chip disconnected)
+  statusReason     String?
+
   // Vendedor association — this campaign sends on behalf of this vendedor
   vendedorId String?
   vendedor   Vendedor? @relation(fields: [vendedorId], references: [id], onDelete: SetNull)

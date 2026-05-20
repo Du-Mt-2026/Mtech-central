@@ -34,6 +34,7 @@ const statusColors: Record<string, string> = {
   connected: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30',
   connecting: 'bg-amber-500/20 text-amber-400 border-amber-500/30',
   disconnected: 'bg-zinc-500/20 text-zinc-400 border-zinc-500/30',
+  banned: 'bg-red-500/20 text-red-400 border-red-500/30',
   error: 'bg-red-500/20 text-red-400 border-red-500/30',
 }
 
@@ -41,6 +42,7 @@ const statusLabels: Record<string, string> = {
   connected: 'Conectado',
   connecting: 'Conectando',
   disconnected: 'Desconectado',
+  banned: 'Banido',
   error: 'Erro',
 }
 

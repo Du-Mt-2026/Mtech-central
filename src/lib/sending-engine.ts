@@ -605,7 +605,14 @@ async function detectChipBan(chip: { id: string; evolutionInstance: string | nul
       const state = await getConnectionState(chip.evolutionInstance)
       const instanceState = state?.instance?.state
       if (instanceState === 'close') {
-        return { banned: true, reason: 'Evolution API reports connection state: close', disconnected: false }
+        // 'close' can mean temporary disconnection OR ban — check disconnection code
+        // Only treat as banned if we have a known ban code; otherwise treat as disconnected
+        const BAN_CODES = [401, 403, 428, 440]
+        if (chip.disconnectionReasonCode && BAN_CODES.includes(chip.disconnectionReasonCode)) {
+          return { banned: true, reason: `Evolution API state: close (ban code: ${chip.disconnectionReasonCode})`, disconnected: false }
+        }
+        // No ban code — treat as temporary disconnection, not a ban
+        return { banned: false, reason: 'Evolution API reports connection state: close (no ban code)', disconnected: true }
       }
     } catch {
       // If we can't reach Evolution API, don't assume ban — could be network issue
@@ -1135,13 +1142,80 @@ export async function processNextMessage(campaignId: string): Promise<{
     const banCheck = await detectChipBan(message.chip)
 
     if (banCheck.disconnected) {
-      // Chip is disconnected but NOT banned — mark this message as failed and try next
-      console.log(`[SendingEngine] Chip ${message.chip.name} is DISCONNECTED (not banned) — skipping message`)
+      // Chip is disconnected but NOT banned — try to reassign messages to other chips
+      console.log(`[SendingEngine] Chip ${message.chip.name} is DISCONNECTED — reassigning messages to other chips`)
+
+      // Find other connected chips
+      const otherChips = await db.chip.findMany({
+        where: {
+          id: { not: message.chip.id },
+          status: 'connected',
+          evolutionInstance: { not: null },
+        },
+      })
+
+      if (otherChips.length > 0) {
+        // Reassign pending messages from this chip to other connected chips (round-robin)
+        const pendingMessages = await db.message.findMany({
+          where: { campaignId, chipId: message.chip.id, status: 'pending' },
+          take: 50,
+        })
+
+        for (let i = 0; i < pendingMessages.length; i++) {
+          const targetChip = otherChips[i % otherChips.length]
+          await db.message.update({
+            where: { id: pendingMessages[i].id },
+            data: { chipId: targetChip.id },
+          })
+        }
+
+        console.log(`[SendingEngine] Reassigned ${pendingMessages.length} messages from disconnected chip ${message.chip.name} to other chips`)
+
+        // Mark current message as failed (it was stuck on the disconnected chip)
+        await db.message.update({
+          where: { id: message.id },
+          data: { status: 'failed', error: `Chip desconectado: ${banCheck.reason} — mensagem redirecionada` },
+        })
+
+        // Notify campaign about the disconnection
+        await db.campaign.update({
+          where: { id: campaignId },
+          data: { statusReason: `Chip ${message.chip.name} desconectou — ${pendingMessages.length} mensagens redirecionadas` },
+        })
+
+        const remaining = await db.message.count({ where: { campaignId, status: 'pending' } })
+        return { processed: false, delayMs: 1000, remaining, completed: remaining === 0, reason: `disconnected_reassigned_${message.chip.name}` }
+      }
+
+      // No other chips available — fail this message and check if campaign should pause
       await db.message.update({
         where: { id: message.id },
-        data: { status: 'failed', error: `Chip desconectado: ${banCheck.reason}` },
+        data: { status: 'failed', error: `Chip desconectado: ${banCheck.reason} — sem outros chips disponíveis` },
       })
-      // Return with short delay so we can try the next message (might use a different chip)
+
+      // Check how many pending messages remain on disconnected/banned chips
+      const pendingOnBadChips = await db.message.count({
+        where: {
+          campaignId,
+          status: 'pending',
+          chip: { status: { in: ['disconnected', 'banned'] } },
+        },
+      })
+      const totalPending = await db.message.count({ where: { campaignId, status: 'pending' } })
+
+      if (pendingOnBadChips === totalPending && totalPending > 0) {
+        // ALL pending messages are on disconnected/banned chips — pause the campaign
+        await db.campaign.update({
+          where: { id: campaignId },
+          data: {
+            status: 'paused',
+            statusReason: `Pausada automaticamente: chip ${message.chip.name} desconectou e não há outros chips disponíveis`,
+          },
+        })
+        console.log(`[SendingEngine] Campaign ${campaignId} PAUSED — chip ${message.chip.name} disconnected, no other chips available`)
+        return { processed: false, delayMs: 0, remaining: -1, completed: false, reason: 'auto_paused_no_chips' }
+      }
+
       const remaining = await db.message.count({ where: { campaignId, status: 'pending' } })
       return { processed: true, delayMs: 1000, remaining, completed: remaining === 0 }
     }
@@ -1155,16 +1229,80 @@ export async function processNextMessage(campaignId: string): Promise<{
         data: { status: 'banned' },
       })
 
-      // Mark this message as failed
-      await db.message.update({
-        where: { id: message.id },
-        data: { status: 'failed', error: `Chip banido: ${banCheck.reason}` },
+      // Find other connected chips for reassignment
+      const otherChips = await db.chip.findMany({
+        where: {
+          id: { not: message.chip.id },
+          status: 'connected',
+          evolutionInstance: { not: null },
+        },
       })
 
-      // Return with short delay — the next iteration will pick up messages from other chips
+      if (otherChips.length > 0) {
+        // Reassign pending messages from the banned chip to other connected chips (round-robin)
+        const pendingMessages = await db.message.findMany({
+          where: { campaignId, chipId: message.chip.id, status: 'pending' },
+          take: 50,
+        })
+
+        for (let i = 0; i < pendingMessages.length; i++) {
+          const targetChip = otherChips[i % otherChips.length]
+          await db.message.update({
+            where: { id: pendingMessages[i].id },
+            data: { chipId: targetChip.id },
+          })
+        }
+
+        console.log(`[SendingEngine] Reassigned ${pendingMessages.length} messages from banned chip ${message.chip.name} to other chips`)
+
+        // Mark current message as failed
+        await db.message.update({
+          where: { id: message.id },
+          data: { status: 'failed', error: `Chip banido: ${banCheck.reason} — mensagens redirecionadas` },
+        })
+
+        // Notify campaign about the ban
+        await db.campaign.update({
+          where: { id: campaignId },
+          data: { statusReason: `Chip ${message.chip.name} foi banido — ${pendingMessages.length} mensagens redirecionadas para outros chips` },
+        })
+
+        const remaining = await db.message.count({ where: { campaignId, status: 'pending' } })
+        return { processed: false, delayMs: 2000, remaining, completed: remaining === 0, reason: `banned_reassigned_${message.chip.name}` }
+      }
+
+      // No other chips available — fail this message and check if campaign should pause
+      await db.message.update({
+        where: { id: message.id },
+          data: { status: 'failed', error: `Chip banido: ${banCheck.reason} — sem outros chips disponíveis` },
+      })
+
+      // Check if all remaining messages are on banned/disconnected chips
+      const pendingOnBadChips = await db.message.count({
+        where: {
+          campaignId,
+          status: 'pending',
+          chip: { status: { in: ['disconnected', 'banned'] } },
+        },
+      })
+      const totalPending = await db.message.count({ where: { campaignId, status: 'pending' } })
+
+      if (pendingOnBadChips === totalPending && totalPending > 0) {
+        // ALL pending messages are on banned/disconnected chips — pause the campaign
+        await db.campaign.update({
+          where: { id: campaignId },
+          data: {
+            status: 'paused',
+            statusReason: `Pausada automaticamente: chip ${message.chip.name} foi banido e não há outros chips disponíveis`,
+          },
+        })
+        console.log(`[SendingEngine] Campaign ${campaignId} PAUSED — chip ${message.chip.name} banned, no other chips available`)
+        return { processed: false, delayMs: 0, remaining: -1, completed: false, reason: 'auto_paused_banned_no_chips' }
+      }
+
+      // Some messages are on other chips — continue processing
       const remaining = await db.message.count({ where: { campaignId, status: 'pending' } })
       if (remaining === 0) {
-        // Check if all remaining messages are from banned chips
         const allFailed = await db.message.count({ where: { campaignId, status: { in: ['pending', 'sending'] } } })
         if (allFailed === 0) {
           await db.campaign.update({ where: { id: campaignId }, data: { status: 'completed', completedAt: new Date() } })
