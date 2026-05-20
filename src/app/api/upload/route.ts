@@ -1,11 +1,21 @@
 import { NextResponse } from 'next/server'
-import { writeFile, mkdir } from 'fs/promises'
+import { writeFile, mkdir, unlink } from 'fs/promises'
 import { existsSync } from 'fs'
 import path from 'path'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 
 const execFileAsync = promisify(execFile)
+
+// Use ffmpeg-static for serverless environments (Vercel) where system ffmpeg is not available
+let ffmpegPath: string | null = null
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  ffmpegPath = require('ffmpeg-static') as string
+} catch {
+  // ffmpeg-static not available, fall back to system ffmpeg
+  ffmpegPath = null
+}
 
 /**
  * POST /api/upload
@@ -15,6 +25,10 @@ const execFileAsync = promisify(execFile)
  * - If audioMode === 'whatsapp' (default): converts to OGG/Opus format (WhatsApp native)
  *   - If already OGG/Opus, no conversion needed
  * - If audioMode === 'original': keeps the original file format
+ * 
+ * Uses ffmpeg-static (bundled ffmpeg binary) for serverless compatibility.
+ * Falls back to system ffmpeg if ffmpeg-static is not available.
+ * Falls back to original file if no ffmpeg is available at all.
  * 
  * Returns: { mediaUrl, mediatype, originalName, converted }
  */
@@ -60,17 +74,23 @@ export async function POST(request: Request) {
         await writeFile(filePath, buffer)
       } else {
         // Need to convert to OGG/Opus
-        // First save the original
+        // First save the original as temp file
         const tempFileName = `${safeFileName}${ext}`
         const tempFilePath = path.join(uploadDir, tempFileName)
         await writeFile(tempFilePath, buffer)
 
-        // Convert using ffmpeg
+        // Convert using ffmpeg (ffmpeg-static or system)
         finalFileName = `${safeFileName}.ogg`
         const outputFilePath = path.join(uploadDir, finalFileName)
 
+        // Determine which ffmpeg to use
+        const ffmpegBin = ffmpegPath || 'ffmpeg'
+        const ffmpegSource = ffmpegPath ? 'ffmpeg-static' : 'system'
+
         try {
-          await execFileAsync('ffmpeg', [
+          console.log(`[Upload] Converting audio with ${ffmpegSource}: ${tempFilePath} → ${outputFilePath}`)
+
+          await execFileAsync(ffmpegBin, [
             '-i', tempFilePath,
             '-c:a', 'libopus',       // Opus codec (WhatsApp native)
             '-b:a', '64k',           // Bitrate — good quality for voice
@@ -84,15 +104,41 @@ export async function POST(request: Request) {
           converted = true
 
           // Remove temp file
-          try {
-            const { unlink } = await import('fs/promises')
-            await unlink(tempFilePath)
-          } catch { /* ignore cleanup error */ }
-        } catch (ffmpegErr) {
-          console.error('Audio conversion failed:', ffmpegErr)
-          // Fall back to saving the original file
-          finalFileName = tempFileName
-          converted = false
+          try { await unlink(tempFilePath) } catch { /* ignore cleanup error */ }
+
+          console.log(`[Upload] Audio conversion successful (source: ${ffmpegSource})`)
+        } catch (ffmpegErr: any) {
+          console.error(`[Upload] Audio conversion failed (source: ${ffmpegSource}):`, ffmpegErr?.message || ffmpegErr)
+          
+          // If ffmpeg-static failed, try system ffmpeg as last resort
+          if (ffmpegPath && ffmpegSource === 'ffmpeg-static') {
+            try {
+              console.log('[Upload] Trying system ffmpeg as fallback...')
+              await execFileAsync('ffmpeg', [
+                '-i', tempFilePath,
+                '-c:a', 'libopus',
+                '-b:a', '64k',
+                '-ar', '48000',
+                '-ac', '1',
+                '-vn',
+                '-y',
+                outputFilePath,
+              ], { timeout: 30000 })
+
+              converted = true
+              try { await unlink(tempFilePath) } catch { /* ignore */ }
+              console.log('[Upload] Audio conversion successful with system ffmpeg fallback')
+            } catch (sysErr: any) {
+              console.error('[Upload] System ffmpeg also failed:', sysErr?.message || sysErr)
+              // Fall back to saving the original file
+              finalFileName = tempFileName
+              converted = false
+            }
+          } else {
+            // Fall back to saving the original file
+            finalFileName = tempFileName
+            converted = false
+          }
         }
       }
     } else {
