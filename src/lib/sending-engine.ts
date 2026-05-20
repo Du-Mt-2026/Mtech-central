@@ -965,20 +965,20 @@ export async function processNextMessage(campaignId: string): Promise<{
   }
 
   // Find the next pending message
-  // For multi-step campaigns: process step 1 first, then step 2, etc. per contact
-  // We order by stepOrder so that step 1 messages are processed before step 2
-  // This ensures the sequence is respected for each contact
+  // CONTACT-BY-CONTACT processing: process ALL steps for one contact before moving to the next.
+  // Messages are created in contact-step order (contact1-step1, contact1-step2, contact2-step1, ...),
+  // so ordering by createdAt first ensures we process contact-by-contact.
   const message = await db.message.findFirst({
     where: { campaignId, status: 'pending' },
     include: { chip: true, contact: true },
     orderBy: [
-      { stepOrder: 'asc' },  // Process step 1 before step 2
-      { createdAt: 'asc' },  // Then by creation order (FIFO)
+      { createdAt: 'asc' },  // Process in creation order (contact-by-contact)
+      { stepOrder: 'asc' },  // Within same contact, process steps in order
     ],
   })
 
-  // For multi-step: check if this contact's previous step has been sent
-  // If step > 1 and the previous step for this contact hasn't been successfully sent yet, skip
+  // For multi-step campaigns: check if this contact's previous step has been sent
+  // CONTACT-BY-CONTACT: if previous step not sent yet, WAIT for it (don't skip to other contacts)
   if (message && (message as any).stepOrder > 1) {
     // Check if previous step has a successful status (sent, delivered, or read)
     const previousStepSent = await db.message.findFirst({
@@ -989,49 +989,37 @@ export async function processNextMessage(campaignId: string): Promise<{
         status: { in: ['sent', 'delivered', 'read'] },
       },
     })
+
     if (!previousStepSent) {
-      // Previous step not yet successfully sent — try to find an alternative message to process
-      // (a message whose previous step HAS been sent, or a step 1 message)
-      const alternativeMessage = await db.message.findFirst({
+      // Check if previous step FAILED — if so, fail this step too (skip this contact entirely)
+      const previousStepFailed = await db.message.findFirst({
         where: {
           campaignId,
-          status: 'pending',
-          id: { not: message.id }, // Don't re-pick the same message
+          contactId: message.contactId,
+          stepOrder: (message as any).stepOrder - 1,
+          status: 'failed',
         },
-        include: { chip: true, contact: true },
-        orderBy: [
-          { stepOrder: 'asc' },
-          { createdAt: 'asc' },
-        ],
       })
-      if (alternativeMessage) {
-        // Check if this alternative message also has its previous step sent
-        if ((alternativeMessage as any).stepOrder <= 1) {
-          // Step 1 is always safe to process
-          Object.assign(message, alternativeMessage)
-        } else {
-          const altPrevSent = await db.message.findFirst({
-            where: {
-              campaignId,
-              contactId: alternativeMessage.contactId,
-              stepOrder: (alternativeMessage as any).stepOrder - 1,
-              status: { in: ['sent', 'delivered', 'read'] },
-            },
-          })
-          if (altPrevSent) {
-            // This alternative's previous step was sent — safe to process
-            Object.assign(message, alternativeMessage)
-          } else {
-            // No eligible message found — wait for previous steps to be processed
-            const remaining = await db.message.count({ where: { campaignId, status: 'pending' } })
-            return { processed: false, delayMs: 5000, remaining, completed: false, reason: 'waiting_for_previous_step' }
-          }
-        }
-      } else {
-        // No alternative — wait for previous step to be processed
+      if (previousStepFailed) {
+        // Previous step failed — mark this step and all subsequent steps for this contact as failed
+        const failedCount = await db.message.updateMany({
+          where: {
+            campaignId,
+            contactId: message.contactId,
+            stepOrder: { gte: (message as any).stepOrder },
+            status: 'pending',
+          },
+          data: { status: 'failed', error: 'Etapa anterior falhou — sequência interrompida' },
+        })
+        console.log(`[SendingEngine] Contact ${message.contactId}: previous step failed, skipping ${failedCount.count} remaining steps`)
         const remaining = await db.message.count({ where: { campaignId, status: 'pending' } })
-        return { processed: false, delayMs: 5000, remaining, completed: false, reason: 'waiting_for_previous_step' }
+        return { processed: true, delayMs: 1000, remaining, completed: remaining === 0 }
       }
+
+      // Previous step still pending (not sent yet) — wait for it to be processed first
+      // This is the key to contact-by-contact processing: DON'T skip to other contacts
+      const remaining = await db.message.count({ where: { campaignId, status: 'pending' } })
+      return { processed: false, delayMs: 3000, remaining, completed: false, reason: 'waiting_for_previous_step' }
     }
 
     // Check delay between steps: if delayMinutes is configured, wait the appropriate time
@@ -1044,7 +1032,7 @@ export async function processNextMessage(campaignId: string): Promise<{
     )
     if (currentStepConfig && currentStepConfig.delayMinutes > 0) {
       // Find when the previous step for this contact was sent
-      const previousStepSent = await db.message.findFirst({
+      const previousStepSentAt = await db.message.findFirst({
         where: {
           campaignId,
           contactId: message.contactId,
@@ -1055,8 +1043,8 @@ export async function processNextMessage(campaignId: string): Promise<{
         orderBy: { sentAt: 'desc' },
         select: { sentAt: true },
       })
-      if (previousStepSent?.sentAt) {
-        const elapsedMs = Date.now() - new Date(previousStepSent.sentAt).getTime()
+      if (previousStepSentAt?.sentAt) {
+        const elapsedMs = Date.now() - new Date(previousStepSentAt.sentAt).getTime()
         const requiredDelayMs = (currentStepConfig.delayUnit === 'seconds' ? currentStepConfig.delayMinutes : currentStepConfig.delayMinutes * 60) * 1000
         if (elapsedMs < requiredDelayMs) {
           const waitMs = requiredDelayMs - elapsedMs

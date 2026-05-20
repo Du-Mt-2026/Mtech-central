@@ -85,15 +85,16 @@ export async function POST(request: NextRequest) {
     let totalSkipped = 0
 
     // Process each campaign — try to send multiple messages per campaign per tick
-    // if the anti-ban interval allows (some campaigns may have short intervals)
+    // CONTACT-BY-CONTACT: when a step delay is pending, wait and process the next step
+    // for the same contact instead of skipping to another contact.
     for (const campaignId of campaignIds) {
       let campaignProcessed = 0
       let campaignSkipped = 0
       let lastReason = ''
 
-      // Process up to 5 messages per campaign per tick
-      // (respects anti-ban by checking delays)
-      for (let attempt = 0; attempt < 5; attempt++) {
+      // Process up to 10 messages per campaign per tick
+      // (increased from 5 to handle contact-by-contact with multiple steps)
+      for (let attempt = 0; attempt < 10; attempt++) {
         // Check if we're about to timeout
         if (Date.now() - startTime > FUNCTION_TIMEOUT_MS) {
           console.log(`[ProcessAll] Approaching function timeout, stopping. Processed ${totalProcessed} messages.`)
@@ -125,8 +126,10 @@ export async function POST(request: NextRequest) {
           break
         }
 
-        // If the message was processed, wait the anti-ban interval before the next one
-        if (result.processed && result.delayMs > 0) {
+        // Wait the delay before processing the next message
+        // This applies BOTH when a message was processed (anti-ban interval)
+        // AND when we're waiting for a step delay (contact-by-contact sequential)
+        if (result.delayMs > 0) {
           await new Promise(resolve => setTimeout(resolve, result.delayMs))
         }
 
