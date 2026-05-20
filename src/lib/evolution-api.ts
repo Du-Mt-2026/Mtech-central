@@ -497,6 +497,8 @@ export async function setWebhook(
   ]
 ): Promise<void> {
   // Evolution API v2.x: webhook config must be wrapped in "webhook" object
+  // Note: event name is INSTANCE_DELETE (not INSTANCE_DELETED) in Evolution API
+  const normalizedEvents = events.map(e => e === 'INSTANCE_DELETED' ? 'INSTANCE_DELETE' : e)
   await evolutionFetch(`/webhook/set/${instanceName}`, {
     method: 'POST',
     body: JSON.stringify({
@@ -504,7 +506,7 @@ export async function setWebhook(
         url: webhookUrl,
         enabled: true,
         byEvents: true,
-        events,
+        events: normalizedEvents,
       },
     }),
   });

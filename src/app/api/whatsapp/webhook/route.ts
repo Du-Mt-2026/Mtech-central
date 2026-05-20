@@ -82,7 +82,8 @@ export async function POST(request: Request) {
         break
       }
 
-      case 'INSTANCE_DELETED': {
+      case 'INSTANCE_DELETED':
+      case 'INSTANCE_DELETE': {
         // Instance was deleted from Evolution API (or via another client)
         // Delete the chip from our database too
         const chip = await db.chip.findFirst({
