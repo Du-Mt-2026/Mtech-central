@@ -17,15 +17,33 @@ export async function GET(
         content: true,
         mediaUrl: true,
         mediatype: true,
-        contactPhone: true,
         chipId: true,
         sentAt: true,
         error: true,
         contactId: true,
+        contact: {
+          select: { id: true, name: true, phone: true },
+        },
       },
     })
-    return NextResponse.json(messages)
+    // Flatten contact info for easier consumption
+    const result = messages.map(m => ({
+      id: m.id,
+      status: m.status,
+      stepOrder: m.stepOrder,
+      content: m.content,
+      mediaUrl: m.mediaUrl,
+      mediatype: m.mediatype,
+      chipId: m.chipId,
+      sentAt: m.sentAt,
+      error: m.error,
+      contactId: m.contactId,
+      contactPhone: m.contact?.phone || '',
+      contactName: m.contact?.name || '',
+    }))
+    return NextResponse.json(result)
   } catch (error) {
+    console.error('Messages API error:', error)
     return NextResponse.json({ error: 'Erro ao buscar mensagens' }, { status: 500 })
   }
 }
