@@ -538,28 +538,22 @@ async function advanceWarmingStage(chipId: string, settings: AntiBanConfig): Pro
 /**
  * Check if chip is in cooldown period.
  * Uses cooldownUntil timestamp on the chip record.
+ *
+ * IMPORTANT: This function ONLY checks if the chip is currently in an active cooldown.
+ * Cooldown is triggered AFTER a message is successfully sent (in the post-send logic),
+ * NOT here. This prevents the re-trigger bug where sentToday % cooldownAfterMessages === 0
+ * would re-enter cooldown every time this function was called after cooldown expired.
  */
-async function isInCooldown(chipId: string, settings: AntiBanConfig): Promise<boolean> {
+async function isInCooldown(chipId: string, settings: AntiBanConfig): Promise<{ inCooldown: boolean; cooldownUntil: Date | null }> {
   const chip = await db.chip.findUnique({ where: { id: chipId } })
-  if (!chip) return true
+  if (!chip) return { inCooldown: true, cooldownUntil: null }
 
   const now = new Date()
 
   // If chip has an active cooldownUntil and it hasn't expired yet
   if (chip.cooldownUntil && new Date(chip.cooldownUntil) > now) {
-    console.log(`[SendingEngine] Chip ${chipId} in cooldown until ${chip.cooldownUntil}`)
-    return true
-  }
-
-  // Check if chip just hit the cooldown threshold
-  if (chip.sentToday > 0 && chip.sentToday % settings.cooldownAfterMessages === 0) {
-    const cooldownUntil = new Date(now.getTime() + settings.cooldownMinutes * 60 * 1000)
-    await db.chip.update({
-      where: { id: chipId },
-      data: { cooldownUntil },
-    })
-    console.log(`[SendingEngine] Chip ${chipId} entering cooldown after ${chip.sentToday} messages until ${cooldownUntil.toISOString()}`)
-    return true
+    console.log(`[SendingEngine] Chip ${chip.name} in cooldown until ${chip.cooldownUntil}`)
+    return { inCooldown: true, cooldownUntil: new Date(chip.cooldownUntil) }
   }
 
   // Cooldown expired — clear it
@@ -568,9 +562,10 @@ async function isInCooldown(chipId: string, settings: AntiBanConfig): Promise<bo
       where: { id: chipId },
       data: { cooldownUntil: null },
     })
+    console.log(`[SendingEngine] Chip ${chip.name} cooldown expired, cleared`)
   }
 
-  return false
+  return { inCooldown: false, cooldownUntil: null }
 }
 
 /**
@@ -1447,13 +1442,21 @@ export async function processNextMessage(campaignId: string): Promise<{
   }
 
   // Check cooldown
-  if (antiBanEnabled && await isInCooldown(message.chipId, settings)) {
-    return {
-      processed: false,
-      delayMs: settings.cooldownMinutes * 60 * 1000,
-      remaining: -1,
-      completed: false,
-      reason: 'cooldown',
+  if (antiBanEnabled) {
+    const cooldownCheck = await isInCooldown(message.chipId, settings)
+    if (cooldownCheck.inCooldown) {
+      // Calculate how long until cooldown expires
+      const waitMs = cooldownCheck.cooldownUntil
+        ? Math.max(cooldownCheck.cooldownUntil.getTime() - Date.now(), 60 * 1000)
+        : settings.cooldownMinutes * 60 * 1000
+      console.log(`[SendingEngine] Chip ${currentChip.name} in cooldown — waiting ${Math.round(waitMs/1000)}s`)
+      return {
+        processed: false,
+        delayMs: waitMs,
+        remaining: -1,
+        completed: false,
+        reason: 'cooldown',
+      }
     }
   }
 
@@ -1587,6 +1590,24 @@ export async function processNextMessage(campaignId: string): Promise<{
       where: { id: message.chipId },
       data: { sentToday: { increment: 1 }, hourlySent: { increment: 1 }, lastSeen: new Date() },
     })
+
+    // ============================================
+    // POST-SEND: Check if chip hit cooldown threshold
+    // ============================================
+    // Only trigger cooldown HERE (after a message is actually sent), not in isInCooldown.
+    // This prevents the re-trigger bug where sentToday % cooldownAfterMessages === 0
+    // would re-enter cooldown every time isInCooldown was called after cooldown expired.
+    if (antiBanEnabled && settings.cooldownAfterMessages > 0 && settings.cooldownMinutes > 0) {
+      const chipAfterSend = await db.chip.findUnique({ where: { id: message.chipId } })
+      if (chipAfterSend && chipAfterSend.sentToday > 0 && chipAfterSend.sentToday % settings.cooldownAfterMessages === 0) {
+        const cooldownUntil = new Date(Date.now() + settings.cooldownMinutes * 60 * 1000)
+        await db.chip.update({
+          where: { id: message.chipId },
+          data: { cooldownUntil },
+        })
+        console.log(`[SendingEngine] Chip ${chipAfterSend.name} entering cooldown after ${chipAfterSend.sentToday} messages — cooldown until ${cooldownUntil.toISOString()}`)
+      }
+    }
 
     console.log(`[SendingEngine] Sent message ${message.id} to ${formattedPhone} via ${instanceName}`)
 
