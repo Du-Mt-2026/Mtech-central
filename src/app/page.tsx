@@ -4201,6 +4201,7 @@ function CampanhasTab() {
                 <Button variant="outline" size="sm" className="gap-1.5" disabled={refreshingDetail} onClick={async () => {
                   if (!selectedCampaign) return
                   setRefreshingDetail(true)
+                  const startTime = Date.now()
                   try {
                     const res = await fetch(`/api/campaigns/${selectedCampaign.id}`, { cache: 'no-store' })
                     if (!res.ok) throw new Error('Erro ao buscar campanha')
@@ -4212,6 +4213,9 @@ function CampanhasTab() {
                     setDetailMessages(Array.isArray(msgData) ? msgData : [])
                     // Also refresh campaign list so cards update
                     fetchCampaigns()
+                    // Ensure loading animation is visible for at least 600ms
+                    const elapsed = Date.now() - startTime
+                    if (elapsed < 600) await new Promise(r => setTimeout(r, 600 - elapsed))
                     toast.success('Campanha atualizada!')
                   } catch {
                     toast.error('Erro ao atualizar campanha')
@@ -5964,12 +5968,18 @@ function MensagensTab() {
 
   const fetchMessages = useCallback(async (showLoading = false) => {
     if (showLoading) setRefreshing(true)
+    const startTime = showLoading ? Date.now() : 0
     try {
       const res = await fetch('/api/messages', { cache: 'no-store' })
       if (!res.ok) throw new Error(`Erro ${res.status}`)
       const data = await res.json()
       setMessages(Array.isArray(data) ? data : [])
-      if (showLoading) toast.success('Mensagens atualizadas!')
+      if (showLoading) {
+        // Ensure loading animation is visible for at least 500ms
+        const elapsed = Date.now() - startTime
+        if (elapsed < 500) await new Promise(r => setTimeout(r, 500 - elapsed))
+        toast.success('Mensagens atualizadas!')
+      }
     } catch { toast.error('Erro ao carregar mensagens') }
     finally { setLoading(false); setRefreshing(false) }
   }, [])
