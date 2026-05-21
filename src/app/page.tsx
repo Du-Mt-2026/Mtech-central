@@ -2880,6 +2880,7 @@ function CampanhasTab() {
   const [saving, setSaving] = useState(false)
   const [exportingId, setExportingId] = useState<string | null>(null)
   const [exportingAll, setExportingAll] = useState(false)
+  const [refreshingDetail, setRefreshingDetail] = useState(false)
   const [editForm, setEditForm] = useState({
     name: '', sendIntervalMin: 30, sendIntervalMax: 90,
     chipIds: [] as string[], contactListId: '', scheduledAt: '',
@@ -2903,7 +2904,7 @@ function CampanhasTab() {
 
   const fetchCampaigns = useCallback(async () => {
     try {
-      const res = await fetch('/api/campaigns')
+      const res = await fetch('/api/campaigns', { cache: 'no-store' })
       const data = await res.json()
       setCampaigns(Array.isArray(data) ? data : [])
     }
@@ -3277,7 +3278,7 @@ function CampanhasTab() {
 
   const openDetail = async (campaign: Campaign) => {
     setSelectedCampaign(campaign); setDetailDialogOpen(true); setEditing(false)
-    try { const res = await fetch(`/api/messages?campaignId=${campaign.id}`); const data = await res.json(); setDetailMessages(Array.isArray(data) ? data : []) }
+    try { const res = await fetch(`/api/messages?campaignId=${campaign.id}`, { cache: 'no-store' }); const data = await res.json(); setDetailMessages(Array.isArray(data) ? data : []) }
     catch { setDetailMessages([]) }
   }
 
@@ -4197,17 +4198,28 @@ function CampanhasTab() {
                 </Button>
               )}
               {selectedCampaign && (
-                <Button variant="outline" size="sm" className="gap-1.5" onClick={async () => {
+                <Button variant="outline" size="sm" className="gap-1.5" disabled={refreshingDetail} onClick={async () => {
                   if (!selectedCampaign) return
-                  const updated = await fetch(`/api/campaigns/${selectedCampaign.id}`).then(r => r.json())
-                  setSelectedCampaign(updated)
-                  if (updated.status === 'running' || updated.status === 'completed') {
-                    const msgRes = await fetch(`/api/messages?campaignId=${updated.id}`)
-                    setDetailMessages(await msgRes.json())
+                  setRefreshingDetail(true)
+                  try {
+                    const res = await fetch(`/api/campaigns/${selectedCampaign.id}`, { cache: 'no-store' })
+                    if (!res.ok) throw new Error('Erro ao buscar campanha')
+                    const updated = await res.json()
+                    setSelectedCampaign(updated)
+                    // Fetch messages for any campaign that has them (not just running/completed)
+                    const msgRes = await fetch(`/api/messages?campaignId=${updated.id}`, { cache: 'no-store' })
+                    const msgData = await msgRes.json()
+                    setDetailMessages(Array.isArray(msgData) ? msgData : [])
+                    // Also refresh campaign list so cards update
+                    fetchCampaigns()
+                    toast.success('Campanha atualizada!')
+                  } catch {
+                    toast.error('Erro ao atualizar campanha')
+                  } finally {
+                    setRefreshingDetail(false)
                   }
-                  toast.success('Status atualizado!')
                 }}>
-                  <RefreshCw className="size-3.5" /> Atualizar
+                  <RefreshCw className={`size-3.5 ${refreshingDetail ? 'animate-spin' : ''}`} /> Atualizar
                 </Button>
               )}
             </DialogTitle>
@@ -5953,9 +5965,11 @@ function MensagensTab() {
   const fetchMessages = useCallback(async (showLoading = false) => {
     if (showLoading) setRefreshing(true)
     try {
-      const res = await fetch('/api/messages')
+      const res = await fetch('/api/messages', { cache: 'no-store' })
+      if (!res.ok) throw new Error(`Erro ${res.status}`)
       const data = await res.json()
       setMessages(Array.isArray(data) ? data : [])
+      if (showLoading) toast.success('Mensagens atualizadas!')
     } catch { toast.error('Erro ao carregar mensagens') }
     finally { setLoading(false); setRefreshing(false) }
   }, [])
