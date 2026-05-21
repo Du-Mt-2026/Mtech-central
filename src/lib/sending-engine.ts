@@ -768,6 +768,21 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
   if (!campaign.contactList) throw new Error('Campanha não tem lista de contatos')
   if (campaign.chips.length === 0) throw new Error('Campanha não tem chips atribuídos')
 
+  // GUARD: Prevent duplicate message creation if startCampaign is called twice
+  // (e.g., race condition between frontend click and cron job)
+  const existingMessages = await db.message.count({ where: { campaignId } })
+  if (existingMessages > 0) {
+    console.log(`[SendingEngine] Campaign ${campaignId} already has ${existingMessages} messages — skipping duplicate creation`)
+    // Ensure campaign status is 'running'
+    if (campaign.status !== 'running') {
+      await db.campaign.update({
+        where: { id: campaignId },
+        data: { status: 'running', startedAt: new Date() },
+      })
+    }
+    return { messageCount: existingMessages }
+  }
+
   // Derive message content from sequence steps (each step may have variations)
   const hasSteps = campaign.sequenceSteps.length > 0
 
@@ -788,7 +803,12 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
     try {
       const raw = JSON.parse(s.variations || '[]')
       if (Array.isArray(raw) && raw.length > 0) {
-        stepVariations = raw.filter((v: VariationObj) => v.content && v.content.trim())
+        // BUG FIX: Don't filter out variations that have media but no text content.
+        // Previously, variations with empty content were dropped even if they had
+        // valid mediaUrl/mediatype, causing image steps to be sent as plain text.
+        stepVariations = raw.filter((v: VariationObj) =>
+          (v.content && v.content.trim()) || v.mediaUrl || v.mediatype
+        )
       }
     } catch { /* ignore */ }
     return {
@@ -808,6 +828,11 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
 
   // Sort steps by stepOrder to ensure correct ordering
   parsedSteps.sort((a, b) => a.stepOrder - b.stepOrder)
+
+  // DIAGNOSTIC: Log parsed step data to help debug media issues
+  for (const ps of parsedSteps) {
+    console.log(`[SendingEngine] Parsed step ${ps.stepOrder}: content="${ps.content?.substring(0, 50)}...", mediaUrl=${ps.mediaUrl || 'null'}, mediatype=${ps.mediatype || 'null'}, variations=${ps.variations.length}`)
+  }
 
   const contacts = campaign.contactList.contacts
   const chips = campaign.chips.map(cc => cc.chip).filter(c => c.evolutionInstance)
@@ -887,6 +912,9 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
 
       // Step 3: Resolve old-style {{KEY_NAME}} markers (from Chaves/MessageKey system)
       content = await resolveMessageKeyMarkers(content)
+
+      // DIAGNOSTIC: Log step media data to help debug media sending issues
+      console.log(`[SendingEngine] Creating message for campaign ${campaignId}, contact ${contact.id}, step ${step.stepOrder}: content="${content.substring(0, 50)}...", mediaUrl=${messageItem.mediaUrl || 'null'}, mediatype=${messageItem.mediatype || 'null'}`)
 
       messagesToCreate.push({
         campaignId: campaign.id,
@@ -1497,6 +1525,9 @@ export async function processNextMessage(campaignId: string): Promise<{
     // ============================================
     // SEND THE MESSAGE
     // ============================================
+    // DIAGNOSTIC: Log what we're about to send (step, content preview, media info)
+    console.log(`[SendingEngine] Sending message ${message.id} step=${(message as any).stepOrder} to ${formattedPhone}: mediaUrl=${message.mediaUrl || 'null'} mediatype=${message.mediatype || 'null'} content="${finalContent.substring(0, 80)}..."`)
+
     let result
     if (message.mediaUrl && message.mediatype) {
       const validMediaTypes = ['image', 'document', 'video', 'audio']
