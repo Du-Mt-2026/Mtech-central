@@ -11,7 +11,7 @@ export async function GET() {
         },
         chips: {
           include: {
-            chip: { select: { id: true, name: true, phoneNumber: true, status: true } },
+            chip: { select: { id: true, name: true, phoneNumber: true, status: true, cooldownUntil: true, sentToday: true, dailyLimit: true, hourlySent: true, warmingPhase: true } },
           },
         },
         sequenceSteps: {
@@ -75,7 +75,7 @@ export async function POST(request: Request) {
         },
         chips: {
           include: {
-            chip: { select: { id: true, name: true, phoneNumber: true, status: true } },
+            chip: { select: { id: true, name: true, phoneNumber: true, status: true, cooldownUntil: true, sentToday: true, dailyLimit: true, hourlySent: true, warmingPhase: true } },
           },
         },
         sequenceSteps: {

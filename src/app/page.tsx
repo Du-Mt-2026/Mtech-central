@@ -169,6 +169,8 @@ interface Chip {
   profileName?: string | null
   profilePicUrl?: string | null
   disconnectionReasonCode?: number | null
+  cooldownUntil?: string | null
+  hourlySent?: number
 }
 
 interface SequenceStep {
@@ -1206,6 +1208,19 @@ function ChipsTab() {
                         <span className="font-semibold">{chip.sentToday}/{chip.dailyLimit}</span>
                       </div>
                       <Progress value={(chip.sentToday / chip.dailyLimit) * 100} className="h-2" />
+                      {chip.cooldownUntil && new Date(chip.cooldownUntil) > new Date() && (() => {
+                        const cooldownMin = Math.ceil((new Date(chip.cooldownUntil).getTime() - Date.now()) / 60000)
+                        return (
+                          <div className="flex items-center gap-2 p-2 rounded-md bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
+                            <Clock className="size-4 text-amber-600 shrink-0" />
+                            <div className="flex-1 min-w-0">
+                              <p className="text-xs font-semibold text-amber-700 dark:text-amber-400">Em cooldown</p>
+                              <p className="text-[10px] text-amber-600 dark:text-amber-500">Retoma em {cooldownMin}min — Pausa de segurança anti-ban</p>
+                            </div>
+                            <Badge variant="outline" className="text-amber-600 border-amber-300 bg-amber-50 text-xs shrink-0">{cooldownMin}min</Badge>
+                          </div>
+                        )
+                      })()}
                       {chip.warmingEnabled && (
                         <div className="flex justify-between items-center">
                           <span className="text-muted-foreground">Aquecimento</span>
@@ -4241,13 +4256,32 @@ function CampanhasTab() {
                     <AlertDescription>Um dos chips atribuídos atingiu o limite de envio do dia. As mensagens pendentes foram reatribuídas a outros chips ou aguardarão até amanhã.</AlertDescription>
                   </Alert>
                 )}
-                {continuousProcessing && continuousStats.remaining === 0 && continuousStats.processed === 0 && (
-                  <Alert variant="destructive" className="mb-3">
-                    <AlertCircle className="size-4" />
-                    <AlertTitle>Processamento parado</AlertTitle>
-                    <AlertDescription>Nenhuma mensagem está sendo processada. Um chip pode ter atingido o limite diário ou não há chips disponíveis.</AlertDescription>
-                  </Alert>
-                )}
+                {continuousProcessing && continuousStats.remaining === 0 && continuousStats.processed === 0 && (() => {
+                  // Detect if any campaign chip is in cooldown
+                  const cooldownChips = (selectedCampaign?.chips || [])
+                    .map((cc: any) => cc.chip)
+                    .filter((c: any) => c && c.cooldownUntil && new Date(c.cooldownUntil) > new Date())
+                  if (cooldownChips.length > 0) {
+                    const chipNames = cooldownChips.map((c: any) => c.name).join(', ')
+                    const minCooldown = Math.min(...cooldownChips.map((c: any) => Math.ceil((new Date(c.cooldownUntil).getTime() - Date.now()) / 60000)))
+                    return (
+                      <Alert className="mb-3 border-amber-300 bg-amber-50 dark:bg-amber-900/20 dark:border-amber-800">
+                        <Clock className="size-4 text-amber-600" />
+                        <AlertTitle className="text-amber-700">Chip em cooldown</AlertTitle>
+                        <AlertDescription className="text-amber-600">
+                          <span className="font-semibold">{chipNames}</span> está em pausa de segurança (cooldown). Envio retoma automaticamente em <span className="font-bold">{minCooldown}min</span>. Isso protege contra banimento do WhatsApp.
+                        </AlertDescription>
+                      </Alert>
+                    )
+                  }
+                  return (
+                    <Alert variant="destructive" className="mb-3">
+                      <AlertCircle className="size-4" />
+                      <AlertTitle>Processamento parado</AlertTitle>
+                      <AlertDescription>Nenhuma mensagem está sendo processada. Verifique os chips atribuídos abaixo.</AlertDescription>
+                    </Alert>
+                  )
+                })()}
                 <div className="flex flex-wrap gap-2">
                   <StatusBadge status={selectedCampaign.status} />
                   {selectedCampaign.antiBanEnabled && <Badge variant="outline" className="gap-1 text-emerald-600"><Shield className="size-3" /> Anti-Ban</Badge>}
@@ -4259,6 +4293,49 @@ function CampanhasTab() {
                   <Card className="shadow"><CardContent className="p-2 text-center"><p className="text-[10px] text-muted-foreground">Entregues</p><p className="text-lg font-bold text-emerald-600">{detailMessages.filter(m => m.status === 'delivered' || m.status === 'read').length}</p></CardContent></Card>
                   <Card className="shadow"><CardContent className="p-2 text-center"><p className="text-[10px] text-muted-foreground">Falharam</p><p className="text-lg font-bold text-rose-600">{detailMessages.filter(m => m.status === 'failed').length}</p></CardContent></Card>
                 </div>
+                {/* Chips atribuídos com status de cooldown */}
+                {selectedCampaign.chips && selectedCampaign.chips.length > 0 && (
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-semibold">Chips Atribuídos</Label>
+                    {selectedCampaign.chips.map((cc: any) => {
+                      const chip = cc.chip
+                      if (!chip) return null
+                      const inCooldown = chip.cooldownUntil && new Date(chip.cooldownUntil) > new Date()
+                      const cooldownMin = inCooldown ? Math.ceil((new Date(chip.cooldownUntil).getTime() - Date.now()) / 60000) : 0
+                      return (
+                        <div key={chip.id} className={`p-2 rounded-lg text-xs flex items-center gap-2 ${inCooldown ? 'bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800' : chip.status === 'connected' ? 'bg-emerald-50 dark:bg-emerald-900/10 border border-emerald-200 dark:border-emerald-800' : 'bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800'}`}>
+                          <div className={`size-2.5 rounded-full shrink-0 ${chip.status === 'connected' ? 'bg-emerald-500' : chip.status === 'disconnected' ? 'bg-zinc-400' : 'bg-rose-500'}`} />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium">{chip.name}</span>
+                              <span className="text-muted-foreground">{chip.phoneNumber}</span>
+                              {chip.status !== 'connected' && <Badge variant="destructive" className="text-[9px] px-1 py-0 h-4">Desconectado</Badge>}
+                            </div>
+                            <div className="flex items-center gap-2 mt-0.5">
+                              <span className="text-muted-foreground">{chip.sentToday || 0}/{chip.dailyLimit || 200} enviadas hoje</span>
+                              {inCooldown && (
+                                <Badge variant="outline" className="gap-1 text-amber-600 border-amber-300 bg-amber-50 text-[9px] px-1.5 py-0 h-4">
+                                  <Clock className="size-2.5" /> Cooldown {cooldownMin}min
+                                </Badge>
+                              )}
+                              {chip.warmingPhase && chip.warmingPhase !== 'ready' && (
+                                <Badge variant="outline" className="text-[9px] px-1.5 py-0 h-4">
+                                  {chip.warmingPhase === 'nursery' ? '🌿 Aquecendo' : chip.warmingPhase === 'prewarm' ? '🔥 Pré-aquecimento' : chip.warmingPhase}
+                                </Badge>
+                              )}
+                            </div>
+                          </div>
+                          {inCooldown && (
+                            <div className="text-right shrink-0">
+                              <p className="text-amber-600 font-medium text-[10px]">Retoma em</p>
+                              <p className="text-amber-700 font-bold text-xs">{cooldownMin}min</p>
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
                 {selectedCampaign.contactList && (
                   <div className="text-xs text-muted-foreground">
                     <p>Lista: <span className="font-medium text-foreground">{selectedCampaign.contactList.name}</span></p>
