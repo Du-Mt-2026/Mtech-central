@@ -12,7 +12,7 @@ import {
   MessageCircle, Type, Shuffle, Flame, Snowflake, EyeOff,
   Download, Filter, ArrowRight, QrCode, Globe, Lock, Server,
   Sparkles, Heart, Star, AlertTriangle, Info, ChevronDown,
-  Pencil, LayoutList, Database, WifiOff, ArrowDownToLine, Save, XCircle,
+  Pencil, LayoutList, Database, WifiOff, ArrowDownToLine, Save, XCircle, ShieldBan,
   Inbox, LogOut, RotateCcw, Film, Music, File, ImageIcon, Key, Paperclip, MapPin, Link2,
   Baby, CheckCircle2, Video, MoreVertical, Mic, User, Smile, BookmarkPlus, GripVertical
 } from 'lucide-react'
@@ -609,6 +609,7 @@ function DashboardTab({ stats, onRefresh, setActiveTab }: { stats: Stats | null;
 function ChipsTab() {
   const [chips, setChips] = useState<Chip[]>([])
   const [loading, setLoading] = useState(true)
+  const [antiBanSettings, setAntiBanSettings] = useState<AntiBanSettings | null>(null)
   const [addDialogOpen, setAddDialogOpen] = useState(false)
   const [configDialogOpen, setConfigDialogOpen] = useState(false)
   const [qrDialogOpen, setQrDialogOpen] = useState(false)
@@ -658,7 +659,83 @@ function ChipsTab() {
     finally { setLoading(false) }
   }, [])
 
-  useEffect(() => { fetchChips() }, [fetchChips])
+  const fetchAntiBanSettings = useCallback(async () => {
+    try {
+      const res = await fetch('/api/antiban')
+      if (res.ok) setAntiBanSettings(await res.json())
+    } catch { /* silently fail */ }
+  }, [])
+
+  useEffect(() => { fetchChips(); fetchAntiBanSettings() }, [fetchChips, fetchAntiBanSettings])
+
+  // === Calculate effective daily limit and phase day for a chip ===
+  const getChipEffectiveInfo = useCallback((chip: Chip): { effectiveLimit: number; phaseDay: number; phaseMaxDays: number } => {
+    if (!antiBanSettings || !chip.warmingEnabled || !antiBanSettings.warmingEnabled) {
+      return { effectiveLimit: chip.dailyLimit || 200, phaseDay: 0, phaseMaxDays: 0 }
+    }
+
+    const phase = chip.warmingPhase || 'nursery'
+    const now = new Date()
+
+    // Parse schedules
+    let schedule: { dayRange: string; days: [number, number]; limit: number }[] = []
+    try {
+      if (phase === 'nursery') {
+        schedule = JSON.parse(antiBanSettings.nurserySchedule || '[]')
+      } else if (phase === 'prewarm') {
+        schedule = JSON.parse(antiBanSettings.prewarmSchedule || '[]')
+      }
+    } catch { /* ignore parse errors */ }
+
+    if (phase === 'ready') {
+      return { effectiveLimit: antiBanSettings.readyDailyLimit || chip.dailyLimit || 200, phaseDay: 0, phaseMaxDays: 0 }
+    }
+
+    // Calculate day within phase
+    let dayInPhase = 1
+    if (phase === 'nursery') {
+      const createdAt = new Date(chip.createdAt)
+      // Use Brasília timezone for day calculation
+      const spFormatter = new Intl.DateTimeFormat('en-US', { year: 'numeric', month: 'numeric', day: 'numeric', timeZone: 'America/Sao_Paulo' })
+      const nowStr = spFormatter.format(now)
+      const createdStr = spFormatter.format(createdAt)
+      const [nm, nd, ny] = nowStr.split('/').map(Number)
+      const [cm, cd, cy] = createdStr.split('/').map(Number)
+      const nowDate = new Date(ny, nm - 1, nd)
+      const createdDate = new Date(cy, cm - 1, cd)
+      dayInPhase = Math.max(1, Math.floor((nowDate.getTime() - createdDate.getTime()) / (86400000)) + 1)
+    } else if (phase === 'prewarm') {
+      const prewarmStart = chip.prewarmStartedAt ? new Date(chip.prewarmStartedAt) : new Date(chip.createdAt)
+      const spFormatter = new Intl.DateTimeFormat('en-US', { year: 'numeric', month: 'numeric', day: 'numeric', timeZone: 'America/Sao_Paulo' })
+      const nowStr = spFormatter.format(now)
+      const startStr = spFormatter.format(prewarmStart)
+      const [nm, nd, ny] = nowStr.split('/').map(Number)
+      const [sm, sd, sy] = startStr.split('/').map(Number)
+      const nowDate = new Date(ny, nm - 1, nd)
+      const startDate = new Date(sy, sm - 1, sd)
+      dayInPhase = Math.max(1, Math.floor((nowDate.getTime() - startDate.getTime()) / (86400000)) + 1)
+    }
+
+    // Find limit for current day
+    let limit = 10 // fallback
+    for (const entry of schedule) {
+      if (dayInPhase >= entry.days[0] && dayInPhase <= entry.days[1]) {
+        limit = entry.limit
+        break
+      }
+    }
+    // If beyond schedule, use last entry's limit
+    if (schedule.length > 0 && dayInPhase > schedule[schedule.length - 1].days[1]) {
+      limit = schedule[schedule.length - 1].limit
+    }
+
+    // Cap at chip's dailyLimit
+    limit = Math.min(limit, chip.dailyLimit || antiBanSettings.dailyLimitPerChip)
+
+    const phaseMaxDays = schedule.length > 0 ? schedule[schedule.length - 1].days[1] : 0
+
+    return { effectiveLimit: limit, phaseDay: dayInPhase, phaseMaxDays }
+  }, [antiBanSettings])
 
   // Sync WhatsApp status on load
   useEffect(() => {
@@ -1203,54 +1280,123 @@ function ChipsTab() {
                            <><QrCode className="size-3" /> QR Code</>}
                         </Badge>
                       </div>
-                      <div className="flex justify-between items-center">
-                        <span className="text-muted-foreground">Envio hoje</span>
-                        <span className="font-semibold">{chip.sentToday}/{chip.dailyLimit}</span>
-                      </div>
-                      <Progress value={(chip.sentToday / chip.dailyLimit) * 100} className="h-2" />
-                      {chip.cooldownUntil && new Date(chip.cooldownUntil) > new Date() && (() => {
-                        const cooldownMin = Math.ceil((new Date(chip.cooldownUntil).getTime() - Date.now()) / 60000)
+                      {(() => {
+                        const info = getChipEffectiveInfo(chip)
+                        const phase = chip.warmingPhase || 'nursery'
+                        const isInCooldown = chip.cooldownUntil && new Date(chip.cooldownUntil) > new Date()
+                        const cooldownMin = isInCooldown ? Math.ceil((new Date(chip.cooldownUntil!).getTime() - Date.now()) / 60000) : 0
+                        const hitDailyLimit = chip.sentToday >= info.effectiveLimit
+                        const hitHourlyLimit = (chip.hourlySent ?? 0) >= (antiBanSettings?.hourlyLimit ?? 30)
+
+                        // Determine chip operational status
+                        let chipStatus: 'available' | 'cooldown' | 'daily_limit' | 'hourly_limit' | 'disconnected' = 'available'
+                        if (chip.status !== 'connected') chipStatus = 'disconnected'
+                        else if (isInCooldown) chipStatus = 'cooldown'
+                        else if (hitDailyLimit) chipStatus = 'daily_limit'
+                        else if (hitHourlyLimit) chipStatus = 'hourly_limit'
+
+                        const progressPct = info.effectiveLimit > 0 ? (chip.sentToday / info.effectiveLimit) * 100 : 0
+                        const progressColor = progressPct >= 90 ? 'bg-red-500' : progressPct >= 60 ? 'bg-amber-500' : 'bg-emerald-500'
+
                         return (
-                          <div className="flex items-center gap-2 p-2 rounded-md bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800">
-                            <Clock className="size-4 text-amber-600 shrink-0" />
-                            <div className="flex-1 min-w-0">
-                              <p className="text-xs font-semibold text-amber-700 dark:text-amber-400">Em cooldown</p>
-                              <p className="text-[10px] text-amber-600 dark:text-amber-500">Retoma em {cooldownMin}min — Pausa de segurança anti-ban</p>
+                          <>
+                            {/* Status badge — always visible, tells you WHY messages aren't going out */}
+                            {chipStatus !== 'available' && (
+                              <div className={`flex items-center gap-2 p-2 rounded-md border ${
+                                chipStatus === 'cooldown' ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800' :
+                                chipStatus === 'daily_limit' ? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800' :
+                                chipStatus === 'hourly_limit' ? 'bg-orange-50 dark:bg-orange-900/20 border-orange-200 dark:border-orange-800' :
+                                'bg-zinc-50 dark:bg-zinc-900/20 border-zinc-200 dark:border-zinc-800'
+                              }`}>
+                                {chipStatus === 'cooldown' && <Clock className="size-4 text-amber-600 shrink-0" />}
+                                {chipStatus === 'daily_limit' && <ShieldBan className="size-4 text-red-600 shrink-0" />}
+                                {chipStatus === 'hourly_limit' && <Clock className="size-4 text-orange-600 shrink-0" />}
+                                {chipStatus === 'disconnected' && <WifiOff className="size-4 text-zinc-600 shrink-0" />}
+                                <div className="flex-1 min-w-0">
+                                  {chipStatus === 'cooldown' && (
+                                    <>
+                                      <p className="text-xs font-semibold text-amber-700 dark:text-amber-400">Em cooldown</p>
+                                      <p className="text-[10px] text-amber-600 dark:text-amber-500">Retoma em {cooldownMin}min</p>
+                                    </>
+                                  )}
+                                  {chipStatus === 'daily_limit' && (
+                                    <>
+                                      <p className="text-xs font-semibold text-red-700 dark:text-red-400">Limite diário atingido</p>
+                                      <p className="text-[10px] text-red-600 dark:text-red-500">{chip.sentToday}/{info.effectiveLimit} — aguarde até amanhã</p>
+                                    </>
+                                  )}
+                                  {chipStatus === 'hourly_limit' && (
+                                    <>
+                                      <p className="text-xs font-semibold text-orange-700 dark:text-orange-400">Limite horário atingido</p>
+                                      <p className="text-[10px] text-orange-600 dark:text-orange-500">{chip.hourlySent ?? 0}/{antiBanSettings?.hourlyLimit ?? 30} por hora</p>
+                                    </>
+                                  )}
+                                  {chipStatus === 'disconnected' && (
+                                    <>
+                                      <p className="text-xs font-semibold text-zinc-700 dark:text-zinc-400">Chip desconectado</p>
+                                      <p className="text-[10px] text-zinc-600 dark:text-zinc-500">Conecte para enviar mensagens</p>
+                                    </>
+                                  )}
+                                </div>
+                                {chipStatus === 'cooldown' && (
+                                  <Badge variant="outline" className="text-amber-600 border-amber-300 bg-amber-50 text-xs shrink-0">{cooldownMin}min</Badge>
+                                )}
+                              </div>
+                            )}
+
+                            {/* Envio hoje — shows effective limit, not raw dailyLimit */}
+                            <div className="flex justify-between items-center">
+                              <span className="text-muted-foreground">Envio hoje</span>
+                              <div className="flex items-center gap-1.5">
+                                <span className={`font-semibold ${hitDailyLimit ? 'text-red-600 dark:text-red-400' : ''}`}>
+                                  {chip.sentToday}/{info.effectiveLimit}
+                                </span>
+                                {info.effectiveLimit < (chip.dailyLimit || 200) && (
+                                  <span className="text-[10px] text-muted-foreground" title={`Limite total do chip: ${chip.dailyLimit || 200}/dia`}>
+                                    (de {chip.dailyLimit || 200})
+                                  </span>
+                                )}
+                              </div>
                             </div>
-                            <Badge variant="outline" className="text-amber-600 border-amber-300 bg-amber-50 text-xs shrink-0">{cooldownMin}min</Badge>
-                          </div>
+                            {/* Progress bar based on effective limit */}
+                            <div className="relative h-2 w-full overflow-hidden rounded-full bg-secondary">
+                              <div className={`h-full rounded-full transition-all duration-300 ${progressColor}`} style={{ width: `${Math.min(progressPct, 100)}%` }} />
+                            </div>
+
+                            {/* Aquecimento — shows phase + day */}
+                            {chip.warmingEnabled && (
+                              <div className="flex justify-between items-center">
+                                <span className="text-muted-foreground">Aquecimento</span>
+                                <div className="flex items-center gap-1">
+                                  <Badge variant="secondary" className="gap-1 text-xs">
+                                    {phase === 'ready' ? (
+                                      <><CheckCircle2 className="size-3" /> Aquecido</>
+                                    ) : phase === 'prewarm' ? (
+                                      <><Flame className="size-3" /> Pré-aquecido{info.phaseMaxDays > 0 ? ` Dia ${info.phaseDay}/${info.phaseMaxDays}` : ''}</>
+                                    ) : (
+                                      <><Baby className="size-3" /> Berçário{info.phaseMaxDays > 0 ? ` Dia ${info.phaseDay}/${info.phaseMaxDays}` : ''}</>
+                                    )}
+                                  </Badge>
+                                  <Select value={phase} onValueChange={async (v) => {
+                                    try {
+                                      await fetch(`/api/chips/${chip.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ warmingPhase: v }) })
+                                      toast.success('Fase de aquecimento atualizada!')
+                                      fetchChips()
+                                    } catch { toast.error('Erro ao atualizar fase') }
+                                  }}>
+                                    <SelectTrigger className="h-7 rounded-md border border-input bg-background px-2 text-xs gap-1 hover:bg-accent"><Pencil className="size-3" /><span className="sr-only">Alterar fase</span></SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="nursery">Berçário</SelectItem>
+                                      <SelectItem value="prewarm">Pré-aquecido</SelectItem>
+                                      <SelectItem value="ready">Aquecido</SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                              </div>
+                            )}
+                          </>
                         )
                       })()}
-                      {chip.warmingEnabled && (
-                        <div className="flex justify-between items-center">
-                          <span className="text-muted-foreground">Aquecimento</span>
-                          <div className="flex items-center gap-1">
-                            <Badge variant="secondary" className="gap-1 text-xs">
-                              {(chip as any).warmingPhase === 'ready' ? (
-                                <><CheckCircle2 className="size-3" /> Aquecido</>
-                              ) : (chip as any).warmingPhase === 'prewarm' ? (
-                                <><Flame className="size-3" /> Pré-aquecido</>
-                              ) : (
-                                <><Baby className="size-3" /> Berçário</>
-                              )}
-                            </Badge>
-                            <Select value={(chip as any).warmingPhase || 'nursery'} onValueChange={async (v) => {
-                              try {
-                                await fetch(`/api/chips/${chip.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ warmingPhase: v }) })
-                                toast.success('Fase de aquecimento atualizada!')
-                                fetchChips()
-                              } catch { toast.error('Erro ao atualizar fase') }
-                            }}>
-                              <SelectTrigger className="h-7 rounded-md border border-input bg-background px-2 text-xs gap-1 hover:bg-accent"><Pencil className="size-3" /><span className="sr-only">Alterar fase</span></SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="nursery">Berçário</SelectItem>
-                                <SelectItem value="prewarm">Pré-aquecido</SelectItem>
-                                <SelectItem value="ready">Aquecido</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </div>
-                        </div>
-                      )}
                       <div className="flex justify-between items-center">
                         <span className="text-muted-foreground">Último visto</span>
                         <span className="text-xs">{chip.lastSeen ? new Date(chip.lastSeen).toLocaleString('pt-BR') : 'Nunca'}</span>
