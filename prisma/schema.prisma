@@ -32,6 +32,7 @@ model Chip {
   cooldownUntil    DateTime?
   warmingEnabled   Boolean  @default(true)
   warmingPhase     String   @default("nursery")   // "nursery" (berçário) | "prewarm" (pré-aquecido) | "ready" (pronto)
+  warmingStartedAt DateTime?                      // When warming actually started (first send or manual). Null = never sent, always Day 1
   prewarmStartedAt DateTime?                      // When prewarm phase started
   warmingStage     Int      @default(0)            // Legacy compat: 0=new, 5=prewarm, 6=ready
   isQrPaired       Boolean  @default(false)

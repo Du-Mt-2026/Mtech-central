@@ -157,6 +157,7 @@ interface Chip {
   warmingEnabled: boolean
   warmingStage: number
   warmingPhase?: string
+  warmingStartedAt?: string | null
   prewarmStartedAt?: string | null
   isQrPaired: boolean
   qrPairingCode: string | null
@@ -692,23 +693,18 @@ function ChipsTab() {
     }
 
     // Calculate day within phase
+    // KEY: If warmingStartedAt is null (chip never sent), always Day 1
     let dayInPhase = 1
-    if (phase === 'nursery') {
-      const createdAt = new Date(chip.createdAt)
-      // Use Brasília timezone for day calculation
+    const warmingStart = chip.warmingStartedAt ? new Date(chip.warmingStartedAt) : null
+
+    if (!warmingStart) {
+      // Chip never sent a message — always Day 1 regardless of age
+      dayInPhase = 1
+    } else {
+      // Calculate days since warming started (using Brasília timezone)
       const spFormatter = new Intl.DateTimeFormat('en-US', { year: 'numeric', month: 'numeric', day: 'numeric', timeZone: 'America/Sao_Paulo' })
       const nowStr = spFormatter.format(now)
-      const createdStr = spFormatter.format(createdAt)
-      const [nm, nd, ny] = nowStr.split('/').map(Number)
-      const [cm, cd, cy] = createdStr.split('/').map(Number)
-      const nowDate = new Date(ny, nm - 1, nd)
-      const createdDate = new Date(cy, cm - 1, cd)
-      dayInPhase = Math.max(1, Math.floor((nowDate.getTime() - createdDate.getTime()) / (86400000)) + 1)
-    } else if (phase === 'prewarm') {
-      const prewarmStart = chip.prewarmStartedAt ? new Date(chip.prewarmStartedAt) : new Date(chip.createdAt)
-      const spFormatter = new Intl.DateTimeFormat('en-US', { year: 'numeric', month: 'numeric', day: 'numeric', timeZone: 'America/Sao_Paulo' })
-      const nowStr = spFormatter.format(now)
-      const startStr = spFormatter.format(prewarmStart)
+      const startStr = spFormatter.format(warmingStart)
       const [nm, nd, ny] = nowStr.split('/').map(Number)
       const [sm, sd, sy] = startStr.split('/').map(Number)
       const nowDate = new Date(ny, nm - 1, nd)
@@ -1363,35 +1359,90 @@ function ChipsTab() {
                               <div className={`h-full rounded-full transition-all duration-300 ${progressColor}`} style={{ width: `${Math.min(progressPct, 100)}%` }} />
                             </div>
 
-                            {/* Aquecimento — shows phase + day */}
+                            {/* Aquecimento — shows phase + editable day */}
                             {chip.warmingEnabled && (
-                              <div className="flex justify-between items-center">
-                                <span className="text-muted-foreground">Aquecimento</span>
-                                <div className="flex items-center gap-1">
-                                  <Badge variant="secondary" className="gap-1 text-xs">
-                                    {phase === 'ready' ? (
-                                      <><CheckCircle2 className="size-3" /> Aquecido</>
-                                    ) : phase === 'prewarm' ? (
-                                      <><Flame className="size-3" /> Pré-aquecido{info.phaseMaxDays > 0 ? ` Dia ${info.phaseDay}/${info.phaseMaxDays}` : ''}</>
-                                    ) : (
-                                      <><Baby className="size-3" /> Berçário{info.phaseMaxDays > 0 ? ` Dia ${info.phaseDay}/${info.phaseMaxDays}` : ''}</>
-                                    )}
-                                  </Badge>
-                                  <Select value={phase} onValueChange={async (v) => {
-                                    try {
-                                      await fetch(`/api/chips/${chip.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ warmingPhase: v }) })
-                                      toast.success('Fase de aquecimento atualizada!')
-                                      fetchChips()
-                                    } catch { toast.error('Erro ao atualizar fase') }
-                                  }}>
-                                    <SelectTrigger className="h-7 rounded-md border border-input bg-background px-2 text-xs gap-1 hover:bg-accent"><Pencil className="size-3" /><span className="sr-only">Alterar fase</span></SelectTrigger>
-                                    <SelectContent>
-                                      <SelectItem value="nursery">Berçário</SelectItem>
-                                      <SelectItem value="prewarm">Pré-aquecido</SelectItem>
-                                      <SelectItem value="ready">Aquecido</SelectItem>
-                                    </SelectContent>
-                                  </Select>
+                              <div className="space-y-1.5">
+                                <div className="flex justify-between items-center">
+                                  <span className="text-muted-foreground">Aquecimento</span>
+                                  <div className="flex items-center gap-1">
+                                    <Badge variant="secondary" className="gap-1 text-xs">
+                                      {phase === 'ready' ? (
+                                        <><CheckCircle2 className="size-3" /> Aquecido</>
+                                      ) : phase === 'prewarm' ? (
+                                        <><Flame className="size-3" /> Pré-aquecido</>
+                                      ) : (
+                                        <><Baby className="size-3" /> Berçário</>
+                                      )}
+                                    </Badge>
+                                    <Select value={phase} onValueChange={async (v) => {
+                                      try {
+                                        await fetch(`/api/chips/${chip.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ warmingPhase: v }) })
+                                        toast.success('Fase atualizada!')
+                                        fetchChips()
+                                      } catch { toast.error('Erro ao atualizar fase') }
+                                    }}>
+                                      <SelectTrigger className="h-7 rounded-md border border-input bg-background px-2 text-xs gap-1 hover:bg-accent"><Pencil className="size-3" /><span className="sr-only">Alterar fase</span></SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="nursery">Berçário</SelectItem>
+                                        <SelectItem value="prewarm">Pré-aquecido</SelectItem>
+                                        <SelectItem value="ready">Aquecido</SelectItem>
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
                                 </div>
+                                {/* Day info + edit button */}
+                                {phase !== 'ready' && (
+                                  <div className="flex items-center justify-between pl-2">
+                                    <div className="flex items-center gap-1.5">
+                                      {!chip.warmingStartedAt && (
+                                        <Badge variant="outline" className="text-[10px] px-1.5 py-0 text-blue-600 border-blue-300 bg-blue-50 dark:bg-blue-900/20 dark:border-blue-800 dark:text-blue-400 gap-1">
+                                          <Clock className="size-2.5" /> Nunca enviou
+                                        </Badge>
+                                      )}
+                                      {chip.warmingStartedAt && info.phaseMaxDays > 0 && (
+                                        <span className="text-[11px] text-muted-foreground">
+                                          Dia {info.phaseDay} de {info.phaseMaxDays} — <span className="font-medium text-foreground">{info.effectiveLimit} msg/dia</span>
+                                        </span>
+                                      )}
+                                    </div>
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      className="h-6 px-2 text-[10px] text-muted-foreground hover:text-foreground gap-1"
+                                      onClick={() => {
+                                        const maxDay = info.phaseMaxDays || 20
+                                        const input = prompt(`Definir dia do aquecimento (1-${maxDay}):`, String(info.phaseDay))
+                                        if (input === null) return
+                                        const day = parseInt(input)
+                                        if (isNaN(day) || day < 1 || day > maxDay) {
+                                          toast.error(`Dia inválido. Use 1 a ${maxDay}`)
+                                          return
+                                        }
+                                        // Calculate the warmingStartedAt date that would result in this day
+                                        // warmingStartedAt = now - (day - 1) days
+                                        const newStartDate = new Date()
+                                        newStartDate.setDate(newStartDate.getDate() - (day - 1))
+                                        newStartDate.setHours(0, 0, 0, 0)
+                                        fetch(`/api/chips/${chip.id}`, {
+                                          method: 'PATCH',
+                                          headers: { 'Content-Type': 'application/json' },
+                                          body: JSON.stringify({ warmingStartedAt: newStartDate.toISOString() })
+                                        }).then(() => {
+                                          toast.success(`Dia ajustado para ${day} — limite: ${(() => {
+                                            const schedule = phase === 'nursery'
+                                              ? JSON.parse(antiBanSettings?.nurserySchedule || '[]')
+                                              : JSON.parse(antiBanSettings?.prewarmSchedule || '[]')
+                                            const entry = schedule.find((s: any) => day >= s.days[0] && day <= s.days[1])
+                                            return entry?.limit || 10
+                                          })()} msg/dia`)
+                                          fetchChips()
+                                        }).catch(() => toast.error('Erro ao ajustar dia'))
+                                      }}
+                                    >
+                                      <Pencil className="size-2.5" /> Ajustar dia
+                                    </Button>
+                                  </div>
+                                )}
                               </div>
                             )}
                           </>

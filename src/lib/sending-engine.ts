@@ -345,7 +345,7 @@ function getMinimumIntervalForChip(
 }
 
 function getEffectiveDailyLimit(
-  chip: { dailyLimit: number; warmingEnabled: boolean; warmingStage: number; warmingPhase?: string; prewarmStartedAt?: Date | null; createdAt: string },
+  chip: { dailyLimit: number; warmingEnabled: boolean; warmingStage: number; warmingPhase?: string; warmingStartedAt?: Date | null; prewarmStartedAt?: Date | null; createdAt: string },
   settings: AntiBanConfig,
   warmingMode?: string
 ): number {
@@ -367,16 +367,19 @@ function getEffectiveDailyLimit(
   }
 
   // Calculate current day within the phase
-  let dayInPhase: number
+  // KEY: If warmingStartedAt is null (chip never sent), always Day 1
+  let dayInPhase = 1
   const now = new Date()
-  
-  if (phase === 'nursery') {
-    const createdAt = new Date(chip.createdAt)
-    dayInPhase = Math.floor((now.getTime() - createdAt.getTime()) / (1000 * 60 * 60 * 24)) + 1
+  const warmingStart = (chip as any).warmingStartedAt ? new Date((chip as any).warmingStartedAt) : null
+
+  if (!warmingStart) {
+    // Chip never sent a message — always Day 1 regardless of age
+    dayInPhase = 1
+  } else if (phase === 'nursery') {
+    dayInPhase = Math.floor((now.getTime() - warmingStart.getTime()) / (1000 * 60 * 60 * 24)) + 1
   } else {
-    // prewarm phase
-    const prewarmStart = (chip as any).prewarmStartedAt ? new Date((chip as any).prewarmStartedAt) : new Date(chip.createdAt)
-    dayInPhase = Math.floor((now.getTime() - prewarmStart.getTime()) / (1000 * 60 * 60 * 24)) + 1
+    // prewarm phase — use warmingStartedAt as reference
+    dayInPhase = Math.floor((now.getTime() - warmingStart.getTime()) / (1000 * 60 * 60 * 24)) + 1
   }
   
   dayInPhase = Math.max(1, dayInPhase)
@@ -1586,9 +1589,16 @@ export async function processNextMessage(campaignId: string): Promise<{
     })
 
     // Increment chip counter (daily + hourly)
+    // Also set warmingStartedAt on first-ever send (if not already set)
     await db.chip.update({
       where: { id: message.chipId },
-      data: { sentToday: { increment: 1 }, hourlySent: { increment: 1 }, lastSeen: new Date() },
+      data: {
+        sentToday: { increment: 1 },
+        hourlySent: { increment: 1 },
+        lastSeen: new Date(),
+        // Set warmingStartedAt on first send — warming clock starts from here, not from registration
+        ...(currentChip.warmingStartedAt ? {} : { warmingStartedAt: new Date() }),
+      },
     })
 
     // ============================================
