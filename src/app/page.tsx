@@ -7259,6 +7259,30 @@ export default function OctupusZapApp() {
   const [forgotForm, setForgotForm] = useState({ newPassword: '', confirmPassword: '', verificationKey: '' })
   const [forgotLoading, setForgotLoading] = useState(false)
 
+  // Live clock — Brasília time (UTC-3)
+  const [brasiliaTime, setBrasiliaTime] = useState('')
+  const [brasiliaDate, setBrasiliaDate] = useState('')
+  const [brasiliaSeconds, setBrasiliaSeconds] = useState('')
+  useEffect(() => {
+    const update = () => {
+      const now = new Date()
+      const fmt = new Intl.DateTimeFormat('pt-BR', {
+        timeZone: 'America/Sao_Paulo',
+        day: '2-digit', month: '2-digit', year: 'numeric',
+        hour: '2-digit', minute: '2-digit', second: '2-digit',
+        hour12: false,
+      })
+      const parts = fmt.formatToParts(now)
+      const get = (type: string) => parts.find(p => p.type === type)?.value || ''
+      setBrasiliaDate(`${get('day')}/${get('month')}/${get('year')}`)
+      setBrasiliaTime(`${get('hour')}:${get('minute')}`)
+      setBrasiliaSeconds(get('second'))
+    }
+    update()
+    const interval = setInterval(update, 1000)
+    return () => clearInterval(interval)
+  }, [])
+
   useEffect(() => {
     fetch('/api/auth/session').then(r => r.json()).then(data => {
       if (data.authenticated) {
@@ -7679,6 +7703,12 @@ export default function OctupusZapApp() {
 
           <div className="flex-1" />
 
+          {/* Relógio Brasília — sempre visível */}
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground select-none">
+            <span className="font-medium">{brasiliaDate}</span>
+            <span className="text-foreground font-semibold tabular-nums text-sm">{brasiliaTime}</span>
+            <span className="text-[10px] tabular-nums text-muted-foreground">{brasiliaSeconds}</span>
+          </div>
 
         </header>
 
