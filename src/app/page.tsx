@@ -1910,7 +1910,7 @@ function ContatosTab() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-2xl font-bold">Contatos</h2>
+          <h2 className="text-2xl font-bold">Lista de Contatos</h2>
           <p className="text-sm text-muted-foreground">Gerencie suas listas e contatos</p>
         </div>
         <div className="flex gap-2 flex-wrap">
@@ -1973,7 +1973,28 @@ function ContatosTab() {
               <ArrowLeft className="size-4" /> Voltar
             </Button>
             <Separator orientation="vertical" className="h-6" />
-            <h3 className="text-lg font-semibold">{selectedList.name}</h3>
+            <h3 className="text-lg font-semibold"
+              contentEditable={true}
+              suppressContentEditableWarning={true}
+              onBlur={async (e) => {
+                const newName = e.currentTarget.textContent?.trim()
+                if (newName && newName !== selectedList!.name) {
+                  try {
+                    await fetch(`/api/contact-lists/${selectedList!.id}`, {
+                      method: 'PATCH',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ name: newName }),
+                    })
+                    setSelectedList({ ...selectedList!, name: newName })
+                    fetchLists()
+                    toast.success('Nome atualizado!')
+                  } catch { toast.error('Erro ao renomear lista') }
+                }
+              }}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur() } }}
+              className="text-lg font-semibold outline-none border-b border-transparent hover:border-muted-foreground/30 focus:border-primary px-1 rounded cursor-text"
+              title="Clique para editar o nome"
+            >{selectedList.name}</h3>
             <Badge variant="secondary">{contacts.length} contatos</Badge>
           </div>
 
