@@ -3053,7 +3053,13 @@ function CampanhasTab() {
       const payload = {
         name: newCampaign.name, sendIntervalMin: newCampaign.sendIntervalMin, sendIntervalMax: newCampaign.sendIntervalMax,
         chipIds: newCampaign.chipIds, contactListId: newCampaign.contactListId || null,
-        scheduledAt: newCampaign.scheduledAt ? new Date(newCampaign.scheduledAt).toISOString() : null,
+        scheduledAt: newCampaign.scheduledAt ? (() => {
+          // datetime-local value is in Brasília time (UTC-3)
+          // Append timezone offset so Date() converts correctly to UTC for the database
+          const localVal = newCampaign.scheduledAt // e.g. "2026-05-21T15:00"
+          const brasiliaOffset = '-03:00'
+          return new Date(localVal + brasiliaOffset).toISOString()
+        })() : null,
         steps: stepsPayload, antiBanEnabled: newCampaign.antiBanEnabled, warmingMode: newCampaign.warmingMode,
       }
 
@@ -3420,7 +3426,14 @@ function CampanhasTab() {
       sendIntervalMax: campaign.sendIntervalMax || 90,
       chipIds: (campaign.chips || []).map(cc => cc.chipId),
       contactListId: campaign.contactList?.id || '',
-      scheduledAt: campaign.scheduledAt ? new Date(campaign.scheduledAt).toISOString().slice(0, 16) : '',
+      scheduledAt: campaign.scheduledAt ? (() => {
+        // Convert UTC to Brasília time for the datetime-local input
+        const d = new Date(campaign.scheduledAt)
+        const brasilia = new Date(d.toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }))
+        const offset = brasilia.getTimezoneOffset()
+        const local = new Date(brasilia.getTime() - offset * 60000)
+        return local.toISOString().slice(0, 16)
+      })() : '',
       steps,
       antiBanEnabled: campaign.antiBanEnabled ?? true,
       warmingMode: campaign.warmingMode || 'normal',
@@ -3489,7 +3502,7 @@ function CampanhasTab() {
         sendIntervalMax: editForm.sendIntervalMax,
         chipIds: editForm.chipIds,
         contactListId: editForm.contactListId || null,
-        scheduledAt: editForm.scheduledAt ? new Date(editForm.scheduledAt).toISOString() : null,
+        scheduledAt: editForm.scheduledAt ? new Date(editForm.scheduledAt + '-03:00').toISOString() : null,
         steps: stepsPayload,
         antiBanEnabled: editForm.antiBanEnabled,
         warmingMode: editForm.warmingMode,
@@ -4184,7 +4197,7 @@ function CampanhasTab() {
                       <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
                         <span className="flex items-center gap-1"><Smartphone className="size-3" /> {c.chips?.length || 0} chips</span>
                         {c.contactList && <span className="flex items-center gap-1"><Users className="size-3" /> {c.contactList.name}</span>}
-                        {c.scheduledAt && <span className="flex items-center gap-1"><CalendarDays className="size-3" /> {new Date(c.scheduledAt).toLocaleDateString('pt-BR')}</span>}
+                        {c.scheduledAt && <span className="flex items-center gap-1"><CalendarDays className="size-3" /> {new Date(c.scheduledAt).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>}
                         {c.sequenceSteps?.length > 0 && <span className="flex items-center gap-1"><ArrowRight className="size-3" /> {c.sequenceSteps.length} mensagens</span>}
                       </div>
                     </div>
