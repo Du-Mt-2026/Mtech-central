@@ -5948,12 +5948,16 @@ function MensagensTab() {
   const [statusFilter, setStatusFilter] = useState('all')
   const [searchQuery, setSearchQuery] = useState('')
 
-  const fetchMessages = useCallback(async () => {
+  const [refreshing, setRefreshing] = useState(false)
+
+  const fetchMessages = useCallback(async (showLoading = false) => {
+    if (showLoading) setRefreshing(true)
     try {
       const res = await fetch('/api/messages')
-      setMessages(await res.json())
+      const data = await res.json()
+      setMessages(Array.isArray(data) ? data : [])
     } catch { toast.error('Erro ao carregar mensagens') }
-    finally { setLoading(false) }
+    finally { setLoading(false); setRefreshing(false) }
   }, [])
 
   useEffect(() => { fetchMessages() }, [fetchMessages])
@@ -6016,6 +6020,10 @@ function MensagensTab() {
           <p className="text-sm text-muted-foreground">Histórico completo de mensagens enviadas</p>
         </div>
         <div className="flex items-center gap-2">
+          <Button variant="outline" className="gap-2" onClick={() => fetchMessages(true)} disabled={refreshing}>
+            <RefreshCw className={`size-4 ${refreshing ? 'animate-spin' : ''}`} />
+            Atualizar
+          </Button>
           {failedCount > 0 && (
             <Button variant="outline" className="gap-2 text-amber-600 hover:text-amber-700 border-amber-200" onClick={resendAllFailed}>
               <RotateCcw className="size-4" /> Reenviar Todas Falhas ({failedCount})
