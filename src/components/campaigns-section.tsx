@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { motion } from 'framer-motion'
-import { Plus, Play, Pause, Trash2, Loader2, Users, MessageSquare, UserCircle, Shield, Key, AlertTriangle } from 'lucide-react'
+import { Plus, Play, Pause, Trash2, Loader2, Users, MessageSquare, UserCircle, Shield, Key, AlertTriangle, Download, FileSpreadsheet } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -129,6 +129,8 @@ export function CampaignsSection() {
   const [antiBanEnabled, setAntiBanEnabled] = useState(true)
   const [warmingMode, setWarmingMode] = useState('normal')
   const [keysPopoverOpen, setKeysPopoverOpen] = useState(false)
+  const [exportingId, setExportingId] = useState<string | null>(null)
+  const [exportingAll, setExportingAll] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const { toast } = useToast()
 
@@ -273,6 +275,61 @@ export function CampaignsSection() {
     }
   }
 
+  const handleExportCampaign = async (id: string, campaignName: string) => {
+    setExportingId(id)
+    try {
+      const res = await fetch(`/api/campaigns/${id}/export`)
+      if (!res.ok) {
+        toast({ title: 'Erro ao exportar campanha', variant: 'destructive' })
+        return
+      }
+      const blob = await res.blob()
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      // Extract filename from Content-Disposition header
+      const disposition = res.headers.get('Content-Disposition')
+      const filenameMatch = disposition?.match(/filename="?([^"]+)"?/)
+      a.download = filenameMatch ? filenameMatch[1] : `relatorio_${campaignName}.csv`
+      document.body.appendChild(a)
+      a.click()
+      window.URL.revokeObjectURL(url)
+      document.body.removeChild(a)
+      toast({ title: 'Relatório exportado com sucesso!' })
+    } catch {
+      toast({ title: 'Erro ao exportar campanha', variant: 'destructive' })
+    } finally {
+      setExportingId(null)
+    }
+  }
+
+  const handleExportAll = async () => {
+    setExportingAll(true)
+    try {
+      const res = await fetch('/api/campaigns/export-all')
+      if (!res.ok) {
+        toast({ title: 'Erro ao exportar relatório geral', variant: 'destructive' })
+        return
+      }
+      const blob = await res.blob()
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      const disposition = res.headers.get('Content-Disposition')
+      const filenameMatch = disposition?.match(/filename="?([^"]+)"?/)
+      a.download = filenameMatch ? filenameMatch[1] : `relatorio_geral_campanhas.csv`
+      document.body.appendChild(a)
+      a.click()
+      window.URL.revokeObjectURL(url)
+      document.body.removeChild(a)
+      toast({ title: 'Relatório geral exportado com sucesso!' })
+    } catch {
+      toast({ title: 'Erro ao exportar relatório geral', variant: 'destructive' })
+    } finally {
+      setExportingAll(false)
+    }
+  }
+
   const toggleChip = (chipId: string) => {
     setSelectedChips((prev) =>
       prev.includes(chipId) ? prev.filter((id) => id !== chipId) : [...prev, chipId]
@@ -337,10 +394,27 @@ export function CampaignsSection() {
             Gerencie suas campanhas de envio
           </p>
         </div>
-        <Button className="bg-emerald-600 hover:bg-emerald-700 text-white" onClick={() => setDialogOpen(true)}>
-          <Plus className="w-4 h-4 mr-2" />
-          Nova Campanha
-        </Button>
+        <div className="flex gap-2">
+          {campaigns.length > 0 && (
+            <Button
+              variant="outline"
+              onClick={handleExportAll}
+              disabled={exportingAll}
+              className="border-sky-500/30 text-sky-400 hover:bg-sky-500/10 hover:text-sky-300"
+            >
+              {exportingAll ? (
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              ) : (
+                <FileSpreadsheet className="w-4 h-4 mr-2" />
+              )}
+              Exportar Todas
+            </Button>
+          )}
+          <Button className="bg-emerald-600 hover:bg-emerald-700 text-white" onClick={() => setDialogOpen(true)}>
+            <Plus className="w-4 h-4 mr-2" />
+            Nova Campanha
+          </Button>
+        </div>
       </div>
 
       {/* Create Dialog */}
@@ -758,6 +832,20 @@ export function CampaignsSection() {
                           Pausar
                         </Button>
                       ) : null}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleExportCampaign(campaign.id, campaign.name)}
+                        disabled={exportingId === campaign.id}
+                        className="text-sky-500 hover:text-sky-400 hover:bg-sky-500/10 border-sky-500/30"
+                        title="Exportar relatório desta campanha"
+                      >
+                        {exportingId === campaign.id ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <Download className="w-3.5 h-3.5" />
+                        )}
+                      </Button>
                       <Button
                         variant="outline"
                         size="sm"
