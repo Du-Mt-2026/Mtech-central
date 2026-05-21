@@ -9,6 +9,53 @@ import { addWireGuardPeer } from '@/lib/wireguard-peer-api'
 
 export async function GET() {
   try {
+    // Reset daily counters for all chips if a new day has started
+    // This ensures sentToday/verifiedToday/hourlySent are reset at midnight
+    // even when no campaign is actively sending messages
+    const now = new Date()
+    const timezone = 'America/Sao_Paulo'
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      year: 'numeric', month: 'numeric', day: 'numeric',
+      timeZone: timezone,
+    })
+    const nowDateStr = formatter.format(now)
+
+    const allChips = await db.chip.findMany({
+      select: { id: true, lastResetAt: true, lastHourlyResetAt: true, hourlySent: true, sentToday: true },
+    })
+
+    for (const chip of allChips) {
+      const lastReset = new Date(chip.lastResetAt)
+      const lastDateStr = formatter.format(lastReset)
+
+      // Daily reset
+      if (nowDateStr !== lastDateStr) {
+        await db.chip.update({
+          where: { id: chip.id },
+          data: {
+            sentToday: 0,
+            verifiedToday: 0,
+            lastResetAt: now,
+            lastVerifiedResetAt: now,
+            hourlySent: 0,
+            lastHourlyResetAt: now,
+          },
+        })
+        console.log(`[Chips GET] Reset daily counters for chip ${chip.id} (was ${chip.sentToday})`)
+      } else {
+        // Same day — check hourly reset
+        const lastHourlyReset = new Date(chip.lastHourlyResetAt ?? chip.lastResetAt)
+        const hoursSinceReset = (now.getTime() - lastHourlyReset.getTime()) / (1000 * 60 * 60)
+        if (hoursSinceReset >= 1 && chip.hourlySent > 0) {
+          await db.chip.update({
+            where: { id: chip.id },
+            data: { hourlySent: 0, lastHourlyResetAt: now },
+          })
+          console.log(`[Chips GET] Reset hourly counter for chip ${chip.id} (was ${chip.hourlySent})`)
+        }
+      }
+    }
+
     const chips = await db.chip.findMany({
       orderBy: { createdAt: 'desc' },
       include: {
