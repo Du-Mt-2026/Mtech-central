@@ -2878,6 +2878,8 @@ function CampanhasTab() {
   const [continuousStats, setContinuousStats] = useState({ processed: 0, remaining: 0, elapsed: 0 })
   const [editing, setEditing] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [exportingId, setExportingId] = useState<string | null>(null)
+  const [exportingAll, setExportingAll] = useState(false)
   const [editForm, setEditForm] = useState({
     name: '', sendIntervalMin: 30, sendIntervalMax: 90,
     chipIds: [] as string[], contactListId: '', scheduledAt: '',
@@ -3156,6 +3158,48 @@ function CampanhasTab() {
   const deleteCampaign = async (id: string) => {
     try { await fetch(`/api/campaigns/${id}`, { method: 'DELETE' }); toast.success('Campanha removida!'); fetchCampaigns() }
     catch { toast.error('Erro ao remover campanha') }
+  }
+
+  const exportCampaign = async (id: string, name: string) => {
+    setExportingId(id)
+    try {
+      const res = await fetch(`/api/campaigns/${id}/export`)
+      if (!res.ok) throw new Error('Erro ao exportar')
+      const blob = await res.blob()
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      const disposition = res.headers.get('Content-Disposition')
+      const filenameMatch = disposition?.match(/filename="?([^"]+)"?/)
+      a.download = filenameMatch ? filenameMatch[1] : `relatorio_${name}.csv`
+      document.body.appendChild(a)
+      a.click()
+      window.URL.revokeObjectURL(url)
+      document.body.removeChild(a)
+      toast.success('Relatório exportado!')
+    } catch { toast.error('Erro ao exportar relatório') }
+    finally { setExportingId(null) }
+  }
+
+  const exportAllCampaigns = async () => {
+    setExportingAll(true)
+    try {
+      const res = await fetch('/api/campaigns/export-all')
+      if (!res.ok) throw new Error('Erro ao exportar')
+      const blob = await res.blob()
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      const disposition = res.headers.get('Content-Disposition')
+      const filenameMatch = disposition?.match(/filename="?([^"]+)"?/)
+      a.download = filenameMatch ? filenameMatch[1] : 'relatorio_geral_campanhas.csv'
+      document.body.appendChild(a)
+      a.click()
+      window.URL.revokeObjectURL(url)
+      document.body.removeChild(a)
+      toast.success('Relatório geral exportado!')
+    } catch { toast.error('Erro ao exportar relatório geral') }
+    finally { setExportingAll(false) }
   }
 
   const duplicateCampaign = async (c: Campaign) => {
@@ -3503,6 +3547,12 @@ function CampanhasTab() {
               {processing ? 'Processando...' : 'Processar Campanhas'}
             </Button>
           )}
+          <TooltipProvider><Tooltip><TooltipTrigger asChild>
+            <Button variant="outline" className="gap-2 border-sky-500/30 text-sky-500 hover:bg-sky-500/10 hover:text-sky-400" onClick={exportAllCampaigns} disabled={exportingAll || campaigns.length === 0}>
+              {exportingAll ? <RefreshCw className="size-4 animate-spin" /> : <FileSpreadsheet className="size-4" />}
+              Exportar Todas
+            </Button>
+          </TooltipTrigger><TooltipContent>Exportar relatório geral de todas as campanhas</TooltipContent></Tooltip></TooltipProvider>
           <Dialog open={createDialogOpen} onOpenChange={(o) => { setCreateDialogOpen(o); if (!o) { setEditing(false); setSaving(false); resetNewCampaign(); setActiveStep(0) } }}>
             <DialogTrigger asChild>
               <Button className="gap-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 shadow-lg">
@@ -4105,6 +4155,11 @@ function CampanhasTab() {
                       <TooltipProvider><Tooltip><TooltipTrigger asChild>
                         <Button variant="outline" size="sm" onClick={() => openDetail(c)}><Eye className="size-4" /></Button>
                       </TooltipTrigger><TooltipContent>Detalhes</TooltipContent></Tooltip></TooltipProvider>
+                      <TooltipProvider><Tooltip><TooltipTrigger asChild>
+                        <Button variant="outline" size="sm" className="gap-1 text-sky-500 hover:bg-sky-500/10 hover:text-sky-400 border-sky-500/30" onClick={() => exportCampaign(c.id, c.name)} disabled={exportingId === c.id}>
+                          {exportingId === c.id ? <RefreshCw className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
+                        </Button>
+                      </TooltipTrigger><TooltipContent>Exportar relatório</TooltipContent></Tooltip></TooltipProvider>
                       <TooltipProvider><Tooltip><TooltipTrigger asChild>
                         <Button variant="outline" size="sm" className="gap-1" onClick={() => duplicateCampaign(c)}><Copy className="size-3.5" /> Duplicar</Button>
                       </TooltipTrigger><TooltipContent>Criar cópia desta campanha</TooltipContent></Tooltip></TooltipProvider>
