@@ -141,10 +141,34 @@ export async function POST(request: NextRequest) {
         processed: campaignProcessed,
         skipped: campaignSkipped,
         reason: lastReason || undefined,
+        remaining: 0, // will be populated below
       })
     }
 
-    const totalRemaining = allResults.reduce((sum, r) => sum + (r.remaining > 0 ? r.remaining : 0), 0)
+    // Calculate remaining pending messages for processed campaigns
+    const processedCampaignIds = allResults.map(r => r.campaignId).filter(Boolean)
+    if (processedCampaignIds.length > 0) {
+      const remainingCounts = await db.message.groupBy({
+        by: ['campaignId'],
+        where: {
+          campaignId: { in: processedCampaignIds },
+          status: 'pending',
+        },
+        _count: { campaignId: true },
+      })
+
+      const remainingMap: Record<string, number> = {}
+      for (const rc of remainingCounts) {
+        if (rc.campaignId) remainingMap[rc.campaignId] = rc._count.campaignId
+      }
+
+      // Add remaining count to each result
+      for (const r of allResults) {
+        r.remaining = remainingMap[r.campaignId] || 0
+      }
+    }
+
+    const totalRemaining = allResults.reduce((sum, r) => sum + (r.remaining || 0), 0)
     const elapsedMs = Date.now() - startTime
 
     return NextResponse.json({

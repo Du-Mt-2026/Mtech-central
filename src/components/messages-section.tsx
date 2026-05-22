@@ -82,6 +82,8 @@ export function MessagesSection() {
       const res = await fetch(`/api/messages?${params.toString()}`)
       if (res.ok) {
         setMessages(await res.json())
+      } else {
+        toast({ title: 'Erro ao carregar mensagens', variant: 'destructive' })
       }
     } catch {
       toast({ title: 'Erro ao carregar mensagens', variant: 'destructive' })
@@ -96,12 +98,20 @@ export function MessagesSection() {
         fetch('/api/campaigns'),
         fetch('/api/chips'),
       ])
-      if (campaignsRes.ok) setCampaigns(await campaignsRes.json())
-      if (chipsRes.ok) setChips(await chipsRes.json())
+      if (campaignsRes.ok) {
+        setCampaigns(await campaignsRes.json())
+      } else {
+        toast({ title: 'Erro ao carregar campanhas', variant: 'destructive' })
+      }
+      if (chipsRes.ok) {
+        setChips(await chipsRes.json())
+      } else {
+        toast({ title: 'Erro ao carregar chips', variant: 'destructive' })
+      }
     } catch {
       // ignore
     }
-  }, [])
+  }, [toast])
 
   useEffect(() => {
     fetchFilters()

@@ -449,18 +449,14 @@ export async function POST(req: NextRequest) {
         results.push('Campaign: statusReason já existe')
       }
 
-      if (!campColumnNames.includes('mediaUrl')) {
-        await db.$executeRawUnsafe(`ALTER TABLE "Campaign" ADD COLUMN IF NOT EXISTS "mediaUrl" TEXT`)
-        results.push('Campaign: adicionada coluna mediaUrl')
-      } else {
-        results.push('Campaign: mediaUrl já existe')
+      // Clean up orphaned columns that don't exist in Prisma schema
+      if (campColumnNames.includes('mediaUrl')) {
+        await db.$executeRawUnsafe(`ALTER TABLE "Campaign" DROP COLUMN IF EXISTS "mediaUrl"`)
+        results.push('Campaign: removida coluna órfã mediaUrl')
       }
-
-      if (!campColumnNames.includes('mediatype')) {
-        await db.$executeRawUnsafe(`ALTER TABLE "Campaign" ADD COLUMN IF NOT EXISTS "mediatype" TEXT`)
-        results.push('Campaign: adicionada coluna mediatype')
-      } else {
-        results.push('Campaign: mediatype já existe')
+      if (campColumnNames.includes('mediatype')) {
+        await db.$executeRawUnsafe(`ALTER TABLE "Campaign" DROP COLUMN IF EXISTS "mediatype"`)
+        results.push('Campaign: removida coluna órfã mediatype')
       }
 
       // Also ensure Message table has mediaUrl and mediatype

@@ -75,6 +75,8 @@ export function ChipsSection() {
       if (res.ok) {
         const data = await res.json()
         setChips(data)
+      } else {
+        toast({ title: 'Erro ao carregar chips', variant: 'destructive' })
       }
     } catch {
       toast({ title: 'Erro ao carregar chips', variant: 'destructive' })

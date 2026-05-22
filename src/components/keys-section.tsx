@@ -84,6 +84,8 @@ export function KeysSection() {
       if (res.ok) {
         const data = await res.json()
         setKeys(data)
+      } else {
+        toast({ title: 'Erro ao carregar chaves', variant: 'destructive' })
       }
     } catch {
       toast({ title: 'Erro ao carregar chaves', variant: 'destructive' })

@@ -109,6 +109,8 @@ export function AntibanSection() {
             setBreakWindows(parsed)
           }
         } catch { setBreakWindows([]) }
+      } else {
+        toast({ title: 'Erro ao carregar configurações', variant: 'destructive' })
       }
     } catch {
       toast({ title: 'Erro ao carregar configurações', variant: 'destructive' })

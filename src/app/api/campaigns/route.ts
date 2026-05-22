@@ -1,49 +1,109 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    const campaigns = await db.campaign.findMany({
-      orderBy: { createdAt: 'desc' },
-      include: {
-        _count: {
-          select: { messages: true, chips: true },
-        },
-        chips: {
-          include: {
-            chip: { select: { id: true, name: true, phoneNumber: true, status: true, cooldownUntil: true, sentToday: true, dailyLimit: true, hourlySent: true, warmingPhase: true } },
-          },
-        },
-        sequenceSteps: {
-          orderBy: { stepOrder: 'asc' },
-        },
-        contactList: {
-          select: { id: true, name: true },
-        },
-        vendedor: {
-          select: { id: true, nome: true, treatAs: true },
-        },
-      },
+    const { searchParams } = new URL(request.url)
+    const pageParam = searchParams.get('page')
+    const limitParam = searchParams.get('limit')
+    const isPaginated = pageParam !== null
+
+    const page = Math.max(1, parseInt(pageParam || '1', 10) || 1)
+    const limit = Math.min(200, Math.max(1, parseInt(limitParam || '50', 10) || 50))
+
+    const where = {}
+
+    const [campaigns, total] = isPaginated
+      ? await Promise.all([
+          db.campaign.findMany({
+            where,
+            orderBy: { createdAt: 'desc' },
+            skip: (page - 1) * limit,
+            take: limit,
+            include: {
+              _count: {
+                select: { messages: true, chips: true },
+              },
+              chips: {
+                include: {
+                  chip: { select: { id: true, name: true, phoneNumber: true, status: true, cooldownUntil: true, sentToday: true, dailyLimit: true, hourlySent: true, warmingPhase: true } },
+                },
+              },
+              sequenceSteps: {
+                orderBy: { stepOrder: 'asc' },
+              },
+              contactList: {
+                select: { id: true, name: true },
+              },
+              vendedor: {
+                select: { id: true, nome: true, treatAs: true },
+              },
+            },
+          }),
+          db.campaign.count({ where }),
+        ])
+      : [
+          await db.campaign.findMany({
+            where,
+            orderBy: { createdAt: 'desc' },
+            include: {
+              _count: {
+                select: { messages: true, chips: true },
+              },
+              chips: {
+                include: {
+                  chip: { select: { id: true, name: true, phoneNumber: true, status: true, cooldownUntil: true, sentToday: true, dailyLimit: true, hourlySent: true, warmingPhase: true } },
+                },
+              },
+              sequenceSteps: {
+                orderBy: { stepOrder: 'asc' },
+              },
+              contactList: {
+                select: { id: true, name: true },
+              },
+              vendedor: {
+                select: { id: true, nome: true, treatAs: true },
+              },
+            },
+          }),
+          0,
+        ]
+
+    // Single query to get all message status counts for all campaigns (fixes N+1)
+    const allStatusCounts = await db.message.groupBy({
+      by: ['campaignId', 'status'],
+      _count: { status: true },
     })
 
-    // Add message status counts for each campaign (for live progress display)
-    const campaignsWithCounts = await Promise.all(campaigns.map(async (c) => {
-      const statusCounts = await db.message.groupBy({
-        by: ['status'],
-        where: { campaignId: c.id },
-        _count: { status: true },
-      })
-      const sc: Record<string, number> = {}
-      for (const s of statusCounts) {
-        sc[s.status] = s._count.status
-      }
-      return { ...c, messageStatusCounts: sc }
+    // Build a lookup map: campaignId -> { status: count }
+    const statusMap: Record<string, Record<string, number>> = {}
+    for (const sc of allStatusCounts) {
+      const cId = sc.campaignId || ''
+      if (!statusMap[cId]) statusMap[cId] = {}
+      statusMap[cId][sc.status] = sc._count.status
+    }
+
+    const campaignsWithCounts = campaigns.map(c => ({
+      ...c,
+      messageStatusCounts: statusMap[c.id] || {},
     }))
+
+    if (isPaginated) {
+      return NextResponse.json({
+        data: campaignsWithCounts,
+        pagination: {
+          page,
+          limit,
+          total,
+          totalPages: Math.ceil(total / limit),
+        },
+      })
+    }
 
     return NextResponse.json(campaignsWithCounts)
   } catch (error) {
     console.error('Campaigns GET error:', error)
-    return NextResponse.json([], { status: 500 })
+    return NextResponse.json({ error: 'Erro ao buscar campanhas' }, { status: 500 })
   }
 }
 

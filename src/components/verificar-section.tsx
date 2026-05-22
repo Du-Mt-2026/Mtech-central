@@ -157,6 +157,8 @@ export function VerificarSection() {
         const data = await res.json()
         setChipQuotas(data.chips || [])
         return data.chips || []
+      } else {
+        toast.error('Erro ao carregar status dos chips')
       }
     } catch {
       // silent
@@ -835,6 +837,8 @@ export function VerificarSection() {
       if (res.ok) {
         const data = await res.json()
         setContactLists(data)
+      } else {
+        toast.error('Erro ao carregar listas de contatos')
       }
     } catch {
       toast.error('Erro ao carregar listas de contatos')

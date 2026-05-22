@@ -141,6 +141,8 @@ export function CampaignsSection() {
       if (res.ok) {
         const data = await res.json()
         setCampaigns(data)
+      } else {
+        toast({ title: 'Erro ao carregar campanhas', variant: 'destructive' })
       }
     } catch {
       toast({ title: 'Erro ao carregar campanhas', variant: 'destructive' })
@@ -154,6 +156,8 @@ export function CampaignsSection() {
       const res = await fetch('/api/chips')
       if (res.ok) {
         setChips(await res.json())
+      } else {
+        toast({ title: 'Erro ao carregar chips', variant: 'destructive' })
       }
     } catch {
       // ignore
@@ -166,6 +170,8 @@ export function CampaignsSection() {
       if (res.ok) {
         const data = await res.json()
         setVendedores(data.filter((v: Vendedor) => v.ativo !== false))
+      } else {
+        toast({ title: 'Erro ao carregar vendedores', variant: 'destructive' })
       }
     } catch {
       // ignore
@@ -177,6 +183,8 @@ export function CampaignsSection() {
       const res = await fetch('/api/keys')
       if (res.ok) {
         setKeys(await res.json())
+      } else {
+        toast({ title: 'Erro ao carregar chaves', variant: 'destructive' })
       }
     } catch {
       // ignore

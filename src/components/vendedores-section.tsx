@@ -68,6 +68,8 @@ export function VendedoresSection() {
       if (res.ok) {
         const data = await res.json()
         setVendedores(data)
+      } else {
+        toast({ title: 'Erro ao carregar vendedores', variant: 'destructive' })
       }
     } catch {
       toast({ title: 'Erro ao carregar vendedores', variant: 'destructive' })
@@ -164,6 +166,8 @@ export function VendedoresSection() {
       if (res.ok) {
         toast({ title: v.ativo ? 'Vendedor desativado' : 'Vendedor reativado' })
         fetchVendedores()
+      } else {
+        toast({ title: 'Erro ao alterar status do vendedor', variant: 'destructive' })
       }
     } catch {
       toast({ title: 'Erro ao alterar status', variant: 'destructive' })

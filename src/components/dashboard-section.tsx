@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import { Smartphone, Megaphone, Send, CheckCircle } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { useToast } from '@/hooks/use-toast'
 
 interface Stats {
   totalChips: number
@@ -41,6 +42,7 @@ const cardVariants = {
 export function DashboardSection() {
   const [stats, setStats] = useState<Stats>(defaultStats)
   const [loading, setLoading] = useState(true)
+  const { toast } = useToast()
 
   useEffect(() => {
     async function fetchStats() {
@@ -49,6 +51,8 @@ export function DashboardSection() {
         if (res.ok) {
           const data = await res.json()
           setStats(data)
+        } else {
+          toast({ title: 'Erro ao carregar estatísticas', variant: 'destructive' })
         }
       } catch {
         // use default stats
