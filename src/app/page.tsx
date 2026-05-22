@@ -46,6 +46,7 @@ import { VendedoresSection } from '@/components/vendedores-section'
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core'
 import { SortableContext, useSortable, horizontalListSortingStrategy, arrayMove } from '@dnd-kit/sortable'
 import { restrictToHorizontalAxis } from '@dnd-kit/modifiers'
+import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable'
 
 // ===== Client-side Audio Conversion (OGG/Opus for WhatsApp) =====
 let ffmpegInstance: any = null
@@ -5804,6 +5805,7 @@ function InboxTab() {
   const [searchChips, setSearchChips] = useState('')
   const [searchConversations, setSearchConversations] = useState('')
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const chatScrollRef = useRef<HTMLDivElement>(null)
   const lastSyncRef = useRef<string>(new Date().toISOString())
   const syncingRef = useRef(false)
 
@@ -5880,9 +5882,16 @@ function InboxTab() {
     fetchMessages(selectedConversation)
   }, [selectedConversation, fetchMessages])
 
-  // Scroll to bottom when messages change
+  // Scroll to bottom when messages change — only within the chat ScrollArea, not the whole page
   useEffect(() => {
-    setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100)
+    if (!chatScrollRef.current || messages.length === 0) return
+    // Find the actual scrollable viewport inside the ScrollArea
+    const viewport = chatScrollRef.current.querySelector('[data-radix-scroll-area-viewport]') as HTMLElement
+    if (viewport) {
+      setTimeout(() => {
+        viewport.scrollTop = viewport.scrollHeight
+      }, 150)
+    }
   }, [messages])
 
   // Auto-sync polling: every 10s, pull new messages from Evolution API
@@ -5988,312 +5997,326 @@ function InboxTab() {
 
   return (
     <div className="flex h-[calc(100vh-12rem)] gap-0 overflow-hidden rounded-xl border bg-card shadow-lg">
-      {/* Panel 1: Chip List */}
-      <div className="w-64 shrink-0 border-r flex flex-col bg-background">
-        <div className="p-3 border-b">
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="font-semibold text-sm">Chips</h3>
-            <Button variant="ghost" size="icon" className="size-7" onClick={() => fetchChips()}>
-              <RefreshCw className="size-3.5" />
-            </Button>
-          </div>
-          <div className="relative">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
-            <Input
-              placeholder="Buscar chip..."
-              className="pl-8 h-8 text-xs"
-              value={searchChips}
-              onChange={e => setSearchChips(e.target.value)}
-            />
-          </div>
-        </div>
-        <ScrollArea className="flex-1">
-          {loadingChips ? (
-            <div className="flex items-center justify-center py-10"><RefreshCw className="size-5 animate-spin text-muted-foreground" /></div>
-          ) : chips.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-10 px-4">
-              <Smartphone className="size-8 text-muted-foreground mb-2" />
-              <p className="text-xs text-muted-foreground text-center">Nenhum chip encontrado</p>
-            </div>
-          ) : (
-            <div className="py-1">
-              {chips.map(chip => (
-                <button
-                  key={chip.id}
-                  onClick={() => { setSelectedChipId(chip.id); setSelectedConversation(null); setMessages([]) }}
-                  className={`w-full flex items-center gap-2.5 px-3 py-2.5 hover:bg-muted/50 transition-colors text-left ${
-                    selectedChipId === chip.id ? 'bg-muted/80 border-r-2 border-primary' : ''
-                  }`}
-                >
-                  <div className="relative shrink-0">
-                    <div className="size-9 rounded-full bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center text-primary font-bold text-sm">
-                      {chip.name.charAt(0).toUpperCase()}
-                    </div>
-                    <div className={`absolute -bottom-0.5 -right-0.5 size-3 rounded-full border-2 border-background ${statusColor(chip.status)}`} />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between">
-                      <p className="text-sm font-medium truncate">{chip.name}</p>
-                      {chip.unreadCount > 0 && (
-                        <Badge className="size-5 p-0 flex items-center justify-center text-[10px] bg-primary text-primary-foreground rounded-full">
-                          {chip.unreadCount > 99 ? '99+' : chip.unreadCount}
-                        </Badge>
-                      )}
-                    </div>
-                    <p className="text-xs text-muted-foreground truncate">{chip.phoneNumber}</p>
-                  </div>
-                </button>
-              ))}
-            </div>
-          )}
-        </ScrollArea>
-      </div>
-
-      {/* Panel 2: Conversations List */}
-      <div className="w-80 shrink-0 border-r flex flex-col bg-background">
-        <div className="p-3 border-b">
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="font-semibold text-sm">
-              {selectedChipId ? chips.find(c => c.id === selectedChipId)?.name || 'Conversas' : 'Selecione um Chip'}
-            </h3>
-            {selectedChipId && (
-              <Badge variant="outline" className="text-[10px]">
-                {conversations.length} conversa{conversations.length !== 1 ? 's' : ''}
-              </Badge>
-            )}
-          </div>
-          {selectedChipId && (
-            <div className="relative">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
-              <Input
-                placeholder="Buscar contato..."
-                className="pl-8 h-8 text-xs"
-                value={searchConversations}
-                onChange={e => setSearchConversations(e.target.value)}
-              />
-            </div>
-          )}
-        </div>
-        <ScrollArea className="flex-1">
-          {!selectedChipId ? (
-            <div className="flex flex-col items-center justify-center py-16 px-4">
-              <MessageCircle className="size-10 text-muted-foreground mb-3" />
-              <p className="text-sm text-muted-foreground text-center">Selecione um chip para ver as conversas</p>
-            </div>
-          ) : loadingConversations ? (
-            <div className="flex items-center justify-center py-10"><RefreshCw className="size-5 animate-spin text-muted-foreground" /></div>
-          ) : conversations.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-16 px-4">
-              <Inbox className="size-10 text-muted-foreground mb-3" />
-              <p className="text-sm text-muted-foreground text-center">Nenhuma conversa encontrada</p>
-              <p className="text-xs text-muted-foreground text-center mt-1">As mensagens trocadas aparecerão aqui</p>
-            </div>
-          ) : (
-            <div className="py-1">
-              {conversations.map(conv => (
-                <button
-                  key={`${conv.chipId}-${conv.remoteJid}`}
-                  onClick={() => setSelectedConversation(conv)}
-                  className={`w-full flex items-start gap-2.5 px-3 py-3 hover:bg-muted/50 transition-colors text-left ${
-                    selectedConversation?.remoteJid === conv.remoteJid && selectedConversation?.chipId === conv.chipId
-                      ? 'bg-muted/80 border-r-2 border-primary'
-                      : ''
-                  } ${conv.unreadCount > 0 ? 'bg-primary/5' : ''}`}
-                >
-                  <div className="size-10 rounded-full bg-gradient-to-br from-blue-100 to-blue-50 dark:from-blue-900/30 dark:to-blue-800/20 flex items-center justify-center text-blue-600 dark:text-blue-400 font-bold text-sm shrink-0">
-                    {conv.contactName.charAt(0).toUpperCase()}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between gap-2">
-                      <p className={`text-sm truncate ${conv.unreadCount > 0 ? 'font-bold' : 'font-medium'}`}>
-                        {conv.contactName}
-                      </p>
-                      <span className="text-[10px] text-muted-foreground shrink-0">
-                        {formatTime(conv.lastMessageAt)}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-1 mt-0.5">
-                      {conv.lastMessage.fromMe && (
-                        <Check className="size-3 text-muted-foreground shrink-0" />
-                      )}
-                      {conv.lastMessage.type !== 'text' && (
-                        <MsgTypeIcon type={conv.lastMessage.type} />
-                      )}
-                      <p className={`text-xs truncate ${conv.unreadCount > 0 ? 'text-foreground font-medium' : 'text-muted-foreground'}`}>
-                        {conv.lastMessage.content || `Mensagem de ${conv.lastMessage.type}`}
-                      </p>
-                    </div>
-                    {conv.unreadCount > 0 && (
-                      <Badge className="mt-1 size-5 p-0 flex items-center justify-center text-[10px] bg-primary text-primary-foreground rounded-full">
-                        {conv.unreadCount}
-                      </Badge>
-                    )}
-                  </div>
-                </button>
-              ))}
-            </div>
-          )}
-        </ScrollArea>
-      </div>
-
-      {/* Panel 3: Chat View */}
-      <div className="flex-1 flex flex-col bg-muted/20">
-        {!selectedConversation ? (
-          <div className="flex-1 flex flex-col items-center justify-center">
-            <MessageCircle className="size-16 text-muted-foreground/30 mb-4" />
-            <p className="text-lg font-medium text-muted-foreground">Selecione uma conversa</p>
-            <p className="text-sm text-muted-foreground mt-1">Escolha um chip e depois uma conversa para ver as mensagens</p>
-          </div>
-        ) : (
-          <>
-            {/* Chat Header */}
-            <div className="px-4 py-3 border-b bg-background flex items-center gap-3">
-              <div className="size-10 rounded-full bg-gradient-to-br from-blue-100 to-blue-50 dark:from-blue-900/30 dark:to-blue-800/20 flex items-center justify-center text-blue-600 dark:text-blue-400 font-bold text-sm">
-                {selectedConversation.contactName.charAt(0).toUpperCase()}
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="font-semibold text-sm">{selectedConversation.contactName}</p>
-                <p className="text-xs text-muted-foreground">
-                  {selectedConversation.remotePhone}
-                  {selectedConversation.chip && ` • via ${selectedConversation.chip.name}`}
-                </p>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <Badge variant="outline" className="text-[10px]">
-                  {selectedConversation.totalMessages} msg
-                </Badge>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="size-8"
-                  onClick={() => fetchMessages(selectedConversation)}
-                >
+      <ResizablePanelGroup direction="horizontal" className="flex h-full">
+        {/* Panel 1: Chip List */}
+        <ResizablePanel defaultSize={18} minSize={12} maxSize={30}>
+          <div className="h-full flex flex-col bg-background">
+            <div className="p-3 border-b">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="font-semibold text-sm">Chips</h3>
+                <Button variant="ghost" size="icon" className="size-7" onClick={() => fetchChips()}>
                   <RefreshCw className="size-3.5" />
                 </Button>
               </div>
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
+                <Input
+                  placeholder="Buscar chip..."
+                  className="pl-8 h-8 text-xs"
+                  value={searchChips}
+                  onChange={e => setSearchChips(e.target.value)}
+                />
+              </div>
             </div>
-
-            {/* Messages Area */}
-            <ScrollArea className="flex-1 px-4 py-3">
-              {loadingMessages ? (
+            <ScrollArea className="flex-1">
+              {loadingChips ? (
                 <div className="flex items-center justify-center py-10"><RefreshCw className="size-5 animate-spin text-muted-foreground" /></div>
-              ) : messages.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-16">
-                  <MessageSquare className="size-10 text-muted-foreground mb-3" />
-                  <p className="text-sm text-muted-foreground">Nenhuma mensagem nesta conversa</p>
+              ) : chips.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-10 px-4">
+                  <Smartphone className="size-8 text-muted-foreground mb-2" />
+                  <p className="text-xs text-muted-foreground text-center">Nenhum chip encontrado</p>
                 </div>
               ) : (
-                <div className="space-y-2 max-w-2xl mx-auto">
-                  {messages.map((msg, idx) => {
-                    const isMe = msg.fromMe
-                    const showDate = idx === 0 || (() => {
-                      const prevDate = new Date(messages[idx - 1].createdAt).toDateString()
-                      const currDate = new Date(msg.createdAt).toDateString()
-                      return prevDate !== currDate
-                    })()
-
-                    return (
-                      <React.Fragment key={msg.id}>
-                        {showDate && (
-                          <div className="flex items-center justify-center py-2">
-                            <Badge variant="secondary" className="text-[10px] font-normal">
-                              {new Date(msg.createdAt).toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' })}
-                            </Badge>
-                          </div>
-                        )}
-                        <div className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
-                          <div className={`max-w-[75%] rounded-2xl px-3.5 py-2 ${
-                            isMe
-                              ? 'bg-primary text-primary-foreground rounded-br-md'
-                              : 'bg-background border rounded-bl-md'
-                          }`}>
-                            {/* Media preview */}
-                            {msg.mediaUrl && msg.messageType === 'image' && (
-                              <div className="mb-1.5 rounded-lg overflow-hidden">
-                                <img
-                                  src={msg.mediaUrl}
-                                  alt="Imagem"
-                                  className="max-w-full max-h-60 object-cover rounded-lg"
-                                  onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
-                                />
-                              </div>
-                            )}
-                            {msg.mediaUrl && msg.messageType === 'video' && (
-                              <div className="mb-1.5 rounded-lg overflow-hidden bg-black/10 flex items-center justify-center h-32">
-                                <Video className="size-8 text-muted-foreground" />
-                              </div>
-                            )}
-                            {msg.mediaUrl && msg.messageType === 'audio' && (
-                              <div className="mb-1.5 flex items-center gap-2 px-1 py-0.5">
-                                <Mic className="size-4" />
-                                <span className="text-xs">Mensagem de voz</span>
-                              </div>
-                            )}
-                            {msg.mediaUrl && msg.messageType === 'document' && (
-                              <div className="mb-1.5 flex items-center gap-2 px-1 py-0.5">
-                                <File className="size-4" />
-                                <span className="text-xs">Documento</span>
-                              </div>
-                            )}
-                            {/* Text content */}
-                            {msg.messageContent && (
-                              <p className="text-sm whitespace-pre-wrap break-words">{msg.messageContent}</p>
-                            )}
-                            {/* Time */}
-                            <div className={`flex items-center gap-1 mt-1 ${isMe ? 'justify-end' : 'justify-start'}`}>
-                              <span className={`text-[10px] ${isMe ? 'text-primary-foreground/70' : 'text-muted-foreground'}`}>
-                                {new Date(msg.createdAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
-                              </span>
-                            </div>
-                          </div>
+                <div className="py-1">
+                  {chips.map(chip => (
+                    <button
+                      key={chip.id}
+                      onClick={() => { setSelectedChipId(chip.id); setSelectedConversation(null); setMessages([]) }}
+                      className={`w-full flex items-center gap-2.5 px-3 py-2.5 hover:bg-muted/50 transition-colors text-left ${
+                        selectedChipId === chip.id ? 'bg-muted/80 border-r-2 border-primary' : ''
+                      }`}
+                    >
+                      <div className="relative shrink-0">
+                        <div className="size-9 rounded-full bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center text-primary font-bold text-sm">
+                          {chip.name.charAt(0).toUpperCase()}
                         </div>
-                      </React.Fragment>
-                    )
-                  })}
-                  <div ref={messagesEndRef} />
+                        <div className={`absolute -bottom-0.5 -right-0.5 size-3 rounded-full border-2 border-background ${statusColor(chip.status)}`} />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between">
+                          <p className="text-sm font-medium truncate">{chip.name}</p>
+                          {chip.unreadCount > 0 && (
+                            <Badge className="size-5 p-0 flex items-center justify-center text-[10px] bg-primary text-primary-foreground rounded-full ml-1">
+                              {chip.unreadCount > 99 ? '99+' : chip.unreadCount}
+                            </Badge>
+                          )}
+                        </div>
+                        <p className="text-xs text-muted-foreground truncate">{chip.phoneNumber}</p>
+                      </div>
+                    </button>
+                  ))}
                 </div>
               )}
             </ScrollArea>
+          </div>
+        </ResizablePanel>
 
-            {/* Reply Input */}
-            {selectedConversation.chip?.status === 'connected' ? (
-              <div className="px-4 py-3 border-t bg-background">
-                <div className="flex items-end gap-2 max-w-2xl mx-auto">
-                  <div className="flex-1">
-                    <Textarea
-                      placeholder="Digite uma mensagem..."
-                      className="min-h-[42px] max-h-32 resize-none text-sm"
-                      value={replyText}
-                      onChange={e => setReplyText(e.target.value)}
-                      onKeyDown={e => {
-                        if (e.key === 'Enter' && !e.shiftKey) {
-                          e.preventDefault()
-                          handleReply()
-                        }
-                      }}
-                      disabled={sending}
-                    />
-                  </div>
-                  <Button
-                    size="icon"
-                    className="size-10 shrink-0"
-                    onClick={handleReply}
-                    disabled={!replyText.trim() || sending}
-                  >
-                    {sending ? <RefreshCw className="size-4 animate-spin" /> : <Send className="size-4" />}
-                  </Button>
+        <ResizableHandle withHandle />
+
+        {/* Panel 2: Conversations List */}
+        <ResizablePanel defaultSize={25} minSize={18} maxSize={40}>
+          <div className="h-full flex flex-col bg-background">
+            <div className="p-3 border-b">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="font-semibold text-sm">
+                  {selectedChipId ? chips.find(c => c.id === selectedChipId)?.name || 'Conversas' : 'Selecione um Chip'}
+                </h3>
+                {selectedChipId && (
+                  <Badge variant="outline" className="text-[10px]">
+                    {conversations.length} conversa{conversations.length !== 1 ? 's' : ''}
+                  </Badge>
+                )}
+              </div>
+              {selectedChipId && (
+                <div className="relative">
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
+                  <Input
+                    placeholder="Buscar contato..."
+                    className="pl-8 h-8 text-xs"
+                    value={searchConversations}
+                    onChange={e => setSearchConversations(e.target.value)}
+                  />
                 </div>
+              )}
+            </div>
+            <ScrollArea className="flex-1">
+              {!selectedChipId ? (
+                <div className="flex flex-col items-center justify-center py-16 px-4">
+                  <MessageCircle className="size-10 text-muted-foreground mb-3" />
+                  <p className="text-sm text-muted-foreground text-center">Selecione um chip para ver as conversas</p>
+                </div>
+              ) : loadingConversations ? (
+                <div className="flex items-center justify-center py-10"><RefreshCw className="size-5 animate-spin text-muted-foreground" /></div>
+              ) : conversations.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-16 px-4">
+                  <Inbox className="size-10 text-muted-foreground mb-3" />
+                  <p className="text-sm text-muted-foreground text-center">Nenhuma conversa encontrada</p>
+                  <p className="text-xs text-muted-foreground text-center mt-1">As mensagens trocadas aparecerão aqui</p>
+                </div>
+              ) : (
+                <div className="py-1">
+                  {conversations.map(conv => (
+                    <button
+                      key={`${conv.chipId}-${conv.remoteJid}`}
+                      onClick={() => setSelectedConversation(conv)}
+                      className={`w-full flex items-start gap-2.5 px-3 py-3 hover:bg-muted/50 transition-colors text-left ${
+                        selectedConversation?.remoteJid === conv.remoteJid && selectedConversation?.chipId === conv.chipId
+                          ? 'bg-muted/80 border-r-2 border-primary'
+                          : ''
+                      } ${conv.unreadCount > 0 ? 'bg-primary/5' : ''}`}
+                    >
+                      <div className="size-10 rounded-full bg-gradient-to-br from-blue-100 to-blue-50 dark:from-blue-900/30 dark:to-blue-800/20 flex items-center justify-center text-blue-600 dark:text-blue-400 font-bold text-sm shrink-0">
+                        {conv.contactName.charAt(0).toUpperCase()}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className={`text-sm truncate ${conv.unreadCount > 0 ? 'font-bold' : 'font-medium'}`}>
+                            {conv.contactName}
+                          </p>
+                          <span className="text-[10px] text-muted-foreground shrink-0">
+                            {formatTime(conv.lastMessageAt)}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1 mt-0.5">
+                          {conv.lastMessage.fromMe && (
+                            <Check className="size-3 text-muted-foreground shrink-0" />
+                          )}
+                          {conv.lastMessage.type !== 'text' && (
+                            <MsgTypeIcon type={conv.lastMessage.type} />
+                          )}
+                          <p className={`text-xs truncate ${conv.unreadCount > 0 ? 'text-foreground font-medium' : 'text-muted-foreground'}`}>
+                            {conv.lastMessage.content || `Mensagem de ${conv.lastMessage.type}`}
+                          </p>
+                        </div>
+                        {conv.unreadCount > 0 && (
+                          <Badge className="mt-1 size-5 p-0 flex items-center justify-center text-[10px] bg-primary text-primary-foreground rounded-full">
+                            {conv.unreadCount}
+                          </Badge>
+                        )}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </ScrollArea>
+          </div>
+        </ResizablePanel>
+
+        <ResizableHandle withHandle />
+
+        {/* Panel 3: Chat View */}
+        <ResizablePanel defaultSize={57} minSize={30}>
+          <div className="h-full flex flex-col bg-muted/20">
+            {!selectedConversation ? (
+              <div className="flex-1 flex flex-col items-center justify-center">
+                <MessageCircle className="size-16 text-muted-foreground/30 mb-4" />
+                <p className="text-lg font-medium text-muted-foreground">Selecione uma conversa</p>
+                <p className="text-sm text-muted-foreground mt-1">Escolha um chip e depois uma conversa para ver as mensagens</p>
               </div>
             ) : (
-              <div className="px-4 py-3 border-t bg-muted/50">
-                <p className="text-xs text-muted-foreground text-center">
-                  Este chip está {statusLabel(selectedConversation.chip?.status || 'disconnected')}. Conecte o chip para responder.
-                </p>
-              </div>
+              <>
+                {/* Chat Header */}
+                <div className="px-4 py-3 border-b bg-background flex items-center gap-3">
+                  <div className="size-10 rounded-full bg-gradient-to-br from-blue-100 to-blue-50 dark:from-blue-900/30 dark:to-blue-800/20 flex items-center justify-center text-blue-600 dark:text-blue-400 font-bold text-sm">
+                    {selectedConversation.contactName.charAt(0).toUpperCase()}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold text-sm">{selectedConversation.contactName}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {selectedConversation.remotePhone}
+                      {selectedConversation.chip && ` • via ${selectedConversation.chip.name}`}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <Badge variant="outline" className="text-[10px]">
+                      {selectedConversation.totalMessages} msg
+                    </Badge>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="size-8"
+                      onClick={() => fetchMessages(selectedConversation)}
+                    >
+                      <RefreshCw className="size-3.5" />
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Messages Area */}
+                <div ref={chatScrollRef} className="flex-1 min-h-0 overflow-hidden">
+                <ScrollArea className="h-full px-4 py-3">
+                  {loadingMessages ? (
+                    <div className="flex items-center justify-center py-10"><RefreshCw className="size-5 animate-spin text-muted-foreground" /></div>
+                  ) : messages.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-16">
+                      <MessageSquare className="size-10 text-muted-foreground mb-3" />
+                      <p className="text-sm text-muted-foreground">Nenhuma mensagem nesta conversa</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2 max-w-2xl mx-auto">
+                      {messages.map((msg, idx) => {
+                        const isMe = msg.fromMe
+                        const showDate = idx === 0 || (() => {
+                          const prevDate = new Date(messages[idx - 1].createdAt).toDateString()
+                          const currDate = new Date(msg.createdAt).toDateString()
+                          return prevDate !== currDate
+                        })()
+
+                        return (
+                          <React.Fragment key={msg.id}>
+                            {showDate && (
+                              <div className="flex items-center justify-center py-2">
+                                <Badge variant="secondary" className="text-[10px] font-normal">
+                                  {new Date(msg.createdAt).toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' })}
+                                </Badge>
+                              </div>
+                            )}
+                            <div className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
+                              <div className={`max-w-[75%] rounded-2xl px-3.5 py-2 ${
+                                isMe
+                                  ? 'bg-primary text-primary-foreground rounded-br-md'
+                                  : 'bg-background border rounded-bl-md'
+                              }`}>
+                                {/* Media preview */}
+                                {msg.mediaUrl && msg.messageType === 'image' && (
+                                  <div className="mb-1.5 rounded-lg overflow-hidden">
+                                    <img
+                                      src={msg.mediaUrl}
+                                      alt="Imagem"
+                                      className="max-w-full max-h-60 object-cover rounded-lg"
+                                      onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
+                                    />
+                                  </div>
+                                )}
+                                {msg.mediaUrl && msg.messageType === 'video' && (
+                                  <div className="mb-1.5 rounded-lg overflow-hidden bg-black/10 flex items-center justify-center h-32">
+                                    <Video className="size-8 text-muted-foreground" />
+                                  </div>
+                                )}
+                                {msg.mediaUrl && msg.messageType === 'audio' && (
+                                  <div className="mb-1.5 flex items-center gap-2 px-1 py-0.5">
+                                    <Mic className="size-4" />
+                                    <span className="text-xs">Mensagem de voz</span>
+                                  </div>
+                                )}
+                                {msg.mediaUrl && msg.messageType === 'document' && (
+                                  <div className="mb-1.5 flex items-center gap-2 px-1 py-0.5">
+                                    <File className="size-4" />
+                                    <span className="text-xs">Documento</span>
+                                  </div>
+                                )}
+                                {/* Text content */}
+                                {msg.messageContent && (
+                                  <p className="text-sm whitespace-pre-wrap break-words">{msg.messageContent}</p>
+                                )}
+                                {/* Time */}
+                                <div className={`flex items-center gap-1 mt-1 ${isMe ? 'justify-end' : 'justify-start'}`}>
+                                  <span className={`text-[10px] ${isMe ? 'text-primary-foreground/70' : 'text-muted-foreground'}`}>
+                                    {new Date(msg.createdAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          </React.Fragment>
+                        )
+                      })}
+                      <div ref={messagesEndRef} />
+                    </div>
+                  )}
+                </ScrollArea>
+                </div>
+
+                {/* Reply Input */}
+                {selectedConversation.chip?.status === 'connected' ? (
+                  <div className="px-4 py-3 border-t bg-background">
+                    <div className="flex items-end gap-2 max-w-2xl mx-auto">
+                      <div className="flex-1">
+                        <Textarea
+                          placeholder="Digite uma mensagem..."
+                          className="min-h-[42px] max-h-32 resize-none text-sm"
+                          value={replyText}
+                          onChange={e => setReplyText(e.target.value)}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter' && !e.shiftKey) {
+                              e.preventDefault()
+                              handleReply()
+                            }
+                          }}
+                          disabled={sending}
+                        />
+                      </div>
+                      <Button
+                        size="icon"
+                        className="size-10 shrink-0"
+                        onClick={handleReply}
+                        disabled={!replyText.trim() || sending}
+                      >
+                        {sending ? <RefreshCw className="size-4 animate-spin" /> : <Send className="size-4" />}
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="px-4 py-3 border-t bg-muted/50">
+                    <p className="text-xs text-muted-foreground text-center">
+                      Este chip está {statusLabel(selectedConversation.chip?.status || 'disconnected')}. Conecte o chip para responder.
+                    </p>
+                  </div>
+                )}
+              </>
             )}
-          </>
-        )}
-      </div>
+          </div>
+        </ResizablePanel>
+      </ResizablePanelGroup>
     </div>
   )
 }
@@ -7956,9 +7979,9 @@ export default function OctupusZapApp() {
         </header>
 
         {/* Page Content */}
-        <main className="flex-1 p-4 lg:p-6 pb-8 overflow-y-auto">
+        <main className="flex-1 p-4 lg:p-6 pb-8 overflow-y-auto" style={{ contain: 'strict' }}>
           <AnimatePresence mode="wait">
-            <motion.div key={activeTab} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} transition={{ duration: 0.2 }}>
+            <motion.div key={activeTab} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} transition={{ duration: 0.2 }} className={activeTab === 'inbox' ? 'h-full' : ''}>
               {renderContent()}
             </motion.div>
           </AnimatePresence>
