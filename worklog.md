@@ -176,3 +176,37 @@ Stage Summary:
 - 1 duplicate className attribute removed (React correctness fix)
 - 3 background/best-effort patterns left as-is (inbox sync, antiban settings, WA status)
 - Lint passes (5 pre-existing errors unrelated to these changes)
+
+---
+Task ID: security-fixes
+Agent: Main
+Task: Fix 5 critical security vulnerabilities + code quality improvements
+
+Work Log:
+- Removed JWT secret fallback from auth.ts (now throws if AUTH_SECRET not set)
+- Removed JWT secret fallback from middleware.ts (logs error instead)
+- Removed hardcoded dev secret from seed-users/route.ts (only accepts AUTH_SECRET env var)
+- Removed hardcoded dev secret from sync-schema/route.ts (only accepts AUTH_SECRET env var)
+- Fixed password reset bypass: verificationKey is now REQUIRED (was optional before)
+- Added master-only auth to /api/admin/migrate endpoint (was completely unprotected)
+- Added mustChangePassword field to AdminUser Prisma schema + sync-schema migration
+- Fixed r.remaining reference in process-all (now queries DB for actual pending count)
+- Added sending → pending message reset on campaign resume
+- Removed ignoreBuildErrors from next.config.ts (now catches TS errors at build)
+- Fixed all TypeScript errors exposed by strict build (13 fixes across 10 files)
+- Added database indexes: Campaign.status, Campaign.(status,scheduledAt), Message.(campaignId,status), Message.(chipId,status), Message.status, Chip.status, Chip.evolutionInstance
+- Replaced 39 console.log → console.debug in sending-engine
+- Removed unused next-auth dependency from package.json
+- Updated .env.example with all required environment variables
+- Fixed sync-schema: drop orphan Campaign.mediaUrl/mediatype columns instead of adding them
+- Excluded Mtech-central/, examples/, skills/ from TypeScript compilation
+- Fixed prisma/seed.ts: removed non-existent messageVariations field
+
+Stage Summary:
+- All 5 critical security vulnerabilities patched and verified in production
+- Password reset bypass: CONFIRMED FIXED (returns 401 without verificationKey)
+- Admin migrate: CONFIRMED PROTECTED (returns 401 without auth)
+- Seed-users dev secret: CONFIRMED REJECTED (returns 401 with old dev secret)
+- mustChangePassword: CONFIRMED in DB and login response
+- Build passes with strict TypeScript (no ignoreBuildErrors)
+- Deployed to https://mtech-sistemas.vercel.app/
