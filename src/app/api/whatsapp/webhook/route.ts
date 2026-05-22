@@ -112,7 +112,7 @@ export async function POST(request: Request) {
       case 'SEND_MESSAGE': {
         // Our message was sent — update status and store evolutionMessageId
         if (data?.key?.id) {
-          // Try to find message by evolutionMessageId
+          // Try to find message by evolutionMessageId (from campaigns)
           const existing = await db.message.findFirst({
             where: { evolutionMessageId: data.key.id },
           })
@@ -132,12 +132,23 @@ export async function POST(request: Request) {
               const chip = await db.chip.findUnique({ where: { id: existing.chipId } })
               if (chip) {
                 const contact = await db.contact.findUnique({ where: { id: existing.contactId } })
-                const remoteJid = `${contact?.phone || ''}@s.whatsapp.net`
-                const remotePhone = contact?.phone || ''
+                // Normalize the remoteJid
+                let remoteJid = `${contact?.phone || ''}@s.whatsapp.net`
+                let remotePhone = contact?.phone || ''
+                const jidSuffix = remoteJid.split('@')[1] || ''
+                let phonePart = remoteJid.split('@')[0]
+                if (phonePart.startsWith('55') && phonePart.length === 12 && jidSuffix === 's.whatsapp.net') {
+                  phonePart = phonePart.slice(0, 4) + '9' + phonePart.slice(4)
+                  remoteJid = `${phonePart}@${jidSuffix}`
+                  remotePhone = phonePart
+                }
 
                 await db.inboxMessage.upsert({
                   where: { evolutionMsgId: data.key.id },
-                  update: {},
+                  update: {
+                    remoteJid,
+                    remotePhone,
+                  },
                   create: {
                     instanceName: chip.evolutionInstance || instance,
                     chipId: chip.id,
@@ -158,6 +169,72 @@ export async function POST(request: Request) {
             } catch (inboxErr) {
               // Don't fail the whole handler if inbox save fails
               console.error('[Webhook] Error saving sent message to inbox:', inboxErr)
+            }
+          } else {
+            // No campaign message record — save directly to inbox using webhook data
+            try {
+              const rawRemoteJid = data.key.remoteJid || ''
+              const addressingMode = data.key.addressingMode
+              const remoteJidAlt = data.key.remoteJidAlt || null
+
+              // Resolve LID to phone number
+              let remoteJid = (addressingMode === 'lid' && remoteJidAlt) ? remoteJidAlt : rawRemoteJid
+
+              // Normalize Brazilian phone numbers
+              const jidSuffix = remoteJid.split('@')[1] || ''
+              let phonePart = remoteJid.split('@')[0]
+              if (phonePart.startsWith('55') && phonePart.length === 12 && jidSuffix === 's.whatsapp.net') {
+                phonePart = phonePart.slice(0, 4) + '9' + phonePart.slice(4)
+                remoteJid = `${phonePart}@${jidSuffix}`
+              }
+
+              const remotePhone = remoteJid.split('@')[0]
+              const chip = await db.chip.findFirst({ where: { evolutionInstance: instance } })
+
+              // Extract content from webhook data
+              let messageContent = ''
+              let messageType = 'text'
+              let mediaUrl: string | null = null
+              if (data.message) {
+                if (data.message.conversation) messageContent = data.message.conversation
+                else if (data.message.extendedTextMessage?.text) messageContent = data.message.extendedTextMessage.text
+                else if (data.message.imageMessage) { messageContent = data.message.imageMessage.caption || ''; messageType = 'image'; mediaUrl = data.message.imageMessage.url || null }
+                else if (data.message.videoMessage) { messageContent = data.message.videoMessage.caption || ''; messageType = 'video'; mediaUrl = data.message.videoMessage.url || null }
+                else if (data.message.audioMessage) { messageType = 'audio'; mediaUrl = data.message.audioMessage.url || null }
+                else if (data.message.documentMessage) { messageContent = data.message.documentMessage.caption || ''; messageType = 'document'; mediaUrl = data.message.documentMessage.url || null }
+              }
+
+              if (messageContent || messageType !== 'text') {
+                let contactName: string | null = chip?.profileName || chip?.name || null
+                if (chip) {
+                  const contact = await db.contact.findFirst({
+                    where: { phone: { contains: remotePhone.replace(/^55/, '') } },
+                  })
+                  if (contact?.name) contactName = contact.name
+                }
+
+                await db.inboxMessage.upsert({
+                  where: { evolutionMsgId: data.key.id },
+                  update: { remoteJid, remotePhone },
+                  create: {
+                    instanceName: instance,
+                    chipId: chip?.id || null,
+                    remoteJid,
+                    remotePhone,
+                    fromMe: true,
+                    messageContent,
+                    messageType,
+                    mediaUrl,
+                    pushName: chip?.profileName || chip?.name || null,
+                    contactName,
+                    evolutionMsgId: data.key.id,
+                    isRead: true,
+                    isGroup: remoteJid.includes('@g.us'),
+                  },
+                })
+              }
+            } catch (inboxErr) {
+              console.error('[Webhook] Error saving direct send to inbox:', inboxErr)
             }
           }
         }
@@ -308,7 +385,13 @@ export async function POST(request: Request) {
 
               await db.inboxMessage.upsert({
                 where: { evolutionMsgId: msgId },
-                update: {},
+                update: {
+                  // Always fix remoteJid if it was saved with LID or non-normalized format
+                  remoteJid,
+                  remotePhone,
+                  chipId: chip?.id || null,
+                  contactName,
+                },
                 create: {
                   instanceName: instance,
                   chipId: chip?.id || null,
