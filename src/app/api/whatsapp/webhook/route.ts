@@ -391,6 +391,11 @@ export async function POST(request: Request) {
                   remotePhone,
                   chipId: chip?.id || null,
                   contactName,
+                  fromMe,
+                  messageContent,
+                  messageType,
+                  mediaUrl,
+                  pushName,
                 },
                 create: {
                   instanceName: instance,
