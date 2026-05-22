@@ -1484,8 +1484,8 @@ function ChipsTab() {
 
       {/* Import Instances Dialog */}
       <Dialog open={importDialogOpen} onOpenChange={setImportDialogOpen}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
+        <DialogContent className="max-w-lg max-h-[90vh] flex flex-col overflow-hidden">
+          <DialogHeader className="shrink-0">
             <DialogTitle className="flex items-center gap-2">
               <Database className="size-5 text-emerald-500" /> Importar Instâncias do Evolution API
             </DialogTitle>
@@ -1555,7 +1555,7 @@ function ChipsTab() {
               </div>
             )}
           </div>
-          <DialogFooter>
+          <DialogFooter className="shrink-0">
             <DialogClose asChild><Button variant="outline">Cancelar</Button></DialogClose>
             <Button onClick={importSelectedInstances} disabled={selectedInstances.size === 0 || importLoading} className="bg-emerald-600 hover:bg-emerald-700 gap-2">
               {importLoading ? <><RefreshCw className="size-4 animate-spin" /> Importando...</> : <><ArrowDownToLine className="size-4" /> Importar {selectedInstances.size > 0 ? `(${selectedInstances.size})` : ''}</>}
@@ -2264,6 +2264,7 @@ function ContatosTab() {
           ) : (
             <Card className="shadow-lg border-0">
               <CardContent className="p-0">
+                <ScrollArea className="max-h-[600px]">
                   <table className="w-full text-sm">
                     <thead className="bg-muted/50">
                       <tr>
@@ -2310,6 +2311,7 @@ function ContatosTab() {
                       })}
                     </tbody>
                   </table>
+                </ScrollArea>
               </CardContent>
             </Card>
           )}
@@ -2358,9 +2360,9 @@ function ContatosTab() {
 
       {/* Edit Contact Dialog */}
       <Dialog open={editContactDialog} onOpenChange={setEditContactDialog}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Editar Contato</DialogTitle><DialogDescription>Atualize as informações do contato</DialogDescription></DialogHeader>
-          <div className="space-y-4 py-4 max-h-[60vh] overflow-y-auto">
+        <DialogContent className="max-w-lg max-h-[90vh] flex flex-col overflow-hidden !p-0">
+          <DialogHeader className="px-6 pt-6 pb-2 shrink-0"><DialogTitle>Editar Contato</DialogTitle><DialogDescription>Atualize as informações do contato</DialogDescription></DialogHeader>
+          <div className="space-y-4 px-6 py-4 overflow-y-auto flex-1 min-h-0">
             <div className="space-y-2"><Label>Nome</Label><Input value={editContactForm.name} onChange={e => setEditContactForm(p => ({ ...p, name: e.target.value }))} /></div>
             <div className="space-y-2"><Label>Telefone</Label><Input value={editContactForm.phone} onChange={e => setEditContactForm(p => ({ ...p, phone: e.target.value }))} /></div>
             {STANDARD_CONTACT_FIELDS.filter(f => !f.core).map(f => (
@@ -2370,7 +2372,7 @@ function ContatosTab() {
               </div>
             ))}
           </div>
-          <DialogFooter>
+          <DialogFooter className="px-6 pb-6 pt-2 shrink-0 border-t">
             <DialogClose asChild><Button variant="outline">Cancelar</Button></DialogClose>
             <Button onClick={saveEditContact} disabled={!editContactForm.name || !editContactForm.phone} className="bg-emerald-600 hover:bg-emerald-700">Salvar</Button>
           </DialogFooter>
@@ -2379,9 +2381,9 @@ function ContatosTab() {
 
       {/* Add Contact Dialog */}
       <Dialog open={addContactDialog} onOpenChange={(open) => { setAddContactDialog(open); if (!open) setNewContact({ name: '', phone: '', customFields: {} }) }}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Adicionar Contato</DialogTitle><DialogDescription>Adicione um contato manualmente à lista{selectedList ? ` "${selectedList.name}"` : ''}</DialogDescription></DialogHeader>
-          <div className="space-y-4 py-4 max-h-[60vh] overflow-y-auto">
+        <DialogContent className="max-w-lg max-h-[90vh] flex flex-col overflow-hidden !p-0">
+          <DialogHeader className="px-6 pt-6 pb-2 shrink-0"><DialogTitle>Adicionar Contato</DialogTitle><DialogDescription>Adicione um contato manualmente à lista{selectedList ? ` "${selectedList.name}"` : ''}</DialogDescription></DialogHeader>
+          <div className="space-y-4 px-6 py-4 overflow-y-auto flex-1 min-h-0">
             <div className="space-y-2"><Label>Nome</Label><Input placeholder="Ex: João Silva" value={newContact.name} onChange={e => setNewContact(p => ({ ...p, name: e.target.value }))} /></div>
             <div className="space-y-2"><Label>Telefone</Label><Input placeholder="Ex: 48999990001" value={newContact.phone} onChange={e => setNewContact(p => ({ ...p, phone: e.target.value }))} /></div>
             {STANDARD_CONTACT_FIELDS.filter(f => !f.core).map(f => (
@@ -2391,7 +2393,7 @@ function ContatosTab() {
               </div>
             ))}
           </div>
-          <DialogFooter>
+          <DialogFooter className="px-6 pb-6 pt-2 shrink-0 border-t">
             <DialogClose asChild><Button variant="outline">Cancelar</Button></DialogClose>
             <Button onClick={addContact} disabled={!newContact.name || !newContact.phone} className="bg-emerald-600 hover:bg-emerald-700">Adicionar</Button>
           </DialogFooter>
@@ -2400,7 +2402,7 @@ function ContatosTab() {
 
       {/* Import Dialog (inside a list) */}
       <Dialog open={importDialogOpen} onOpenChange={setImportDialogOpen}>
-        <DialogContent>
+        <DialogContent className="max-h-[90vh] overflow-y-auto">
           <DialogHeader><DialogTitle>Importar Planilha</DialogTitle><DialogDescription>Importe contatos de um arquivo CSV, Excel ou ODS</DialogDescription></DialogHeader>
           <div className="py-4 space-y-4">
             <div className="border-2 border-dashed rounded-xl p-8 text-center hover:border-emerald-400 transition-colors">
@@ -2420,7 +2422,7 @@ function ContatosTab() {
 
       {/* Quick Import Dialog — create list + import in one step */}
       <Dialog open={quickImportOpen} onOpenChange={(open) => { setQuickImportOpen(open); if (!open) { setQuickImportName(''); setQuickImportFile(null) } }}>
-        <DialogContent>
+        <DialogContent className="max-h-[90vh] overflow-y-auto">
           <DialogHeader><DialogTitle>Importar Planilha</DialogTitle><DialogDescription>Crie uma lista e importe contatos em um passo só</DialogDescription></DialogHeader>
           <div className="py-4 space-y-4">
             <div className="space-y-2">
@@ -4534,7 +4536,7 @@ function CampanhasTab() {
           {selectedCampaign && (
             <div className="flex gap-6 overflow-hidden p-6">
               {/* Left panel - Stats */}
-              <div className="w-64 shrink-0 space-y-3">
+              <div className="w-64 shrink-0 space-y-3 overflow-y-auto max-h-[65vh]">
                 {/* Chip daily limit warning */}
                 {detailMessages.some(m => m.status === 'failed' && m.error && (/limite/i.test(m.error) || /daily_limit/i.test(m.error))) && (
                   <Alert variant="destructive" className="mb-3">
@@ -4972,12 +4974,12 @@ function TemplatesTab() {
 
       {/* Edit Template Dialog */}
       <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
-        <DialogContent className="max-w-lg max-h-[85vh]">
-          <DialogHeader>
+        <DialogContent className="max-w-lg max-h-[90vh] flex flex-col overflow-hidden !p-0">
+          <DialogHeader className="px-6 pt-6 pb-2 shrink-0">
             <DialogTitle>Editar Template</DialogTitle>
             <DialogDescription>Atualize as informações do template</DialogDescription>
           </DialogHeader>
-          <div className="space-y-4 py-4 overflow-y-auto">
+          <div className="space-y-4 px-6 py-4 overflow-y-auto flex-1 min-h-0">
             <div className="space-y-2">
               <Label>Nome</Label>
               <Input value={editForm.name} onChange={e => setEditForm(p => ({ ...p, name: e.target.value }))} />
@@ -5039,7 +5041,7 @@ function TemplatesTab() {
               </div>
             </div>
           </div>
-          <DialogFooter>
+          <DialogFooter className="px-6 pb-6 pt-2 shrink-0 border-t">
             <DialogClose asChild><Button variant="outline">Cancelar</Button></DialogClose>
             <Button onClick={saveEditTemplate} disabled={!editForm.name || !editForm.content} className="bg-emerald-600 hover:bg-emerald-700">Salvar</Button>
           </DialogFooter>
@@ -7123,7 +7125,7 @@ function VpsSetupTab() {
               <p className="text-xs">Crie chips primeiro na aba "Chips"</p>
             </div>
           ) : (
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b">
@@ -7378,6 +7380,7 @@ function UsuariosTab() {
       {/* Users List */}
       <Card className="shadow-lg border-0">
         <CardContent className="p-0">
+          <ScrollArea className="max-h-[500px]">
           <div className="divide-y">
             {filteredUsers.map(user => (
               <div key={user.id} className="flex items-center gap-4 p-4 hover:bg-muted/30 transition-colors">
@@ -7433,17 +7436,18 @@ function UsuariosTab() {
               </div>
             )}
           </div>
+          </ScrollArea>
         </CardContent>
       </Card>
 
       {/* Add User Dialog */}
       <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
+        <DialogContent className="max-w-lg max-h-[90vh] flex flex-col overflow-hidden !p-0">
+          <DialogHeader className="px-6 pt-6 pb-2 shrink-0">
             <DialogTitle>Novo Usuário</DialogTitle>
             <DialogDescription>Crie um novo usuário no sistema</DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
+          <div className="space-y-4 px-6 py-4 overflow-y-auto flex-1 min-h-0">
             <div className="space-y-2">
               <Label>Nome</Label>
               <Input placeholder="Nome completo" value={newUser.name}
@@ -7479,7 +7483,7 @@ function UsuariosTab() {
               <Label>Usuário de sistema</Label>
             </div>
           </div>
-          <DialogFooter>
+          <DialogFooter className="px-6 pb-6 pt-2 shrink-0 border-t">
             <DialogClose asChild>
               <Button variant="outline">Cancelar</Button>
             </DialogClose>
@@ -7493,12 +7497,12 @@ function UsuariosTab() {
 
       {/* Edit User Dialog */}
       <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
+        <DialogContent className="max-w-lg max-h-[90vh] flex flex-col overflow-hidden !p-0">
+          <DialogHeader className="px-6 pt-6 pb-2 shrink-0">
             <DialogTitle>Editar Usuário</DialogTitle>
             <DialogDescription>Altere os dados do usuário</DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
+          <div className="space-y-4 px-6 py-4 overflow-y-auto flex-1 min-h-0">
             <div className="space-y-2">
               <Label>Nome</Label>
               <Input value={editForm.name} onChange={e => setEditForm(p => ({ ...p, name: e.target.value }))} />
@@ -7532,7 +7536,7 @@ function UsuariosTab() {
               <Label>Usuário de sistema</Label>
             </div>
           </div>
-          <DialogFooter>
+          <DialogFooter className="px-6 pb-6 pt-2 shrink-0 border-t">
             <DialogClose asChild>
               <Button variant="outline">Cancelar</Button>
             </DialogClose>
