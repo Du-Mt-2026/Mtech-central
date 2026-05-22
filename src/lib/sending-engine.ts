@@ -18,6 +18,12 @@ interface ScheduleEntry {
   limit: number
 }
 
+interface BreakWindow {
+  start: number  // minutos desde meia-noite (ex: 720 = 12:00)
+  end: number    // minutos desde meia-noite (ex: 810 = 13:30)
+  label: string  // descrição da pausa (ex: "Almoço")
+}
+
 interface AntiBanConfig {
   typingMinDelay: number
   typingMaxDelay: number
@@ -27,7 +33,9 @@ interface AntiBanConfig {
   warmingEnabled: boolean
   warmingDays: number
   cooldownMinutes: number
+  cooldownMinutesMax: number    // Cooldown variável: máximo minutos de pausa (range min-max)
   cooldownAfterMessages: number
+  cooldownAfterMessagesMax: number  // Cooldown após N mensagens: máximo (range min-max)
   stopOnWarning: boolean
   randomLineBreaks: boolean
   emojiVariation: boolean
@@ -39,6 +47,8 @@ interface AntiBanConfig {
   prewarmSchedule: ScheduleEntry[]
   readyDailyLimit: number     // Phase 3 (Aquecido) daily limit per chip
   hourlyLimit: number         // Max messages per hour per chip
+  // Break windows — pausas dentro da janela de envio
+  breakWindows: BreakWindow[]
 }
 
 // ============================================================
@@ -124,7 +134,9 @@ const DEFAULT_SETTINGS: AntiBanConfig = {
   warmingEnabled: true,
   warmingDays: 7,
   cooldownMinutes: 30,
+  cooldownMinutesMax: 30,
   cooldownAfterMessages: 50,
+  cooldownAfterMessagesMax: 50,
   stopOnWarning: true,
   randomLineBreaks: false,
   emojiVariation: true,
@@ -135,6 +147,28 @@ const DEFAULT_SETTINGS: AntiBanConfig = {
   prewarmSchedule: PREWARM_SCHEDULE,
   readyDailyLimit: 200,
   hourlyLimit: 30,
+  breakWindows: [],
+}
+
+/**
+ * Parse a JSON schedule string from the DB, falling back to default schedule
+ */
+/**
+ * Parse break windows from JSON string
+ */
+function parseBreakWindows(jsonStr: string | undefined | null): BreakWindow[] {
+  if (!jsonStr) return []
+  try {
+    const parsed = JSON.parse(jsonStr)
+    if (Array.isArray(parsed)) {
+      return parsed.filter((w: any) => w.start !== undefined && w.end !== undefined).map((w: any) => ({
+        start: Number(w.start),
+        end: Number(w.end),
+        label: String(w.label || 'Pausa'),
+      }))
+    }
+  } catch { /* ignore */ }
+  return []
 }
 
 /**
@@ -283,6 +317,22 @@ function isWithinSendingWindow(settings: AntiBanConfig): boolean {
   }
 }
 
+/**
+ * Check if current time is within any break window.
+ * Returns the active break window if found, or null if not in a break.
+ */
+function getActiveBreakWindow(settings: AntiBanConfig): BreakWindow | null {
+  const currentMins = getCurrentMinutes(settings.timezone)
+  for (const bw of settings.breakWindows) {
+    const bwStart = toMins(bw.start)
+    const bwEnd = toMins(bw.end)
+    if (currentMins >= bwStart && currentMins < bwEnd) {
+      return bw
+    }
+  }
+  return null
+}
+
 // ============================================================
 // ANTI-BAN LOGIC
 // ============================================================
@@ -425,6 +475,11 @@ async function getAntiBanSettings(): Promise<AntiBanConfig> {
         prewarmSchedule: parseSchedule((saved as any).prewarmSchedule, PREWARM_SCHEDULE),
         readyDailyLimit: (saved as any).readyDailyLimit ?? 200,
         hourlyLimit: (saved as any).hourlyLimit ?? 30,
+        // Variable cooldown
+        cooldownMinutesMax: (saved as any).cooldownMinutesMax ?? saved.cooldownMinutes ?? 30,
+        cooldownAfterMessagesMax: (saved as any).cooldownAfterMessagesMax ?? saved.cooldownAfterMessages ?? 50,
+        // Break windows
+        breakWindows: parseBreakWindows((saved as any).breakWindows),
       }
     }
   } catch {
@@ -1065,6 +1120,30 @@ export async function processNextMessage(campaignId: string): Promise<{
       remaining: -1,
       completed: false,
       reason: `outside_sending_window_${Math.floor(currentMins/60)}h${currentMins%60}m`,
+    }
+  }
+
+  // CHECK BREAK WINDOWS — pausas dentro da janela de envio (almoço, reunião, etc.)
+  if (antiBanEnabled && settings.breakWindows.length > 0) {
+    const activeBreak = getActiveBreakWindow(settings)
+    if (activeBreak) {
+      const currentMins = getCurrentMinutes(settings.timezone)
+      const breakEndMins = toMins(activeBreak.end)
+      // Wait until break ends
+      const waitMins = breakEndMins - currentMins
+      const waitMs = Math.max(waitMins * 60 * 1000, 60 * 1000) // at least 1 minute
+      const startH = Math.floor(toMins(activeBreak.start) / 60)
+      const startM = toMins(activeBreak.start) % 60
+      const endH = Math.floor(breakEndMins / 60)
+      const endM = breakEndMins % 60
+      console.log(`[SendingEngine] In break window "${activeBreak.label}" (${String(startH).padStart(2,'0')}:${String(startM).padStart(2,'0')}-${String(endH).padStart(2,'0')}:${String(endM).padStart(2,'0')}). Waiting ${waitMins}min.`)
+      return {
+        processed: false,
+        delayMs: waitMs,
+        remaining: -1,
+        completed: false,
+        reason: `break_${activeBreak.label}_${Math.floor(currentMins/60)}h${currentMins%60}m`,
+      }
     }
   }
 
@@ -1726,15 +1805,30 @@ export async function processNextMessage(campaignId: string): Promise<{
     // Only trigger cooldown HERE (after a message is actually sent), not in isInCooldown.
     // This prevents the re-trigger bug where sentToday % cooldownAfterMessages === 0
     // would re-enter cooldown every time isInCooldown was called after cooldown expired.
+    //
+    // Variable cooldown: random between cooldownMinutes and cooldownMinutesMax
+    // Variable threshold: random between cooldownAfterMessages and cooldownAfterMessagesMax
     if (antiBanEnabled && settings.cooldownAfterMessages > 0 && settings.cooldownMinutes > 0) {
       const chipAfterSend = await db.chip.findUnique({ where: { id: message.chipId } })
-      if (chipAfterSend && chipAfterSend.sentToday > 0 && chipAfterSend.sentToday % settings.cooldownAfterMessages === 0) {
-        const cooldownUntil = new Date(Date.now() + settings.cooldownMinutes * 60 * 1000)
-        await db.chip.update({
-          where: { id: message.chipId },
-          data: { cooldownUntil },
-        })
-        console.log(`[SendingEngine] Chip ${chipAfterSend.name} entering cooldown after ${chipAfterSend.sentToday} messages — cooldown until ${cooldownUntil.toISOString()}`)
+      if (chipAfterSend && chipAfterSend.sentToday > 0) {
+        // Variable threshold: random number between min and max
+        const thresholdMin = settings.cooldownAfterMessages
+        const thresholdMax = Math.max(settings.cooldownAfterMessagesMax, settings.cooldownAfterMessages)
+        const threshold = randomInt(thresholdMin, thresholdMax)
+
+        if (chipAfterSend.sentToday % threshold === 0) {
+          // Variable cooldown duration: random between min and max minutes
+          const cooldownMin = settings.cooldownMinutes
+          const cooldownMax = Math.max(settings.cooldownMinutesMax, settings.cooldownMinutes)
+          const cooldownDuration = randomInt(cooldownMin, cooldownMax)
+
+          const cooldownUntil = new Date(Date.now() + cooldownDuration * 60 * 1000)
+          await db.chip.update({
+            where: { id: message.chipId },
+            data: { cooldownUntil },
+          })
+          console.log(`[SendingEngine] Chip ${chipAfterSend.name} entering cooldown after ${chipAfterSend.sentToday} messages (threshold: ${threshold}, duration: ${cooldownDuration}min) — cooldown until ${cooldownUntil.toISOString()}`)
+        }
       }
     }
 

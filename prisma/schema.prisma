@@ -74,7 +74,14 @@ model AntiBanSettings {
   warmingEnabled        Boolean  @default(true)
   warmingDays           Int      @default(7)
   cooldownMinutes       Int      @default(30)
+  cooldownMinutesMax    Int      @default(30)      // Cooldown variável: máximo de minutos de pausa (range min-max)
   cooldownAfterMessages Int      @default(50)
+  cooldownAfterMessagesMax Int   @default(50)      // Cooldown após N mensagens: máximo (range min-max), ex: 5-10 msgs
+
+  // Break windows — pausas dentro da janela de envio (JSON array)
+  // Format: [{"start":720,"end":810,"label":"Almoço"}, {"start":930,"end":960,"label":"Reunião"}]
+  // start/end = minutos desde meia-noite (720 = 12:00, 810 = 13:30)
+  breakWindows          String   @default("[]")
   stopOnWarning         Boolean  @default(true)
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt

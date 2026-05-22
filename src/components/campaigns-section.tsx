@@ -45,6 +45,7 @@ interface Campaign {
   vendedorId: string | null
   vendedor?: { id: string; nome: string; treatAs: string | null } | null
   _count?: { messages: number; chips: number }
+  messageStatusCounts?: Record<string, number>
 }
 
 interface Chip {
@@ -378,10 +379,16 @@ export function CampaignsSection() {
     ? chips.filter((c) => c.vendedorId === selectedVendedorId || !c.vendedorId)
     : chips
 
-  // Count sent vs pending
+  // Calculate progress info from messageStatusCounts
   const getProgressInfo = (campaign: Campaign) => {
-    const total = campaign._count?.messages || 0
-    return { total }
+    const sc = campaign.messageStatusCounts || {}
+    const sent = (sc['sent'] || 0) + (sc['delivered'] || 0) + (sc['read'] || 0)
+    const pending = sc['pending'] || 0
+    const sending = sc['sending'] || 0
+    const failed = sc['failed'] || 0
+    const total = sent + pending + sending + failed
+    const percent = total > 0 ? Math.round((sent / total) * 100) : 0
+    return { sent, pending, sending, failed, total, percent }
   }
 
   return (
@@ -393,6 +400,24 @@ export function CampaignsSection() {
           <p className="text-sm text-muted-foreground">
             Gerencie suas campanhas de envio
           </p>
+          {/* Status legend */}
+          <div className="flex items-center gap-3 mt-2">
+            <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+              <span className="w-2 h-2 rounded-full bg-emerald-500" /> Ativa
+            </span>
+            <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+              <span className="w-2 h-2 rounded-full bg-amber-500" /> Pausada
+            </span>
+            <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+              <span className="w-2 h-2 rounded-full bg-zinc-500" /> Rascunho
+            </span>
+            <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+              <span className="w-2 h-2 rounded-full bg-sky-500" /> Concluída
+            </span>
+            <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+              <span className="w-2 h-2 rounded-full bg-violet-500" /> Agendada
+            </span>
+          </div>
         </div>
         <div className="flex gap-2">
           {campaigns.length > 0 && (
@@ -751,7 +776,7 @@ export function CampaignsSection() {
           animate="visible"
         >
           {campaigns.map((campaign) => {
-            const { total } = getProgressInfo(campaign)
+            const progress = getProgressInfo(campaign)
             return (
               <motion.div key={campaign.id} variants={cardVariants}>
                 <Card className="relative group">
@@ -775,6 +800,49 @@ export function CampaignsSection() {
                       </div>
                     )}
 
+                    {/* Progress bar — show for running/completed campaigns */}
+                    {progress.total > 0 && (campaign.status === 'running' || campaign.status === 'completed' || campaign.status === 'paused') && (
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="text-muted-foreground">
+                            {progress.sent}/{progress.total} enviadas
+                          </span>
+                          <span className="font-medium">
+                            {progress.percent}%
+                          </span>
+                        </div>
+                        <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+                          <div className="h-full rounded-full bg-emerald-500 transition-all duration-500" style={{ width: `${progress.percent}%` }} />
+                        </div>
+                        <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
+                          {progress.pending > 0 && (
+                            <span className="flex items-center gap-1">
+                              <span className="w-1.5 h-1.5 rounded-full bg-zinc-400" />
+                              {progress.pending} pendente{progress.pending !== 1 ? 's' : ''}
+                            </span>
+                          )}
+                          {progress.sending > 0 && (
+                            <span className="flex items-center gap-1">
+                              <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                              {progress.sending} enviando
+                            </span>
+                          )}
+                          {progress.failed > 0 && (
+                            <span className="flex items-center gap-1">
+                              <span className="w-1.5 h-1.5 rounded-full bg-red-400" />
+                              {progress.failed} falha{progress.failed !== 1 ? 's' : ''}
+                            </span>
+                          )}
+                          {progress.sent > 0 && (
+                            <span className="flex items-center gap-1">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                              {progress.sent} enviada{progress.sent !== 1 ? 's' : ''}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
                     {/* Stats */}
                     <div className="flex items-center gap-4 text-sm text-muted-foreground">
                       <div className="flex items-center gap-1">
@@ -783,7 +851,7 @@ export function CampaignsSection() {
                       </div>
                       <div className="flex items-center gap-1">
                         <MessageSquare className="w-3.5 h-3.5" />
-                        <span>{total} msgs</span>
+                        <span>{progress.total} msgs</span>
                       </div>
                       <span className="text-xs">{campaign.sendIntervalMin}-{campaign.sendIntervalMax}s</span>
                     </div>

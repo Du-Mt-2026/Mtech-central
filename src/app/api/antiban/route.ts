@@ -190,7 +190,9 @@ export async function PATCH(request: NextRequest) {
       'warmingEnabled',
       'warmingDays',
       'cooldownMinutes',
+      'cooldownMinutesMax',
       'cooldownAfterMessages',
+      'cooldownAfterMessagesMax',
       'stopOnWarning',
       'sendingWindowStart',
       'sendingWindowEnd',
@@ -199,6 +201,7 @@ export async function PATCH(request: NextRequest) {
       'prewarmSchedule',
       'readyDailyLimit',
       'hourlyLimit',
+      'breakWindows',
     ]
 
     const updateData: Record<string, unknown> = {}
@@ -283,6 +286,52 @@ export async function PATCH(request: NextRequest) {
           )
         }
       }
+    }
+
+    // Validate breakWindows JSON if provided
+    if (updateData.breakWindows !== undefined) {
+      try {
+        const parsed = typeof updateData.breakWindows === 'string'
+          ? JSON.parse(updateData.breakWindows as string)
+          : updateData.breakWindows
+        if (!Array.isArray(parsed)) {
+          return NextResponse.json(
+            { error: 'breakWindows deve ser um array' },
+            { status: 400 }
+          )
+        }
+        for (const entry of parsed) {
+          if (entry.start === undefined || entry.end === undefined || entry.start < 0 || entry.end > 1440 || entry.start >= entry.end) {
+            return NextResponse.json(
+              { error: 'Cada janela de pausa deve ter start < end (0-1440 minutos)' },
+              { status: 400 }
+            )
+          }
+          entry.label = entry.label || 'Pausa'
+        }
+        updateData.breakWindows = JSON.stringify(parsed)
+      } catch {
+        return NextResponse.json(
+          { error: 'breakWindows JSON inválido' },
+          { status: 400 }
+        )
+      }
+    }
+
+    // Validate cooldownMinutesMax >= cooldownMinutes
+    if (updateData.cooldownMinutesMax !== undefined && Number(updateData.cooldownMinutesMax) < Number(updateData.cooldownMinutes || settings.cooldownMinutes)) {
+      return NextResponse.json(
+        { error: 'Cooldown máximo deve ser maior ou igual ao mínimo' },
+        { status: 400 }
+      )
+    }
+
+    // Validate cooldownAfterMessagesMax >= cooldownAfterMessages
+    if (updateData.cooldownAfterMessagesMax !== undefined && Number(updateData.cooldownAfterMessagesMax) < Number(updateData.cooldownAfterMessages || settings.cooldownAfterMessages)) {
+      return NextResponse.json(
+        { error: 'Limite máximo de mensagens deve ser maior ou igual ao mínimo' },
+        { status: 400 }
+      )
     }
 
     const updated = await db.antiBanSettings.update({
