@@ -344,7 +344,7 @@ const CONTACT_VARIABLES = [
 function statusColor(status: string) {
   const map: Record<string, string> = {
     connected: 'bg-emerald-500', connecting: 'bg-amber-500', disconnected: 'bg-zinc-400', error: 'bg-rose-500',
-    running: 'bg-emerald-500', draft: 'bg-zinc-400', scheduled: 'bg-amber-500', paused: 'bg-amber-500', completed: 'bg-sky-500',
+    running: 'bg-emerald-500', draft: 'bg-zinc-400', scheduled: 'bg-amber-500', paused: 'bg-amber-500', completed: 'bg-sky-500', cancelled: 'bg-rose-400',
     pending: 'bg-zinc-400', sent: 'bg-sky-500', delivered: 'bg-emerald-500', read: 'bg-teal-500', failed: 'bg-rose-500',
   }
   return map[status] || 'bg-zinc-400'
@@ -353,7 +353,7 @@ function statusColor(status: string) {
 function statusLabel(status: string) {
   const map: Record<string, string> = {
     connected: 'Conectado', connecting: 'Conectando', disconnected: 'Desconectado', error: 'Erro',
-    running: 'Executando', draft: 'Rascunho', scheduled: 'Agendada', paused: 'Pausada', completed: 'Concluída',
+    running: 'Executando', draft: 'Rascunho', scheduled: 'Agendada', paused: 'Pausada', completed: 'Concluída', cancelled: 'Cancelada',
     pending: 'Pendente', sent: 'Enviada', delivered: 'Entregue', read: 'Lida', failed: 'Falhou',
   }
   return map[status] || status
@@ -7979,7 +7979,7 @@ export default function OctupusZapApp() {
   return (
     <div className="h-screen flex overflow-hidden bg-zinc-50 dark:bg-zinc-950">
       {/* Sidebar - Desktop */}
-      <aside className="hidden lg:flex w-64 flex-col bg-zinc-900 dark:bg-zinc-950 border-r border-zinc-800">
+      <aside className="hidden lg:flex w-64 flex-col bg-zinc-900 dark:bg-zinc-950 border-r border-zinc-800 shrink-0 overflow-hidden">
         <div className="p-6">
           <div className="flex items-center gap-3">
             <div className="flex size-10 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-400 to-teal-500 shadow-lg">
