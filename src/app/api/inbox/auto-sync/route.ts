@@ -6,8 +6,7 @@ import { evolutionFetch } from '@/lib/evolution-api'
  * POST /api/inbox/auto-sync
  * Syncs recent messages from Evolution API for ALL connected chips.
  * Called automatically by the frontend every 10 seconds.
- * Only syncs messages newer than the latest message in each chip's inbox.
- * Also fixes LID-based remoteJid entries by updating them to phone-based JIDs.
+ * Uses upsert to handle race conditions and duplicate messages.
  */
 export async function POST(request: NextRequest) {
   try {
@@ -38,15 +37,7 @@ export async function POST(request: NextRequest) {
 
     for (const chip of chips) {
       try {
-        // Get the latest message timestamp for this chip
-        const latestMsg = await db.inboxMessage.findFirst({
-          where: { chipId: chip.id },
-          orderBy: { createdAt: 'desc' },
-          select: { createdAt: true },
-        })
-
         // Fetch recent messages from Evolution API
-        // Use a higher limit and empty number to get all recent messages
         const fetchRes = await evolutionFetch(`/chat/findMessages/${chip.evolutionInstance}`, {
           method: 'POST',
           body: JSON.stringify({
@@ -87,34 +78,6 @@ export async function POST(request: NextRequest) {
 
             const fromMe = msg.key.fromMe === true
             const pushName = msg.pushName || null
-
-            // Check if this message already exists
-            const existing = await db.inboxMessage.findUnique({
-              where: { evolutionMsgId: msgId },
-            })
-
-            if (existing) {
-              // If the existing message has a LID-based or non-normalized JID, fix it
-              if (existing.remoteJid !== effectiveRemoteJid) {
-                try {
-                  await db.inboxMessage.update({
-                    where: { id: existing.id },
-                    data: {
-                      remoteJid: effectiveRemoteJid,
-                      remotePhone: effectiveRemoteJid.split('@')[0],
-                    },
-                  })
-                  totalFixed++
-                } catch {
-                  // Unique constraint - delete the old one
-                  try {
-                    await db.inboxMessage.delete({ where: { id: existing.id } })
-                    totalFixed++
-                  } catch { /* ignore */ }
-                }
-              }
-              continue
-            }
 
             // Extract content
             let messageContent = ''
@@ -171,8 +134,19 @@ export async function POST(request: NextRequest) {
               ? new Date(typeof timestamp === 'object' && timestamp.low ? timestamp.low * 1000 : Number(timestamp) * 1000)
               : new Date()
 
-            await db.inboxMessage.create({
-              data: {
+            // Use upsert to handle race conditions and existing messages
+            await db.inboxMessage.upsert({
+              where: { evolutionMsgId: msgId },
+              update: {
+                // Always update to fix LID-based or non-normalized JIDs
+                remoteJid: effectiveRemoteJid,
+                remotePhone,
+                chipId: chip.id,
+                fromMe,
+                messageContent,
+                contactName,
+              },
+              create: {
                 instanceName: chip.evolutionInstance!,
                 chipId: chip.id,
                 remoteJid: effectiveRemoteJid,
@@ -192,6 +166,7 @@ export async function POST(request: NextRequest) {
             totalSynced++
           } catch (msgErr) {
             totalErrors++
+            console.error('[AutoSync] Error syncing message:', msgErr)
           }
         }
       } catch (chipErr) {
@@ -213,4 +188,3 @@ export async function POST(request: NextRequest) {
     )
   }
 }
-// Build Fri May 22 03:51:14 UTC 2026
