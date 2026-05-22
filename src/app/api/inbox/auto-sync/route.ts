@@ -135,13 +135,15 @@ export async function POST(request: NextRequest) {
               : new Date()
 
             // Use upsert to handle race conditions and existing messages
+            // NOTE: Do NOT update chipId on update — a message might exist under a different chip's perspective
+            // (e.g., sent from Dudinha's chip, received on Artur's chip). The first chip to save it wins.
             await db.inboxMessage.upsert({
               where: { evolutionMsgId: msgId },
               update: {
                 // Always update to fix LID-based or non-normalized JIDs
                 remoteJid: effectiveRemoteJid,
                 remotePhone,
-                chipId: chip.id,
+                // chipId is NOT updated here — first chip to save the message keeps ownership
                 fromMe,
                 messageContent,
                 contactName,
