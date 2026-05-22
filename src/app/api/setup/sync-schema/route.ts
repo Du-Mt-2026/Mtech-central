@@ -186,6 +186,29 @@ export async function POST(req: NextRequest) {
       } else {
         results.push('AntiBanSettings: hourlyLimit já existe')
       }
+
+      // New: Variable cooldown fields
+      if (!absColumnNames.includes('cooldownMinutesMax')) {
+        await db.$executeRawUnsafe(`ALTER TABLE "AntiBanSettings" ADD COLUMN IF NOT EXISTS "cooldownMinutesMax" INTEGER NOT NULL DEFAULT 30`)
+        results.push('AntiBanSettings: adicionada coluna cooldownMinutesMax')
+      } else {
+        results.push('AntiBanSettings: cooldownMinutesMax já existe')
+      }
+
+      if (!absColumnNames.includes('cooldownAfterMessagesMax')) {
+        await db.$executeRawUnsafe(`ALTER TABLE "AntiBanSettings" ADD COLUMN IF NOT EXISTS "cooldownAfterMessagesMax" INTEGER NOT NULL DEFAULT 50`)
+        results.push('AntiBanSettings: adicionada coluna cooldownAfterMessagesMax')
+      } else {
+        results.push('AntiBanSettings: cooldownAfterMessagesMax já existe')
+      }
+
+      // New: Break windows
+      if (!absColumnNames.includes('breakWindows')) {
+        await db.$executeRawUnsafe(`ALTER TABLE "AntiBanSettings" ADD COLUMN IF NOT EXISTS "breakWindows" TEXT NOT NULL DEFAULT '[]'`)
+        results.push('AntiBanSettings: adicionada coluna breakWindows')
+      } else {
+        results.push('AntiBanSettings: breakWindows já existe')
+      }
     } catch (absError: any) {
       results.push(`Erro na migração AntiBanSettings: ${absError.message}`)
     }
