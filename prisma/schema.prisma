@@ -239,6 +239,9 @@ model Message {
   campaign            Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
   chip                Chip      @relation(fields: [chipId], references: [id], onDelete: Cascade)
   contact             Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  // Prevent duplicate messages: one message per contact per step per campaign
+  @@unique([campaignId, contactId, stepOrder])
 }
 
 model Settings {

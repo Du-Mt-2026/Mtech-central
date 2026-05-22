@@ -14,7 +14,7 @@ import {
   Sparkles, Heart, Star, AlertTriangle, Info, ChevronDown,
   Pencil, LayoutList, Database, WifiOff, ArrowDownToLine, Save, XCircle, ShieldBan,
   Inbox, LogOut, RotateCcw, Film, Music, File, ImageIcon, Key, Paperclip, MapPin, Link2,
-  Baby, CheckCircle2, Video, MoreVertical, Mic, User, Smile, BookmarkPlus, GripVertical
+  Baby, CheckCircle2, Video, MoreVertical, Mic, User, Smile, BookmarkPlus, GripVertical, Loader2
 } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardAction } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -3284,7 +3284,14 @@ function CampanhasTab() {
     }
   }
 
+  // Track which campaigns are currently starting (prevents double-click)
+  const [startingCampaignIds, setStartingCampaignIds] = React.useState<Set<string>>(new Set())
+
   const startCampaignAction = async (id: string) => {
+    // Prevent double-click: if this campaign is already starting, ignore
+    if (startingCampaignIds.has(id)) return
+    setStartingCampaignIds(prev => new Set(prev).add(id))
+
     try {
       const res = await fetch(`/api/campaigns/${id}/start`, { method: 'POST' })
       let data
@@ -3298,6 +3305,15 @@ function CampanhasTab() {
       const msg = (err as Error).message || 'Erro ao iniciar campanha'
       toast.error(msg)
       console.error('Campaign start error:', err)
+    } finally {
+      // Remove from starting set after a delay to prevent rapid re-clicks
+      setTimeout(() => {
+        setStartingCampaignIds(prev => {
+          const next = new Set(prev)
+          next.delete(id)
+          return next
+        })
+      }, 3000)
     }
   }
 
@@ -4415,7 +4431,7 @@ function CampanhasTab() {
                         <Button variant="outline" size="sm" className="gap-1" onClick={() => saveCampaignAsTemplate(c)}><BookmarkPlus className="size-3.5" /> Template</Button>
                       </TooltipTrigger><TooltipContent>Salvar como template</TooltipContent></Tooltip></TooltipProvider>
                       {['draft', 'paused', 'scheduled'].includes(c.status) && <Button variant="outline" size="sm" className="gap-1" onClick={() => { setSelectedCampaign(c); startEditing(c); setCreateDialogOpen(true) }}><Pencil className="size-3.5" /> Editar</Button>}
-                      {c.status === 'draft' && <Button size="sm" className="gap-1 bg-emerald-600 hover:bg-emerald-700" onClick={() => startCampaignAction(c.id)}><Play className="size-3.5" /> Iniciar</Button>}
+                      {c.status === 'draft' && <Button size="sm" className="gap-1 bg-emerald-600 hover:bg-emerald-700" disabled={startingCampaignIds.has(c.id)} onClick={() => startCampaignAction(c.id)}>{startingCampaignIds.has(c.id) ? <><Loader2 className="size-3.5 animate-spin" /> Iniciando...</> : <><Play className="size-3.5" /> Iniciar</>}</Button>}
                       {c.status === 'running' && <Button variant="outline" size="sm" className="gap-1" onClick={async () => { try { await fetch(`/api/campaigns/${c.id}/pause`, { method: 'POST' }); toast.success('Campanha pausada!'); fetchCampaigns() } catch { toast.error('Erro ao pausar') } }}><Pause className="size-3.5" /> Pausar</Button>}
                       {c.status === 'paused' && <Button size="sm" className="gap-1 bg-emerald-600 hover:bg-emerald-700" onClick={async () => { try { await fetch(`/api/campaigns/${c.id}/resume`, { method: 'POST' }); toast.success('Campanha retomada!'); fetchCampaigns() } catch { toast.error('Erro ao retomar') } }}><Play className="size-3.5" /> Retomar</Button>}
                       {(c.status === 'running' || c.status === 'paused') && <Button variant="outline" size="sm" className="gap-1 text-amber-600 hover:text-amber-700 border-amber-200" onClick={() => updateCampaignStatus(c.id, 'cancelled')}><X className="size-3.5" /> Cancelar</Button>}

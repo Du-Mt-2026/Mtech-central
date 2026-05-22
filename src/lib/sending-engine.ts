@@ -750,9 +750,79 @@ async function resolveMessageKeyMarkers(text: string): Promise<string> {
 }
 
 /**
- * Start a campaign: create pending messages and set status to running
+ * Start a campaign: create pending messages and set status to running.
+ *
+ * CRITICAL: Uses a database transaction with row-level lock on the Campaign row
+ * to prevent race conditions. Two concurrent calls to startCampaign for the same
+ * campaign will serialize — the second will see that messages already exist and skip.
+ *
+ * Additionally, a @@unique([campaignId, contactId, stepOrder]) constraint on Message
+ * prevents duplicate records at the database level.
  */
 export async function startCampaign(campaignId: string): Promise<{ messageCount: number }> {
+  // ============================================================
+  // PHASE 1: Atomic status check + lock
+  // Use a transaction with row-level lock to prevent race conditions.
+  // Two concurrent calls will serialize — only one creates messages.
+  // ============================================================
+  const startResult = await db.$transaction(async (tx) => {
+    // Lock the campaign row to prevent concurrent start attempts
+    const campaign = await tx.$queryRaw<Array<{id: string, status: string}>>`
+      SELECT id, status FROM "Campaign" WHERE id = ${campaignId} FOR UPDATE
+    `
+
+    if (campaign.length === 0) {
+      throw new Error('Campanha não encontrada')
+    }
+
+    const currentStatus = campaign[0].status
+
+    // If already running, just ensure messages exist
+    if (currentStatus === 'running') {
+      const existingCount = await tx.message.count({ where: { campaignId } })
+      if (existingCount > 0) {
+        console.log(`[SendingEngine] Campaign ${campaignId} already running with ${existingCount} messages — skipping`)
+        return { alreadyStarted: true, messageCount: existingCount }
+      }
+    }
+
+    // If not draft/scheduled and not running, cannot start
+    if (currentStatus !== 'draft' && currentStatus !== 'scheduled') {
+      throw new Error(`Campanha não pode ser iniciada no status "${currentStatus}"`)
+    }
+
+    // Check for existing messages (in case a previous attempt partially succeeded)
+    const existingMessages = await tx.message.count({ where: { campaignId } })
+    if (existingMessages > 0) {
+      console.log(`[SendingEngine] Campaign ${campaignId} already has ${existingMessages} messages — marking as running`)
+      await tx.campaign.update({
+        where: { id: campaignId },
+        data: { status: 'running', startedAt: new Date() },
+      })
+      return { alreadyStarted: true, messageCount: existingMessages }
+    }
+
+    // Mark as running IMMEDIATELY to block other concurrent attempts
+    await tx.campaign.update({
+      where: { id: campaignId },
+      data: { status: 'running', startedAt: new Date() },
+    })
+
+    return { alreadyStarted: false, messageCount: 0 }
+  }, {
+    maxWait: 10000,  // Max time to wait for transaction to start
+    timeout: 30000,  // Max time for transaction to complete
+  })
+
+  if (startResult.alreadyStarted) {
+    return { messageCount: startResult.messageCount }
+  }
+
+  // ============================================================
+  // PHASE 2: Create messages (outside transaction for performance)
+  // The campaign is now 'running', so concurrent calls will see it
+  // and skip. The @@unique constraint is the final safety net.
+  // ============================================================
   const campaign = await db.campaign.findUnique({
     where: { id: campaignId },
     include: {
@@ -765,21 +835,6 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
   if (!campaign) throw new Error('Campanha não encontrada')
   if (!campaign.contactList) throw new Error('Campanha não tem lista de contatos')
   if (campaign.chips.length === 0) throw new Error('Campanha não tem chips atribuídos')
-
-  // GUARD: Prevent duplicate message creation if startCampaign is called twice
-  // (e.g., race condition between frontend click and cron job)
-  const existingMessages = await db.message.count({ where: { campaignId } })
-  if (existingMessages > 0) {
-    console.log(`[SendingEngine] Campaign ${campaignId} already has ${existingMessages} messages — skipping duplicate creation`)
-    // Ensure campaign status is 'running'
-    if (campaign.status !== 'running') {
-      await db.campaign.update({
-        where: { id: campaignId },
-        data: { status: 'running', startedAt: new Date() },
-      })
-    }
-    return { messageCount: existingMessages }
-  }
 
   // Derive message content from sequence steps (each step may have variations)
   const hasSteps = campaign.sequenceSteps.length > 0
@@ -801,9 +856,6 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
     try {
       const raw = JSON.parse(s.variations || '[]')
       if (Array.isArray(raw) && raw.length > 0) {
-        // BUG FIX: Don't filter out variations that have media but no text content.
-        // Previously, variations with empty content were dropped even if they had
-        // valid mediaUrl/mediatype, causing image steps to be sent as plain text.
         stepVariations = raw.filter((v: VariationObj) =>
           (v.content && v.content.trim()) || v.mediaUrl || v.mediatype
         )
@@ -821,6 +873,8 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
   })
 
   if (!hasSteps || parsedSteps.length === 0) {
+    // Revert to draft since there are no messages
+    await db.campaign.update({ where: { id: campaignId }, data: { status: 'draft', startedAt: null } })
     throw new Error('Campanha não tem mensagens configuradas. Adicione etapas com mensagens.')
   }
 
@@ -835,8 +889,14 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
   const contacts = campaign.contactList.contacts
   const chips = campaign.chips.map(cc => cc.chip).filter(c => c.evolutionInstance)
 
-  if (chips.length === 0) throw new Error('Nenhum chip com instância WhatsApp conectada')
-  if (contacts.length === 0) throw new Error('Lista de contatos vazia')
+  if (chips.length === 0) {
+    await db.campaign.update({ where: { id: campaignId }, data: { status: 'draft', startedAt: null } })
+    throw new Error('Nenhum chip com instância WhatsApp conectada')
+  }
+  if (contacts.length === 0) {
+    await db.campaign.update({ where: { id: campaignId }, data: { status: 'draft', startedAt: null } })
+    throw new Error('Lista de contatos vazia')
+  }
 
   // Create messages for ALL steps in the sequence
   // For multi-step: each contact gets one message per step, processed in order
@@ -872,7 +932,6 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
       let content = resolveKeyBlocks(messageItem.content)
 
       // Step 2: Replace contact variables from customFields
-      // customFields contains ALL spreadsheet columns: {"nome":"Maria","whatsapp":"55119...","empresa":"Tech Corp","vendedora":"Ana"}
       let customData: Record<string, string> = {}
       try {
         if (contact.customFields) {
@@ -880,26 +939,22 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
         }
       } catch { /* ignore invalid JSON */ }
 
-      // All fields: customFields already has every column from the spreadsheet
-      // If customFields is missing core fields, add them as fallback
       const allFields: Record<string, string> = {
         nome: contact.name,
         telefone: contact.phone,
-        ...customData, // customData overrides everything — it has the real values from the spreadsheet
+        ...customData,
       }
 
-      // Resolve all {{variable}} patterns: if found in allFields, replace; if not, leave as-is
-      // Match {{any_word_or_underscored_key}} but NOT {{KEY: ...}} (already resolved)
+      // Resolve all {{variable}} patterns
       content = content.replace(/\{\{([a-zA-ZÀ-ÿ_][a-zA-ZÀ-ÿ0-9_]*)\}\}/g, (match, varName) => {
         const key = varName.toLowerCase()
         if (allFields[key] !== undefined) {
           return allFields[key]
         }
-        // Variable not found — leave {{varName}} as-is
         return match
       })
 
-      // Legacy single-brace format: {nome}, {telefone}, etc.
+      // Legacy single-brace format
       content = content.replace(/\{([a-zA-ZÀ-ÿ_][a-zA-ZÀ-ÿ0-9_]*)\}/g, (match, varName) => {
         const key = varName.toLowerCase()
         if (allFields[key] !== undefined) {
@@ -908,10 +963,9 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
         return match
       })
 
-      // Step 3: Resolve old-style {{KEY_NAME}} markers (from Chaves/MessageKey system)
+      // Step 3: Resolve old-style {{KEY_NAME}} markers
       content = await resolveMessageKeyMarkers(content)
 
-      // DIAGNOSTIC: Log step media data to help debug media sending issues
       console.log(`[SendingEngine] Creating message for campaign ${campaignId}, contact ${contact.id}, step ${step.stepOrder}: content="${content.substring(0, 50)}...", mediaUrl=${messageItem.mediaUrl || 'null'}, mediatype=${messageItem.mediatype || 'null'}`)
 
       messagesToCreate.push({
@@ -927,17 +981,16 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
     }
   }
 
-  await db.message.createMany({ data: messagesToCreate })
-
-  await db.campaign.update({
-    where: { id: campaignId },
-    data: {
-      status: 'running',
-      startedAt: new Date(),
-    },
+  // Create messages with skipDuplicates — if the unique constraint (campaignId, contactId, stepOrder)
+  // is violated, skip that record instead of failing. This is the FINAL safety net against duplicates.
+  const createResult = await db.message.createMany({
+    data: messagesToCreate,
+    skipDuplicates: true,
   })
 
-  return { messageCount: messagesToCreate.length }
+  console.log(`[SendingEngine] Created ${createResult.count} messages for campaign ${campaignId} (requested ${messagesToCreate.length})`)
+
+  return { messageCount: createResult.count }
 }
 
 // ============================================================
@@ -1465,6 +1518,36 @@ export async function processNextMessage(campaignId: string): Promise<{
         completed: false,
         reason: 'cooldown',
       }
+    }
+  }
+
+  // ============================================================
+  // DEDUPLICATION CHECK: Before sending, verify that no other message
+  // for the same (campaignId, contactId, stepOrder) has already been
+  // sent. This catches any residual duplicates that might exist from
+  // before the unique constraint was added.
+  // ============================================================
+  if (message.campaignId) {
+    const alreadySent = await db.message.findFirst({
+      where: {
+        campaignId: message.campaignId,
+        contactId: message.contactId,
+        stepOrder: (message as any).stepOrder,
+        status: { in: ['sent', 'delivered', 'read', 'sending'] },
+        id: { not: message.id },  // Exclude this message itself
+      },
+      select: { id: true },
+    })
+
+    if (alreadySent) {
+      // Another message for this contact+step was already sent — mark this as failed (duplicate)
+      console.log(`[SendingEngine] DUPLICATE DETECTED: Message ${message.id} for contact ${message.contactId} step ${(message as any).stepOrder} — already sent as message ${alreadySent.id}. Marking as failed.`)
+      await db.message.update({
+        where: { id: message.id },
+        data: { status: 'failed', error: 'Mensagem duplicada — já enviada em outro registro' },
+      })
+      const remaining = await db.message.count({ where: { campaignId, status: 'pending' } })
+      return { processed: true, delayMs: 1000, remaining, completed: remaining === 0 }
     }
   }
 
