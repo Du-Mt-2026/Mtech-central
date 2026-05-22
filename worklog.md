@@ -764,3 +764,30 @@ Stage Summary:
 - Deployed auto-sync chipId preservation fix
 - Production site responding with HTTP 200
 - All messages verified in database including the ones user complained about (00:54, 08:30)
+
+---
+Task ID: scroll-fixes
+Agent: Main Agent
+Task: Fix ALL scroll issues across the application — 9 fixes
+
+Work Log:
+- FIX 1: ContatosTab — Contact Table: Wrapped `<table>` inside `<ScrollArea className="max-h-[600px]">` within `<CardContent className="p-0">` to prevent table overflow (same pattern as MensagensTab)
+- FIX 2: UsuariosTab — Users List: Wrapped `<div className="divide-y">` with filteredUsers.map() inside `<ScrollArea className="max-h-[500px]">` within CardContent
+- FIX 3: CampanhasTab — Campaign Detail Left Panel: Added `overflow-y-auto max-h-[65vh]` to the `<div className="w-64 shrink-0 space-y-3">` stats panel (matching the right panel which already had it)
+- FIX 4: ChipsTab — Import Instances Dialog: Changed DialogContent className from `max-w-lg` to `max-w-lg max-h-[90vh] flex flex-col overflow-hidden`, added `shrink-0` to DialogHeader and DialogFooter
+- FIX 5: ContatosTab — Add/Edit Contact Dialogs: Changed both DialogContent to `max-w-lg max-h-[90vh] flex flex-col overflow-hidden !p-0`, wrapped DialogHeader with `px-6 pt-6 pb-2 shrink-0`, inner content with `px-6 py-4 overflow-y-auto flex-1 min-h-0`, DialogFooter with `px-6 pb-6 pt-2 shrink-0 border-t`
+- FIX 6: TemplatesTab — Edit Template Dialog: Changed DialogContent from `max-w-lg max-h-[85vh]` to `max-w-lg max-h-[90vh] flex flex-col overflow-hidden !p-0`, adjusted DialogHeader/content/Footer with same pattern as create dialog
+- FIX 7: UsuariosTab — Add/Edit User Dialogs: Changed both DialogContent to `max-w-lg max-h-[90vh] flex flex-col overflow-hidden !p-0`, applied consistent header/content/footer pattern with shrink-0, overflow-y-auto, border-t
+- FIX 8: VpsSetupTab — Proxy Config Table: Added `max-h-[400px] overflow-y-auto` to the existing `<div className="overflow-x-auto">` wrapper around the proxy table
+- FIX 9: ContatosTab — Import Dialogs: Added `max-h-[90vh] overflow-y-auto` to both the Import Dialog and Quick Import Dialog DialogContent className
+- Build verified passing (npx next build)
+- Committed: "fix: add scroll to all overflow-prone areas across the app"
+- Pushed to GitHub (9116b71)
+
+Stage Summary:
+- All 9 scroll fixes applied successfully
+- Tables, lists, and dialogs now have proper max-height constraints with scroll
+- Dialog forms use flex column layout with overflow containment (header/content/footer pattern)
+- VPS proxy table has vertical scroll limit
+- Import dialogs scroll when content exceeds viewport
+- Build passes clean, deployed to production
