@@ -1037,6 +1037,11 @@ export async function processNextMessage(campaignId: string): Promise<{
     orderBy: { stepOrder: 'asc' },
   })
 
+  if (!message) {
+    // No more pending messages for this contact — might have been picked up by another process
+    return { processed: false, delayMs: 1000, remaining: -1, completed: false, reason: 'no_pending_message' }
+  }
+
   // For multi-step campaigns: check if this contact's previous step has been sent
   // CONTACT-BY-CONTACT: if previous step not sent yet, WAIT for it (don't skip to other contacts)
   if (message && (message as any).stepOrder > 1) {
@@ -1463,11 +1468,22 @@ export async function processNextMessage(campaignId: string): Promise<{
     }
   }
 
-  // Mark as sending
-  await db.message.update({
-    where: { id: message.id },
+  // ============================================================
+  // CRITICAL: Atomically claim this message to prevent duplicates
+  // Use updateMany with status='pending' filter — only claims if still pending
+  // If another process already claimed it, this returns count=0 and we skip
+  // This MUST be done right before sending, after all checks pass
+  // ============================================================
+  const claimed = await db.message.updateMany({
+    where: { id: message.id, status: 'pending' },
     data: { status: 'sending' },
   })
+
+  if (claimed.count === 0) {
+    // Message was already claimed by another concurrent process — skip it
+    console.log(`[SendingEngine] Message ${message.id} already claimed by another process, skipping`)
+    return { processed: false, delayMs: 500, remaining: -1, completed: false, reason: 'message_already_claimed' }
+  }
 
   try {
     const instanceName = chip.evolutionInstance!
