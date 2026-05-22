@@ -215,9 +215,30 @@ export async function POST(request: Request) {
         if (data?.key?.remoteJid) {
           try {
             const msgId = data.key.id
-            const remoteJid = data.key.remoteJid
+            const rawRemoteJid = data.key.remoteJid
             const fromMe = data.key.fromMe === true
             const pushName = data.pushName || null
+
+            // Handle WhatsApp LID (Linked Identity) format
+            // Newer WhatsApp versions use opaque LIDs like "275075592913115@lid" instead of phone numbers
+            // The actual phone number is in remoteJidAlt when addressingMode is "lid"
+            const addressingMode = data.key.addressingMode
+            const remoteJidAlt = data.key.remoteJidAlt || null
+
+            // Use the phone-based JID when available, fall back to LID
+            let remoteJid = (addressingMode === 'lid' && remoteJidAlt) ? remoteJidAlt : rawRemoteJid
+
+            // Normalize Brazilian phone numbers in JID
+            // WhatsApp sometimes sends numbers without the mobile "9" prefix (e.g., 554888158370 vs 5548988158370)
+            // We normalize to always include the 9 for Brazilian mobile numbers
+            const jidSuffix = remoteJid.split('@')[1] || ''
+            let phonePart = remoteJid.split('@')[0]
+            if (phonePart.startsWith('55') && phonePart.length === 12 && jidSuffix === 's.whatsapp.net') {
+              // Brazilian number without the 9: 55 + DDD(2) + 8 digits = 12 chars
+              // Add the 9 after the DDD to make it 55 + DDD(2) + 9 + 8 digits = 13 chars
+              phonePart = phonePart.slice(0, 4) + '9' + phonePart.slice(4)
+              remoteJid = `${phonePart}@${jidSuffix}`
+            }
 
             // Skip group messages for cleaner inbox
             const isGroup = remoteJid.includes('@g.us')
@@ -306,7 +327,7 @@ export async function POST(request: Request) {
               })
             }
 
-            console.log(`[Webhook] Saved ${fromMe ? 'outgoing' : 'incoming'} message ${isGroup ? '(group) ' : ''}from ${remoteJid} on ${instance}`)
+            console.log(`[Webhook] Saved ${fromMe ? 'outgoing' : 'incoming'} message ${isGroup ? '(group) ' : ''}from ${remoteJid}${addressingMode === 'lid' ? ' (LID resolved from ' + rawRemoteJid + ')' : ''} on ${instance}`)
           } catch (inboxErr) {
             console.error('[Webhook] Error saving inbox message:', inboxErr)
           }

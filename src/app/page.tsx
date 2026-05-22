@@ -5832,13 +5832,13 @@ function InboxTab() {
   }, [selectedChipId, searchConversations])
 
   // Fetch messages for selected conversation
-  const fetchMessages = useCallback(async () => {
-    if (!selectedConversation) { setMessages([]); return }
+  const fetchMessages = useCallback(async (conv: InboxConversation | null) => {
+    if (!conv || !conv.chipId || !conv.remoteJid) { setMessages([]); return }
     setLoadingMessages(true)
     try {
       const params = new URLSearchParams({
-        chipId: selectedConversation.chipId || '',
-        remoteJid: selectedConversation.remoteJid,
+        chipId: conv.chipId,
+        remoteJid: conv.remoteJid,
         limit: '100',
       })
       const res = await fetch(`/api/inbox/messages?${params}`)
@@ -5846,12 +5846,16 @@ function InboxTab() {
       setMessages(data.messages || [])
     } catch { toast.error('Erro ao carregar mensagens') }
     finally { setLoadingMessages(false) }
-  }, [selectedConversation])
+  }, [])
 
-  // Auto-refresh
+  // Auto-refresh chips and conversations
   useEffect(() => { fetchChips() }, [fetchChips])
   useEffect(() => { fetchConversations() }, [fetchConversations])
-  useEffect(() => { fetchMessages() }, [fetchMessages])
+
+  // Fetch messages when conversation changes (direct dependency)
+  useEffect(() => {
+    fetchMessages(selectedConversation)
+  }, [selectedConversation, fetchMessages])
 
   // Scroll to bottom when messages change
   useEffect(() => {
@@ -6133,7 +6137,7 @@ function InboxTab() {
                   variant="ghost"
                   size="icon"
                   className="size-8"
-                  onClick={() => fetchMessages()}
+                  onClick={() => fetchMessages(selectedConversation)}
                 >
                   <RefreshCw className="size-3.5" />
                 </Button>
