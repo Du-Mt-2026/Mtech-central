@@ -7901,7 +7901,7 @@ export default function OctupusZapApp() {
   }
 
   return (
-    <div className="min-h-screen flex bg-zinc-50 dark:bg-zinc-950">
+    <div className="h-screen flex overflow-hidden bg-zinc-50 dark:bg-zinc-950">
       {/* Sidebar - Desktop */}
       <aside className="hidden lg:flex w-64 flex-col bg-zinc-900 dark:bg-zinc-950 border-r border-zinc-800">
         <div className="p-6">
@@ -8010,9 +8010,9 @@ export default function OctupusZapApp() {
       </AnimatePresence>
 
       {/* Main Content */}
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex-1 flex flex-col min-w-0 min-h-0">
         {/* Top Bar */}
-        <header className="sticky top-0 z-30 flex items-center gap-4 px-4 lg:px-6 h-14 bg-white/80 dark:bg-zinc-900/80 backdrop-blur-md border-b">
+        <header className="shrink-0 z-30 flex items-center gap-4 px-4 lg:px-6 h-14 bg-white/80 dark:bg-zinc-900/80 backdrop-blur-md border-b">
           <Button variant="ghost" size="sm" className="lg:hidden" onClick={() => setSidebarOpen(true)}>
             <Menu className="size-5" />
           </Button>
@@ -8034,16 +8034,18 @@ export default function OctupusZapApp() {
         </header>
 
         {/* Page Content */}
-        <main className={`flex-1 p-4 lg:p-6 pb-8 ${activeTab === 'inbox' ? 'overflow-hidden' : 'overflow-y-auto'}`} style={{ contain: 'layout paint' }}>
-          <AnimatePresence mode="wait">
-            <motion.div key={activeTab} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} transition={{ duration: 0.2 }} className={activeTab === 'inbox' ? 'h-full' : ''}>
-              {renderContent()}
-            </motion.div>
-          </AnimatePresence>
+        <main className="flex-1 min-h-0 p-4 lg:p-6 pb-8 overflow-hidden">
+          <div className={activeTab === 'inbox' ? 'h-full' : 'h-full overflow-y-auto'}>
+            <AnimatePresence mode="wait">
+              <motion.div key={activeTab} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} transition={{ duration: 0.2 }} className={activeTab === 'inbox' ? 'h-full' : ''}>
+                {renderContent()}
+              </motion.div>
+            </AnimatePresence>
+          </div>
         </main>
 
         {/* Footer */}
-        <footer className="mt-auto px-4 lg:px-6 py-2.5 border-t bg-white/80 dark:bg-zinc-900/80 backdrop-blur-sm">
+        <footer className="shrink-0 px-4 lg:px-6 py-2.5 border-t bg-white/80 dark:bg-zinc-900/80 backdrop-blur-sm">
           <div className="flex items-center justify-between text-xs text-muted-foreground">
             <p>OctupusZap © {new Date().getFullYear()}</p>
             <p className="flex items-center gap-1">
