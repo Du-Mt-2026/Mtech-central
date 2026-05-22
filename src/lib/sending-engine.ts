@@ -752,9 +752,13 @@ async function resolveMessageKeyMarkers(text: string): Promise<string> {
 /**
  * Start a campaign: create pending messages and set status to running.
  *
- * CRITICAL: Uses a database transaction with row-level lock on the Campaign row
- * to prevent race conditions. Two concurrent calls to startCampaign for the same
- * campaign will serialize — the second will see that messages already exist and skip.
+ * CRITICAL ORDER: Messages MUST be created BEFORE the campaign status is set to 'running'.
+ * If we set status='running' first, the processing loop (auto-process every 60s) can
+ * pick up the campaign, find 0 pending messages, and immediately mark it as completed.
+ *
+ * Uses a database transaction with row-level lock on the Campaign row to prevent
+ * race conditions. Two concurrent calls to startCampaign for the same campaign will
+ * serialize — the second will see that messages already exist and skip.
  *
  * Additionally, a @@unique([campaignId, contactId, stepOrder]) constraint on Message
  * prevents duplicate records at the database level.
@@ -763,7 +767,8 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
   // ============================================================
   // PHASE 1: Atomic status check + lock
   // Use a transaction with row-level lock to prevent race conditions.
-  // Two concurrent calls will serialize — only one creates messages.
+  // Two concurrent calls will serialize — only one proceeds to create messages.
+  // IMPORTANT: Do NOT set status='running' here — that happens AFTER messages exist.
   // ============================================================
   const startResult = await db.$transaction(async (tx) => {
     // Lock the campaign row to prevent concurrent start attempts
@@ -777,16 +782,21 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
 
     const currentStatus = campaign[0].status
 
-    // If already running, just ensure messages exist
+    // If already running with messages, skip
     if (currentStatus === 'running') {
       const existingCount = await tx.message.count({ where: { campaignId } })
       if (existingCount > 0) {
         console.log(`[SendingEngine] Campaign ${campaignId} already running with ${existingCount} messages — skipping`)
-        return { alreadyStarted: true, messageCount: existingCount }
+        return { canProceed: false, messageCount: existingCount }
       }
     }
 
-    // If not draft/scheduled and not running, cannot start
+    // If already completed/cancelled, cannot start
+    if (currentStatus === 'completed' || currentStatus === 'cancelled') {
+      throw new Error(`Campanha não pode ser iniciada no status "${currentStatus}"`)
+    }
+
+    // If not draft/scheduled, cannot start
     if (currentStatus !== 'draft' && currentStatus !== 'scheduled') {
       throw new Error(`Campanha não pode ser iniciada no status "${currentStatus}"`)
     }
@@ -794,34 +804,31 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
     // Check for existing messages (in case a previous attempt partially succeeded)
     const existingMessages = await tx.message.count({ where: { campaignId } })
     if (existingMessages > 0) {
+      // Messages exist from a previous attempt — just mark as running
       console.log(`[SendingEngine] Campaign ${campaignId} already has ${existingMessages} messages — marking as running`)
       await tx.campaign.update({
         where: { id: campaignId },
         data: { status: 'running', startedAt: new Date() },
       })
-      return { alreadyStarted: true, messageCount: existingMessages }
+      return { canProceed: false, messageCount: existingMessages }
     }
 
-    // Mark as running IMMEDIATELY to block other concurrent attempts
-    await tx.campaign.update({
-      where: { id: campaignId },
-      data: { status: 'running', startedAt: new Date() },
-    })
-
-    return { alreadyStarted: false, messageCount: 0 }
+    // Campaign is draft/scheduled with no messages — we can proceed
+    // DO NOT set status='running' here! Wait until messages are created.
+    return { canProceed: true, messageCount: 0 }
   }, {
-    maxWait: 10000,  // Max time to wait for transaction to start
-    timeout: 30000,  // Max time for transaction to complete
+    maxWait: 10000,
+    timeout: 30000,
   })
 
-  if (startResult.alreadyStarted) {
+  if (!startResult.canProceed) {
     return { messageCount: startResult.messageCount }
   }
 
   // ============================================================
-  // PHASE 2: Create messages (outside transaction for performance)
-  // The campaign is now 'running', so concurrent calls will see it
-  // and skip. The @@unique constraint is the final safety net.
+  // PHASE 2: Create messages (campaign is still in 'draft' status)
+  // The processing loop only picks up 'running' campaigns, so there's
+  // no risk of premature processing while we're creating messages.
   // ============================================================
   const campaign = await db.campaign.findUnique({
     where: { id: campaignId },
@@ -989,6 +996,19 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
   })
 
   console.log(`[SendingEngine] Created ${createResult.count} messages for campaign ${campaignId} (requested ${messagesToCreate.length})`)
+
+  // ============================================================
+  // PHASE 3: NOW set campaign to 'running' — AFTER messages exist
+  // This is the critical ordering: the processing loop will only
+  // pick up 'running' campaigns, and by now messages are guaranteed
+  // to exist, so processNextMessage won't prematurely complete it.
+  // ============================================================
+  await db.campaign.update({
+    where: { id: campaignId },
+    data: { status: 'running', startedAt: new Date() },
+  })
+
+  console.log(`[SendingEngine] Campaign ${campaignId} is now RUNNING with ${createResult.count} messages`)
 
   return { messageCount: createResult.count }
 }
