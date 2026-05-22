@@ -192,6 +192,7 @@ model Campaign {
 
   // Status reason — explains why a campaign was paused/stopped (e.g., chip banned, chip disconnected)
   statusReason     String?
+  pausedAt         DateTime?
 
   // Vendedor association — this campaign sends on behalf of this vendedor
   vendedorId String?

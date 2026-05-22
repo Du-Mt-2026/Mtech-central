@@ -74,6 +74,7 @@ export async function POST(request: Request) {
     let totalFailed = 0
     let totalRemaining = 0
     let lastReason = ''
+    const allEvents: Array<{ type: string; chipName?: string; campaignName?: string; reason?: string }> = []
 
     for (const campaignId of campaignIds) {
       // Process up to 10 messages per campaign per invocation
@@ -90,6 +91,18 @@ export async function POST(request: Request) {
           totalProcessed++
         } else {
           lastReason = result.reason || ''
+        }
+
+        // Collect events for frontend notifications
+        if (result.events?.length) {
+          // Look up campaign name for events that don't have it
+          for (const evt of result.events) {
+            if (!evt.campaignName) {
+              const c = await db.campaign.findUnique({ where: { id: campaignId }, select: { name: true } })
+              evt.campaignName = c?.name || 'Desconhecida'
+            }
+          }
+          allEvents.push(...result.events)
         }
 
         totalRemaining = result.remaining >= 0 ? result.remaining : totalRemaining
@@ -130,6 +143,7 @@ export async function POST(request: Request) {
       startedScheduled: startedCampaigns.length,
       lastReason: lastReason || undefined,
       elapsedMs,
+      events: allEvents.length > 0 ? allEvents : undefined,
     })
   } catch (error: any) {
     console.error('[Process] Error:', error)

@@ -1082,6 +1082,7 @@ export async function processNextMessage(campaignId: string): Promise<{
   remaining: number
   completed: boolean
   reason?: string
+  events?: Array<{ type: string; chipName?: string; campaignName?: string; reason?: string }>
 }> {
   // Check if campaign is paused or completed
   const campaignStatus = await db.campaign.findUnique({
@@ -1368,7 +1369,7 @@ export async function processNextMessage(campaignId: string): Promise<{
         })
 
         const remaining = await db.message.count({ where: { campaignId, status: 'pending' } })
-        return { processed: false, delayMs: 1000, remaining, completed: remaining === 0, reason: `disconnected_reassigned_${message.chip.name}` }
+        return { processed: false, delayMs: 1000, remaining, completed: remaining === 0, reason: `disconnected_reassigned_${message.chip.name}`, events: [{ type: 'chip_disconnected', chipName: message.chip.name, campaignName: undefined }] }
       }
 
       // No other campaign chips available — pause the campaign and notify
@@ -1385,10 +1386,11 @@ export async function processNextMessage(campaignId: string): Promise<{
         data: {
           status: 'paused',
           statusReason: `Pausada automaticamente: chip ${message.chip.name} desconectou e não há outros chips disponíveis na campanha`,
+          pausedAt: new Date(),
         },
       })
       console.log(`[SendingEngine] Campaign ${campaignId} PAUSED — chip ${message.chip.name} disconnected, no other campaign chips available`)
-      return { processed: false, delayMs: 0, remaining: -1, completed: false, reason: 'auto_paused_no_campaign_chips' }
+      return { processed: false, delayMs: 0, remaining: -1, completed: false, reason: 'auto_paused_no_campaign_chips', events: [{ type: 'chip_disconnected', chipName: message.chip.name }, { type: 'campaign_auto_paused', reason: 'Chip desconectou e não há outros chips disponíveis' }] }
     }
 
     if (banCheck.banned) {
@@ -1440,7 +1442,7 @@ export async function processNextMessage(campaignId: string): Promise<{
         })
 
         const remaining = await db.message.count({ where: { campaignId, status: 'pending' } })
-        return { processed: false, delayMs: 2000, remaining, completed: remaining === 0, reason: `banned_reassigned_${message.chip.name}` }
+        return { processed: false, delayMs: 2000, remaining, completed: remaining === 0, reason: `banned_reassigned_${message.chip.name}`, events: [{ type: 'chip_banned', chipName: message.chip.name }] }
       }
 
       // No other campaign chips available — pause the campaign and notify
@@ -1457,10 +1459,11 @@ export async function processNextMessage(campaignId: string): Promise<{
         data: {
           status: 'paused',
           statusReason: `Pausada automaticamente: chip ${message.chip.name} foi banido e não há outros chips disponíveis na campanha`,
+          pausedAt: new Date(),
         },
       })
       console.log(`[SendingEngine] Campaign ${campaignId} PAUSED — chip ${message.chip.name} banned, no other campaign chips available`)
-      return { processed: false, delayMs: 0, remaining: -1, completed: false, reason: 'auto_paused_banned_no_campaign_chips' }
+      return { processed: false, delayMs: 0, remaining: -1, completed: false, reason: 'auto_paused_banned_no_campaign_chips', events: [{ type: 'chip_banned', chipName: message.chip.name }, { type: 'campaign_auto_paused', reason: 'Chip banido e não há outros chips disponíveis' }] }
     }
   }
 
@@ -1471,7 +1474,11 @@ export async function processNextMessage(campaignId: string): Promise<{
       // Pause the campaign — a warning was detected
       await db.campaign.update({
         where: { id: campaignId },
-        data: { status: 'paused' },
+        data: {
+          status: 'paused',
+          statusReason: 'Campanha pausada automaticamente — aviso de spam detectado pelo WhatsApp. Retome com cautela.',
+          pausedAt: new Date(),
+        },
       })
       console.log(`[SendingEngine] Campaign ${campaignId} PAUSED — WhatsApp warning detected for chip ${message.chip.name}`)
       return {
@@ -1480,6 +1487,7 @@ export async function processNextMessage(campaignId: string): Promise<{
         remaining: -1,
         completed: false,
         reason: 'whatsapp_warning_detected',
+        events: [{ type: 'campaign_auto_paused', reason: 'Aviso de spam detectado pelo WhatsApp' }],
       }
     }
   }

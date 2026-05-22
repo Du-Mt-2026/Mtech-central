@@ -202,6 +202,8 @@ interface Campaign {
   updatedAt: string
   antiBanEnabled: boolean
   warmingMode: string
+  statusReason?: string | null
+  pausedAt?: string | null
   chips: { id: string; chipId: string; chip: Chip }[]
   sequenceSteps: SequenceStep[]
   contactList: { id: string; name: string } | null
@@ -1252,9 +1254,14 @@ function ChipsTab() {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
                           <CardTitle className="truncate text-base">{chip.profileName || chip.name}</CardTitle>
-                          {chip.disconnectionReasonCode === 401 && (
+                          {chip.disconnectionReasonCode && (
                             <Badge variant="destructive" className="gap-1 text-[10px] px-1.5 py-0 shrink-0">
-                              <WifiOff className="size-3" /> Dispositivo removido
+                              <WifiOff className="size-3" />
+                              {chip.disconnectionReasonCode === 401 ? 'Dispositivo removido' :
+                               chip.disconnectionReasonCode === 403 ? 'Banido pelo WhatsApp' :
+                               chip.disconnectionReasonCode === 428 ? 'Dispositivo substituído' :
+                               chip.disconnectionReasonCode === 440 ? 'Dispositivo desconectado' :
+                               `Código ${chip.disconnectionReasonCode}`}
                             </Badge>
                           )}
                         </div>
@@ -1541,9 +1548,14 @@ function ChipsTab() {
                             <Badge variant={inst.connectionStatus === 'open' ? 'default' : 'secondary'} className={`text-[10px] px-1.5 py-0 ${inst.connectionStatus === 'open' ? 'bg-emerald-600' : ''}`}>
                               {inst.connectionStatus === 'open' ? 'Conectada' : inst.connectionStatus === 'connecting' ? 'Conectando' : 'Desconectada'}
                             </Badge>
-                            {inst.disconnectionReasonCode === 401 && (
+                            {inst.disconnectionReasonCode && (
                               <Badge variant="destructive" className="text-[10px] px-1.5 py-0 gap-0.5">
-                                <WifiOff className="size-2.5" /> Removido
+                                <WifiOff className="size-2.5" />
+                                {inst.disconnectionReasonCode === 401 ? 'Removido' :
+                                 inst.disconnectionReasonCode === 403 ? 'Banido' :
+                                 inst.disconnectionReasonCode === 428 ? 'Substituído' :
+                                 inst.disconnectionReasonCode === 440 ? 'Desconectado' :
+                                 `Código ${inst.disconnectionReasonCode}`}
                               </Badge>
                             )}
                           </div>
@@ -3366,6 +3378,19 @@ function CampanhasTab() {
             elapsed: data.elapsedMs || 0,
           }))
 
+          // Show toasts for chip ban/disconnect/auto-pause events
+          if (data.events?.length) {
+            for (const event of data.events) {
+              if (event.type === 'chip_banned') {
+                toast.error(`Chip ${event.chipName} foi banido durante a campanha "${event.campaignName}"`, { duration: 8000 })
+              } else if (event.type === 'chip_disconnected') {
+                toast.warning(`Chip ${event.chipName} desconectou durante a campanha "${event.campaignName}"`, { duration: 8000 })
+              } else if (event.type === 'campaign_auto_paused') {
+                toast.error(`Campanha "${event.campaignName}" foi pausada automaticamente: ${event.reason}`, { duration: 8000 })
+              }
+            }
+          }
+
           // If no messages were processed and no running campaigns, stop
           if (data.processed === 0 && data.campaigns === 0) {
             console.log('[ContinuousProcess] No more running campaigns, stopping.')
@@ -4413,6 +4438,12 @@ function CampanhasTab() {
                       <div className="flex items-center gap-2">
                         <h3 className="font-semibold truncate">{c.name}</h3>
                         <StatusBadge status={c.status} />
+                        {c.status === 'paused' && c.statusReason && (
+                          <div className="flex items-center gap-1.5 mt-1.5 text-xs text-amber-600 dark:text-amber-400">
+                            <AlertTriangle className="size-3 shrink-0" />
+                            <span className="truncate">{c.statusReason}</span>
+                          </div>
+                        )}
                         {c.antiBanEnabled && (
                           <Badge variant="outline" className="gap-1 text-xs text-emerald-600 border-emerald-300">
                             <Shield className="size-3" /> Anti-Ban
@@ -4530,6 +4561,39 @@ function CampanhasTab() {
                   <RefreshCw className={`size-3.5 ${refreshingDetail ? 'animate-spin' : ''}`} /> Atualizar
                 </Button>
               )}
+              {selectedCampaign && (selectedCampaign.messageStatusCounts?.failed || 0) > 0 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5 text-xs"
+                  onClick={async () => {
+                    if (!selectedCampaign) return
+                    try {
+                      const res = await fetch('/api/messages/resend-all-failed', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ campaignId: selectedCampaign.id }),
+                      })
+                      const data = await res.json()
+                      if (res.ok) {
+                        toast.success(`${data.resetCount || 0} mensagens reenviadas`)
+                        // Refresh messages
+                        const msgRes = await fetch(`/api/messages?campaignId=${selectedCampaign.id}`, { cache: 'no-store' })
+                        const msgData = await msgRes.json()
+                        setDetailMessages(Array.isArray(msgData) ? msgData : [])
+                        fetchCampaigns()
+                      } else {
+                        toast.error(data.error || 'Erro ao reenviar')
+                      }
+                    } catch {
+                      toast.error('Erro ao reenviar mensagens')
+                    }
+                  }}
+                >
+                  <RotateCcw className="size-3" />
+                  Reenviar falhadas ({selectedCampaign.messageStatusCounts?.failed})
+                </Button>
+              )}
             </DialogTitle>
             <DialogDescription>Detalhes da campanha</DialogDescription>
           </DialogHeader>
@@ -4537,6 +4601,14 @@ function CampanhasTab() {
             <div className="flex gap-6 overflow-hidden p-6">
               {/* Left panel - Stats */}
               <div className="w-64 shrink-0 space-y-3 overflow-y-auto max-h-[65vh]">
+                {/* Paused status reason alert */}
+                {selectedCampaign.status === 'paused' && selectedCampaign.statusReason && (
+                  <Alert className="mb-3 border-amber-200 bg-amber-50 dark:bg-amber-900/20 dark:border-amber-800">
+                    <AlertTriangle className="size-4 text-amber-600" />
+                    <AlertTitle className="text-amber-800 dark:text-amber-300">Campanha pausada</AlertTitle>
+                    <AlertDescription className="text-amber-700 dark:text-amber-400">{selectedCampaign.statusReason}</AlertDescription>
+                  </Alert>
+                )}
                 {/* Chip daily limit warning */}
                 {detailMessages.some(m => m.status === 'failed' && m.error && (/limite/i.test(m.error) || /daily_limit/i.test(m.error))) && (
                   <Alert variant="destructive" className="mb-3">

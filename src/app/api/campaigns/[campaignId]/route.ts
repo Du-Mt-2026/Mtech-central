@@ -129,7 +129,7 @@ export async function PATCH(
             )
           }
         } else if (currentCampaign.status === 'paused') {
-          // Resuming from pause — clear the status reason
+          // Resuming from pause — clear the status reason and pausedAt
           // Also recover messages stuck in 'sending' state (they were interrupted by the pause)
           const stuckMessages = await db.message.findMany({
             where: { campaignId: currentCampaign.id, status: 'sending' },
@@ -144,13 +144,13 @@ export async function PATCH(
           }
           await db.campaign.update({
             where: { id: campaignId },
-            data: { status: 'running', statusReason: null },
+            data: { status: 'running', statusReason: null, pausedAt: null },
           })
         }
       } else if (newStatus === 'paused') {
         await db.campaign.update({
           where: { id: campaignId },
-          data: { status: 'paused' },
+          data: { status: 'paused', statusReason: 'Pausada manualmente pelo usuário', pausedAt: new Date() },
         })
       } else if (newStatus === 'cancelled') {
         // Cancel campaign and mark all pending messages as failed

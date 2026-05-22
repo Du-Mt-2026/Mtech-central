@@ -24,7 +24,11 @@ export async function POST(
 
     const updated = await db.campaign.update({
       where: { id: campaignId },
-      data: { status: 'paused' },
+      data: {
+        status: 'paused',
+        statusReason: 'Pausada manualmente pelo usuário',
+        pausedAt: new Date(),
+      },
       include: {
         chips: { include: { chip: true } },
         sequenceSteps: { orderBy: { stepOrder: 'asc' } },
