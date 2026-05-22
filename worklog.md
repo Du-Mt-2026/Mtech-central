@@ -742,3 +742,25 @@ Stage Summary:
 - Auto-refresh code ready locally but NOT DEPLOYED
 - CRITICAL BLOCKER: GitHub token expired, cannot push code for deployment
 - Need new GitHub Personal Access Token from user to deploy all fixes
+---
+Task ID: 1
+Agent: Main Agent
+Task: Fix inbox not updating with WhatsApp messages, UI bugs (scroll, click, resizable panels)
+
+Work Log:
+- Investigated production code structure - project is a single-page Next.js app (not the multi-page layout from previous session)
+- Discovered all messages ARE being synced to database via auto-sync (159 messages synced across 7 chips)
+- Found root cause of "page jumping down" bug: scrollIntoView() was scrolling the entire page instead of just the chat area
+- Fixed scrollIntoView by using chatScrollRef and directly manipulating the ScrollArea viewport's scrollTop
+- Replaced fixed-width panels (w-64, w-80) with ResizablePanelGroup for user-adjustable widths
+- Added ResizableHandle with drag indicators between all 3 panels
+- Fixed auto-sync chipId overwrite issue - messages no longer lose their chip association when synced from multiple instances
+- Added proper overflow containment to main content area
+- Built, committed, and pushed to GitHub - Vercel auto-deploy triggered successfully
+
+Stage Summary:
+- Deployed fix for scrollIntoView page jump bug (line 5884-5894 in page.tsx)
+- Deployed resizable panels for inbox (ResizablePanelGroup with 12-30%, 18-40%, 30%+ size ranges)
+- Deployed auto-sync chipId preservation fix
+- Production site responding with HTTP 200
+- All messages verified in database including the ones user complained about (00:54, 08:30)
