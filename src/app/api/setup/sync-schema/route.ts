@@ -59,8 +59,13 @@ export async function POST(req: NextRequest) {
 
         results.push('Migração concluída com sucesso!')
       } else if (columnNames.includes('name') && columnNames.includes('email')) {
-        // Already has new schema
-        results.push('Schema já está atualizado. Nenhuma migração necessária.')
+        // Already has new schema — but check for missing newer columns
+        if (!columnNames.includes('mustChangePassword')) {
+          await db.$executeRawUnsafe(`ALTER TABLE "AdminUser" ADD COLUMN IF NOT EXISTS "mustChangePassword" BOOLEAN NOT NULL DEFAULT false`)
+          results.push('AdminUser: adicionada coluna mustChangePassword')
+        } else {
+          results.push('Schema já está atualizado. Nenhuma migração necessária.')
+        }
       } else {
         // Unknown schema state - drop and let Prisma recreate
         results.push('Schema em estado desconhecido. Recriando tabela...')
