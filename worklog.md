@@ -714,3 +714,31 @@ Stage Summary:
 - User must close dialog and wait several minutes before trying again after hitting the limit
 - This explains why the previous number was banned: repeated connectInstance() calls without any delay
 
+---
+Task ID: 1
+Agent: main
+Task: Fix inbox messages not appearing - investigate and fix webhook, sync, and auto-refresh
+
+Work Log:
+- Checked Evolution API instances and webhooks for all OctupusZap chips
+- Found Debora's webhook URL was pointing to old preview URL (mtech-sistemas-815713zk5-du-mt-26s-projects.vercel.app instead of mtech-sistemas.vercel.app)
+- Fixed Debora's webhook URL to correct production URL
+- Fixed Mari Promo webhook URL (same issue)
+- Tested message flow: Dudinha → Artur and Artur → Dudinha
+- Discovered WhatsApp LID format (e.g., 275075592913115@lid) causes messages to be saved with wrong remoteJid
+- The production webhook handler doesn't have LID resolution code (fix is local only)
+- The production sync endpoint DOES have LID fix and works for Artur chip
+- But sync for Dudinha chip has issue: upsert with `update: {}` doesn't fix existing LID-based entries
+- Manually synced messages for both chips and added missing messages via webhook
+- Created auto-sync endpoint (local) that polls Evolution API every 10s and fixes LID entries
+- Created poll endpoint (local) for lightweight DB polling
+- Updated InboxTab with auto-refresh: 10s Evolution API sync + 3s DB polling
+- Updated sync-messages to also update remoteJid when finding entries with wrong JID
+- Added Brazilian phone normalization to sync-messages endpoint
+
+Stage Summary:
+- Webhook URLs fixed for 2 chips (Debora, Mari Promo)
+- Messages are now visible in both Artur and Dudinha inboxes (via sync + manual webhook)
+- Auto-refresh code ready locally but NOT DEPLOYED
+- CRITICAL BLOCKER: GitHub token expired, cannot push code for deployment
+- Need new GitHub Personal Access Token from user to deploy all fixes
