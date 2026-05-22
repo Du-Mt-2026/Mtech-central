@@ -7916,7 +7916,8 @@ export default function OctupusZapApp() {
           </div>
         </div>
 
-        <nav className="flex-1 px-3 space-y-1">
+        <ScrollArea className="flex-1 min-h-0 px-3">
+          <div className="space-y-1 py-1">
           {NAV_ITEMS.filter(item => {
             const userLevel = ROLE_LEVELS[userRole] || 1
             const requiredLevel = ROLE_LEVELS[item.minRole] || 1
@@ -7933,9 +7934,10 @@ export default function OctupusZapApp() {
               {item.label}
             </button>
           ))}
-        </nav>
+          </div>
+        </ScrollArea>
 
-        <div className="p-4 m-3 rounded-xl bg-zinc-800/50 space-y-3">
+        <div className="shrink-0 p-4 m-3 rounded-xl bg-zinc-800/50 space-y-3">
           <div className="flex items-center gap-3">
             <div className="flex size-9 items-center justify-center rounded-full bg-gradient-to-br from-emerald-400 to-teal-500 shadow-md">
               <span className="text-sm font-bold text-white">{username ? username.charAt(0).toUpperCase() : 'O'}</span>
@@ -7986,7 +7988,8 @@ export default function OctupusZapApp() {
                   </Button>
                 </div>
               </div>
-              <nav className="flex-1 px-3 space-y-1">
+              <ScrollArea className="flex-1 min-h-0 px-3">
+                <div className="space-y-1 py-1">
                 {NAV_ITEMS.filter(item => {
                   const userLevel = ROLE_LEVELS[userRole] || 1
                   const requiredLevel = ROLE_LEVELS[item.minRole] || 1
@@ -8003,7 +8006,8 @@ export default function OctupusZapApp() {
                     {item.label}
                   </button>
                 ))}
-              </nav>
+                </div>
+              </ScrollArea>
             </motion.aside>
           </>
         )}
