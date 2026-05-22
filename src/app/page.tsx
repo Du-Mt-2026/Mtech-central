@@ -5804,6 +5804,8 @@ function InboxTab() {
   const [searchChips, setSearchChips] = useState('')
   const [searchConversations, setSearchConversations] = useState('')
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const lastSyncRef = useRef<string>(new Date().toISOString())
+  const syncingRef = useRef(false)
 
   // Fetch chips
   const fetchChips = useCallback(async () => {
@@ -5818,23 +5820,23 @@ function InboxTab() {
   }, [searchChips])
 
   // Fetch conversations for selected chip
-  const fetchConversations = useCallback(async () => {
+  const fetchConversations = useCallback(async (silent = false) => {
     if (!selectedChipId) { setConversations([]); return }
-    setLoadingConversations(true)
+    if (!silent) setLoadingConversations(true)
     try {
       const params = new URLSearchParams({ chipId: selectedChipId })
       if (searchConversations) params.set('search', searchConversations)
       const res = await fetch(`/api/inbox/conversations?${params}`)
       const data = await res.json()
       setConversations(data.conversations || [])
-    } catch { toast.error('Erro ao carregar conversas') }
+    } catch { if (!silent) toast.error('Erro ao carregar conversas') }
     finally { setLoadingConversations(false) }
   }, [selectedChipId, searchConversations])
 
   // Fetch messages for selected conversation
-  const fetchMessages = useCallback(async (conv: InboxConversation | null) => {
+  const fetchMessages = useCallback(async (conv: InboxConversation | null, silent = false) => {
     if (!conv || !conv.chipId || !conv.remoteJid) { setMessages([]); return }
-    setLoadingMessages(true)
+    if (!silent) setLoadingMessages(true)
     try {
       const params = new URLSearchParams({
         chipId: conv.chipId,
@@ -5844,9 +5846,30 @@ function InboxTab() {
       const res = await fetch(`/api/inbox/messages?${params}`)
       const data = await res.json()
       setMessages(data.messages || [])
-    } catch { toast.error('Erro ao carregar mensagens') }
+    } catch { if (!silent) toast.error('Erro ao carregar mensagens') }
     finally { setLoadingMessages(false) }
   }, [])
+
+  // Auto-sync: pull new messages from Evolution API every 10 seconds
+  const autoSync = useCallback(async () => {
+    if (syncingRef.current) return
+    syncingRef.current = true
+    try {
+      const res = await fetch('/api/inbox/auto-sync', { method: 'POST' })
+      if (res.ok) {
+        const data = await res.json()
+        if (data.synced > 0) {
+          // New messages found — refresh conversations and messages
+          fetchChips()
+          fetchConversations(true)
+          if (selectedConversation) {
+            fetchMessages(selectedConversation, true)
+          }
+        }
+      }
+    } catch { /* silent */ }
+    finally { syncingRef.current = false }
+  }, [fetchChips, fetchConversations, fetchMessages, selectedConversation])
 
   // Auto-refresh chips and conversations
   useEffect(() => { fetchChips() }, [fetchChips])
@@ -5862,7 +5885,13 @@ function InboxTab() {
     setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100)
   }, [messages])
 
-  // Polling for new messages every 5s when a conversation is selected
+  // Auto-sync polling: every 10s, pull new messages from Evolution API
+  useEffect(() => {
+    const interval = setInterval(autoSync, 10000)
+    return () => clearInterval(interval)
+  }, [autoSync])
+
+  // Quick polling for new messages every 3s when a conversation is selected (checks DB only, no Evolution API)
   useEffect(() => {
     if (!selectedConversation) return
     const interval = setInterval(async () => {
@@ -5878,7 +5907,7 @@ function InboxTab() {
           setMessages(data.messages || [])
         }
       } catch { /* silent */ }
-    }, 5000)
+    }, 3000)
     return () => clearInterval(interval)
   }, [selectedConversation, messages.length])
 

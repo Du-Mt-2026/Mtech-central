@@ -3,76 +3,67 @@ import { db } from '@/lib/db'
 import { evolutionFetch } from '@/lib/evolution-api'
 
 /**
- * POST /api/inbox/sync-messages
- * Syncs missing messages from Evolution API into InboxMessage table.
- * This is useful when webhooks were down or missed messages.
- *
- * Body: {
- *   chipId: string        - The chip to sync messages for
- *   remoteJid?: string    - Optional: only sync for this specific contact
- *   limit?: number        - Max messages to fetch per conversation (default 50)
- * }
+ * POST /api/inbox/auto-sync
+ * Syncs recent messages from Evolution API for ALL connected chips.
+ * Called automatically by the frontend every 10 seconds.
+ * Only syncs messages newer than the latest message in each chip's inbox.
+ * Also fixes LID-based remoteJid entries by updating them to phone-based JIDs.
  */
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json()
-    const { chipId, remoteJid, limit = 50 } = body as {
-      chipId?: string
-      remoteJid?: string
-      limit?: number
+    const body = await request.json().catch(() => ({}))
+    const { chipId } = body as { chipId?: string }
+
+    // Get connected chips
+    const chips = await db.chip.findMany({
+      where: {
+        status: 'connected',
+        evolutionInstance: { not: null },
+        ...(chipId ? { id: chipId } : {}),
+      },
+      select: {
+        id: true,
+        evolutionInstance: true,
+        name: true,
+      },
+    })
+
+    if (chips.length === 0) {
+      return NextResponse.json({ synced: 0, chips: 0 })
     }
 
-    if (!chipId) {
-      return NextResponse.json({ error: 'chipId é obrigatório' }, { status: 400 })
-    }
+    let totalSynced = 0
+    let totalErrors = 0
+    let totalFixed = 0
 
-    // Get the chip
-    const chip = await db.chip.findUnique({ where: { id: chipId } })
-    if (!chip || !chip.evolutionInstance) {
-      return NextResponse.json({ error: 'Chip não encontrado ou sem instância' }, { status: 404 })
-    }
+    for (const chip of chips) {
+      try {
+        // Get the latest message timestamp for this chip
+        const latestMsg = await db.inboxMessage.findFirst({
+          where: { chipId: chip.id },
+          orderBy: { createdAt: 'desc' },
+          select: { createdAt: true },
+        })
 
-    const instanceName = chip.evolutionInstance
+        // Fetch recent messages from Evolution API
+        const fetchRes = await evolutionFetch(`/chat/findMessages/${chip.evolutionInstance}`, {
+          method: 'POST',
+          body: JSON.stringify({
+            number: '',
+            limit: 20,
+            page: 1,
+          }),
+        })
 
-    // Get conversations from our DB to know which contacts to sync
-    let conversationsToSync: string[] = []
+        if (!fetchRes.ok) continue
 
-    if (remoteJid) {
-      conversationsToSync = [remoteJid]
-    } else {
-      // Get all distinct remoteJids for this chip
-      const distinctJids = await db.inboxMessage.findMany({
-        where: { chipId },
-        select: { remoteJid: true },
-        distinct: ['remoteJid'],
-      })
-      conversationsToSync = distinctJids.map(j => j.remoteJid)
-    }
-
-    let synced = 0
-    let skipped = 0
-    let errors = 0
-    let fixed = 0
-
-    // Fetch the latest messages from Evolution API
-    try {
-      const fetchRes = await evolutionFetch(`/chat/findMessages/${instanceName}`, {
-        method: 'POST',
-        body: JSON.stringify({
-          number: remoteJid || '',
-          limit,
-          page: 1,
-        }),
-      })
-
-      if (fetchRes.ok) {
         const fetchData = await fetchRes.json()
         const messages = fetchData?.messages?.records || fetchData?.messages || []
 
         for (const msg of messages) {
           try {
             const msgId = msg.key?.id
-            if (!msgId) { skipped++; continue }
+            if (!msgId) continue
 
             // Handle LID format
             const rawRemoteJid = msg.key.remoteJid || ''
@@ -83,7 +74,6 @@ export async function POST(request: NextRequest) {
             let effectiveRemoteJid = (addressingMode === 'lid' && remoteJidAlt) ? remoteJidAlt : rawRemoteJid
 
             // Normalize Brazilian phone numbers in JID
-            // WhatsApp sometimes sends numbers without the mobile "9" prefix
             const jidSuffix = effectiveRemoteJid.split('@')[1] || ''
             let phonePart = effectiveRemoteJid.split('@')[0]
             if (phonePart.startsWith('55') && phonePart.length === 12 && jidSuffix === 's.whatsapp.net') {
@@ -92,10 +82,47 @@ export async function POST(request: NextRequest) {
             }
 
             // Skip group messages
-            if (effectiveRemoteJid.includes('@g.us')) { skipped++; continue }
+            if (effectiveRemoteJid.includes('@g.us')) continue
 
             const fromMe = msg.key.fromMe === true
             const pushName = msg.pushName || null
+
+            // Check if this message already exists
+            const existing = await db.inboxMessage.findUnique({
+              where: { evolutionMsgId: msgId },
+            })
+
+            if (existing) {
+              // If the existing message has a LID-based or non-normalized JID, fix it
+              if (existing.remoteJid !== effectiveRemoteJid) {
+                try {
+                  await db.inboxMessage.update({
+                    where: { id: existing.id },
+                    data: {
+                      remoteJid: effectiveRemoteJid,
+                      remotePhone: effectiveRemoteJid.split('@')[0],
+                    },
+                  })
+                  totalFixed++
+                } catch {
+                  // Unique constraint - delete the old one
+                  try {
+                    await db.inboxMessage.delete({ where: { id: existing.id } })
+                    totalFixed++
+                  } catch { /* ignore */ }
+                }
+              }
+              continue
+            }
+
+            // Skip if older than latest message (optimization)
+            if (latestMsg) {
+              const msgTimestamp = msg.messageTimestamp
+              const msgDate = msgTimestamp
+                ? new Date(typeof msgTimestamp === 'object' && msgTimestamp.low ? msgTimestamp.low * 1000 : Number(msgTimestamp) * 1000)
+                : new Date()
+              if (msgDate <= latestMsg.createdAt) continue
+            }
 
             // Extract content
             let messageContent = ''
@@ -133,7 +160,7 @@ export async function POST(request: NextRequest) {
               }
             }
 
-            if (!messageContent && messageType === 'text') { skipped++; continue }
+            if (!messageContent && messageType === 'text') continue
 
             const remotePhone = effectiveRemoteJid.split('@')[0]
 
@@ -143,27 +170,19 @@ export async function POST(request: NextRequest) {
               const contact = await db.contact.findFirst({
                 where: { phone: { contains: remotePhone.replace(/^55/, '') } },
               })
-              if (contact?.name) {
-                contactName = contact.name
-              }
+              if (contact?.name) contactName = contact.name
             }
 
-            // Calculate createdAt from messageTimestamp (Unix timestamp in seconds)
+            // Calculate createdAt from messageTimestamp
             const timestamp = msg.messageTimestamp
             const createdAt = timestamp
               ? new Date(typeof timestamp === 'object' && timestamp.low ? timestamp.low * 1000 : Number(timestamp) * 1000)
               : new Date()
 
-            await db.inboxMessage.upsert({
-              where: { evolutionMsgId: msgId },
-              update: {
-                // Fix remoteJid if it was saved with LID or non-normalized format
-                remoteJid: effectiveRemoteJid,
-                remotePhone: effectiveRemoteJid.split('@')[0],
-              },
-              create: {
-                instanceName,
-                chipId,
+            await db.inboxMessage.create({
+              data: {
+                instanceName: chip.evolutionInstance!,
+                chipId: chip.id,
                 remoteJid: effectiveRemoteJid,
                 remotePhone,
                 fromMe,
@@ -173,35 +192,31 @@ export async function POST(request: NextRequest) {
                 pushName,
                 contactName,
                 evolutionMsgId: msgId,
-                isRead: fromMe || msg.MessageUpdate?.some((u: any) => u.status === 'READ'),
+                isRead: fromMe,
                 isGroup: effectiveRemoteJid.includes('@g.us'),
                 createdAt,
               },
             })
-            synced++
+            totalSynced++
           } catch (msgErr) {
-            errors++
-            console.error('[SyncMessages] Error syncing message:', msgErr)
+            totalErrors++
           }
         }
+      } catch (chipErr) {
+        totalErrors++
       }
-    } catch (fetchErr) {
-      console.error('[SyncMessages] Error fetching from Evolution API:', fetchErr)
     }
 
     return NextResponse.json({
-      chipId,
-      instanceName,
-      synced,
-      skipped,
-      errors,
-      fixed,
-      conversationsChecked: conversationsToSync.length,
+      synced: totalSynced,
+      errors: totalErrors,
+      fixed: totalFixed,
+      chips: chips.length,
     })
   } catch (error) {
-    console.error('Sync messages error:', error)
+    console.error('Auto-sync error:', error)
     return NextResponse.json(
-      { error: 'Erro ao sincronizar mensagens' },
+      { error: 'Erro na sincronização automática' },
       { status: 500 }
     )
   }
