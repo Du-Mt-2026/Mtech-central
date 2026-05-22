@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { getEvolutionCredentials } from '@/lib/evolution-api'
+import { evolutionFetch } from '@/lib/evolution-api'
 
 /**
  * POST /api/inbox/sync-messages
@@ -32,7 +32,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Chip não encontrado ou sem instância' }, { status: 404 })
     }
 
-    const creds = await getEvolutionCredentials()
     const instanceName = chip.evolutionInstance
 
     // Get conversations from our DB to know which contacts to sync
@@ -54,16 +53,10 @@ export async function POST(request: NextRequest) {
     let skipped = 0
     let errors = 0
 
-    // Also fetch the latest messages from Evolution API for the most recent conversations
-    // This catches conversations that don't exist in our DB yet
+    // Fetch the latest messages from Evolution API
     try {
-      const fetchUrl = `${creds.url}/chat/findMessages/${instanceName}`
-      const fetchRes = await fetch(fetchUrl, {
+      const fetchRes = await evolutionFetch(`/chat/findMessages/${instanceName}`, {
         method: 'POST',
-        headers: {
-          'apikey': creds.apiKey,
-          'Content-Type': 'application/json',
-        },
         body: JSON.stringify({
           number: remoteJid || '',
           limit,
@@ -84,7 +77,15 @@ export async function POST(request: NextRequest) {
             const rawRemoteJid = msg.key.remoteJid || ''
             const addressingMode = msg.key.addressingMode
             const remoteJidAlt = msg.key.remoteJidAlt || null
-            const effectiveRemoteJid = (addressingMode === 'lid' && remoteJidAlt) ? remoteJidAlt : rawRemoteJid
+            let effectiveRemoteJid = (addressingMode === 'lid' && remoteJidAlt) ? remoteJidAlt : rawRemoteJid
+
+            // Normalize Brazilian phone numbers (add 9 if missing)
+            const jidSuffix = effectiveRemoteJid.split('@')[1] || ''
+            let phonePart = effectiveRemoteJid.split('@')[0]
+            if (phonePart.startsWith('55') && phonePart.length === 12 && jidSuffix === 's.whatsapp.net') {
+              phonePart = phonePart.slice(0, 4) + '9' + phonePart.slice(4)
+              effectiveRemoteJid = `${phonePart}@${jidSuffix}`
+            }
 
             // Skip group messages
             if (effectiveRemoteJid.includes('@g.us')) { skipped++; continue }
