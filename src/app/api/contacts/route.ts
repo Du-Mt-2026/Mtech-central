@@ -48,8 +48,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Contacts array is required' }, { status: 400 })
     }
 
-    const created = []
-    const errors = []
+    const created: any[] = []
+    const errors: any[] = []
 
     for (const c of contacts) {
       try {

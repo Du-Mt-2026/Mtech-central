@@ -63,6 +63,7 @@ interface Vendedor {
   empresa: string | null
   genero: string | null
   treatAs: string | null
+  ativo: boolean | null
 }
 
 interface MessageKey {

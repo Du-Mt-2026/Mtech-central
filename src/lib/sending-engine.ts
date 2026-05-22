@@ -368,7 +368,7 @@ function getWarmingLimitForDay(
  * Ready/Aquecido chips: use normal interval from settings (30-90s)
  */
 function getMinimumIntervalForChip(
-  chip: { warmingPhase?: string; warmingEnabled: boolean; dailyLimit: number; createdAt: string; prewarmStartedAt?: Date | null },
+  chip: { warmingPhase?: string; warmingEnabled: boolean; dailyLimit: number; createdAt: string | Date; prewarmStartedAt?: Date | null },
   settings: AntiBanConfig
 ): number {
   if (!chip.warmingEnabled || !settings.warmingEnabled) return 0
@@ -395,7 +395,7 @@ function getMinimumIntervalForChip(
 }
 
 function getEffectiveDailyLimit(
-  chip: { dailyLimit: number; warmingEnabled: boolean; warmingStage: number; warmingPhase?: string; warmingStartedAt?: Date | null; prewarmStartedAt?: Date | null; createdAt: string },
+  chip: { dailyLimit: number; warmingEnabled: boolean; warmingStage: number; warmingPhase?: string; warmingStartedAt?: Date | null; prewarmStartedAt?: Date | null; createdAt: string | Date },
   settings: AntiBanConfig,
   warmingMode?: string
 ): number {
@@ -962,7 +962,7 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
 
   // Create messages for ALL steps in the sequence
   // For multi-step: each contact gets one message per step, processed in order
-  const messagesToCreate = []
+  const messagesToCreate: any[] = []
   for (let i = 0; i < contacts.length; i++) {
     const contact = contacts[i]
     const chip = chips[i % chips.length]
@@ -1037,9 +1037,9 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
         content,
         status: 'pending' as const,
         stepOrder: step.stepOrder,
-        mediaUrl: messageItem.mediaUrl,
-        mediatype: messageItem.mediatype,
-      })
+        mediaUrl: messageItem.mediaUrl || null,
+        mediatype: messageItem.mediatype || null,
+      } as any)
     }
   }
 
@@ -1335,7 +1335,7 @@ export async function processNextMessage(campaignId: string): Promise<{
           id: { not: message.chip.id },
           status: 'connected',
           evolutionInstance: { not: null },
-          campaignChips: { some: { campaignId } },
+          campaigns: { some: { campaignId } },
         },
       })
 
@@ -1408,7 +1408,7 @@ export async function processNextMessage(campaignId: string): Promise<{
           id: { not: message.chip.id },
           status: 'connected',
           evolutionInstance: { not: null },
-          campaignChips: { some: { campaignId } },
+          campaigns: { some: { campaignId } },
         },
       })
 
@@ -1573,7 +1573,7 @@ export async function processNextMessage(campaignId: string): Promise<{
         id: { not: currentChip.id },
         status: 'connected',
         evolutionInstance: { not: null },
-        campaignChips: { some: { campaignId } },
+        campaigns: { some: { campaignId } },
       },
     })
 

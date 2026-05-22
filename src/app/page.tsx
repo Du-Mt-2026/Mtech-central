@@ -95,7 +95,7 @@ async function convertAudioToOgg(file: File): Promise<File> {
     try { await ffmpegInstance.deleteFile(inputName) } catch { /* ignore */ }
     try { await ffmpegInstance.deleteFile(outputName) } catch { /* ignore */ }
 
-    return new File([blob], oggName, { type: 'audio/ogg' })
+    return new Blob([blob], { type: 'audio/ogg' }) as any
   } catch (err) {
     console.error('[AudioConverter] Client-side conversion failed:', err)
     throw err
@@ -1036,6 +1036,7 @@ function ChipsTab() {
           setQrCodeUrl(url)
         } catch { setQrCodeUrl('') }
       } else {
+        toast.error('Erro ao carregar configuração do proxy')
         setSelectedChipConfig(null)
         setQrCodeUrl('')
       }
@@ -2184,7 +2185,7 @@ function ContatosTab() {
               <ArrowLeft className="size-4" /> Voltar
             </Button>
             <Separator orientation="vertical" className="h-6" />
-            <h3 className="text-lg font-semibold"
+            <h3
               contentEditable={true}
               suppressContentEditableWarning={true}
               onBlur={async (e) => {

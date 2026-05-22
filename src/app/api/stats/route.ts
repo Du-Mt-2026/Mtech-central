@@ -74,7 +74,7 @@ export async function GET() {
     const totalSent = sentMessages + deliveredMessages + readMessages + failedMessages
 
     // Calculate campaign progress using separate count queries (not loading all messages)
-    const runningCampaigns = []
+    const runningCampaigns: any[] = []
     for (const c of runningCampaignsRaw) {
       const [total, completed] = await Promise.all([
         db.message.count({ where: { campaignId: c.id } }),

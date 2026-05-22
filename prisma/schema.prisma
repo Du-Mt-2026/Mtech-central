@@ -271,6 +271,7 @@ model AdminUser {
   twoFactorEnabled Boolean  @default(false)
   imagem           String   @default("")
   isSystemUser     Boolean  @default(false)
+  mustChangePassword Boolean @default(false)
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 }

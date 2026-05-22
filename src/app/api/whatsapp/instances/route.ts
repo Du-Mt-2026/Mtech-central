@@ -17,7 +17,7 @@ export async function GET() {
     const chips = await db.chip.findMany()
 
     // Update chip statuses based on Evolution API
-    const updatedChips = []
+    const updatedChips: any[] = []
     for (const chip of chips) {
       const instanceName = chip.evolutionInstance || getInstanceName(chip.id, chip.name)
       const evoInstance = instanceMap.get(instanceName)

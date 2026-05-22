@@ -607,6 +607,7 @@ export function VerificarSection() {
       }
 
       // Pick next chip (round-robin)
+      let currentChipId: string | undefined
       if (rotationEnabled) {
         // Find next available chip in rotation order
         let attempts = 0
@@ -615,16 +616,16 @@ export function VerificarSection() {
           chipRotationIndex++
           attempts++
           if (availableChips.includes(candidateChipId)) {
-            var currentChipId = candidateChipId
+            currentChipId = candidateChipId
             break
           }
         }
         if (!currentChipId) {
-          var currentChipId = availableChips[0]
+          currentChipId = availableChips[0]
         }
       } else {
         // Single chip mode — use first selected connected chip
-        var currentChipId = availableChips[0]
+        currentChipId = availableChips[0]
       }
 
       const currentChip = chipQuotas.find(c => c.id === currentChipId)!
