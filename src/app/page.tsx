@@ -206,6 +206,7 @@ interface Campaign {
   sequenceSteps: SequenceStep[]
   contactList: { id: string; name: string } | null
   _count?: { messages: number }
+  messageStatusCounts?: Record<string, number>
 }
 
 interface ContactItem {
@@ -3181,6 +3182,14 @@ function CampanhasTab() {
 
   useEffect(() => { fetchCampaigns(); fetchChips(); fetchLists(); fetchKeys(); fetchTemplates() }, [fetchCampaigns, fetchChips, fetchLists, fetchKeys, fetchTemplates])
 
+  // Auto-refresh campaigns every 5 seconds when any campaign is running (for live progress)
+  useEffect(() => {
+    const hasRunning = campaigns.some(c => c.status === 'running')
+    if (!hasRunning) return
+    const interval = setInterval(fetchCampaigns, 5000)
+    return () => clearInterval(interval)
+  }, [campaigns, fetchCampaigns])
+
   // When contact list changes, fetch available variables
   useEffect(() => {
     if (newCampaign.contactListId) {
@@ -4414,6 +4423,36 @@ function CampanhasTab() {
                         {c.scheduledAt && <span className="flex items-center gap-1"><CalendarDays className="size-3" /> {new Date(c.scheduledAt).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>}
                         {c.sequenceSteps?.length > 0 && <span className="flex items-center gap-1"><ArrowRight className="size-3" /> {c.sequenceSteps.length} mensagens</span>}
                       </div>
+                      {/* Live message progress bar */}
+                      {(() => {
+                        const msc = c.messageStatusCounts || {}
+                        const total = (msc.pending || 0) + (msc.sending || 0) + (msc.sent || 0) + (msc.delivered || 0) + (msc.read || 0) + (msc.failed || 0)
+                        const done = (msc.sent || 0) + (msc.delivered || 0) + (msc.read || 0)
+                        const failed = msc.failed || 0
+                        const pending = (msc.pending || 0) + (msc.sending || 0)
+                        if (total === 0) return null
+                        const pct = Math.round((done / total) * 100)
+                        const isRunning = c.status === 'running'
+                        const barColor = pct === 100 ? 'bg-emerald-500' : failed > 0 ? 'bg-amber-500' : 'bg-sky-500'
+                        return (
+                          <div className="mt-2 space-y-1">
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="flex items-center gap-2">
+                                {done > 0 && <span className="text-emerald-600 font-medium">{done} enviada{done !== 1 ? 's' : ''}</span>}
+                                {failed > 0 && <span className="text-rose-500 font-medium">{failed} falha{failed !== 1 ? 's' : ''}</span>}
+                                {pending > 0 && <span className="text-muted-foreground">{pending} pendente{pending !== 1 ? 's' : ''}</span>}
+                              </span>
+                              <span className="font-semibold text-muted-foreground">{pct}%</span>
+                            </div>
+                            <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
+                              <div
+                                className={`h-full rounded-full transition-all duration-500 ${barColor} ${isRunning ? 'animate-pulse' : ''}`}
+                                style={{ width: `${pct}%` }}
+                              />
+                            </div>
+                          </div>
+                        )
+                      })()}
                     </div>
                     <div className="flex gap-2">
                       <TooltipProvider><Tooltip><TooltipTrigger asChild>

@@ -25,7 +25,22 @@ export async function GET() {
         },
       },
     })
-    return NextResponse.json(campaigns)
+
+    // Add message status counts for each campaign (for live progress display)
+    const campaignsWithCounts = await Promise.all(campaigns.map(async (c) => {
+      const statusCounts = await db.message.groupBy({
+        by: ['status'],
+        where: { campaignId: c.id },
+        _count: { status: true },
+      })
+      const sc: Record<string, number> = {}
+      for (const s of statusCounts) {
+        sc[s.status] = s._count.status
+      }
+      return { ...c, messageStatusCounts: sc }
+    }))
+
+    return NextResponse.json(campaignsWithCounts)
   } catch (error) {
     console.error('Campaigns GET error:', error)
     return NextResponse.json([], { status: 500 })
