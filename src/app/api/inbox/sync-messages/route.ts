@@ -56,10 +56,12 @@ export async function POST(request: NextRequest) {
 
     // Fetch the latest messages from Evolution API
     try {
+      // Extract just the phone number from remoteJid (remove @s.whatsapp.net suffix)
+      const phoneNumber = remoteJid ? remoteJid.split('@')[0] : ''
       const fetchRes = await evolutionFetch(`/chat/findMessages/${instanceName}`, {
         method: 'POST',
         body: JSON.stringify({
-          number: remoteJid || '',
+          number: phoneNumber,
           limit,
           page: 1,
         }),

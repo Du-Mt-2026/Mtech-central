@@ -46,11 +46,12 @@ export async function POST(request: NextRequest) {
         })
 
         // Fetch recent messages from Evolution API
+        // Use a higher limit and empty number to get all recent messages
         const fetchRes = await evolutionFetch(`/chat/findMessages/${chip.evolutionInstance}`, {
           method: 'POST',
           body: JSON.stringify({
             number: '',
-            limit: 20,
+            limit: 50,
             page: 1,
           }),
         })
@@ -113,15 +114,6 @@ export async function POST(request: NextRequest) {
                 }
               }
               continue
-            }
-
-            // Skip if older than latest message (optimization)
-            if (latestMsg) {
-              const msgTimestamp = msg.messageTimestamp
-              const msgDate = msgTimestamp
-                ? new Date(typeof msgTimestamp === 'object' && msgTimestamp.low ? msgTimestamp.low * 1000 : Number(msgTimestamp) * 1000)
-                : new Date()
-              if (msgDate <= latestMsg.createdAt) continue
             }
 
             // Extract content
