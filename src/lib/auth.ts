@@ -3,9 +3,10 @@ import { SignJWT, jwtVerify } from 'jose'
 import bcrypt from 'bcryptjs'
 import { cookies } from 'next/headers'
 
-const AUTH_SECRET = new TextEncoder().encode(
-  process.env.AUTH_SECRET || 'octupuszap-dev-secret-change-in-production'
-)
+if (!process.env.AUTH_SECRET) {
+  throw new Error('AUTH_SECRET environment variable is required. Set it in your .env file.')
+}
+const AUTH_SECRET = new TextEncoder().encode(process.env.AUTH_SECRET)
 
 const COOKIE_NAME = 'octupuszap-session'
 const TOKEN_EXPIRY = '7d'

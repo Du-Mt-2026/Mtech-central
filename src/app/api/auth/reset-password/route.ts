@@ -32,9 +32,8 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // If verificationKey is provided, check it. Otherwise, auto-allow (first-time setup or trusted).
-    // For security, we require the API key as verification
-    if (verificationKey && verificationKey !== apiKeySetting.value) {
+    // Security: verificationKey is REQUIRED — prevents unauthorized password resets
+    if (!verificationKey || verificationKey !== apiKeySetting.value) {
       return NextResponse.json(
         { error: 'Chave de verificação inválida. Verifique a Evolution API Key.' },
         { status: 401 }

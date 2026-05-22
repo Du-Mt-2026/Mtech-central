@@ -55,8 +55,8 @@ export async function GET(request: Request) {
       db.chip.findMany(),
     ])
 
-    const instanceMap = new Map<string, string>(
-      instances.map((inst: any) => [inst.name, inst.connectionStatus] as [string, string])
+    const instanceMap = new Map<string, any>(
+      instances.map((inst: any) => [inst.name, inst.connectionStatus] as [string, any])
     )
 
     // Only sync chips that belong to OctupusZap

@@ -49,7 +49,7 @@ export async function POST(request: NextRequest) {
     }
 
     const created: any[] = []
-    const errors: any[] = []
+    const errors: Array<{ contact: any; error: string }> = []
 
     for (const c of contacts) {
       try {

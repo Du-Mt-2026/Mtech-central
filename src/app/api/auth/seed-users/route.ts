@@ -9,8 +9,8 @@ export async function POST(request: Request) {
     const body = await request.json()
     const { secret } = body
 
-    // Simple protection — only allow with correct secret
-    if (secret !== process.env.AUTH_SECRET && secret !== 'octupuszap-dev-secret-change-in-production') {
+    // Security: Require AUTH_SECRET — no fallback to hardcoded dev secret
+    if (!process.env.AUTH_SECRET || secret !== process.env.AUTH_SECRET) {
       return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
     }
 

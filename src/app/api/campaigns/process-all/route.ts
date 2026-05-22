@@ -147,26 +147,28 @@ export async function POST(request: NextRequest) {
 
     // Calculate remaining pending messages for processed campaigns
     const processedCampaignIds = allResults.map(r => r.campaignId).filter(Boolean)
-    if (processedCampaignIds.length > 0) {
-      const remainingCounts = await db.message.groupBy({
-        by: ['campaignId'],
-        where: {
-          campaignId: { in: processedCampaignIds },
-          status: 'pending',
-        },
-        _count: { campaignId: true },
-      })
+    try {
+      if (processedCampaignIds.length > 0) {
+        const remainingCounts = await db.message.groupBy({
+          by: ['campaignId'],
+          where: {
+            campaignId: { in: processedCampaignIds },
+            status: 'pending',
+          },
+          _count: true,
+        })
 
-      const remainingMap: Record<string, number> = {}
-      for (const rc of remainingCounts) {
-        if (rc.campaignId) remainingMap[rc.campaignId] = rc._count.campaignId
-      }
+        const remainingMap: Record<string, number> = {}
+        for (const rc of remainingCounts) {
+          if (rc.campaignId) remainingMap[rc.campaignId] = rc._count
+        }
 
-      // Add remaining count to each result
-      for (const r of allResults) {
-        r.remaining = remainingMap[r.campaignId] || 0
+        // Add remaining count to each result
+        for (const r of allResults) {
+          r.remaining = remainingMap[r.campaignId] || 0
+        }
       }
-    }
+    } catch { /* non-critical */ }
 
     const totalRemaining = allResults.reduce((sum, r) => sum + (r.remaining || 0), 0)
     const elapsedMs = Date.now() - startTime

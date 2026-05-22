@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { recoverStuckMessages } from '@/lib/sending-engine'
 
 export async function POST(
   req: NextRequest,
@@ -23,8 +22,17 @@ export async function POST(
       )
     }
 
-    // Recover stuck "sending" messages before resuming
-    const recoveredCount = await recoverStuckMessages(campaignId)
+    // Reset messages stuck in 'sending' state back to 'pending' so they can be reprocessed
+    const resetResult = await db.message.updateMany({
+      where: {
+        campaignId: campaignId,
+        status: 'sending',
+      },
+      data: {
+        status: 'pending',
+      },
+    })
+    const recoveredCount = resetResult.count
 
     const updated = await db.campaign.update({
       where: { id: campaignId },

@@ -60,6 +60,9 @@ model Chip {
   // Vendedor association — each chip can belong to a vendedor
   vendedorId String?
   vendedor   Vendedor? @relation(fields: [vendedorId], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@index([evolutionInstance])
 }
 
 model AntiBanSettings {
@@ -197,6 +200,9 @@ model Campaign {
   // Vendedor association — this campaign sends on behalf of this vendedor
   vendedorId String?
   vendedor   Vendedor? @relation(fields: [vendedorId], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@index([status, scheduledAt])
 }
 
 model SequenceStep {
@@ -250,6 +256,9 @@ model Message {
 
   // Prevent duplicate messages: one message per contact per step per campaign
   @@unique([campaignId, contactId, stepOrder])
+  @@index([campaignId, status])
+  @@index([chipId, status])
+  @@index([status])
 }
 
 model Settings {
@@ -271,7 +280,7 @@ model AdminUser {
   twoFactorEnabled Boolean  @default(false)
   imagem           String   @default("")
   isSystemUser     Boolean  @default(false)
-  mustChangePassword Boolean @default(false)
+  mustChangePassword Boolean @default(true)
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 }

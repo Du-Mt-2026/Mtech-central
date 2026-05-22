@@ -7,8 +7,8 @@ export async function POST(req: NextRequest) {
     const body = await req.json()
     const { secret } = body
 
-    // Protect with secret
-    if (secret !== process.env.AUTH_SECRET && secret !== 'octupuszap-dev-secret-change-in-production') {
+    // Security: Require AUTH_SECRET — no fallback to hardcoded dev secret
+    if (!process.env.AUTH_SECRET || secret !== process.env.AUTH_SECRET) {
       return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
     }
 
@@ -59,13 +59,12 @@ export async function POST(req: NextRequest) {
 
         results.push('Migração concluída com sucesso!')
       } else if (columnNames.includes('name') && columnNames.includes('email')) {
-        // Already has new schema — but check for missing newer columns
+        // Already has new schema — check for missing columns
         if (!columnNames.includes('mustChangePassword')) {
-          await db.$executeRawUnsafe(`ALTER TABLE "AdminUser" ADD COLUMN IF NOT EXISTS "mustChangePassword" BOOLEAN NOT NULL DEFAULT false`)
+          await db.$executeRawUnsafe(`ALTER TABLE "AdminUser" ADD COLUMN IF NOT EXISTS "mustChangePassword" BOOLEAN NOT NULL DEFAULT true`)
           results.push('AdminUser: adicionada coluna mustChangePassword')
-        } else {
-          results.push('Schema já está atualizado. Nenhuma migração necessária.')
         }
+        results.push('Schema já está atualizado.')
       } else {
         // Unknown schema state - drop and let Prisma recreate
         results.push('Schema em estado desconhecido. Recriando tabela...')
@@ -455,14 +454,16 @@ export async function POST(req: NextRequest) {
         results.push('Campaign: statusReason já existe')
       }
 
-      // Clean up orphaned columns that don't exist in Prisma schema
+      // Drop orphan columns that don't exist in Prisma schema
+      // (mediaUrl/mediatype are on SequenceStep and Message, not Campaign)
       if (campColumnNames.includes('mediaUrl')) {
         await db.$executeRawUnsafe(`ALTER TABLE "Campaign" DROP COLUMN IF EXISTS "mediaUrl"`)
-        results.push('Campaign: removida coluna órfã mediaUrl')
+        results.push('Campaign: removida coluna orfã mediaUrl')
       }
+
       if (campColumnNames.includes('mediatype')) {
         await db.$executeRawUnsafe(`ALTER TABLE "Campaign" DROP COLUMN IF EXISTS "mediatype"`)
-        results.push('Campaign: removida coluna órfã mediatype')
+        results.push('Campaign: removida coluna orfã mediatype')
       }
 
       // Also ensure Message table has mediaUrl and mediatype

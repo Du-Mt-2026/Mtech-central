@@ -567,7 +567,7 @@ async function advanceWarmingPhase(chipId: string, settings: AntiBanConfig): Pro
           warmingStage: 5, // Legacy compat
         },
       })
-      console.log(`[SendingEngine] Chip ${chip.name} graduated from NURSERY → PREWARM (day ${daysSinceCreation})`)
+      console.debug(`[SendingEngine] Chip ${chip.name} graduated from NURSERY → PREWARM (day ${daysSinceCreation})`)
     }
   } else if (phase === 'prewarm') {
     // Check if prewarm period is complete (20 days from prewarmStartedAt)
@@ -583,7 +583,7 @@ async function advanceWarmingPhase(chipId: string, settings: AntiBanConfig): Pro
           warmingStage: 6, // Legacy compat — beyond old max
         },
       })
-      console.log(`[SendingEngine] Chip ${chip.name} graduated from PREWARM → READY (prewarm day ${daysSincePrewarm})`)
+      console.debug(`[SendingEngine] Chip ${chip.name} graduated from PREWARM → READY (prewarm day ${daysSincePrewarm})`)
     }
   }
 }
@@ -610,7 +610,7 @@ async function isInCooldown(chipId: string, settings: AntiBanConfig): Promise<{ 
 
   // If chip has an active cooldownUntil and it hasn't expired yet
   if (chip.cooldownUntil && new Date(chip.cooldownUntil) > now) {
-    console.log(`[SendingEngine] Chip ${chip.name} in cooldown until ${chip.cooldownUntil}`)
+    console.debug(`[SendingEngine] Chip ${chip.name} in cooldown until ${chip.cooldownUntil}`)
     return { inCooldown: true, cooldownUntil: new Date(chip.cooldownUntil) }
   }
 
@@ -620,7 +620,7 @@ async function isInCooldown(chipId: string, settings: AntiBanConfig): Promise<{ 
       where: { id: chipId },
       data: { cooldownUntil: null },
     })
-    console.log(`[SendingEngine] Chip ${chip.name} cooldown expired, cleared`)
+    console.debug(`[SendingEngine] Chip ${chip.name} cooldown expired, cleared`)
   }
 
   return { inCooldown: false, cooldownUntil: null }
@@ -669,7 +669,7 @@ async function detectChipBan(chip: { id: string; evolutionInstance: string | nul
       }
     } catch {
       // If we can't reach Evolution API, don't assume ban — could be network issue
-      console.log(`[SendingEngine] Could not check connection state for ${chip.evolutionInstance}`)
+      console.debug(`[SendingEngine] Could not check connection state for ${chip.evolutionInstance}`)
     }
   }
 
@@ -703,7 +703,7 @@ async function checkForWarnings(chipId: string): Promise<boolean> {
     for (const msg of recentWarnings) {
       const content = (msg.messageContent || '').toLowerCase()
       if (WARNING_KEYWORDS.some(kw => content.includes(kw))) {
-        console.log(`[SendingEngine] WARNING detected for chip ${chip.name}: ${msg.messageContent?.substring(0, 100)}`)
+        console.debug(`[SendingEngine] WARNING detected for chip ${chip.name}: ${msg.messageContent?.substring(0, 100)}`)
         return true
       }
     }
@@ -841,7 +841,7 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
     if (currentStatus === 'running') {
       const existingCount = await tx.message.count({ where: { campaignId } })
       if (existingCount > 0) {
-        console.log(`[SendingEngine] Campaign ${campaignId} already running with ${existingCount} messages — skipping`)
+        console.debug(`[SendingEngine] Campaign ${campaignId} already running with ${existingCount} messages — skipping`)
         return { canProceed: false, messageCount: existingCount }
       }
     }
@@ -860,7 +860,7 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
     const existingMessages = await tx.message.count({ where: { campaignId } })
     if (existingMessages > 0) {
       // Messages exist from a previous attempt — just mark as running
-      console.log(`[SendingEngine] Campaign ${campaignId} already has ${existingMessages} messages — marking as running`)
+      console.debug(`[SendingEngine] Campaign ${campaignId} already has ${existingMessages} messages — marking as running`)
       await tx.campaign.update({
         where: { id: campaignId },
         data: { status: 'running', startedAt: new Date() },
@@ -945,7 +945,7 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
 
   // DIAGNOSTIC: Log parsed step data to help debug media issues
   for (const ps of parsedSteps) {
-    console.log(`[SendingEngine] Parsed step ${ps.stepOrder}: content="${ps.content?.substring(0, 50)}...", mediaUrl=${ps.mediaUrl || 'null'}, mediatype=${ps.mediatype || 'null'}, variations=${ps.variations.length}`)
+    console.debug(`[SendingEngine] Parsed step ${ps.stepOrder}: content="${ps.content?.substring(0, 50)}...", mediaUrl=${ps.mediaUrl || 'null'}, mediatype=${ps.mediatype || 'null'}, variations=${ps.variations.length}`)
   }
 
   const contacts = campaign.contactList.contacts
@@ -962,7 +962,7 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
 
   // Create messages for ALL steps in the sequence
   // For multi-step: each contact gets one message per step, processed in order
-  const messagesToCreate: any[] = []
+  const messagesToCreate: { campaignId: string; chipId: string; contactId: string; content: string; status: "pending"; stepOrder: number; mediaUrl: string | null; mediatype: string | null }[] = []
   for (let i = 0; i < contacts.length; i++) {
     const contact = contacts[i]
     const chip = chips[i % chips.length]
@@ -1028,7 +1028,7 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
       // Step 3: Resolve old-style {{KEY_NAME}} markers
       content = await resolveMessageKeyMarkers(content)
 
-      console.log(`[SendingEngine] Creating message for campaign ${campaignId}, contact ${contact.id}, step ${step.stepOrder}: content="${content.substring(0, 50)}...", mediaUrl=${messageItem.mediaUrl || 'null'}, mediatype=${messageItem.mediatype || 'null'}`)
+      console.debug(`[SendingEngine] Creating message for campaign ${campaignId}, contact ${contact.id}, step ${step.stepOrder}: content="${content.substring(0, 50)}...", mediaUrl=${messageItem.mediaUrl || 'null'}, mediatype=${messageItem.mediatype || 'null'}`)
 
       messagesToCreate.push({
         campaignId: campaign.id,
@@ -1039,7 +1039,7 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
         stepOrder: step.stepOrder,
         mediaUrl: messageItem.mediaUrl || null,
         mediatype: messageItem.mediatype || null,
-      } as any)
+      })
     }
   }
 
@@ -1050,7 +1050,7 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
     skipDuplicates: true,
   })
 
-  console.log(`[SendingEngine] Created ${createResult.count} messages for campaign ${campaignId} (requested ${messagesToCreate.length})`)
+  console.debug(`[SendingEngine] Created ${createResult.count} messages for campaign ${campaignId} (requested ${messagesToCreate.length})`)
 
   // ============================================================
   // PHASE 3: NOW set campaign to 'running' — AFTER messages exist
@@ -1063,7 +1063,7 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
     data: { status: 'running', startedAt: new Date() },
   })
 
-  console.log(`[SendingEngine] Campaign ${campaignId} is now RUNNING with ${createResult.count} messages`)
+  console.debug(`[SendingEngine] Campaign ${campaignId} is now RUNNING with ${createResult.count} messages`)
 
   return { messageCount: createResult.count }
 }
@@ -1114,7 +1114,7 @@ export async function processNextMessage(campaignId: string): Promise<{
     const currentMins = getCurrentMinutes(settings.timezone)
     const startMins = toMins(settings.sendingWindowStart)
     const endMins = toMins(settings.sendingWindowEnd)
-    console.log(`[SendingEngine] Outside sending window (${currentMins}min, window: ${startMins}-${endMins}). Pausing.`)
+    console.debug(`[SendingEngine] Outside sending window (${currentMins}min, window: ${startMins}-${endMins}). Pausing.`)
     return {
       processed: false,
       delayMs: 60 * 1000, // Check again in 1 minute
@@ -1137,7 +1137,7 @@ export async function processNextMessage(campaignId: string): Promise<{
       const startM = toMins(activeBreak.start) % 60
       const endH = Math.floor(breakEndMins / 60)
       const endM = breakEndMins % 60
-      console.log(`[SendingEngine] In break window "${activeBreak.label}" (${String(startH).padStart(2,'0')}:${String(startM).padStart(2,'0')}-${String(endH).padStart(2,'0')}:${String(endM).padStart(2,'0')}). Waiting ${waitMins}min.`)
+      console.debug(`[SendingEngine] In break window "${activeBreak.label}" (${String(startH).padStart(2,'0')}:${String(startM).padStart(2,'0')}-${String(endH).padStart(2,'0')}:${String(endM).padStart(2,'0')}). Waiting ${waitMins}min.`)
       return {
         processed: false,
         delayMs: waitMs,
@@ -1240,7 +1240,7 @@ export async function processNextMessage(campaignId: string): Promise<{
           },
           data: { status: 'failed', error: 'Etapa anterior falhou — sequência interrompida' },
         })
-        console.log(`[SendingEngine] Contact ${message.contactId}: previous step failed, skipping ${failedCount.count} remaining steps`)
+        console.debug(`[SendingEngine] Contact ${message.contactId}: previous step failed, skipping ${failedCount.count} remaining steps`)
         const remaining = await db.message.count({ where: { campaignId, status: 'pending' } })
         return { processed: true, delayMs: 1000, remaining, completed: remaining === 0 }
       }
@@ -1283,7 +1283,7 @@ export async function processNextMessage(campaignId: string): Promise<{
         if (elapsedMs < requiredDelayMs) {
           const waitMs = requiredDelayMs - elapsedMs
           const delayUnitLabel = currentStepConfig.delayUnit === 'seconds' ? 'seg' : 'min'
-          console.log(`[SendingEngine] Step ${(message as any).stepOrder} for contact ${message.contactId}: delay not met (${Math.round(elapsedMs/1000)}s/${currentStepConfig.delayMinutes}${delayUnitLabel}) — waiting ${Math.round(waitMs/1000)}s`)
+          console.debug(`[SendingEngine] Step ${(message as any).stepOrder} for contact ${message.contactId}: delay not met (${Math.round(elapsedMs/1000)}s/${currentStepConfig.delayMinutes}${delayUnitLabel}) — waiting ${Math.round(waitMs/1000)}s`)
           return {
             processed: false,
             delayMs: waitMs, // Return actual remaining delay — callers MUST wait this
@@ -1327,7 +1327,7 @@ export async function processNextMessage(campaignId: string): Promise<{
 
     if (banCheck.disconnected) {
       // Chip is disconnected but NOT banned — try to reassign messages to OTHER chips in this campaign
-      console.log(`[SendingEngine] Chip ${message.chip.name} is DISCONNECTED — checking for other chips in this campaign`)
+      console.debug(`[SendingEngine] Chip ${message.chip.name} is DISCONNECTED — checking for other chips in this campaign`)
 
       // Find other connected chips that BELONG to this campaign (via CampaignChip)
       const otherChips = await db.chip.findMany({
@@ -1354,7 +1354,7 @@ export async function processNextMessage(campaignId: string): Promise<{
           })
         }
 
-        console.log(`[SendingEngine] Reassigned ${pendingMessages.length} messages from disconnected chip ${message.chip.name} to other campaign chips`)
+        console.debug(`[SendingEngine] Reassigned ${pendingMessages.length} messages from disconnected chip ${message.chip.name} to other campaign chips`)
 
         // Mark current message as failed (it was stuck on the disconnected chip)
         await db.message.update({
@@ -1373,7 +1373,7 @@ export async function processNextMessage(campaignId: string): Promise<{
       }
 
       // No other campaign chips available — pause the campaign and notify
-      console.log(`[SendingEngine] No other campaign chips available for disconnected chip ${message.chip.name} — pausing campaign`)
+      console.debug(`[SendingEngine] No other campaign chips available for disconnected chip ${message.chip.name} — pausing campaign`)
 
       await db.message.update({
         where: { id: message.id },
@@ -1389,12 +1389,12 @@ export async function processNextMessage(campaignId: string): Promise<{
           pausedAt: new Date(),
         },
       })
-      console.log(`[SendingEngine] Campaign ${campaignId} PAUSED — chip ${message.chip.name} disconnected, no other campaign chips available`)
+      console.debug(`[SendingEngine] Campaign ${campaignId} PAUSED — chip ${message.chip.name} disconnected, no other campaign chips available`)
       return { processed: false, delayMs: 0, remaining: -1, completed: false, reason: 'auto_paused_no_campaign_chips', events: [{ type: 'chip_disconnected', chipName: message.chip.name }, { type: 'campaign_auto_paused', reason: 'Chip desconectou e não há outros chips disponíveis' }] }
     }
 
     if (banCheck.banned) {
-      console.log(`[SendingEngine] Chip ${message.chip.name} appears BANNED: ${banCheck.reason}`)
+      console.debug(`[SendingEngine] Chip ${message.chip.name} appears BANNED: ${banCheck.reason}`)
 
       // Update chip status to banned
       await db.chip.update({
@@ -1427,7 +1427,7 @@ export async function processNextMessage(campaignId: string): Promise<{
           })
         }
 
-        console.log(`[SendingEngine] Reassigned ${pendingMessages.length} messages from banned chip ${message.chip.name} to other campaign chips`)
+        console.debug(`[SendingEngine] Reassigned ${pendingMessages.length} messages from banned chip ${message.chip.name} to other campaign chips`)
 
         // Mark current message as failed
         await db.message.update({
@@ -1446,7 +1446,7 @@ export async function processNextMessage(campaignId: string): Promise<{
       }
 
       // No other campaign chips available — pause the campaign and notify
-      console.log(`[SendingEngine] No other campaign chips available for banned chip ${message.chip.name} — pausing campaign`)
+      console.debug(`[SendingEngine] No other campaign chips available for banned chip ${message.chip.name} — pausing campaign`)
 
       await db.message.update({
         where: { id: message.id },
@@ -1462,7 +1462,7 @@ export async function processNextMessage(campaignId: string): Promise<{
           pausedAt: new Date(),
         },
       })
-      console.log(`[SendingEngine] Campaign ${campaignId} PAUSED — chip ${message.chip.name} banned, no other campaign chips available`)
+      console.debug(`[SendingEngine] Campaign ${campaignId} PAUSED — chip ${message.chip.name} banned, no other campaign chips available`)
       return { processed: false, delayMs: 0, remaining: -1, completed: false, reason: 'auto_paused_banned_no_campaign_chips', events: [{ type: 'chip_banned', chipName: message.chip.name }, { type: 'campaign_auto_paused', reason: 'Chip banido e não há outros chips disponíveis' }] }
     }
   }
@@ -1480,7 +1480,7 @@ export async function processNextMessage(campaignId: string): Promise<{
           pausedAt: new Date(),
         },
       })
-      console.log(`[SendingEngine] Campaign ${campaignId} PAUSED — WhatsApp warning detected for chip ${message.chip.name}`)
+      console.debug(`[SendingEngine] Campaign ${campaignId} PAUSED — WhatsApp warning detected for chip ${message.chip.name}`)
       return {
         processed: false,
         delayMs: 0,
@@ -1523,7 +1523,7 @@ export async function processNextMessage(campaignId: string): Promise<{
   if (antiBanEnabled && settings.hourlyLimit > 0) {
     const hourlySent = (currentChip as any).hourlySent ?? 0
     if (hourlySent >= settings.hourlyLimit) {
-      console.log(`[SendingEngine] Chip ${currentChip.name} hit hourly limit (${hourlySent}/${settings.hourlyLimit}) — waiting`)
+      console.debug(`[SendingEngine] Chip ${currentChip.name} hit hourly limit (${hourlySent}/${settings.hourlyLimit}) — waiting`)
       return {
         processed: false,
         delayMs: 60 * 1000, // Check again in 1 minute
@@ -1549,7 +1549,7 @@ export async function processNextMessage(campaignId: string): Promise<{
         if (elapsed < minIntervalSeconds) {
           const waitSeconds = Math.ceil(minIntervalSeconds - elapsed)
           const phase = (currentChip as any).warmingPhase || 'nursery'
-          console.log(`[SendingEngine] Chip ${currentChip.name} (${phase}): minimum interval not reached (${Math.round(elapsed)}s/${minIntervalSeconds}s) — waiting ${waitSeconds}s`)
+          console.debug(`[SendingEngine] Chip ${currentChip.name} (${phase}): minimum interval not reached (${Math.round(elapsed)}s/${minIntervalSeconds}s) — waiting ${waitSeconds}s`)
           return {
             processed: false,
             delayMs: waitSeconds * 1000,
@@ -1565,7 +1565,7 @@ export async function processNextMessage(campaignId: string): Promise<{
   // Check daily limit (with warming mode multiplier)
   const effectiveLimit = getEffectiveDailyLimit(currentChip, settings, warmingMode)
   if (antiBanEnabled && currentChip.sentToday >= effectiveLimit) {
-    console.log(`[SendingEngine] Chip ${currentChip.name} hit daily limit (${currentChip.sentToday}/${effectiveLimit}) — reassigning messages to other chips`)
+    console.debug(`[SendingEngine] Chip ${currentChip.name} hit daily limit (${currentChip.sentToday}/${effectiveLimit}) — reassigning messages to other chips`)
 
     // Find other connected chips that BELONG to this campaign (via CampaignChip)
     const otherChips = await db.chip.findMany({
@@ -1592,7 +1592,7 @@ export async function processNextMessage(campaignId: string): Promise<{
         })
       }
 
-      console.log(`[SendingEngine] Reassigned ${pendingMessages.length} messages from ${currentChip.name} to other chips`)
+      console.debug(`[SendingEngine] Reassigned ${pendingMessages.length} messages from ${currentChip.name} to other chips`)
 
       // Return with short delay so we can try processing again with the reassigned messages
       const remaining = await db.message.count({ where: { campaignId, status: 'pending' } })
@@ -1617,7 +1617,7 @@ export async function processNextMessage(campaignId: string): Promise<{
       const waitMs = cooldownCheck.cooldownUntil
         ? Math.max(cooldownCheck.cooldownUntil.getTime() - Date.now(), 60 * 1000)
         : settings.cooldownMinutes * 60 * 1000
-      console.log(`[SendingEngine] Chip ${currentChip.name} in cooldown — waiting ${Math.round(waitMs/1000)}s`)
+      console.debug(`[SendingEngine] Chip ${currentChip.name} in cooldown — waiting ${Math.round(waitMs/1000)}s`)
       return {
         processed: false,
         delayMs: waitMs,
@@ -1648,7 +1648,7 @@ export async function processNextMessage(campaignId: string): Promise<{
 
     if (alreadySent) {
       // Another message for this contact+step was already sent — mark this as failed (duplicate)
-      console.log(`[SendingEngine] DUPLICATE DETECTED: Message ${message.id} for contact ${message.contactId} step ${(message as any).stepOrder} — already sent as message ${alreadySent.id}. Marking as failed.`)
+      console.debug(`[SendingEngine] DUPLICATE DETECTED: Message ${message.id} for contact ${message.contactId} step ${(message as any).stepOrder} — already sent as message ${alreadySent.id}. Marking as failed.`)
       await db.message.update({
         where: { id: message.id },
         data: { status: 'failed', error: 'Mensagem duplicada — já enviada em outro registro' },
@@ -1671,7 +1671,7 @@ export async function processNextMessage(campaignId: string): Promise<{
 
   if (claimed.count === 0) {
     // Message was already claimed by another concurrent process — skip it
-    console.log(`[SendingEngine] Message ${message.id} already claimed by another process, skipping`)
+    console.debug(`[SendingEngine] Message ${message.id} already claimed by another process, skipping`)
     return { processed: false, delayMs: 500, remaining: -1, completed: false, reason: 'message_already_claimed' }
   }
 
@@ -1696,7 +1696,7 @@ export async function processNextMessage(campaignId: string): Promise<{
           ? calculateTypingDuration(message.content) // Audio: longer "recording" time proportional to content
           : randomInt(2000, 4000) // Image/video/document: 2-4 seconds to "attach"
 
-        console.log(`[SendingEngine] Recording presence for ${mediaDurationMs}ms (${message.mediatype}) to ${formattedPhone}`)
+        console.debug(`[SendingEngine] Recording presence for ${mediaDurationMs}ms (${message.mediatype}) to ${formattedPhone}`)
 
         try {
           await setPresence(instanceName, `${formattedPhone}@s.whatsapp.net`, 'recording', mediaDurationMs)
@@ -1709,7 +1709,7 @@ export async function processNextMessage(campaignId: string): Promise<{
         // Text messages: use "composing" presence (shows "digitando...")
         const typingDurationMs = calculateTypingDuration(message.content)
 
-        console.log(`[SendingEngine] Typing for ${typingDurationMs}ms (${message.content.length} chars) to ${formattedPhone}`)
+        console.debug(`[SendingEngine] Typing for ${typingDurationMs}ms (${message.content.length} chars) to ${formattedPhone}`)
 
         try {
           await setPresence(instanceName, `${formattedPhone}@s.whatsapp.net`, 'composing', typingDurationMs)
@@ -1738,7 +1738,7 @@ export async function processNextMessage(campaignId: string): Promise<{
     // SEND THE MESSAGE
     // ============================================
     // DIAGNOSTIC: Log what we're about to send (step, content preview, media info)
-    console.log(`[SendingEngine] Sending message ${message.id} step=${(message as any).stepOrder} to ${formattedPhone}: mediaUrl=${message.mediaUrl || 'null'} mediatype=${message.mediatype || 'null'} content="${finalContent.substring(0, 80)}..."`)
+    console.debug(`[SendingEngine] Sending message ${message.id} step=${(message as any).stepOrder} to ${formattedPhone}: mediaUrl=${message.mediaUrl || 'null'} mediatype=${message.mediatype || 'null'} content="${finalContent.substring(0, 80)}..."`)
 
     let result
     if (message.mediaUrl && message.mediatype) {
@@ -1749,7 +1749,7 @@ export async function processNextMessage(campaignId: string): Promise<{
         try {
           const urlCheck = await fetch(message.mediaUrl, { method: 'HEAD', signal: AbortSignal.timeout(5000) })
           if (!urlCheck.ok) {
-            console.log(`[SendingEngine] Media URL check failed: ${urlCheck.status} for ${message.mediaUrl}`)
+            console.debug(`[SendingEngine] Media URL check failed: ${urlCheck.status} for ${message.mediaUrl}`)
             await db.message.update({
               where: { id: message.id },
               data: { status: 'failed', error: `URL de mídia inacessível (HTTP ${urlCheck.status})` },
@@ -1759,7 +1759,7 @@ export async function processNextMessage(campaignId: string): Promise<{
           }
         } catch (urlError: any) {
           // Timeout or network error — URL is not reachable
-          console.log(`[SendingEngine] Media URL check error: ${urlError.message} for ${message.mediaUrl}`)
+          console.debug(`[SendingEngine] Media URL check error: ${urlError.message} for ${message.mediaUrl}`)
           await db.message.update({
             where: { id: message.id },
             data: { status: 'failed', error: `URL de mídia inacessível: ${urlError.message}` },
@@ -1835,12 +1835,12 @@ export async function processNextMessage(campaignId: string): Promise<{
             where: { id: message.chipId },
             data: { cooldownUntil },
           })
-          console.log(`[SendingEngine] Chip ${chipAfterSend.name} entering cooldown after ${chipAfterSend.sentToday} messages (threshold: ${threshold}, duration: ${cooldownDuration}min) — cooldown until ${cooldownUntil.toISOString()}`)
+          console.debug(`[SendingEngine] Chip ${chipAfterSend.name} entering cooldown after ${chipAfterSend.sentToday} messages (threshold: ${threshold}, duration: ${cooldownDuration}min) — cooldown until ${cooldownUntil.toISOString()}`)
         }
       }
     }
 
-    console.log(`[SendingEngine] Sent message ${message.id} to ${formattedPhone} via ${instanceName}`)
+    console.debug(`[SendingEngine] Sent message ${message.id} to ${formattedPhone} via ${instanceName}`)
 
     // ============================================
     // CALCULATE NEXT MESSAGE DELAY

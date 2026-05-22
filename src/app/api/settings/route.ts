@@ -33,7 +33,7 @@ export async function PUT(request: Request) {
     }
 
     const entries = Object.entries(body)
-    const results: any[] = []
+    const results: { id: string; createdAt: Date; updatedAt: Date; value: string; key: string }[] = []
 
     for (const [key, value] of entries) {
       if (typeof key !== 'string' || typeof value !== 'string') {

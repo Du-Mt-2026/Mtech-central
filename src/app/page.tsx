@@ -13,7 +13,7 @@ import {
   Download, Filter, ArrowRight, QrCode, Globe, Lock, Server,
   Sparkles, Heart, Star, AlertTriangle, Info, ChevronDown,
   Pencil, LayoutList, Database, WifiOff, ArrowDownToLine, Save, XCircle, ShieldBan,
-  Inbox, LogOut, RotateCcw, Film, Music, File, ImageIcon, Key, Paperclip, MapPin, Link2,
+  Inbox, LogOut, RotateCcw, Film, Music, File as FileIcon, ImageIcon, Key, Paperclip, MapPin, Link2,
   Baby, CheckCircle2, Video, MoreVertical, Mic, User, Smile, BookmarkPlus, GripVertical, Loader2
 } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardAction } from '@/components/ui/card'
@@ -4065,7 +4065,7 @@ function CampanhasTab() {
                             <div className="flex items-center gap-2 p-2 bg-muted/50 rounded-lg text-xs">
                               {step.mediatype === 'image' ? (
                                 <img src={URL.createObjectURL(step.mediaFile)} alt="Preview" className="size-12 rounded object-cover border shrink-0" />
-                              ) : step.mediatype === 'video' ? <Film className="size-3.5 text-sky-500" /> : step.mediatype === 'audio' ? <Music className="size-3.5 text-amber-500" /> : <File className="size-3.5 text-zinc-500" />}
+                              ) : step.mediatype === 'video' ? <Film className="size-3.5 text-sky-500" /> : step.mediatype === 'audio' ? <Music className="size-3.5 text-amber-500" /> : <FileIcon className="size-3.5 text-zinc-500" />}
                               <span className="truncate">{step.mediaFile.name}</span>
                               <span className="text-muted-foreground">({(step.mediaFile.size / 1024).toFixed(1)}KB)</span>
                               <Button variant="ghost" size="sm" className="h-5 w-5 p-0 ml-auto" onClick={() => updateStep(idx, 'mediaFile', null)}><X className="size-3" /></Button>
@@ -4074,7 +4074,7 @@ function CampanhasTab() {
                             <div className="flex items-center gap-2 p-2 bg-emerald-500/10 border border-emerald-500/20 rounded-lg text-xs">
                               {step.mediatype === 'image' ? (
                                 <img src={step.mediaUrl} alt="Preview" className="size-12 rounded object-cover border shrink-0" />
-                              ) : step.mediatype === 'video' ? <Film className="size-3.5 text-sky-500" /> : step.mediatype === 'audio' ? <Music className="size-3.5 text-amber-500" /> : <File className="size-3.5 text-zinc-500" />}
+                              ) : step.mediatype === 'video' ? <Film className="size-3.5 text-sky-500" /> : step.mediatype === 'audio' ? <Music className="size-3.5 text-amber-500" /> : <FileIcon className="size-3.5 text-zinc-500" />}
                               <span className="truncate text-emerald-600 dark:text-emerald-400">Mídia salva</span>
                               <a href={step.mediaUrl} target="_blank" rel="noopener noreferrer" className="text-muted-foreground hover:text-foreground underline truncate max-w-[120px]">abrir</a>
                               <Button variant="ghost" size="sm" className="h-5 w-5 p-0 ml-auto text-red-500 hover:text-red-400" onClick={() => { updateStep(idx, 'mediaUrl', ''); updateStep(idx, 'mediatype', ''); }}><X className="size-3" /></Button>
@@ -4188,7 +4188,7 @@ function CampanhasTab() {
                                     <div className="flex items-center gap-2 p-1.5 bg-muted/50 rounded-lg text-xs">
                                       {v.mediatype === 'image' ? (
                                         <img src={URL.createObjectURL(v.mediaFile)} alt="Preview" className="size-10 rounded object-cover border shrink-0" />
-                                      ) : v.mediatype === 'video' ? <Film className="size-3 text-sky-500" /> : v.mediatype === 'audio' ? <Music className="size-3 text-amber-500" /> : <File className="size-3 text-zinc-500" />}
+                                      ) : v.mediatype === 'video' ? <Film className="size-3 text-sky-500" /> : v.mediatype === 'audio' ? <Music className="size-3 text-amber-500" /> : <FileIcon className="size-3 text-zinc-500" />}
                                       <span className="truncate">{v.mediaFile.name}</span>
                                       <Button variant="ghost" size="sm" className="h-4 w-4 p-0 ml-auto" onClick={() => updateVariation(idx, vIdx, 'mediaFile', null)}><X className="size-2.5" /></Button>
                                     </div>
@@ -4196,7 +4196,7 @@ function CampanhasTab() {
                                     <div className="flex items-center gap-2 p-1.5 bg-emerald-500/10 border border-emerald-500/20 rounded-lg text-xs">
                                       {v.mediatype === 'image' ? (
                                         <img src={v.mediaUrl} alt="Preview" className="size-10 rounded object-cover border shrink-0" />
-                                      ) : v.mediatype === 'video' ? <Film className="size-3 text-sky-500" /> : v.mediatype === 'audio' ? <Music className="size-3 text-amber-500" /> : <File className="size-3 text-zinc-500" />}
+                                      ) : v.mediatype === 'video' ? <Film className="size-3 text-sky-500" /> : v.mediatype === 'audio' ? <Music className="size-3 text-amber-500" /> : <FileIcon className="size-3 text-zinc-500" />}
                                       <span className="truncate text-emerald-600 dark:text-emerald-400">Mídia salva</span>
                                       <a href={v.mediaUrl} target="_blank" rel="noopener noreferrer" className="text-muted-foreground hover:text-foreground underline truncate max-w-[80px]">abrir</a>
                                       <Button variant="ghost" size="sm" className="h-4 w-4 p-0 ml-auto text-red-500 hover:text-red-400" onClick={() => { updateVariation(idx, vIdx, 'mediaUrl', ''); updateVariation(idx, vIdx, 'mediatype', ''); }}><X className="size-2.5" /></Button>
@@ -4330,7 +4330,7 @@ function CampanhasTab() {
                                 {step.mediatype === 'document' && (
                                   <div className="flex items-center gap-2.5 px-3 py-3 bg-[#1a3a2a]">
                                     <div className="size-10 rounded bg-blue-500/20 flex items-center justify-center">
-                                      <File className="size-5 text-blue-400" />
+                                      <FileIcon className="size-5 text-blue-400" />
                                     </div>
                                     <div className="flex-1 min-w-0">
                                       <p className="text-[11px] text-white/80 truncate">{step.mediaFile?.name || 'Documento.pdf'}</p>
@@ -4859,7 +4859,7 @@ function TemplatesTab() {
     'image': { icon: <ImageIcon className="size-3.5" />, color: 'text-emerald-500', label: 'Imagem' },
     'video': { icon: <Film className="size-3.5" />, color: 'text-sky-500', label: 'Vídeo' },
     'audio': { icon: <Music className="size-3.5" />, color: 'text-amber-500', label: 'Áudio' },
-    'document': { icon: <File className="size-3.5" />, color: 'text-violet-500', label: 'Documento' },
+    'document': { icon: <FileIcon className="size-3.5" />, color: 'text-violet-500', label: 'Documento' },
     'contact': { icon: <Users className="size-3.5" />, color: 'text-rose-500', label: 'Contato' },
     'location': { icon: <MapPin className="size-3.5" />, color: 'text-orange-500', label: 'Localização' },
     'link': { icon: <Link2 className="size-3.5" />, color: 'text-blue-500', label: 'Link' },
@@ -6117,7 +6117,7 @@ function InboxTab() {
       case 'image': return <ImageIcon className="size-3.5" />
       case 'video': return <Video className="size-3.5" />
       case 'audio': return <Mic className="size-3.5" />
-      case 'document': return <File className="size-3.5" />
+      case 'document': return <FileIcon className="size-3.5" />
       case 'sticker': return <Smile className="size-3.5" />
       case 'location': return <MapPin className="size-3.5" />
       case 'contact': return <User className="size-3.5" />
@@ -6381,7 +6381,7 @@ function InboxTab() {
                                 )}
                                 {msg.mediaUrl && msg.messageType === 'document' && (
                                   <div className="mb-1.5 flex items-center gap-2 px-1 py-0.5">
-                                    <File className="size-4" />
+                                    <FileIcon className="size-4" />
                                     <span className="text-xs">Documento</span>
                                   </div>
                                 )}
