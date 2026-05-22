@@ -6051,7 +6051,7 @@ function InboxTab() {
   }
 
   return (
-    <div className="flex h-[calc(100vh-12rem)] gap-0 overflow-hidden rounded-xl border bg-card shadow-lg">
+    <div className="flex h-full gap-0 overflow-hidden rounded-xl border bg-card shadow-lg">
       <ResizablePanelGroup direction="horizontal" className="flex h-full">
         {/* Panel 1: Chip List */}
         <ResizablePanel defaultSize={18} minSize={12} maxSize={30}>
@@ -6073,7 +6073,7 @@ function InboxTab() {
                 />
               </div>
             </div>
-            <ScrollArea className="flex-1">
+            <ScrollArea className="flex-1 min-h-0">
               {loadingChips ? (
                 <div className="flex items-center justify-center py-10"><RefreshCw className="size-5 animate-spin text-muted-foreground" /></div>
               ) : chips.length === 0 ? (
@@ -6144,7 +6144,7 @@ function InboxTab() {
                 </div>
               )}
             </div>
-            <ScrollArea className="flex-1">
+            <ScrollArea className="flex-1 min-h-0">
               {!selectedChipId ? (
                 <div className="flex flex-col items-center justify-center py-16 px-4">
                   <MessageCircle className="size-10 text-muted-foreground mb-3" />
@@ -8034,7 +8034,7 @@ export default function OctupusZapApp() {
         </header>
 
         {/* Page Content */}
-        <main className="flex-1 p-4 lg:p-6 pb-8 overflow-y-auto" style={{ contain: 'strict' }}>
+        <main className={`flex-1 p-4 lg:p-6 pb-8 ${activeTab === 'inbox' ? 'overflow-hidden' : 'overflow-y-auto'}`} style={{ contain: 'layout paint' }}>
           <AnimatePresence mode="wait">
             <motion.div key={activeTab} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} transition={{ duration: 0.2 }} className={activeTab === 'inbox' ? 'h-full' : ''}>
               {renderContent()}
