@@ -41,38 +41,61 @@ async function main() {
     },
   });
 
-  // Create sample contacts
+  // Create sample contact list
+  const contactList = await prisma.contactList.create({
+    data: { name: 'Lista de Contatos Teste' },
+  });
+
+  // Create sample contacts linked to the contact list
   const contacts = [
-    { name: 'João Silva', phone: '11988880001', chipId: chip1.id },
-    { name: 'Maria Santos', phone: '11988880002', chipId: chip1.id },
-    { name: 'Pedro Lima', phone: '11988880003', chipId: chip2.id },
-    { name: 'Ana Costa', phone: '11988880004', chipId: chip2.id },
+    { name: 'João Silva', phone: '11988880001', chipId: chip1.id, contactListId: contactList.id },
+    { name: 'Maria Santos', phone: '11988880002', chipId: chip1.id, contactListId: contactList.id },
+    { name: 'Pedro Lima', phone: '11988880003', chipId: chip2.id, contactListId: contactList.id },
+    { name: 'Ana Costa', phone: '11988880004', chipId: chip2.id, contactListId: contactList.id },
   ];
   for (const c of contacts) {
     await prisma.contact.create({ data: c });
   }
 
-  // Create sample campaign
+  // Create sample campaign with SequenceStep (replaces old messageVariations)
   const campaign = await prisma.campaign.create({
     data: {
       name: 'Campanha Black Friday',
       status: 'draft',
-      messageVariations: JSON.stringify([
-        'Olá {nome}! Temos uma oferta especial pra você! 🎉',
-        'Ei {nome}, não perca nossa promoção exclusiva! 🔥',
-      ]),
       sendIntervalMin: 30,
       sendIntervalMax: 90,
+      contactListId: contactList.id,
+      antiBanEnabled: true,
+      warmingMode: 'normal',
       chips: {
         create: [
           { chipId: chip1.id },
           { chipId: chip2.id },
         ],
       },
+      sequenceSteps: {
+        create: [
+          {
+            stepOrder: 1,
+            content: 'Olá {nome}! Temos uma oferta especial pra você!',
+            delayMinutes: 0,
+            variations: JSON.stringify([
+              { content: 'Olá {nome}! Temos uma oferta especial pra você!' },
+              { content: 'Ei {nome}, não perca nossa promoção exclusiva!' },
+            ]),
+          },
+          {
+            stepOrder: 2,
+            content: 'Acesse agora e garanta seu desconto, {nome}!',
+            delayMinutes: 60,
+            variations: '[]',
+          },
+        ],
+      },
     },
   });
 
-  console.log('Seed completed!', { chip1: chip1.id, chip2: chip2.id, campaign: campaign.id });
+  console.log('Seed completed!', { chip1: chip1.id, chip2: chip2.id, contactList: contactList.id, campaign: campaign.id });
 }
 
 main()

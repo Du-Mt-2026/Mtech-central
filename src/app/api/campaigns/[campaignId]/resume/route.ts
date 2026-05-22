@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { recoverStuckMessages } from '@/lib/sending-engine'
 
 export async function POST(
   req: NextRequest,
@@ -22,6 +23,9 @@ export async function POST(
       )
     }
 
+    // Recover stuck "sending" messages before resuming
+    const recoveredCount = await recoverStuckMessages(campaignId)
+
     const updated = await db.campaign.update({
       where: { id: campaignId },
       data: { status: 'running', statusReason: null, pausedAt: null },
@@ -32,7 +36,12 @@ export async function POST(
       },
     })
 
-    return NextResponse.json(updated)
+    const response: Record<string, unknown> = { ...updated }
+    if (recoveredCount > 0) {
+      response._recoveredMessages = recoveredCount
+    }
+
+    return NextResponse.json(response)
   } catch (error: any) {
     console.error('Campaign resume error:', error)
     return NextResponse.json(

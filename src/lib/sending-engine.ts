@@ -1896,9 +1896,39 @@ export async function processCampaign(campaignId: string): Promise<{
 }
 
 /**
- * Get all running campaigns that need processing
+ * Recover stuck "sending" messages — messages that were marked as "sending"
+ * but never completed (server crash, timeout, etc.). Resets them to "pending"
+ * so they can be reprocessed. Should be called before processing.
+ */
+export async function recoverStuckMessages(campaignId?: string): Promise<number> {
+  const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000)
+
+  const where: Record<string, unknown> = {
+    status: 'sending',
+    updatedAt: { lt: fiveMinutesAgo },
+  }
+  if (campaignId) where.campaignId = campaignId
+
+  const result = await db.message.updateMany({
+    where,
+    data: { status: 'pending' },
+  })
+
+  if (result.count > 0) {
+    console.log(`[SendingEngine] Recovered ${result.count} stuck "sending" messages${campaignId ? ` for campaign ${campaignId}` : ''}`)
+  }
+
+  return result.count
+}
+
+/**
+ * Get all running campaigns that need processing.
+ * Also recovers any stuck "sending" messages before returning.
  */
 export async function getRunningCampaigns(): Promise<string[]> {
+  // Recover stuck messages across all running campaigns
+  await recoverStuckMessages()
+
   const campaigns = await db.campaign.findMany({
     where: { status: 'running' },
     select: { id: true },

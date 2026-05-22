@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import {
   generateWireGuardIp,
@@ -6,6 +6,8 @@ import {
   generateWireGuardKeys,
 } from '@/lib/wireguard'
 import { addWireGuardPeer } from '@/lib/wireguard-peer-api'
+import { deleteInstance, disconnectInstance, getInstanceName } from '@/lib/evolution-api'
+import { removeWireGuardPeer } from '@/lib/wireguard-peer-api'
 
 export async function GET() {
   try {
@@ -133,7 +135,7 @@ export async function POST(request: Request) {
   }
 }
 
-export async function DELETE(request: Request) {
+export async function DELETE(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
     const id = searchParams.get('id')
@@ -142,6 +144,25 @@ export async function DELETE(request: Request) {
       return NextResponse.json({ error: 'ID is required' }, { status: 400 })
     }
 
+    // Find chip first to clean up Evolution API instance and WireGuard peer
+    const chip = await db.chip.findUnique({ where: { id } })
+
+    if (chip) {
+      const instanceName = chip.evolutionInstance || getInstanceName(chip.id, chip.name)
+
+      // Disconnect and delete instance from Evolution API
+      try { await disconnectInstance(instanceName) } catch { /* may already be disconnected */ }
+      try { await deleteInstance(instanceName) } catch { /* may not exist */ }
+
+      // Remove WireGuard peer from KVM8 server
+      if (chip.wireguardPubKey && chip.wireguardIp) {
+        removeWireGuardPeer(chip.wireguardPubKey, chip.wireguardIp).catch(err => {
+          console.error('[Chips DELETE] Background WireGuard peer remove failed:', err)
+        })
+      }
+    }
+
+    // Delete related records and chip from database
     await db.message.deleteMany({ where: { chipId: id } })
     await db.contact.deleteMany({ where: { chipId: id } })
     await db.campaignChip.deleteMany({ where: { chipId: id } })
