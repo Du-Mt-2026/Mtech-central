@@ -275,6 +275,12 @@ interface ScheduleEntry {
   limit: number
 }
 
+interface BreakWindow {
+  start: number  // minutos desde meia-noite
+  end: number    // minutos desde meia-noite
+  label: string  // descrição da pausa
+}
+
 interface AntiBanSettings {
   id: string
   typingMinDelay: number
@@ -285,7 +291,9 @@ interface AntiBanSettings {
   warmingEnabled: boolean
   warmingDays: number
   cooldownMinutes: number
+  cooldownMinutesMax: number       // Cooldown variável: máximo minutos de pausa (range min-max)
   cooldownAfterMessages: number
+  cooldownAfterMessagesMax: number // Cooldown após N mensagens: máximo (range min-max)
   stopOnWarning: boolean
   sendingWindowStart: number
   sendingWindowEnd: number
@@ -294,6 +302,7 @@ interface AntiBanSettings {
   prewarmSchedule: string   // JSON string of ScheduleEntry[]
   readyDailyLimit: number   // Phase 3 (Aquecido) daily limit
   hourlyLimit: number       // Max messages per hour per chip
+  breakWindows: string      // JSON string of BreakWindow[]
 }
 
 interface MessageTemplate {
@@ -5127,6 +5136,7 @@ function TemplatesTab() {
 // ===== Anti-Ban Tab =====
 function AntiBanTab() {
   const [settings, setSettings] = useState<AntiBanSettings | null>(null)
+  const [breakWindows, setBreakWindows] = useState<BreakWindow[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [resetDialogOpen, setResetDialogOpen] = useState(false)
@@ -5142,7 +5152,9 @@ function AntiBanTab() {
     warmingEnabled: true,
     warmingDays: 7,
     cooldownMinutes: 30,
+    cooldownMinutesMax: 30,
     cooldownAfterMessages: 50,
+    cooldownAfterMessagesMax: 50,
     stopOnWarning: true,
     sendingWindowStart: 480,
     sendingWindowEnd: 1260,
@@ -5151,6 +5163,7 @@ function AntiBanTab() {
     prewarmSchedule: '[{"dayRange":"1","days":[1,1],"limit":11},{"dayRange":"2","days":[2,2],"limit":15},{"dayRange":"3","days":[3,3],"limit":20},{"dayRange":"4","days":[4,4],"limit":25},{"dayRange":"5","days":[5,5],"limit":30},{"dayRange":"6","days":[6,6],"limit":35},{"dayRange":"7","days":[7,7],"limit":40},{"dayRange":"8","days":[8,8],"limit":45},{"dayRange":"9","days":[9,9],"limit":50},{"dayRange":"10","days":[10,10],"limit":60},{"dayRange":"11","days":[11,11],"limit":70},{"dayRange":"12","days":[12,12],"limit":80},{"dayRange":"13","days":[13,13],"limit":90},{"dayRange":"14","days":[14,14],"limit":100},{"dayRange":"15","days":[15,15],"limit":120},{"dayRange":"16","days":[16,16],"limit":140},{"dayRange":"17","days":[17,17],"limit":160},{"dayRange":"18","days":[18,18],"limit":180},{"dayRange":"19","days":[19,19],"limit":190},{"dayRange":"20","days":[20,20],"limit":200}]',
     readyDailyLimit: 200,
     hourlyLimit: 30,
+    breakWindows: '[]',
   }
 
   // Convert minutes-from-midnight to HH:MM string
@@ -5173,7 +5186,19 @@ function AntiBanTab() {
   const fetchSettings = useCallback(async () => {
     try {
       const res = await fetch('/api/antiban')
-      setSettings(await res.json())
+      const data = await res.json()
+      setSettings(data)
+      // Parse breakWindows from JSON string
+      try {
+        const parsed = typeof data.breakWindows === 'string' ? JSON.parse(data.breakWindows) : (data.breakWindows || [])
+        if (Array.isArray(parsed)) {
+          setBreakWindows(parsed.filter((w: any) => w.start !== undefined && w.end !== undefined).map((w: any) => ({
+            start: Number(w.start),
+            end: Number(w.end),
+            label: String(w.label || 'Pausa'),
+          })))
+        }
+      } catch { setBreakWindows([]) }
     } catch { toast.error('Erro ao carregar configurações') }
     finally { setLoading(false) }
   }, [])
@@ -5185,10 +5210,44 @@ function AntiBanTab() {
     setSaving(true)
     try {
       const res = await fetch('/api/antiban', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [key]: value }) })
-      setSettings(await res.json())
+      const updated = await res.json()
+      setSettings(updated)
+      // Re-parse breakWindows if it was updated
+      if (key === 'breakWindows') {
+        try {
+          const parsed = typeof updated.breakWindows === 'string' ? JSON.parse(updated.breakWindows) : (updated.breakWindows || [])
+          if (Array.isArray(parsed)) {
+            setBreakWindows(parsed.filter((w: any) => w.start !== undefined && w.end !== undefined).map((w: any) => ({
+              start: Number(w.start),
+              end: Number(w.end),
+              label: String(w.label || 'Pausa'),
+            })))
+          }
+        } catch { setBreakWindows([]) }
+      }
       toast.success('Configuração atualizada!')
     } catch { toast.error('Erro ao atualizar') }
     finally { setSaving(false) }
+  }
+
+  // Break window helpers
+  const addBreakWindow = () => {
+    const updated = [...breakWindows, { start: 720, end: 810, label: 'Almoço' }]
+    setBreakWindows(updated)
+    updateSetting('breakWindows', JSON.stringify(updated))
+  }
+
+  const removeBreakWindow = (index: number) => {
+    const updated = breakWindows.filter((_, i) => i !== index)
+    setBreakWindows(updated)
+    updateSetting('breakWindows', JSON.stringify(updated))
+  }
+
+  const updateBreakWindow = (index: number, field: keyof BreakWindow, value: string | number) => {
+    const updated = [...breakWindows]
+    updated[index] = { ...updated[index], [field]: value }
+    setBreakWindows(updated)
+    updateSetting('breakWindows', JSON.stringify(updated))
   }
 
   const resetField = async (field: string) => {
@@ -5706,54 +5765,88 @@ function AntiBanTab() {
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1.5">
-                <div className="flex justify-between items-center">
-                  <Label className="text-xs">Limite diário/chip</Label>
-                  <Button variant="ghost" size="icon" className="size-5 text-muted-foreground hover:text-rose-600" onClick={() => resetField('dailyLimitPerChip')} title={`Padrão: ${DEFAULTS.dailyLimitPerChip}`}>
-                    <RotateCcw className="size-2.5" />
-                  </Button>
+            <div className="space-y-1.5">
+              <div className="flex justify-between items-center">
+                <Label className="text-xs">Limite diário/chip</Label>
+                <Button variant="ghost" size="icon" className="size-5 text-muted-foreground hover:text-rose-600" onClick={() => resetField('dailyLimitPerChip')} title={`Padrão: ${DEFAULTS.dailyLimitPerChip}`}>
+                  <RotateCcw className="size-2.5" />
+                </Button>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <Input type="number" min={50} max={500} step={10} value={settings.dailyLimitPerChip} onChange={e => updateSetting('dailyLimitPerChip', Math.max(50, parseInt(e.target.value) || 50))} className="w-24 h-8 text-sm" />
+                <span className="text-[11px] text-muted-foreground">msgs</span>
+              </div>
+            </div>
+
+            {/* Variable Cooldown Duration — min/max range */}
+            <div className="border-t pt-3">
+              <Label className="text-xs font-semibold">Duração do Cooldown</Label>
+              <p className="text-[10px] text-muted-foreground mb-2">O sistema escolhe aleatoriamente entre mín e máx a cada ciclo</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label className="text-[10px] text-muted-foreground">Mínimo</Label>
+                  <div className="flex items-center gap-1.5">
+                    <Input type="number" min={5} max={120} step={5} value={settings.cooldownMinutes} onChange={e => {
+                      const val = Math.max(5, parseInt(e.target.value) || 5)
+                      updateSetting('cooldownMinutes', val)
+                      if (settings.cooldownMinutesMax < val) updateSetting('cooldownMinutesMax', val)
+                    }} className="w-20 h-8 text-sm" />
+                    <span className="text-[11px] text-muted-foreground">min</span>
+                  </div>
                 </div>
-                <div className="flex items-center gap-1.5">
-                  <Input type="number" min={50} max={500} step={10} value={settings.dailyLimitPerChip} onChange={e => updateSetting('dailyLimitPerChip', Math.max(50, parseInt(e.target.value) || 50))} className="w-24 h-8 text-sm" />
-                  <span className="text-[11px] text-muted-foreground">msgs</span>
+                <div className="space-y-1">
+                  <Label className="text-[10px] text-muted-foreground">Máximo</Label>
+                  <div className="flex items-center gap-1.5">
+                    <Input type="number" min={settings.cooldownMinutes} max={180} step={5} value={settings.cooldownMinutesMax} onChange={e => updateSetting('cooldownMinutesMax', Math.max(settings.cooldownMinutes, parseInt(e.target.value) || settings.cooldownMinutes))} className="w-20 h-8 text-sm" />
+                    <span className="text-[11px] text-muted-foreground">min</span>
+                  </div>
                 </div>
               </div>
-              <div className="space-y-1.5">
-                <div className="flex justify-between items-center">
-                  <Label className="text-xs">Cooldown após</Label>
-                  <Button variant="ghost" size="icon" className="size-5 text-muted-foreground hover:text-rose-600" onClick={() => resetField('cooldownAfterMessages')} title={`Padrão: ${DEFAULTS.cooldownAfterMessages}`}>
-                    <RotateCcw className="size-2.5" />
-                  </Button>
+            </div>
+
+            {/* Variable Cooldown Threshold — min/max range */}
+            <div className="border-t pt-3">
+              <Label className="text-xs font-semibold">Cooldown após N mensagens</Label>
+              <p className="text-[10px] text-muted-foreground mb-2">Após enviar entre mín e máx mensagens, o chip entra em cooldown</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label className="text-[10px] text-muted-foreground">Mínimo</Label>
+                  <div className="flex items-center gap-1.5">
+                    <Input type="number" min={5} max={100} step={5} value={settings.cooldownAfterMessages} onChange={e => {
+                      const val = Math.max(5, parseInt(e.target.value) || 5)
+                      updateSetting('cooldownAfterMessages', val)
+                      if (settings.cooldownAfterMessagesMax < val) updateSetting('cooldownAfterMessagesMax', val)
+                    }} className="w-20 h-8 text-sm" />
+                    <span className="text-[11px] text-muted-foreground">msgs</span>
+                  </div>
                 </div>
-                <div className="flex items-center gap-1.5">
-                  <Input type="number" min={10} max={100} step={5} value={settings.cooldownAfterMessages} onChange={e => updateSetting('cooldownAfterMessages', Math.max(10, parseInt(e.target.value) || 10))} className="w-24 h-8 text-sm" />
-                  <span className="text-[11px] text-muted-foreground">msgs</span>
+                <div className="space-y-1">
+                  <Label className="text-[10px] text-muted-foreground">Máximo</Label>
+                  <div className="flex items-center gap-1.5">
+                    <Input type="number" min={settings.cooldownAfterMessages} max={200} step={5} value={settings.cooldownAfterMessagesMax} onChange={e => updateSetting('cooldownAfterMessagesMax', Math.max(settings.cooldownAfterMessages, parseInt(e.target.value) || settings.cooldownAfterMessages))} className="w-20 h-8 text-sm" />
+                    <span className="text-[11px] text-muted-foreground">msgs</span>
+                  </div>
                 </div>
               </div>
-              <div className="space-y-1.5">
-                <div className="flex justify-between items-center">
-                  <Label className="text-xs">Duração cooldown</Label>
-                  <Button variant="ghost" size="icon" className="size-5 text-muted-foreground hover:text-rose-600" onClick={() => resetField('cooldownMinutes')} title={`Padrão: ${DEFAULTS.cooldownMinutes} min`}>
-                    <RotateCcw className="size-2.5" />
-                  </Button>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <Input type="number" min={5} max={120} step={5} value={settings.cooldownMinutes} onChange={e => updateSetting('cooldownMinutes', Math.max(5, parseInt(e.target.value) || 5))} className="w-24 h-8 text-sm" />
-                  <span className="text-[11px] text-muted-foreground">min</span>
-                </div>
+            </div>
+
+            {/* Summary */}
+            <div className="p-3 bg-muted/50 rounded-lg">
+              <p className="text-[11px] text-muted-foreground">
+                Após enviar <strong>{settings.cooldownAfterMessages === settings.cooldownAfterMessagesMax ? settings.cooldownAfterMessages : `${settings.cooldownAfterMessages}-${settings.cooldownAfterMessagesMax}`}</strong> mensagens, o chip faz uma pausa de <strong>{settings.cooldownMinutes === settings.cooldownMinutesMax ? settings.cooldownMinutes : `${settings.cooldownMinutes}-${settings.cooldownMinutesMax}`}</strong> min. Valores são aleatórios dentro dos ranges.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">
+              <div>
+                <p className="text-xs font-medium">Parada em Aviso</p>
+                <p className="text-[10px] text-muted-foreground">Para ao detectar aviso</p>
               </div>
-              <div className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">
-                <div>
-                  <p className="text-xs font-medium">Parada em Aviso</p>
-                  <p className="text-[10px] text-muted-foreground">Para ao detectar aviso</p>
-                </div>
-                <div className="flex items-center gap-1">
-                  <Switch checked={settings.stopOnWarning} onCheckedChange={v => updateSetting('stopOnWarning', v)} />
-                  <Button variant="ghost" size="icon" className="size-5 text-muted-foreground hover:text-rose-600" onClick={() => resetField('stopOnWarning')} title="Restaurar padrão">
-                    <RotateCcw className="size-2.5" />
-                  </Button>
-                </div>
+              <div className="flex items-center gap-1">
+                <Switch checked={settings.stopOnWarning} onCheckedChange={v => updateSetting('stopOnWarning', v)} />
+                <Button variant="ghost" size="icon" className="size-5 text-muted-foreground hover:text-rose-600" onClick={() => resetField('stopOnWarning')} title="Restaurar padrão">
+                  <RotateCcw className="size-2.5" />
+                </Button>
               </div>
             </div>
           </CardContent>
@@ -5838,6 +5931,55 @@ function AntiBanTab() {
                 })}
               </div>
               <p className="text-[11px] text-muted-foreground">Envio permitido das <strong>{minsToTime(windowStartMins)}</strong> às <strong>{minsToTime(windowEndMins)}</strong> (fuso: {settings.timezone})</p>
+            </div>
+
+            {/* Break Windows — Pausas dentro da janela */}
+            <div className="border-t pt-3">
+              <div className="flex items-center justify-between mb-2">
+                <div>
+                  <Label className="text-xs font-semibold">Pausas dentro da janela</Label>
+                  <p className="text-[10px] text-muted-foreground">Almoço, reuniões, etc. O envio para e retoma automaticamente.</p>
+                </div>
+                <Button variant="outline" size="sm" className="h-7 text-xs text-orange-500 border-orange-500/30 hover:bg-orange-500/10" onClick={addBreakWindow} disabled={saving}>
+                  <Plus className="size-3 mr-1" />
+                  Adicionar Pausa
+                </Button>
+              </div>
+              {breakWindows.length === 0 ? (
+                <div className="text-center py-2 bg-muted/30 rounded-lg">
+                  <p className="text-[10px] text-muted-foreground">Nenhuma pausa configurada</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {breakWindows.map((bw, idx) => (
+                    <div key={idx} className="flex items-center gap-2 bg-orange-500/5 border border-orange-500/20 rounded-lg p-2">
+                      <Input
+                        type="time"
+                        value={minsToTime(bw.start)}
+                        onChange={e => updateBreakWindow(idx, 'start', timeToMins(e.target.value))}
+                        className="w-28 h-7 text-xs"
+                      />
+                      <span className="text-[10px] text-muted-foreground">até</span>
+                      <Input
+                        type="time"
+                        value={minsToTime(bw.end)}
+                        onChange={e => updateBreakWindow(idx, 'end', timeToMins(e.target.value))}
+                        className="w-28 h-7 text-xs"
+                      />
+                      <Input
+                        type="text"
+                        value={bw.label}
+                        onChange={e => updateBreakWindow(idx, 'label', e.target.value)}
+                        placeholder="Ex: Almoço"
+                        className="flex-1 h-7 text-xs"
+                      />
+                      <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-red-500 hover:text-red-400 hover:bg-red-500/10" onClick={() => removeBreakWindow(idx)} disabled={saving}>
+                        <Trash2 className="size-3" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>
