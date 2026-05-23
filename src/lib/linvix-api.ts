@@ -430,8 +430,8 @@ export async function syncLinvixClients(db: any): Promise<{
   console.debug(`[LinvixSync] Found ${existingContactMap.size} existing contacts in DB`)
 
   // 6. Separate into updates and creates
-  const toUpdate: Array<{ id: string; phone: string; nome: string; customFields: string }> = []
-  const toCreate: Array<{ phone: string; nome: string; customFields: string; contactListId: string }> = []
+  const toUpdate: Array<{ id: string; phone: string; name: string; customFields: string }> = []
+  const toCreate: Array<{ phone: string; name: string; customFields: string; contactListId: string }> = []
 
   for (const contact of validContacts) {
     const existing = existingContactMap.get(contact.phone)
@@ -439,13 +439,13 @@ export async function syncLinvixClients(db: any): Promise<{
       toUpdate.push({
         id: existing.id,
         phone: contact.phone,
-        nome: contact.nome,
+        name: contact.nome,
         customFields: contact.customFields,
       })
     } else {
       toCreate.push({
         phone: contact.phone,
-        nome: contact.nome,
+        name: contact.nome,
         customFields: contact.customFields,
         contactListId: contactList.id,
       })
@@ -460,7 +460,12 @@ export async function syncLinvixClients(db: any): Promise<{
     const batch = toCreate.slice(i, i + DB_BATCH_SIZE)
     try {
       const result = await db.contact.createMany({
-        data: batch,
+        data: batch.map(c => ({
+          name: c.name,
+          phone: c.phone,
+          customFields: c.customFields,
+          contactListId: c.contactListId,
+        })),
         skipDuplicates: true,
       })
       created += result.count
@@ -469,7 +474,14 @@ export async function syncLinvixClients(db: any): Promise<{
       console.warn(`[LinvixSync] Batch create failed, falling back to individual: ${error.message}`)
       for (const contact of batch) {
         try {
-          await db.contact.create({ data: contact })
+          await db.contact.create({
+            data: {
+              name: contact.name,
+              phone: contact.phone,
+              customFields: contact.customFields,
+              contactListId: contact.contactListId,
+            }
+          })
           created++
         } catch (e: any) {
           if (!e.message?.includes('Unique constraint')) {
@@ -489,7 +501,7 @@ export async function syncLinvixClients(db: any): Promise<{
       db.contact.update({
         where: { id: contact.id },
         data: {
-          name: contact.nome,
+          name: contact.name,
           customFields: contact.customFields,
           contactListId: contactList.id,
         },
