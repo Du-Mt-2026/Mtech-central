@@ -5486,7 +5486,7 @@ function AntiBanTab() {
                   </Button>
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <Input type="number" min={5} max={120} step={5} value={settings.messageIntervalMin} onChange={e => updateSetting('messageIntervalMin', Math.max(5, parseInt(e.target.value) || 5))} className="w-24 h-8 text-sm" />
+                  <Input type="number" min={1} max={120} step={1} value={settings.messageIntervalMin} onChange={e => updateSetting('messageIntervalMin', Math.max(1, parseInt(e.target.value) || 1))} className="w-24 h-8 text-sm" />
                   <span className="text-[11px] text-muted-foreground">seg</span>
                 </div>
               </div>
@@ -5498,7 +5498,7 @@ function AntiBanTab() {
                   </Button>
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <Input type="number" min={10} max={300} step={5} value={settings.messageIntervalMax} onChange={e => updateSetting('messageIntervalMax', Math.max(10, parseInt(e.target.value) || 10))} className="w-24 h-8 text-sm" />
+                  <Input type="number" min={1} max={300} step={1} value={settings.messageIntervalMax} onChange={e => updateSetting('messageIntervalMax', Math.max(1, parseInt(e.target.value) || 1))} className="w-24 h-8 text-sm" />
                   <span className="text-[11px] text-muted-foreground">seg</span>
                 </div>
               </div>
@@ -5671,11 +5671,11 @@ function AntiBanTab() {
                     <div className="flex items-center gap-1.5">
                       <Input
                         type="number"
-                        min={10}
+                        min={1}
                         max={5000}
-                        step={10}
+                        step={1}
                         value={settings.readyDailyLimit || 200}
-                        onChange={e => updateReadyDailyLimit(Math.max(10, parseInt(e.target.value) || 200))}
+                        onChange={e => updateReadyDailyLimit(Math.max(1, parseInt(e.target.value) || 200))}
                         className="w-24 h-8 text-sm border-emerald-200 dark:border-emerald-800"
                         disabled={saving}
                       />
@@ -5687,11 +5687,11 @@ function AntiBanTab() {
                     <div className="flex items-center gap-1.5">
                       <Input
                         type="number"
-                        min={5}
+                        min={1}
                         max={500}
-                        step={5}
+                        step={1}
                         value={settings.hourlyLimit || 30}
-                        onChange={e => updateSetting('hourlyLimit', Math.max(5, parseInt(e.target.value) || 30))}
+                        onChange={e => updateSetting('hourlyLimit', Math.max(1, parseInt(e.target.value) || 30))}
                         className="w-24 h-8 text-sm border-emerald-200 dark:border-emerald-800"
                         disabled={saving}
                       />
@@ -5773,7 +5773,7 @@ function AntiBanTab() {
                 </Button>
               </div>
               <div className="flex items-center gap-1.5">
-                <Input type="number" min={50} max={500} step={10} value={settings.dailyLimitPerChip} onChange={e => updateSetting('dailyLimitPerChip', Math.max(50, parseInt(e.target.value) || 50))} className="w-24 h-8 text-sm" />
+                <Input type="number" min={1} max={500} step={1} value={settings.dailyLimitPerChip} onChange={e => updateSetting('dailyLimitPerChip', Math.max(1, parseInt(e.target.value) || 1))} className="w-24 h-8 text-sm" />
                 <span className="text-[11px] text-muted-foreground">msgs</span>
               </div>
             </div>
