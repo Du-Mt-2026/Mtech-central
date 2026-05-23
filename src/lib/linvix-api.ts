@@ -1,9 +1,9 @@
 /**
  * Linvix ERP Integration Library
- * 
+ *
  * Connects to the Linvix (Linx Microvix) ERP via its DataTable AJAX endpoints.
- * Uses cookie-based authentication (PHP session).
- * 
+ * Uses cookie-based authentication (PHP session) via AJAX login endpoint.
+ *
  * Data available:
  * - Clients (Clientes): CODIGO, NOME, FANTASIA, TELEFONE, CELULAR, FAX, EMAIL,
  *   CNPJ_CNPF, IE_RG, SITUACAO, CIDADE, BAIRRO, UF, CATEGORIA, VENDEDOR_NOME
@@ -13,6 +13,12 @@
 const LINVIX_BASE_URL = process.env.LINVIX_URL || 'https://rp.erp.linvix.com'
 const LINVIX_USER = process.env.LINVIX_USER || ''
 const LINVIX_PASS = process.env.LINVIX_PASS || ''
+
+/** Timeout for fetch calls to Linvix ERP (ms) */
+const LINVIX_FETCH_TIMEOUT = 15_000
+
+/** Batch size for bulk DB operations */
+const DB_BATCH_SIZE = 100
 
 interface LinvixClient {
   CODIGO: string
@@ -42,17 +48,35 @@ interface LinvixDatatableResponse {
 }
 
 /**
- * Login to Linvix ERP and return session cookies
+ * Fetch with timeout and retry
+ */
+async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: number = LINVIX_FETCH_TIMEOUT): Promise<Response> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+
+  try {
+    const response = await fetch(url, { ...options, signal: controller.signal })
+    return response
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/**
+ * Login to Linvix ERP via AJAX endpoint and return session cookies
  */
 async function linvixLogin(): Promise<string> {
-  const loginUrl = `${LINVIX_BASE_URL}/login.php`
+  const loginUrl = `${LINVIX_BASE_URL}/ajax/ajax-login.php`
 
-  const response = await fetch(loginUrl, {
+  console.debug('[LinvixSync] Logging in via AJAX endpoint...')
+
+  const response = await fetchWithTimeout(loginUrl, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
+      'X-Requested-With': 'XMLHttpRequest',
     },
-    redirect: 'manual', // Don't follow redirects - we need the Set-Cookie header
+    redirect: 'manual',
     body: new URLSearchParams({
       login: LINVIX_USER,
       senha: LINVIX_PASS,
@@ -69,24 +93,35 @@ async function linvixLogin(): Promise<string> {
   }
 
   if (allCookies.length === 0) {
-    throw new Error('Linvix login failed: no cookies returned')
+    // Try reading response body for error details
+    let errorDetail = ''
+    try {
+      const body = await response.text()
+      // Check if it's a JSON error response
+      const json = JSON.parse(body)
+      if (json.status !== 'SUCESSO') {
+        errorDetail = json.mensagem || 'Unknown error'
+      }
+    } catch {
+      errorDetail = 'No cookies returned and response is not JSON'
+    }
+    throw new Error(`Linvix login failed: ${errorDetail}`)
   }
 
-  // If we got redirected (302), the login was successful
-  const location = response.headers.get('location')
-  if (response.status === 302 || location) {
-    // Need to follow redirect to establish full session
-    const followResponse = await fetch(`${LINVIX_BASE_URL}${location || '/'}`, {
-      headers: { Cookie: allCookies.join('; ') },
-      redirect: 'manual',
-    })
-
-    // Get any additional cookies from the redirect
-    const moreCookies = followResponse.headers.getSetCookie?.() || []
-    for (const cookie of moreCookies) {
-      const match = cookie.match(/^([^;]+)/)
-      if (match) allCookies.push(match[1])
+  // Verify login was successful by checking the response
+  try {
+    const body = await response.text()
+    // The AJAX endpoint returns JSON
+    const json = JSON.parse(body)
+    if (json.status !== 'SUCESSO') {
+      throw new Error(`Linvix login rejected: ${json.mensagem || 'Unknown error'}`)
     }
+    console.debug(`[LinvixSync] Login successful: ${json.mensagem}`)
+  } catch (e: any) {
+    if (e.message?.includes('Linvix login rejected')) throw e
+    // If we can't parse JSON but got cookies, the login might have worked
+    // (some responses mix HTML before JSON)
+    console.debug('[LinvixSync] Could not parse login response as JSON, but cookies were received')
   }
 
   return allCookies.join('; ')
@@ -151,12 +186,12 @@ const CLIENT_COLUMNS = [
 ]
 
 /**
- * Fetch all clients from Linvix ERP (paginated)
+ * Fetch a single page of clients from Linvix ERP
  */
 export async function fetchLinvixClients(
   cookies: string,
   page: number = 0,
-  pageSize: number = 100
+  pageSize: number = 200
 ): Promise<LinvixDatatableResponse> {
   const url = `${LINVIX_BASE_URL}/cadastros/clientes/ajax/ajax-clientes-datatable.php`
   const params = buildDatatableParams({
@@ -166,7 +201,7 @@ export async function fetchLinvixClients(
     columns: CLIENT_COLUMNS,
   })
 
-  const response = await fetch(`${url}?${params.toString()}`, {
+  const response = await fetchWithTimeout(`${url}?${params.toString()}`, {
     headers: {
       Cookie: cookies,
       'X-Requested-With': 'XMLHttpRequest',
@@ -198,6 +233,7 @@ export async function fetchAllLinvixClients(
   let page = 0
 
   while (page < maxPages) {
+    console.debug(`[LinvixSync] Fetching page ${page + 1}...`)
     const result = await fetchLinvixClients(cookies, page, pageSize)
 
     if (result.data && result.data.length > 0) {
@@ -213,11 +249,18 @@ export async function fetchAllLinvixClients(
     page++
   }
 
+  console.debug(`[LinvixSync] Fetched ${allClients.length} clients total`)
   return allClients
 }
 
 /**
- * Full sync: Login → Fetch clients → Upsert into database
+ * Full sync: Login -> Fetch clients -> Batch upsert into database
+ *
+ * Optimizations:
+ * - Bulk fetch existing contacts (1 query instead of N)
+ * - Batch createMany for new contacts
+ * - Batch updates in groups
+ * - DB warm-up for Neon cold starts
  */
 export async function syncLinvixClients(db: any): Promise<{
   total: number
@@ -226,6 +269,27 @@ export async function syncLinvixClients(db: any): Promise<{
   errors: string[]
 }> {
   const errors: string[] = []
+
+  // 0. DB warm-up for Neon cold starts
+  console.debug('[LinvixSync] Warming up DB connection...')
+  try {
+    await db.$queryRaw`SELECT 1`
+    console.debug('[LinvixSync] DB warm-up successful')
+  } catch (dbError: any) {
+    console.warn('[LinvixSync] DB warm-up failed, retrying in 1s...', dbError.message)
+    await new Promise(resolve => setTimeout(resolve, 1000))
+    try {
+      await db.$queryRaw`SELECT 1`
+      console.debug('[LinvixSync] DB warm-up retry successful')
+    } catch (retryError: any) {
+      return {
+        total: 0,
+        synced: 0,
+        skipped: 0,
+        errors: [`DB connection failed after retry: ${retryError.message}`],
+      }
+    }
+  }
 
   // 1. Login
   if (!LINVIX_USER || !LINVIX_PASS) {
@@ -262,7 +326,7 @@ export async function syncLinvixClients(db: any): Promise<{
     }
   }
 
-  // 3. Find or create a "Linvix Sync" contact list
+  // 3. Find or create "Linvix - Clientes" contact list
   let contactList = await db.contactList.findFirst({
     where: { name: 'Linvix - Clientes' },
   })
@@ -285,13 +349,19 @@ export async function syncLinvixClients(db: any): Promise<{
     })
   }
 
-  // 4. Upsert clients as contacts
-  let synced = 0
+  // 4. Filter and prepare valid contacts
+  const validContacts: Array<{
+    phone: string
+    nome: string
+    customFields: string
+    codigo: string
+    vendedorNome: string
+  }> = []
+
   let skipped = 0
 
   for (const client of clients) {
     try {
-      // Normalize phone number
       const phone = normalizePhone(client.CELULAR || client.TELEFONE || client.FAX || '')
       const nome = cleanName(client.NOME || client.FANTASIA || '')
 
@@ -311,7 +381,6 @@ export async function syncLinvixClients(db: any): Promise<{
         continue
       }
 
-      // Build custom fields from Linvix data
       const customFields = JSON.stringify({
         codigo: client.CODIGO || '',
         fantasia: client.FANTASIA || '',
@@ -327,67 +396,147 @@ export async function syncLinvixClients(db: any): Promise<{
         linvix_uuid: client.UUID || '',
       })
 
-      // Upsert by phone number (unique identifier)
-      const existing = await db.contact.findFirst({
-        where: { phone },
+      validContacts.push({
+        phone,
+        nome,
+        customFields,
+        codigo: client.CODIGO || '',
+        vendedorNome: client.VENDEDOR_NOME || '',
       })
-
-      if (existing) {
-        await db.contact.update({
-          where: { id: existing.id },
-          data: {
-            name: nome,
-            customFields,
-            contactListId: contactList.id,
-          },
-        })
-      } else {
-        await db.contact.create({
-          data: {
-            name: nome,
-            phone,
-            customFields,
-            contactListId: contactList.id,
-          },
-        })
-      }
-
-      synced++
     } catch (error: any) {
       errors.push(`Client ${client.CODIGO}: ${error.message}`)
     }
   }
 
-  // 5. Sync vendedores
-  const vendedorNames = [...new Set(clients.map(c => c.VENDEDOR_NOME).filter(Boolean))]
-  let vendedoresSynced = 0
+  console.debug(`[LinvixSync] ${validContacts.length} valid contacts out of ${clients.length} total (${skipped} skipped)`)
 
-  for (const vendedorNome of vendedorNames) {
-    try {
-      const existing = await db.vendedor.findFirst({
-        where: { nome: vendedorNome },
-      })
+  // 5. BULK UPSERT — fetch all existing contacts by phone in one query
+  const phones = validContacts.map(c => c.phone)
 
-      if (!existing) {
-        await db.vendedor.create({
-          data: {
-            nome: vendedorNome,
-            empresa: 'Mtech Distribuidora',
-            ativo: true,
-          },
-        })
-        vendedoresSynced++
-      }
-    } catch (error: any) {
-      errors.push(`Vendedor ${vendedorNome}: ${error.message}`)
+  // Fetch existing contacts in batches to avoid query size limits
+  const existingContactMap = new Map<string, { id: string; phone: string }>()
+
+  for (let i = 0; i < phones.length; i += DB_BATCH_SIZE) {
+    const batchPhones = phones.slice(i, i + DB_BATCH_SIZE)
+    const existing = await db.contact.findMany({
+      where: { phone: { in: batchPhones } },
+      select: { id: true, phone: true },
+    })
+    for (const c of existing) {
+      existingContactMap.set(c.phone, c)
     }
   }
+
+  console.debug(`[LinvixSync] Found ${existingContactMap.size} existing contacts in DB`)
+
+  // 6. Separate into updates and creates
+  const toUpdate: Array<{ id: string; phone: string; nome: string; customFields: string }> = []
+  const toCreate: Array<{ phone: string; nome: string; customFields: string; contactListId: string }> = []
+
+  for (const contact of validContacts) {
+    const existing = existingContactMap.get(contact.phone)
+    if (existing) {
+      toUpdate.push({
+        id: existing.id,
+        phone: contact.phone,
+        nome: contact.nome,
+        customFields: contact.customFields,
+      })
+    } else {
+      toCreate.push({
+        phone: contact.phone,
+        nome: contact.nome,
+        customFields: contact.customFields,
+        contactListId: contactList.id,
+      })
+    }
+  }
+
+  console.debug(`[LinvixSync] ${toCreate.length} new contacts, ${toUpdate.length} to update`)
+
+  // 7. Batch create new contacts
+  let created = 0
+  for (let i = 0; i < toCreate.length; i += DB_BATCH_SIZE) {
+    const batch = toCreate.slice(i, i + DB_BATCH_SIZE)
+    try {
+      const result = await db.contact.createMany({
+        data: batch,
+        skipDuplicates: true,
+      })
+      created += result.count
+    } catch (error: any) {
+      // Fallback to individual creates if batch fails
+      console.warn(`[LinvixSync] Batch create failed, falling back to individual: ${error.message}`)
+      for (const contact of batch) {
+        try {
+          await db.contact.create({ data: contact })
+          created++
+        } catch (e: any) {
+          if (!e.message?.includes('Unique constraint')) {
+            errors.push(`Create ${contact.phone}: ${e.message}`)
+          }
+        }
+      }
+    }
+  }
+
+  // 8. Batch update existing contacts
+  let updated = 0
+  for (let i = 0; i < toUpdate.length; i += DB_BATCH_SIZE) {
+    const batch = toUpdate.slice(i, i + DB_BATCH_SIZE)
+    // Run updates in parallel within each batch
+    const updatePromises = batch.map(contact =>
+      db.contact.update({
+        where: { id: contact.id },
+        data: {
+          name: contact.nome,
+          customFields: contact.customFields,
+          contactListId: contactList.id,
+        },
+      }).catch((e: any) => {
+        errors.push(`Update ${contact.phone}: ${e.message}`)
+        return null
+      })
+    )
+    const results = await Promise.all(updatePromises)
+    updated += results.filter(Boolean).length
+  }
+
+  // 9. Sync vendedores (batch)
+  const vendedorNames = [...new Set(clients.map(c => c.VENDEDOR_NOME).filter(Boolean))]
+  console.debug(`[LinvixSync] Syncing ${vendedorNames.length} vendedores...`)
+
+  // Bulk fetch existing vendedores
+  const existingVendedores = await db.vendedor.findMany({
+    where: { nome: { in: vendedorNames } },
+    select: { nome: true },
+  })
+  const existingVendedorNames = new Set(existingVendedores.map((v: any) => v.nome))
+
+  const newVendedores = vendedorNames.filter(name => !existingVendedorNames.has(name))
+
+  if (newVendedores.length > 0) {
+    try {
+      await db.vendedor.createMany({
+        data: newVendedores.map(nome => ({
+          nome,
+          empresa: 'Mtech Distribuidora',
+          ativo: true,
+        })),
+        skipDuplicates: true,
+      })
+    } catch (error: any) {
+      errors.push(`Vendedores batch create: ${error.message}`)
+    }
+  }
+
+  const synced = created + updated
 
   return {
     total: clients.length,
     synced,
     skipped,
-    errors: errors.slice(0, 20), // Limit error messages
+    errors: errors.slice(0, 20),
   }
 }
 
