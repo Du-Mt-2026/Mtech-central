@@ -2,9 +2,6 @@ import { NextRequest, NextResponse } from 'next/server'
 import { jwtVerify } from 'jose'
 
 const COOKIE_NAME = 'octupuszap-session'
-if (!process.env.AUTH_SECRET) {
-  console.error('[Middleware] AUTH_SECRET environment variable is not set. Requests will fail.')
-}
 const AUTH_SECRET = new TextEncoder().encode(process.env.AUTH_SECRET || '')
 
 // Routes that don't require authentication (external services call these)

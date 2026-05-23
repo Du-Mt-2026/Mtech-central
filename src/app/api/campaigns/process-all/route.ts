@@ -11,9 +11,7 @@ import { getRunningCampaigns, processNextMessage, startCampaign } from '@/lib/se
  *
  * KEY IMPROVEMENT: Instead of processing just 1 message per campaign per cron tick,
  * this now uses a time-based approach — it processes messages in a loop
- * until the function is about to timeout (50 seconds max for Vercel).
- * This means more messages get processed per cron invocation while still
- * respecting anti-ban intervals.
+ * until the function is about to timeout (25 seconds max for Vercel serverless).
  */
 export async function POST(request: NextRequest) {
   // Security: Verify CRON_SECRET to prevent unauthorized access
@@ -21,7 +19,6 @@ export async function POST(request: NextRequest) {
   if (cronSecret) {
     const headerSecret = request.headers.get('x-cron-secret') || request.headers.get('authorization')?.replace('Bearer ', '')
     const querySecret = new URL(request.url).searchParams.get('cron_secret')
-    const bodySecret: string | undefined = undefined
 
     // Try to read from body without consuming it
     let bodyCronSecret: string | undefined
@@ -45,15 +42,39 @@ export async function POST(request: NextRequest) {
   const startTime = Date.now()
 
   try {
+    // 0. Warm up DB connection (Neon cold start can take 2-3s)
+    // This simple query ensures the connection pool is ready
+    try {
+      await db.$queryRaw`SELECT 1`
+    } catch {
+      // DB connection failed — try one more time after a brief pause
+      try {
+        await new Promise(resolve => setTimeout(resolve, 1000))
+        await db.$queryRaw`SELECT 1`
+      } catch (dbError: any) {
+        console.error('[ProcessAll] DB connection failed after retry:', dbError.message)
+        return NextResponse.json(
+          { error: 'Database connection failed', detail: dbError.message },
+          { status: 503 }
+        )
+      }
+    }
+
     // 1. Auto-start scheduled campaigns whose scheduledAt has passed
-    const now = new Date()
-    const scheduledCampaigns = await db.campaign.findMany({
-      where: {
-        status: 'scheduled',
-        scheduledAt: { lte: now },
-      },
-      select: { id: true, name: true },
-    })
+    let scheduledCampaigns: { id: string; name: string }[] = []
+    try {
+      const now = new Date()
+      scheduledCampaigns = await db.campaign.findMany({
+        where: {
+          status: 'scheduled',
+          scheduledAt: { lte: now },
+        },
+        select: { id: true, name: true },
+      })
+    } catch (error: any) {
+      console.error('[ProcessAll] Error fetching scheduled campaigns:', error.message)
+      // Continue — don't let this block processing
+    }
 
     const startedCampaigns: { id: string; name: string; messageCount?: number }[] = []
     const startErrors: { id: string; name: string; error: string }[] = []
@@ -62,15 +83,29 @@ export async function POST(request: NextRequest) {
       try {
         const { messageCount } = await startCampaign(campaign.id)
         startedCampaigns.push({ id: campaign.id, name: campaign.name, messageCount })
-        console.log(`[ProcessAll] Auto-started scheduled campaign: ${campaign.name} (${messageCount} messages)`)
       } catch (error: any) {
         startErrors.push({ id: campaign.id, name: campaign.name, error: error.message })
         console.error(`[ProcessAll] Failed to auto-start campaign ${campaign.name}:`, error.message)
       }
     }
 
-    // 2. Process running campaigns
-    const campaignIds = await getRunningCampaigns()
+    // 2. Get running campaigns (with stuck message recovery)
+    let campaignIds: string[] = []
+    try {
+      campaignIds = await getRunningCampaigns()
+    } catch (error: any) {
+      console.error('[ProcessAll] Error getting running campaigns:', error.message)
+      // Try to get campaigns without stuck message recovery
+      try {
+        const campaigns = await db.campaign.findMany({
+          where: { status: 'running' },
+          select: { id: true },
+        })
+        campaignIds = campaigns.map(c => c.id)
+      } catch (fallbackError: any) {
+        console.error('[ProcessAll] Fallback campaign fetch also failed:', fallbackError.message)
+      }
+    }
 
     if (campaignIds.length === 0 && startedCampaigns.length === 0) {
       return NextResponse.json({
@@ -80,60 +115,70 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    const allResults: any[] = []
+    const allResults: Array<{
+      campaignId: string
+      processed: number
+      skipped: number
+      reason?: string
+      remaining: number
+      error?: string
+    }> = []
     let totalProcessed = 0
     let totalSkipped = 0
 
     // Process each campaign — try to send multiple messages per campaign per tick
-    // CONTACT-BY-CONTACT: when a step delay is pending, wait and process the next step
-    // for the same contact instead of skipping to another contact.
     for (const campaignId of campaignIds) {
       let campaignProcessed = 0
       let campaignSkipped = 0
       let lastReason = ''
+      let campaignError: string | undefined
 
       // Process up to 10 messages per campaign per tick
-      // (increased from 5 to handle contact-by-contact with multiple steps)
       for (let attempt = 0; attempt < 10; attempt++) {
         // Check if we're about to timeout
         if (Date.now() - startTime > FUNCTION_TIMEOUT_MS) {
-          console.log(`[ProcessAll] Approaching function timeout, stopping. Processed ${totalProcessed} messages.`)
           break
         }
 
-        const result = await processNextMessage(campaignId)
+        try {
+          const result = await processNextMessage(campaignId)
 
-        if (result.processed) {
-          campaignProcessed++
-          totalProcessed++
-        } else {
+          if (result.processed) {
+            campaignProcessed++
+            totalProcessed++
+          } else {
+            campaignSkipped++
+            totalSkipped++
+            lastReason = result.reason || ''
+          }
+
+          // If no message was processed and the reason is a hard block (ban, window, etc.),
+          // don't retry this campaign in this tick
+          if (!result.processed && ['cooldown', 'outside_sending_window', 'chip_banned', 'whatsapp_warning_detected'].some(r => lastReason.includes(r))) {
+            break
+          }
+
+          // Wait the delay before processing the next message
+          if (result.delayMs > 0) {
+            const remainingTime = FUNCTION_TIMEOUT_MS - (Date.now() - startTime)
+            if (remainingTime < 3000) break // Not enough time to wait + process
+            const waitTime = Math.min(result.delayMs, remainingTime - 3000)
+            if (waitTime > 0) {
+              await new Promise(resolve => setTimeout(resolve, waitTime))
+            }
+          }
+
+          // If campaign is complete, stop processing it
+          if (result.completed) break
+
+        } catch (msgError: any) {
+          // Individual message processing error — don't crash the whole loop
+          console.error(`[ProcessAll] Error processing message for campaign ${campaignId}:`, msgError.message)
+          campaignError = msgError.message
           campaignSkipped++
           totalSkipped++
-          lastReason = result.reason || ''
+          break // Stop processing this campaign, move to next
         }
-
-        // If no message was processed and the reason is a hard block (ban, window, etc.),
-        // don't retry this campaign in this tick
-        if (!result.processed && ['cooldown', 'outside_sending_window', 'chip_banned', 'whatsapp_warning_detected'].some(r => lastReason.includes(r))) {
-          break
-        }
-
-        // Wait the delay before processing the next message
-        // This applies BOTH when a message was processed (anti-ban interval)
-        // AND when we're waiting for a step delay (contact-by-contact sequential)
-        // We wait as much as we can within the function timeout, then the next
-        // cron tick will continue if needed.
-        if (result.delayMs > 0) {
-          const remainingTime = FUNCTION_TIMEOUT_MS - (Date.now() - startTime)
-          if (remainingTime < 3000) break // Not enough time to wait + process
-          const waitTime = Math.min(result.delayMs, remainingTime - 3000)
-          if (waitTime > 0) {
-            await new Promise(resolve => setTimeout(resolve, waitTime))
-          }
-        }
-
-        // If campaign is complete, stop processing it
-        if (result.completed) break
       }
 
       allResults.push({
@@ -141,7 +186,8 @@ export async function POST(request: NextRequest) {
         processed: campaignProcessed,
         skipped: campaignSkipped,
         reason: lastReason || undefined,
-        remaining: 0, // will be populated below
+        remaining: 0,
+        error: campaignError,
       })
     }
 
@@ -163,7 +209,6 @@ export async function POST(request: NextRequest) {
           if (rc.campaignId) remainingMap[rc.campaignId] = rc._count
         }
 
-        // Add remaining count to each result
         for (const r of allResults) {
           r.remaining = remainingMap[r.campaignId] || 0
         }
@@ -185,9 +230,12 @@ export async function POST(request: NextRequest) {
       elapsedMs,
     })
   } catch (error: any) {
-    console.error('Process all campaigns error:', error)
+    console.error('[ProcessAll] Unhandled error:', error)
     return NextResponse.json(
-      { error: error.message || 'Erro ao processar campanhas' },
+      {
+        error: error.message || 'Erro ao processar campanhas',
+        stack: process.env.NODE_ENV === 'development' ? error.stack : undefined,
+      },
       { status: 500 }
     )
   }
