@@ -5786,8 +5786,8 @@ function AntiBanTab() {
                 <div className="space-y-1">
                   <Label className="text-[10px] text-muted-foreground">Mínimo</Label>
                   <div className="flex items-center gap-1.5">
-                    <Input type="number" min={5} max={120} step={5} value={settings.cooldownMinutes} onChange={e => {
-                      const val = Math.max(5, parseInt(e.target.value) || 5)
+                    <Input type="number" min={1} max={120} step={1} value={settings.cooldownMinutes} onChange={e => {
+                      const val = Math.max(1, parseInt(e.target.value) || 1)
                       updateSetting('cooldownMinutes', val)
                       if (settings.cooldownMinutesMax < val) updateSetting('cooldownMinutesMax', val)
                     }} className="w-20 h-8 text-sm" />
@@ -5797,7 +5797,7 @@ function AntiBanTab() {
                 <div className="space-y-1">
                   <Label className="text-[10px] text-muted-foreground">Máximo</Label>
                   <div className="flex items-center gap-1.5">
-                    <Input type="number" min={settings.cooldownMinutes} max={180} step={5} value={settings.cooldownMinutesMax} onChange={e => updateSetting('cooldownMinutesMax', Math.max(settings.cooldownMinutes, parseInt(e.target.value) || settings.cooldownMinutes))} className="w-20 h-8 text-sm" />
+                    <Input type="number" min={settings.cooldownMinutes} max={180} step={1} value={settings.cooldownMinutesMax} onChange={e => updateSetting('cooldownMinutesMax', Math.max(settings.cooldownMinutes, parseInt(e.target.value) || settings.cooldownMinutes))} className="w-20 h-8 text-sm" />
                     <span className="text-[11px] text-muted-foreground">min</span>
                   </div>
                 </div>
@@ -5812,8 +5812,8 @@ function AntiBanTab() {
                 <div className="space-y-1">
                   <Label className="text-[10px] text-muted-foreground">Mínimo</Label>
                   <div className="flex items-center gap-1.5">
-                    <Input type="number" min={5} max={100} step={5} value={settings.cooldownAfterMessages} onChange={e => {
-                      const val = Math.max(5, parseInt(e.target.value) || 5)
+                    <Input type="number" min={1} max={100} step={1} value={settings.cooldownAfterMessages} onChange={e => {
+                      const val = Math.max(1, parseInt(e.target.value) || 1)
                       updateSetting('cooldownAfterMessages', val)
                       if (settings.cooldownAfterMessagesMax < val) updateSetting('cooldownAfterMessagesMax', val)
                     }} className="w-20 h-8 text-sm" />
@@ -5823,7 +5823,7 @@ function AntiBanTab() {
                 <div className="space-y-1">
                   <Label className="text-[10px] text-muted-foreground">Máximo</Label>
                   <div className="flex items-center gap-1.5">
-                    <Input type="number" min={settings.cooldownAfterMessages} max={200} step={5} value={settings.cooldownAfterMessagesMax} onChange={e => updateSetting('cooldownAfterMessagesMax', Math.max(settings.cooldownAfterMessages, parseInt(e.target.value) || settings.cooldownAfterMessages))} className="w-20 h-8 text-sm" />
+                    <Input type="number" min={settings.cooldownAfterMessages} max={200} step={1} value={settings.cooldownAfterMessagesMax} onChange={e => updateSetting('cooldownAfterMessagesMax', Math.max(settings.cooldownAfterMessages, parseInt(e.target.value) || settings.cooldownAfterMessages))} className="w-20 h-8 text-sm" />
                     <span className="text-[11px] text-muted-foreground">msgs</span>
                   </div>
                 </div>
