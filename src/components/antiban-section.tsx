@@ -427,35 +427,21 @@ export function AntibanSection() {
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>Início</Label>
-                <Select
-                  value={String(settings.sendingWindowStart)}
-                  onValueChange={(v) => updateField('sendingWindowStart', parseInt(v))}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {Array.from({ length: 24 }, (_, i) => (
-                      <SelectItem key={i} value={String(i)}>{String(i).padStart(2, '0')}:00h</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Input
+                  type="time"
+                  value={minsToTime(settings.sendingWindowStart)}
+                  onChange={(e) => updateField('sendingWindowStart', timeToMins(e.target.value))}
+                  className="w-full"
+                />
               </div>
               <div className="space-y-2">
                 <Label>Término</Label>
-                <Select
-                  value={String(settings.sendingWindowEnd)}
-                  onValueChange={(v) => updateField('sendingWindowEnd', parseInt(v))}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {Array.from({ length: 24 }, (_, i) => i + 1).map((i) => (
-                      <SelectItem key={i} value={String(i)}>{String(i).padStart(2, '0')}:00h</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Input
+                  type="time"
+                  value={minsToTime(settings.sendingWindowEnd)}
+                  onChange={(e) => updateField('sendingWindowEnd', timeToMins(e.target.value))}
+                  className="w-full"
+                />
               </div>
             </div>
             <div className="space-y-2">
@@ -482,7 +468,7 @@ export function AntibanSection() {
             <div className="bg-muted/50 rounded-lg p-3 flex items-center gap-2">
               <Clock className="w-4 h-4 text-sky-500 flex-shrink-0" />
               <p className="text-xs text-muted-foreground">
-                Mensagens só serão enviadas entre <strong>{String(settings.sendingWindowStart).padStart(2, '0')}:00</strong> e <strong>{String(settings.sendingWindowEnd).padStart(2, '0')}:00</strong> no fuso <strong>BRT</strong>.
+                Mensagens só serão enviadas entre <strong>{minsToTime(settings.sendingWindowStart)}</strong> e <strong>{minsToTime(settings.sendingWindowEnd)}</strong> no fuso <strong>{settings.timezone === 'America/Sao_Paulo' ? 'BRT' : settings.timezone}</strong>.
               </p>
             </div>
 
@@ -655,7 +641,7 @@ export function AntibanSection() {
                       <Info className="w-3.5 h-3.5 text-muted-foreground cursor-help" />
                     </TooltipTrigger>
                     <TooltipContent className="max-w-xs">
-                      <p>A cada ciclo de mensagens, o sistema escolhe um tempo de pausa aleatório entre o mínimo e o máximo configurados. Isso torna o comportamento mais natural e imprevisível.</p>
+                      <p>A cada ciclo de mensagens, o sistema escolhe um tempo de pausa aleatório entre o mínimo e o máximo configurados. Isso torna o comportamento mais natural e imprevisível. O valor é unitário (1 em 1 minuto).</p>
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
@@ -666,10 +652,11 @@ export function AntibanSection() {
                   <div className="flex items-center gap-2">
                     <Input
                       type="number"
-                      min={5}
+                      min={1}
+                      step={1}
                       value={settings.cooldownMinutes}
                       onChange={(e) => {
-                        const val = parseInt(e.target.value) || 5
+                        const val = Math.max(1, parseInt(e.target.value) || 1)
                         updateField('cooldownMinutes', val)
                         // Auto-adjust max if it's less than min
                         if (settings.cooldownMinutesMax < val) {
@@ -686,8 +673,9 @@ export function AntibanSection() {
                     <Input
                       type="number"
                       min={settings.cooldownMinutes}
+                      step={1}
                       value={settings.cooldownMinutesMax}
-                      onChange={(e) => updateField('cooldownMinutesMax', parseInt(e.target.value) || settings.cooldownMinutes)}
+                      onChange={(e) => updateField('cooldownMinutesMax', Math.max(settings.cooldownMinutes, parseInt(e.target.value) || settings.cooldownMinutes))}
                     />
                     <span className="text-xs text-muted-foreground whitespace-nowrap">min</span>
                   </div>
@@ -705,7 +693,7 @@ export function AntibanSection() {
                       <Info className="w-3.5 h-3.5 text-muted-foreground cursor-help" />
                     </TooltipTrigger>
                     <TooltipContent className="max-w-xs">
-                      <p>A cada ciclo, o sistema escolhe aleatoriamente um número entre o mínimo e o máximo. Após enviar essa quantidade de mensagens, o chip entra em cooldown. Ex: 5-10 significa que o cooldown pode ocorrer após 5, 6, 7, 8, 9 ou 10 mensagens.</p>
+                      <p>A cada ciclo, o sistema escolhe aleatoriamente um número entre o mínimo e o máximo. Após enviar essa quantidade de mensagens, o chip entra em cooldown. Ex: 5-10 significa que o cooldown pode ocorrer após 5, 6, 7, 8, 9 ou 10 mensagens. O valor é unitário (1 em 1 mensagem).</p>
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
@@ -716,10 +704,11 @@ export function AntibanSection() {
                   <div className="flex items-center gap-2">
                     <Input
                       type="number"
-                      min={5}
+                      min={1}
+                      step={1}
                       value={settings.cooldownAfterMessages}
                       onChange={(e) => {
-                        const val = parseInt(e.target.value) || 5
+                        const val = Math.max(1, parseInt(e.target.value) || 1)
                         updateField('cooldownAfterMessages', val)
                         if (settings.cooldownAfterMessagesMax < val) {
                           updateField('cooldownAfterMessagesMax', val)
@@ -735,8 +724,9 @@ export function AntibanSection() {
                     <Input
                       type="number"
                       min={settings.cooldownAfterMessages}
+                      step={1}
                       value={settings.cooldownAfterMessagesMax}
-                      onChange={(e) => updateField('cooldownAfterMessagesMax', parseInt(e.target.value) || settings.cooldownAfterMessages)}
+                      onChange={(e) => updateField('cooldownAfterMessagesMax', Math.max(settings.cooldownAfterMessages, parseInt(e.target.value) || settings.cooldownAfterMessages))}
                     />
                     <span className="text-xs text-muted-foreground whitespace-nowrap">msgs</span>
                   </div>
