@@ -31,14 +31,11 @@ interface AntiBanConfig {
   messageIntervalMax: number
   dailyLimitPerChip: number
   warmingEnabled: boolean
-  warmingDays: number
   cooldownMinutes: number
   cooldownMinutesMax: number    // Cooldown variável: máximo minutos de pausa (range min-max)
   cooldownAfterMessages: number
   cooldownAfterMessagesMax: number  // Cooldown após N mensagens: máximo (range min-max)
   stopOnWarning: boolean
-  randomLineBreaks: boolean
-  emojiVariation: boolean
   sendingWindowStart: number  // minutos desde meia-noite (0-1440), default 480 (8:00)
   sendingWindowEnd: number    // minutos desde meia-noite (0-1440), default 1260 (21:00)
   timezone: string            // fuso horário, default 'America/Sao_Paulo'
@@ -109,21 +106,7 @@ const TYPING_MIN_MS = 3000    // minimum typing time (3 seconds even for short m
 const TYPING_MAX_MS = 25000   // maximum typing time (25 seconds — avoids Vercel timeout)
 const TYPING_PAUSE_CHANCE = 0.3  // 30% chance of a mid-typing pause (simulates thinking)
 
-// Common emoji swaps for variation
-const EMOJI_SWAPS: Record<string, string[]> = {
-  '🙂': ['😊', '😄', '🙂', '😃'],
-  '😊': ['🙂', '😄', '😊', '😃'],
-  '👍': ['👌', '👍', '🤝', '👏'],
-  '❤️': ['💜', '🧡', '❤️', '💙'],
-  '😎': ['🤓', '😎', '😄', '🤩'],
-  '🤦': ['😅', '🤦', '🙈', '😬'],
-  '✨': ['🌟', '⭐', '✨', '💫'],
-  '!': ['!', '!!', '!'],
-  '?': ['?', '??', '?'],
-}
 
-// Line break insertion points (after these words/chars)
-const LINE_BREAK_POINTS = [',', '.', '!', '?', ' - ', ': ']
 
 const DEFAULT_SETTINGS: AntiBanConfig = {
   typingMinDelay: 3000,
@@ -132,14 +115,11 @@ const DEFAULT_SETTINGS: AntiBanConfig = {
   messageIntervalMax: 90,
   dailyLimitPerChip: 200,
   warmingEnabled: true,
-  warmingDays: 7,
   cooldownMinutes: 30,
   cooldownMinutesMax: 30,
   cooldownAfterMessages: 50,
   cooldownAfterMessagesMax: 50,
   stopOnWarning: true,
-  randomLineBreaks: false,
-  emojiVariation: true,
   sendingWindowStart: 480,  // 8:00 in minutes-from-midnight
   sendingWindowEnd: 1260,   // 21:00 in minutes-from-midnight
   timezone: 'America/Sao_Paulo',
@@ -230,53 +210,7 @@ function calculateTypingDuration(text: string): number {
  * Inserts line breaks after punctuation with 20-40% probability.
  * This makes each message visually different even with the same text.
  */
-function applyRandomLineBreaks(text: string): string {
-  let result = text
-  const breakChance = randomFloat(0.2, 0.4)
 
-  for (const point of LINE_BREAK_POINTS) {
-    // Split by the punctuation mark
-    const parts = result.split(point)
-    if (parts.length <= 1) continue
-
-    // Rejoin with occasional line breaks
-    result = parts[0]
-    for (let i = 1; i < parts.length; i++) {
-      if (Math.random() < breakChance && parts[i].trim().length > 0) {
-        result += point + '\n' + parts[i]
-      } else {
-        result += point + parts[i]
-      }
-    }
-  }
-
-  return result
-}
-
-/**
- * Apply emoji variation to message content.
- * Swaps common emojis and punctuation with random alternatives.
- */
-function applyEmojiVariation(text: string): string {
-  let result = text
-
-  for (const [original, alternatives] of Object.entries(EMOJI_SWAPS)) {
-    // Only swap with 50% probability per occurrence
-    const regex = new RegExp(escapeRegex(original), 'g')
-    result = result.replace(regex, () => {
-      if (Math.random() < 0.5) {
-        return alternatives[Math.floor(Math.random() * alternatives.length)]
-      }
-      return original
-    })
-  }
-
-  return result
-}
-
-function escapeRegex(str: string): string {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-}
 
 /**
  * Get current hour in the configured timezone
@@ -460,12 +394,9 @@ async function getAntiBanSettings(): Promise<AntiBanConfig> {
         messageIntervalMax: saved.messageIntervalMax,
         dailyLimitPerChip: saved.dailyLimitPerChip,
         warmingEnabled: saved.warmingEnabled,
-        warmingDays: saved.warmingDays,
         cooldownMinutes: saved.cooldownMinutes,
         cooldownAfterMessages: saved.cooldownAfterMessages,
         stopOnWarning: saved.stopOnWarning,
-        randomLineBreaks: saved.randomLineBreaks,
-        emojiVariation: saved.emojiVariation,
         // New fields with safe defaults for existing DB rows
         sendingWindowStart: toMins((saved as any).sendingWindowStart ?? 480),
         sendingWindowEnd: toMins((saved as any).sendingWindowEnd ?? 1260),
@@ -1722,17 +1653,9 @@ export async function processNextMessage(campaignId: string): Promise<{
     }
 
     // ============================================
-    // ANTI-BAN: TEXT VARIATION (line breaks + emoji)
+    // ANTI-BAN: TEXT CONTENT (no variation — removed randomLineBreaks/emojiVariation)
     // ============================================
     let finalContent = message.content
-
-    if (antiBanEnabled && settings.randomLineBreaks && false) { // Line breaks disabled - makes messages ugly
-      finalContent = applyRandomLineBreaks(finalContent)
-    }
-
-    if (antiBanEnabled && settings.emojiVariation) {
-      finalContent = applyEmojiVariation(finalContent)
-    }
 
     // ============================================
     // SEND THE MESSAGE

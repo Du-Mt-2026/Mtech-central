@@ -289,7 +289,6 @@ interface AntiBanSettings {
   messageIntervalMax: number
   dailyLimitPerChip: number
   warmingEnabled: boolean
-  warmingDays: number
   cooldownMinutes: number
   cooldownMinutesMax: number       // Cooldown variável: máximo minutos de pausa (range min-max)
   cooldownAfterMessages: number
@@ -5150,7 +5149,6 @@ function AntiBanTab() {
     messageIntervalMax: 90,
     dailyLimitPerChip: 200,
     warmingEnabled: true,
-    warmingDays: 7,
     cooldownMinutes: 30,
     cooldownMinutesMax: 30,
     cooldownAfterMessages: 50,
