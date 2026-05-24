@@ -4,7 +4,7 @@ import { NextResponse } from 'next/server';
 
 export async function POST(request: Request) {
   try {
-    // Fetch only OctupusZap instances (filtered by prefix)
+    // Fetch only OctupusZap instances from Evolution Go (real-time)
     const instances = await fetchOctupusZapInstances();
 
     // Get all chips that have an evolution instance linked
@@ -20,16 +20,11 @@ export async function POST(request: Request) {
     let synced = 0;
     const unlinked: string[] = [];
 
-    // Process each OctupusZap Evolution API instance
+    // Process each OctupusZap Evolution Go instance
     for (const instance of instances) {
       if (chipInstanceNames.has(instance.name)) {
         // This instance is linked to a chip — sync its status
-        const newStatus =
-          instance.connectionStatus === 'open'
-            ? 'connected'
-            : instance.connectionStatus === 'close'
-              ? 'disconnected'
-              : 'connecting';
+        const newStatus = instance.connected ? 'connected' : 'disconnected';
 
         const chip = chips.find((c) => c.evolutionInstance === instance.name);
         if (chip && chip.status !== newStatus) {
@@ -64,7 +59,7 @@ export async function POST(request: Request) {
       }
     }
 
-    // Also check for chips whose evolution instances no longer exist in Evolution API
+    // Also check for chips whose evolution instances no longer exist in Evolution Go
     const instanceNames = new Set(instances.map((inst) => inst.name));
     for (const chip of chips) {
       // Only care about chips with OctupusZap prefix
@@ -74,7 +69,7 @@ export async function POST(request: Request) {
       if (chip.evolutionInstance && !instanceNames.has(chip.evolutionInstance)) {
         await db.chip.update({
           where: { id: chip.id },
-          data: { status: 'disconnected' },
+          data: { status: 'disconnected', isQrPaired: false },
         });
         synced++;
       }

@@ -6,14 +6,12 @@ import {
   generateWireGuardKeys,
 } from '@/lib/wireguard'
 import { addWireGuardPeer } from '@/lib/wireguard-peer-api'
-import { deleteInstance, disconnectInstance, getInstanceName } from '@/lib/evolution-api'
+import { deleteInstance, disconnectInstance, getInstanceName, fetchOctupusZapInstances, INSTANCE_PREFIX } from '@/lib/evolution-api'
 import { removeWireGuardPeer } from '@/lib/wireguard-peer-api'
 
 export async function GET() {
   try {
     // Reset daily counters for all chips if a new day has started
-    // This ensures sentToday/verifiedToday/hourlySent are reset at midnight
-    // even when no campaign is actively sending messages
     const now = new Date()
     const timezone = 'America/Sao_Paulo'
     const formatter = new Intl.DateTimeFormat('en-US', {
@@ -43,7 +41,6 @@ export async function GET() {
             lastHourlyResetAt: now,
           },
         })
-        console.log(`[Chips GET] Reset daily counters for chip ${chip.id} (was ${chip.sentToday})`)
       } else {
         // Same day — check hourly reset
         const lastHourlyReset = new Date(chip.lastHourlyResetAt ?? chip.lastResetAt)
@@ -53,11 +50,11 @@ export async function GET() {
             where: { id: chip.id },
             data: { hourlySent: 0, lastHourlyResetAt: now },
           })
-          console.log(`[Chips GET] Reset hourly counter for chip ${chip.id} (was ${chip.hourlySent})`)
         }
       }
     }
 
+    // Fetch chips from DB
     const chips = await db.chip.findMany({
       orderBy: { createdAt: 'desc' },
       include: {
@@ -66,7 +63,66 @@ export async function GET() {
         },
       },
     })
-    return NextResponse.json(chips)
+
+    // Fetch real-time status from Evolution Go
+    // This merges Evolution Go instance data with our DB chips
+    let instanceMap = new Map<string, any>()
+    try {
+      const instances = await fetchOctupusZapInstances()
+      for (const inst of instances) {
+        instanceMap.set(inst.name, inst)
+      }
+    } catch {
+      // Evolution Go unavailable — return DB data as-is
+    }
+
+    // Merge real-time Evolution Go status into chips
+    const mergedChips = chips.map(chip => {
+      const instanceName = chip.evolutionInstance || getInstanceName(chip.id, chip.name)
+      const evoInstance = instanceMap.get(instanceName)
+
+      // If chip has an evolutionInstance but it doesn't exist in Evolution Go → disconnected
+      let realTimeStatus = chip.status
+      let realTimeConnected = false
+      let realTimeJid: string | null = null
+      let realTimeProfileName: string | null = chip.profileName
+
+      if (evoInstance) {
+        realTimeConnected = evoInstance.connected || false
+        realTimeStatus = realTimeConnected ? 'connected' : 'disconnected'
+        realTimeJid = evoInstance.jid || evoInstance.ownerJid || null
+        realTimeProfileName = evoInstance.profileName || chip.profileName
+      } else if (chip.evolutionInstance && chip.evolutionInstance.startsWith(INSTANCE_PREFIX)) {
+        // Instance doesn't exist in Evolution Go anymore
+        realTimeStatus = 'disconnected'
+      }
+
+      // Update DB in background if status changed (non-blocking)
+      if (realTimeStatus !== chip.status || (evoInstance && realTimeProfileName !== chip.profileName)) {
+        db.chip.update({
+          where: { id: chip.id },
+          data: {
+            ...(realTimeStatus !== chip.status ? {
+              status: realTimeStatus,
+              lastSeen: realTimeStatus === 'connected' ? new Date() : chip.lastSeen,
+              isQrPaired: realTimeStatus === 'connected',
+            } : {}),
+            ...(realTimeProfileName !== chip.profileName ? { profileName: realTimeProfileName } : {}),
+            ...(realTimeJid && realTimeConnected ? { profilePicUrl: realTimeJid } : {}),
+          },
+        }).catch(() => {}) // Silently ignore DB update errors
+      }
+
+      return {
+        ...chip,
+        status: realTimeStatus,
+        profileName: realTimeProfileName,
+        _evoConnected: realTimeConnected,
+        _evoInstanceExists: !!evoInstance,
+      }
+    })
+
+    return NextResponse.json(mergedChips)
   } catch (error) {
     console.error('Chips GET error:', error)
     return NextResponse.json([], { status: 500 })
@@ -150,7 +206,7 @@ export async function DELETE(request: NextRequest) {
     if (chip) {
       const instanceName = chip.evolutionInstance || getInstanceName(chip.id, chip.name)
 
-      // Disconnect and delete instance from Evolution API
+      // Disconnect and delete instance from Evolution Go
       try { await disconnectInstance(instanceName) } catch { /* may already be disconnected */ }
       try { await deleteInstance(instanceName) } catch { /* may not exist */ }
 

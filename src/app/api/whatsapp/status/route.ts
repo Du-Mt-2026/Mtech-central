@@ -13,12 +13,11 @@ export async function GET(request: Request) {
         return NextResponse.json({ error: 'Chip não encontrado' }, { status: 404 })
       }
 
-      // Use the linked instance name from chip, or generate from chip ID/name
       const instanceName = chip.evolutionInstance || getInstanceName(chip.id, chip.name)
 
       try {
         const connectionState = await getConnectionState(instanceName)
-        const state = connectionState.instance?.state || 'close'
+        const state = connectionState.instance?.state || connectionState.state || 'close'
 
         const newStatus = state === 'open' ? 'connected' : state === 'connecting' ? 'connecting' : 'disconnected'
         if (chip.status !== newStatus) {
@@ -49,25 +48,27 @@ export async function GET(request: Request) {
       }
     }
 
-    // No chipId — return only OctupusZap instances and sync statuses
+    // No chipId — return all OctupusZap instances and sync statuses in real-time
     const [instances, chips] = await Promise.all([
       fetchOctupusZapInstances().catch(() => []),
       db.chip.findMany(),
     ])
 
     const instanceMap = new Map<string, any>(
-      instances.map((inst: any) => [inst.name, inst.connectionStatus] as [string, any])
+      instances.map((inst: any) => [inst.name, inst] as [string, any])
     )
 
-    // Only sync chips that belong to OctupusZap
+    // Sync chips that belong to OctupusZap
     for (const chip of chips) {
       if (chip.evolutionInstance && !chip.evolutionInstance.startsWith(INSTANCE_PREFIX)) {
         continue
       }
       const instanceName = chip.evolutionInstance || getInstanceName(chip.id, chip.name)
-      const instanceState = instanceMap.get(instanceName)
-      if (instanceState) {
-        const newStatus = instanceState === 'open' ? 'connected' : 'disconnected'
+      const evoInstance = instanceMap.get(instanceName)
+
+      if (evoInstance) {
+        // Instance exists in Evolution Go — use real-time status
+        const newStatus = evoInstance.connected ? 'connected' : 'disconnected'
         if (chip.status !== newStatus) {
           await db.chip.update({
             where: { id: chip.id },
@@ -79,6 +80,14 @@ export async function GET(request: Request) {
             },
           })
         }
+      } else if (chip.evolutionInstance) {
+        // Instance no longer exists in Evolution Go — mark as disconnected
+        if (chip.status !== 'disconnected') {
+          await db.chip.update({
+            where: { id: chip.id },
+            data: { status: 'disconnected', isQrPaired: false },
+          })
+        }
       }
     }
 
@@ -86,7 +95,7 @@ export async function GET(request: Request) {
       instances,
       chips: await db.chip.findMany(),
       total: instances.length,
-      connected: instances.filter((i: any) => i.connectionStatus === 'open').length,
+      connected: instances.filter((i: any) => i.connected).length,
       prefix: INSTANCE_PREFIX,
     })
   } catch (error: any) {

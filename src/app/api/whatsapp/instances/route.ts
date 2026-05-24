@@ -4,10 +4,10 @@ import { db } from '@/lib/db'
 
 export async function GET() {
   try {
-    // Fetch only OctupusZap instances (filtered by prefix)
+    // Fetch only OctupusZap instances from Evolution Go (real-time)
     const instances = await fetchOctupusZapInstances()
 
-    // Create a map of instance name -> connection status
+    // Create a map of instance name -> instance data
     const instanceMap = new Map<string, any>()
     for (const inst of instances) {
       instanceMap.set(inst.name, inst)
@@ -16,14 +16,23 @@ export async function GET() {
     // Fetch all chips from our database
     const chips = await db.chip.findMany()
 
-    // Update chip statuses based on Evolution API
+    // Update chip statuses based on real-time Evolution Go data
     const updatedChips: any[] = []
     for (const chip of chips) {
       const instanceName = chip.evolutionInstance || getInstanceName(chip.id, chip.name)
       const evoInstance = instanceMap.get(instanceName)
 
-      const evoStatus = evoInstance?.connectionStatus || 'close'
-      const newStatus = evoStatus === 'open' ? 'connected' : evoStatus === 'connecting' ? 'connecting' : 'disconnected'
+      let evoStatus = 'close'
+      let newStatus = 'disconnected'
+
+      if (evoInstance) {
+        evoStatus = evoInstance.connected ? 'open' : 'close'
+        newStatus = evoInstance.connected ? 'connected' : 'disconnected'
+      } else if (chip.evolutionInstance && chip.evolutionInstance.startsWith(INSTANCE_PREFIX)) {
+        // Instance no longer exists in Evolution Go
+        evoStatus = 'close'
+        newStatus = 'disconnected'
+      }
 
       // Update chip in database if status changed
       if (chip.status !== newStatus || !chip.evolutionInstance) {
@@ -43,8 +52,8 @@ export async function GET() {
         status: newStatus,
         evoInstanceName: instanceName,
         evoStatus,
-        profileName: evoInstance?.profileName || null,
-        profilePicUrl: evoInstance?.profilePicUrl || null,
+        profileName: evoInstance?.profileName || chip.profileName,
+        profilePicUrl: evoInstance?.profilePicUrl || chip.profilePicUrl,
       })
     }
 
@@ -52,7 +61,7 @@ export async function GET() {
       instances,
       chips: updatedChips,
       total: instances.length,
-      connected: instances.filter((i: any) => i.connectionStatus === 'open').length,
+      connected: instances.filter((i: any) => i.connected).length,
       prefix: INSTANCE_PREFIX,
     })
   } catch (error: any) {
