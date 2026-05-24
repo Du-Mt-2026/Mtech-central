@@ -1277,7 +1277,7 @@ function ChipsTab() {
                         <div className="flex items-center gap-2">
                           <CardDescription className="truncate">{chip.phoneNumber}</CardDescription>
                           {chip.evolutionInstance && (
-                            <span className="text-[10px] font-mono text-muted-foreground/70 truncate max-w-28" title={chip.evolutionInstance}>{chip.evolutionInstance}</span>
+                            <span className="text-[10px] font-mono text-muted-foreground/70 truncate max-w-28" title={chip.evolutionInstance}>{chip.evolutionInstance.replace(/^OctupusZap_/, '')}</span>
                           )}
                         </div>
                       </div>
