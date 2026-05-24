@@ -3,12 +3,12 @@ import { db } from '@/lib/db'
 import {
   createInstance,
   connectInstance,
-  setWebhook,
-  setProxy,
+  getInstanceQRCode,
   findInstanceByName,
   getInstanceName,
   resolveChipProxy,
   getGlobalProxy,
+  toEvolutionGoProxy,
 } from '@/lib/evolution-api'
 
 export async function POST(request: NextRequest) {
@@ -27,45 +27,39 @@ export async function POST(request: NextRequest) {
 
     const instanceName = chip.evolutionInstance || getInstanceName(chip.id, chip.name)
 
+    // Build webhook URL
+    const webhookUrl = `${process.env.VERCEL_URL ? 'https://' + process.env.VERCEL_URL : process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/whatsapp/webhook`
+
+    // Resolve proxy config
+    const globalProxy = await getGlobalProxy()
+    const proxyConfig = resolveChipProxy(chip, globalProxy)
+
     // Check if instance already exists
     let existing = await findInstanceByName(instanceName)
 
     if (!existing) {
-      const newInstance = await createInstance(instanceName)
+      // Create new instance with proxy at creation time (v3)
+      const newInstance = await createInstance(instanceName, toEvolutionGoProxy(proxyConfig))
       existing = newInstance
     }
 
     const effectiveInstanceName = existing.name || instanceName
 
-    // Configure webhook
-    const webhookUrl = `${process.env.VERCEL_URL ? 'https://' + process.env.VERCEL_URL : process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/whatsapp/webhook`
-    try {
-      await setWebhook(effectiveInstanceName, webhookUrl, [
-        'MESSAGES_UPSERT',
-        'MESSAGES_UPDATE',
-        'SEND_MESSAGE',
-        'CONNECTION_UPDATE',
-      ])
-    } catch (webhookErr) {
-      console.error('Verifier: Failed to set webhook:', webhookErr)
-    }
+    // Connect with webhook (v3: webhook is configured at connect time)
+    const connectResult = await connectInstance(effectiveInstanceName, webhookUrl)
 
-    // Apply SOCKS5 proxy — priority: chip config > WireGuard auto-detect > global proxy
-    // The global proxy comes from Settings, so the user configures it ONCE
-    // and ALL chips use it automatically — no per-chip configuration needed
-    const globalProxy = await getGlobalProxy()
-    const proxyConfig = resolveChipProxy(chip, globalProxy)
-    if (proxyConfig) {
+    // Try to fetch QR code if not yet connected
+    let qrcode = connectResult.qrcode
+    let code = connectResult.code
+    if (!qrcode && connectResult.state !== 'open') {
       try {
-        await setProxy(effectiveInstanceName, proxyConfig)
-        console.log(`Verifier: Proxy applied to ${effectiveInstanceName}: ${proxyConfig.host}:${proxyConfig.port}`)
-      } catch (proxyErr) {
-        console.error('Verifier: Failed to set proxy:', proxyErr)
+        const qrResult = await getInstanceQRCode(effectiveInstanceName)
+        qrcode = qrResult.qrcode
+        code = qrResult.code
+      } catch {
+        // QR code not available yet
       }
     }
-
-    // Connect to get QR Code (or detect already connected)
-    const connectResult = await connectInstance(effectiveInstanceName)
 
     const isConnected = connectResult.state === 'open'
     const newStatus = isConnected ? 'connected' : 'connecting'
@@ -76,7 +70,7 @@ export async function POST(request: NextRequest) {
       data: {
         status: newStatus,
         evolutionInstance: effectiveInstanceName,
-        qrPairingCode: connectResult.code || connectResult.pairingCode || null,
+        qrPairingCode: code || connectResult.pairingCode || null,
         lastSeen: isConnected ? new Date() : chip.lastSeen,
         ...(isConnected ? { isQrPaired: true } : {}),
       },
@@ -95,8 +89,8 @@ export async function POST(request: NextRequest) {
       connected: false,
       status: 'connecting',
       instanceName: effectiveInstanceName,
-      qrcode: connectResult.qrcode || null,
-      code: connectResult.code || connectResult.pairingCode || null,
+      qrcode: qrcode || null,
+      code: code || connectResult.pairingCode || null,
     })
   } catch (error: any) {
     console.error('Verifier connect error:', error)

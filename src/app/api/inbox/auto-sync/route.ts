@@ -38,6 +38,9 @@ export async function POST(request: NextRequest) {
     for (const chip of chips) {
       try {
         // Fetch recent messages from Evolution API
+        // NOTE: /chat/findMessages is NOT available in Evolution Go v3.
+        // In v3, message history sync is handled via webhook events (MESSAGE events).
+        // This auto-sync is a best-effort for v2 compatibility.
         const fetchRes = await evolutionFetch(`/chat/findMessages/${chip.evolutionInstance}`, {
           method: 'POST',
           body: JSON.stringify({

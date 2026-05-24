@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { evolutionFetch, getInstanceName } from '@/lib/evolution-api'
+import { evolutionFetch, getInstanceName, checkWhatsAppNumbers } from '@/lib/evolution-api'
 import { normalizePhone } from '@/lib/phone-utils'
 
 // Daily verification limit per chip (safe anti-ban threshold)
@@ -82,52 +82,18 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Call Evolution API's whatsappNumbers endpoint to check which numbers exist
-    const res = await evolutionFetch(`/chat/whatsappNumbers/${instanceName}`, {
-      method: 'POST',
-      body: JSON.stringify({ numbers: formattedPhones }),
-    })
+    // Call Evolution Go's user/check endpoint to verify which numbers exist on WhatsApp
+    // In v3: POST /user/check with { numbers: [...] } and instanceId header
+    const results = await checkWhatsAppNumbers(instanceName, formattedPhones)
 
-    const data = await res.json()
-
-    if (!res.ok) {
-      return NextResponse.json(
-        { error: data.error || data.message || 'Erro ao verificar números na Evolution API' },
-        { status: res.status }
-      )
-    }
-
-    // Evolution API returns an array of results like:
-    // [{ exists: true, jid: "55119...@s.whatsapp.net", name: "João" }, ...]
-    // Normalize to the format the frontend expects
-    let results: Array<{ number: string; exists: boolean; jid?: string; name?: string; error?: string }>
-
-    if (Array.isArray(data)) {
-      results = data.map((item: any, idx: number) => ({
-        number: item.number || formattedPhones[idx] || '',
-        exists: item.exists === true,
-        jid: item.jid || '',
-        name: item.name || '',
-        error: item.error || (!item.exists ? 'not_on_whatsapp' : ''),
-      }))
-    } else if (data.results && Array.isArray(data.results)) {
-      results = data.results.map((item: any, idx: number) => ({
-        number: item.number || formattedPhones[idx] || '',
-        exists: item.exists === true,
-        jid: item.jid || '',
-        name: item.name || '',
-        error: item.error || (!item.exists ? 'not_on_whatsapp' : ''),
-      }))
-    } else {
-      // Fallback: return all as unable to verify
-      results = formattedPhones.map(phone => ({
-        number: phone,
-        exists: false,
-        jid: '',
-        name: '',
-        error: 'unknown_response_format',
-      }))
-    }
+    // Normalize results to the format the frontend expects
+    const normalizedResults: Array<{ number: string; exists: boolean; jid?: string; name?: string; error?: string }> = results.map((item: any, idx: number) => ({
+      number: item.query || formattedPhones[idx] || '',
+      exists: item.exists === true,
+      jid: item.jid || '',
+      name: '',
+      error: !item.exists ? 'not_on_whatsapp' : '',
+    }))
 
     // Update verification count for this chip
     await db.chip.update({
@@ -138,7 +104,7 @@ export async function POST(request: NextRequest) {
     })
 
     return NextResponse.json({
-      results,
+      results: normalizedResults,
       chipName: chip.name,
       verifiedToday: currentVerifiedToday + formattedPhones.length,
       dailyLimit: DAILY_VERIFY_LIMIT,

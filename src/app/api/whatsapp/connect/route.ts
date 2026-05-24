@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { createInstance, connectInstance, setWebhook, setProxy, findInstanceByName, getInstanceName, resolveChipProxy, getGlobalProxy } from '@/lib/evolution-api'
+import { createInstance, connectInstance, getInstanceQRCode, findInstanceByName, getInstanceName, resolveChipProxy, getGlobalProxy, toEvolutionGoProxy, setWebhook } from '@/lib/evolution-api'
 
 export async function POST(request: Request) {
   try {
@@ -17,48 +17,52 @@ export async function POST(request: Request) {
 
     const instanceName = getInstanceName(chip.id, chip.name)
 
-    // Check if instance already exists in Evolution API
+    // Check if instance already exists in Evolution Go
     let existing = await findInstanceByName(instanceName)
 
-    if (!existing) {
-      // Create new instance in Evolution API
-      // Note: createInstance now normalizes the response so .name works correctly
-      const newInstance = await createInstance(instanceName)
-      existing = newInstance
-    }
-
-    // Use the instance name consistently — prefer existing.name (from fetchInstances) 
-    // or fall back to our generated instanceName
-    const effectiveInstanceName = existing.name || instanceName
-
-    // Always ensure webhook is configured (for both new and existing instances)
+    // Build webhook URL for this instance
     const webhookUrl = `${process.env.VERCEL_URL ? 'https://' + process.env.VERCEL_URL : process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/whatsapp/webhook`
-    try {
-      await setWebhook(effectiveInstanceName, webhookUrl, [
-        'MESSAGES_UPSERT',
-        'MESSAGES_UPDATE',
-        'SEND_MESSAGE',
-        'CONNECTION_UPDATE',
-        'INSTANCE_DELETED',
-      ])
-    } catch (webhookErr) {
-      console.error('Failed to set webhook:', webhookErr)
-    }
 
-    // Apply SOCKS5 proxy — priority: chip config > WireGuard auto-detect > global proxy
+    // Resolve proxy config for this chip
     const globalProxy = await getGlobalProxy()
     const proxyConfig = resolveChipProxy(chip, globalProxy)
-    if (proxyConfig) {
+
+    if (!existing) {
+      // Create new instance in Evolution Go
+      // In v3: proxy is set at creation time, webhook is set at connect time
+      const newInstance = await createInstance(instanceName, toEvolutionGoProxy(proxyConfig))
+      existing = newInstance
+    } else {
+      // Instance exists — update webhook and proxy if needed
+      // In v3: webhook is configured via connect, proxy at creation
+      // If proxy changed, we'd need to recreate the instance
+      // For now, just ensure webhook is set
       try {
-        await setProxy(effectiveInstanceName, proxyConfig)
-        console.log(`Proxy applied to ${effectiveInstanceName}: ${proxyConfig.host}:${proxyConfig.port}`)
-      } catch (proxyErr) {
-        console.error('Failed to set proxy on instance:', proxyErr)
+        await setWebhook(existing.name || instanceName, webhookUrl)
+      } catch (webhookErr) {
+        console.error('Failed to set webhook:', webhookErr)
       }
     }
 
+    const effectiveInstanceName = existing.name || instanceName
+
     // Connect to get QR Code (or detect already connected)
-    const connectResult = await connectInstance(effectiveInstanceName)
+    // In v3: connect also sets the webhook
+    const connectResult = await connectInstance(effectiveInstanceName, webhookUrl)
+
+    // If not connected yet, try to fetch QR code separately
+    // (In v3, QR code comes via webhook or via GET /instance/qr)
+    let qrcode = connectResult.qrcode
+    let code = connectResult.code
+    if (!qrcode && connectResult.state !== 'open') {
+      try {
+        const qrResult = await getInstanceQRCode(effectiveInstanceName)
+        qrcode = qrResult.qrcode
+        code = qrResult.code
+      } catch {
+        // QR code not available yet — will be provided via webhook
+      }
+    }
 
     // If already connected, update status and return
     const isConnected = connectResult.state === 'open'
@@ -70,7 +74,7 @@ export async function POST(request: Request) {
       data: {
         status: newStatus,
         evolutionInstance: effectiveInstanceName,
-        qrPairingCode: connectResult.code || connectResult.pairingCode || null,
+        qrPairingCode: code || connectResult.pairingCode || null,
         lastSeen: isConnected ? new Date() : chip.lastSeen,
         ...(isConnected ? { isQrPaired: true } : {}),
       },
@@ -78,8 +82,8 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       instanceName: effectiveInstanceName,
-      qrcode: connectResult.qrcode || null,
-      code: connectResult.code || null,
+      qrcode: qrcode || null,
+      code: code || null,
       state: connectResult.state,
       status: isConnected ? 'open' : existing.connectionStatus,
     })

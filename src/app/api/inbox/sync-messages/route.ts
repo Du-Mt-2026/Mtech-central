@@ -55,6 +55,9 @@ export async function POST(request: NextRequest) {
     let fixed = 0
 
     // Fetch the latest messages from Evolution API
+    // NOTE: /chat/findMessages is NOT available in Evolution Go v3.
+    // In v3, message history sync is handled via webhook events (MESSAGE events).
+    // This sync endpoint is a best-effort for v2 compatibility.
     try {
       // Extract just the phone number from remoteJid (remove @s.whatsapp.net suffix)
       const phoneNumber = remoteJid ? remoteJid.split('@')[0] : ''

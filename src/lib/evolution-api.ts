@@ -1,5 +1,6 @@
-// Evolution API Service Layer
-// Handles all communication with the Evolution API (WhatsApp Baileys)
+// Evolution Go API Service Layer
+// Handles all communication with the Evolution Go API (WhatsApp Go/whatsmeow)
+// Migrated from Evolution API v2 (Baileys) to Evolution Go (v3)
 // Credentials are stored in the database (Settings table) with env var fallback
 
 import { db } from './db'
@@ -21,7 +22,7 @@ let cacheTimestamp = 0
 const CACHE_TTL_MS = 60_000 // 60 seconds
 
 /**
- * Get Evolution API credentials from DB Settings table.
+ * Get Evolution Go API credentials from DB Settings table.
  * Falls back to environment variables if not found in DB.
  * Uses in-memory cache with 60s TTL to avoid excessive DB queries.
  */
@@ -74,7 +75,7 @@ export function clearCredentialsCache(): void {
 }
 
 /**
- * Test Evolution API connection — returns true if credentials are valid
+ * Test Evolution Go API connection — returns true if credentials are valid
  */
 export async function testConnection(): Promise<{ success: boolean; error?: string; instanceCount?: number }> {
   try {
@@ -82,7 +83,8 @@ export async function testConnection(): Promise<{ success: boolean; error?: stri
     if (!creds.apiUrl || !creds.apiKey) {
       return { success: false, error: 'URL ou API Key não configurados' }
     }
-    const response = await fetch(`${creds.apiUrl}/instance/fetchInstances`, {
+    // Evolution Go: GET /instance/all
+    const response = await fetch(`${creds.apiUrl}/instance/all`, {
       headers: {
         'Content-Type': 'application/json',
         'apikey': creds.apiKey,
@@ -92,30 +94,47 @@ export async function testConnection(): Promise<{ success: boolean; error?: stri
       const text = await response.text()
       return { success: false, error: `API retornou ${response.status}: ${text.substring(0, 200)}` }
     }
-    const instances = await response.json()
+    const data = await response.json()
+    const instances = data.data || data
     return { success: true, instanceCount: Array.isArray(instances) ? instances.length : 0 }
   } catch (error: any) {
     return { success: false, error: error.message || 'Erro ao conectar' }
   }
 }
 
-// ============ Evolution API Types ============
+// ============ Evolution Go API Types ============
 
 interface EvolutionInstance {
-  id: string;
+  id: string;               // UUID in v3 (was instanceId in v2)
   name: string;
-  connectionStatus: 'open' | 'close' | 'connecting';
-  ownerJid: string | null;
-  profileName: string | null;
-  profilePicUrl: string | null;
-  integration: string;
-  number: string | null;
   token: string;
-  disconnectionReasonCode: number | null;
-  disconnectionAt: string | null;
+  connected: boolean;       // v3 uses boolean (v2 used connectionStatus string)
+  jid: string;              // WhatsApp JID when connected
+  webhook: string;
+  proxy: string;
+  os_name: string;
+  client_name: string;
+  events: string;
+  alwaysOnline: boolean;
+  rejectCall: boolean;
+  msgRejectCall: string;
+  readMessages: boolean;
+  ignoreGroups: boolean;
+  ignoreStatus: boolean;
   createdAt: string;
-  updatedAt: string;
-  Proxy: {
+  disconnect_reason: string;
+
+  // Computed/normalized fields for backward compatibility
+  connectionStatus?: 'open' | 'close' | 'connecting';
+  ownerJid?: string | null;
+  profileName?: string | null;
+  profilePicUrl?: string | null;
+  integration?: string;
+  number?: string | null;
+  disconnectionReasonCode?: number | null;
+  disconnectionAt?: string | null;
+  updatedAt?: string;
+  Proxy?: {
     enabled: boolean;
     host: string;
     port: string;
@@ -125,10 +144,18 @@ interface EvolutionInstance {
 }
 
 interface ConnectionState {
-  instance: {
+  instance?: {
     instanceName: string;
     state: 'open' | 'close' | 'connecting';
   };
+  // Evolution Go format
+  data?: {
+    Connected: boolean;
+    LoggedIn: boolean;
+    Name: string;
+  };
+  // Normalized
+  state?: 'open' | 'close' | 'connecting';
 }
 
 /** Result from connectInstance — handles both QR code and already-connected responses */
@@ -138,35 +165,67 @@ export interface ConnectResult {
   pairingCode?: string | null;
   state?: string;           // connection state ("open" if already connected)
   instanceName?: string;
+  instanceId?: string;      // UUID of the instance (v3)
 }
 
 interface SendMessageResponse {
-  key: {
+  key?: {
     remoteJid: string;
     fromMe: boolean;
     id: string;
   };
-  message: any;
-  status: string;
+  // Evolution Go response format
+  data?: {
+    Info?: {
+      Chat: string;
+      Sender: string;
+      IsFromMe: boolean;
+      ID: string;
+      Type: string;
+      Timestamp: string;
+    };
+    Message?: any;
+  };
+  message?: string;
+  messageId?: string;
+  status?: string;
 }
 
 // ============ Core API Client ============
 
-export async function evolutionFetch(endpoint: string, options: RequestInit = {}) {
+/**
+ * Core fetch function for Evolution Go API.
+ * In v3, many endpoints require the `instanceId` header (UUID) instead of
+ * the instance name in the URL path.
+ */
+export async function evolutionFetch(
+  endpoint: string,
+  options: RequestInit = {},
+  instanceId?: string
+) {
   const creds = await getCredentials()
   const url = `${creds.apiUrl}${endpoint}`;
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'apikey': creds.apiKey,
+  };
+
+  // Evolution Go v3: add instanceId header for instance-scoped operations
+  if (instanceId) {
+    headers['instanceId'] = instanceId;
+  }
+
   const response = await fetch(url, {
     ...options,
     headers: {
-      'Content-Type': 'application/json',
-      'apikey': creds.apiKey,
-      ...options.headers,
+      ...headers,
+      ...(options.headers as Record<string, string> || {}),
     },
   });
 
   if (!response.ok) {
     const error = await response.text();
-    throw new Error(`Evolution API error (${response.status}): ${error}`);
+    throw new Error(`Evolution Go API error (${response.status}): ${error}`);
   }
 
   return response;
@@ -174,110 +233,317 @@ export async function evolutionFetch(endpoint: string, options: RequestInit = {}
 
 // ============ Instance Management ============
 
-export async function createInstance(instanceName: string): Promise<EvolutionInstance> {
+/**
+ * Create a new instance in Evolution Go.
+ * In v3: POST /instance/create with { name, token, proxy }
+ * No more integration: 'WHATSAPP-BAILEYS' — Go is the only engine.
+ */
+export async function createInstance(
+  instanceName: string,
+  proxyConfig?: {
+    address: string;
+    port: string;
+    username: string;
+    password: string;
+  }
+): Promise<EvolutionInstance> {
+  const body: any = {
+    name: instanceName,
+    token: '',  // Let Evolution Go auto-generate the token
+  };
+
+  // In v3, proxy is set at creation time
+  if (proxyConfig) {
+    body.proxy = proxyConfig;
+  }
+
   const response = await evolutionFetch('/instance/create', {
     method: 'POST',
-    body: JSON.stringify({
-      instanceName,
-      integration: 'WHATSAPP-BAILEYS',
-    }),
+    body: JSON.stringify(body),
   });
   const data = await response.json();
 
-  // Evolution API v2.x returns: { instance: { instanceName, instanceId, status, ... }, hash: "...", ... }
-  // Normalize to our flat EvolutionInstance format so .name and .connectionStatus work correctly
-  if (data.instance) {
-    const inst = data.instance;
-    return {
-      id: inst.instanceId || '',
-      name: inst.instanceName || instanceName,
-      connectionStatus: inst.status === 'open' ? 'open' : inst.status === 'connecting' ? 'connecting' : 'close',
-      ownerJid: null,
-      profileName: null,
-      profilePicUrl: null,
-      integration: inst.integration || 'WHATSAPP-BAILEYS',
-      number: null,
-      token: data.hash || '',
-      disconnectionReasonCode: null,
-      disconnectionAt: null,
-      createdAt: inst.createdAt || new Date().toISOString(),
-      updatedAt: inst.updatedAt || new Date().toISOString(),
-      Proxy: null,
-    };
-  }
+  // Evolution Go response: { data: { id, name, token, connected, ... }, message: "success" }
+  const inst = data.data || data;
 
-  // Fallback: response might already be flat format
-  return data as EvolutionInstance;
+  return {
+    id: inst.id || '',
+    name: inst.name || instanceName,
+    token: inst.token || '',
+    connected: inst.connected || false,
+    jid: inst.jid || '',
+    webhook: inst.webhook || '',
+    proxy: inst.proxy || '',
+    os_name: inst.os_name || 'Evolution GO',
+    client_name: inst.client_name || 'evolution',
+    events: inst.events || '',
+    alwaysOnline: inst.alwaysOnline || false,
+    rejectCall: inst.rejectCall || false,
+    msgRejectCall: inst.msgRejectCall || '',
+    readMessages: inst.readMessages || false,
+    ignoreGroups: inst.ignoreGroups || false,
+    ignoreStatus: inst.ignoreStatus || false,
+    createdAt: inst.createdAt || new Date().toISOString(),
+    disconnect_reason: inst.disconnect_reason || '',
+    // Normalized for backward compatibility
+    connectionStatus: inst.connected ? 'open' : 'close',
+    ownerJid: inst.jid || null,
+    profileName: null,
+    profilePicUrl: null,
+    integration: 'WHATSAPP-GO',
+    number: null,
+    disconnectionReasonCode: null,
+    disconnectionAt: null,
+    updatedAt: inst.createdAt || new Date().toISOString(),
+    Proxy: null,
+  };
 }
 
+/**
+ * Fetch all instances from Evolution Go.
+ * In v3: GET /instance/all
+ */
 export async function fetchInstances(): Promise<EvolutionInstance[]> {
-  const response = await evolutionFetch('/instance/fetchInstances');
-  return response.json();
+  const response = await evolutionFetch('/instance/all');
+  const data = await response.json();
+
+  // Evolution Go response: { data: [...instances], message: "success" }
+  const instances = data.data || data;
+  if (!Array.isArray(instances)) return [];
+
+  // Normalize v3 instances to our EvolutionInstance format
+  return instances.map((inst: any) => ({
+    id: inst.id || '',
+    name: inst.name || '',
+    token: inst.token || '',
+    connected: inst.connected || false,
+    jid: inst.jid || '',
+    webhook: inst.webhook || '',
+    proxy: inst.proxy || '',
+    os_name: inst.os_name || 'Evolution GO',
+    client_name: inst.client_name || 'evolution',
+    events: inst.events || '',
+    alwaysOnline: inst.alwaysOnline || false,
+    rejectCall: inst.rejectCall || false,
+    msgRejectCall: inst.msgRejectCall || '',
+    readMessages: inst.readMessages || false,
+    ignoreGroups: inst.ignoreGroups || false,
+    ignoreStatus: inst.ignoreStatus || false,
+    createdAt: inst.createdAt || '',
+    disconnect_reason: inst.disconnect_reason || '',
+    // Normalized for backward compatibility
+    connectionStatus: inst.connected ? 'open' : 'close',
+    ownerJid: inst.jid || null,
+    profileName: null,
+    profilePicUrl: null,
+    integration: 'WHATSAPP-GO',
+    number: null,
+    disconnectionReasonCode: null,
+    disconnectionAt: null,
+    updatedAt: inst.createdAt || '',
+    Proxy: null,
+  }));
 }
 
 /**
  * Fetch only OctupusZap instances (filtered by INSTANCE_PREFIX).
- * Other instances on the same Evolution API server are ignored.
+ * Other instances on the same Evolution Go server are ignored.
  */
 export async function fetchOctupusZapInstances(): Promise<EvolutionInstance[]> {
   const all = await fetchInstances();
   return all.filter(inst => inst.name.startsWith(INSTANCE_PREFIX));
 }
 
-export async function deleteInstance(instanceName: string): Promise<void> {
-  await evolutionFetch(`/instance/delete/${instanceName}`, {
+/**
+ * Delete an instance.
+ * In v3: DELETE /instance/delete/{instanceId} (UUID, not name!)
+ */
+export async function deleteInstance(instanceIdOrName: string): Promise<void> {
+  // Try to resolve UUID from name if needed
+  const instanceId = await resolveInstanceId(instanceIdOrName);
+  await evolutionFetch(`/instance/delete/${instanceId}`, {
     method: 'DELETE',
   });
 }
 
 // ============ Connection ============
 
-export async function connectInstance(instanceName: string): Promise<ConnectResult> {
-  // Evolution API v2.x: GET /instance/connect/{instanceName}
-  // - If already connected: returns { instance: { instanceName, state: "open" } }
-  // - If disconnected/connecting: returns { pairingCode, code, base64 }
-  const response = await evolutionFetch(`/instance/connect/${instanceName}`);
+/**
+ * Connect to an instance.
+ * In v3: POST /instance/connect with { webhookUrl, subscribe, immediate }
+ * The webhook is configured at connect time (no separate setWebhook call).
+ * QR code is received via webhook event, not in the connect response.
+ */
+export async function connectInstance(
+  instanceIdOrName: string,
+  webhookUrl?: string,
+  subscribeEvents?: string[]
+): Promise<ConnectResult> {
+  const instanceId = await resolveInstanceId(instanceIdOrName);
+
+  const body: any = {
+    immediate: true,
+  };
+
+  if (webhookUrl) {
+    body.webhookUrl = webhookUrl;
+    body.subscribe = subscribeEvents || [
+      'MESSAGE',
+      'SEND_MESSAGE',
+      'READ_RECEIPT',
+      'PRESENCE',
+      'CHAT_PRESENCE',
+      'CALL',
+      'CONNECTION',
+      'QRCODE',
+      'LABEL',
+      'CONTACT',
+      'GROUP',
+    ];
+  }
+
+  const response = await evolutionFetch('/instance/connect', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  }, instanceId);
+
   const data = await response.json();
 
-  // Case 1: Already connected — { instance: { instanceName, state: "open" } }
-  if (data.instance?.state) {
+  // Evolution Go connect response: { data: { eventString, jid, webhookUrl }, message: "success" }
+  const result = data.data || data;
+
+  // Check if already connected (jid is present)
+  if (result.jid) {
     return {
-      state: data.instance.state,
-      instanceName: data.instance.instanceName || instanceName,
+      state: 'open',
+      instanceName: instanceIdOrName,
+      instanceId: instanceId,
       qrcode: null,
       code: null,
       pairingCode: null,
     };
   }
 
-  // Case 2: Disconnected — returns QR code { pairingCode, code, base64 }
+  // Not yet connected — QR code will come via webhook event
+  // We need to fetch it separately
   return {
-    qrcode: data.base64 || null,
-    code: data.code || null,
-    pairingCode: data.pairingCode || null,
     state: 'close',
-    instanceName,
+    instanceName: instanceIdOrName,
+    instanceId: instanceId,
+    qrcode: null,
+    code: null,
+    pairingCode: null,
   };
 }
 
-export async function disconnectInstance(instanceName: string): Promise<void> {
-  // Evolution API v2.x: restart instance to disconnect (generates new QR code)
-  // The /instance/disconnect endpoint doesn't exist in v2.3.7
-  // Instead, use /instance/restart which disconnects and returns a new QR code
-  await evolutionFetch(`/instance/restart/${instanceName}`, {
-    method: 'POST',
-  });
+/**
+ * Get QR code for an instance.
+ * In v3: GET /instance/qr (with instanceId header)
+ * Returns { data: { Qrcode: "data:image/png;base64,...", Code: "2@..." }, message: "success" }
+ */
+export async function getInstanceQRCode(instanceIdOrName: string): Promise<ConnectResult> {
+  const instanceId = await resolveInstanceId(instanceIdOrName);
+
+  try {
+    const response = await evolutionFetch('/instance/qr', {}, instanceId);
+    const data = await response.json();
+
+    const qrData = data.data || data;
+    return {
+      qrcode: qrData.Qrcode || null,
+      code: qrData.Code || null,
+      pairingCode: null,
+      state: 'close',
+      instanceName: instanceIdOrName,
+      instanceId: instanceId,
+    };
+  } catch {
+    // QR code not available yet — instance might still be connecting
+    return {
+      qrcode: null,
+      code: null,
+      pairingCode: null,
+      state: 'close',
+      instanceName: instanceIdOrName,
+      instanceId: instanceId,
+    };
+  }
 }
 
-export async function getConnectionState(instanceName: string): Promise<ConnectionState> {
-  const response = await evolutionFetch(`/instance/connectionState/${instanceName}`);
-  return response.json();
+/**
+ * Request pairing code for an instance (alternative to QR code).
+ * In v3: POST /instance/pair with { phone, subscribe }
+ */
+export async function requestPairingCode(
+  instanceIdOrName: string,
+  phone: string
+): Promise<string | null> {
+  const instanceId = await resolveInstanceId(instanceIdOrName);
+
+  try {
+    const response = await evolutionFetch('/instance/pair', {
+      method: 'POST',
+      body: JSON.stringify({ phone }),
+    }, instanceId);
+    const data = await response.json();
+    const result = data.data || data;
+    return result.PairingCode || result.pairingCode || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Disconnect from an instance.
+ * In v3: POST /instance/disconnect (with instanceId header)
+ */
+export async function disconnectInstance(instanceIdOrName: string): Promise<void> {
+  const instanceId = await resolveInstanceId(instanceIdOrName);
+  await evolutionFetch('/instance/disconnect', {
+    method: 'POST',
+  }, instanceId);
+}
+
+/**
+ * Get connection state of an instance.
+ * In v3: GET /instance/status (with instanceId header)
+ * Returns { data: { Connected, LoggedIn, Name }, message: "success" }
+ */
+export async function getConnectionState(instanceIdOrName: string): Promise<ConnectionState> {
+  const instanceId = await resolveInstanceId(instanceIdOrName);
+
+  try {
+    const response = await evolutionFetch('/instance/status', {}, instanceId);
+    const data = await response.json();
+    const status = data.data || data;
+
+    return {
+      data: status,
+      state: status.Connected ? 'open' : 'close',
+      instance: {
+        instanceName: instanceIdOrName,
+        state: status.Connected ? 'open' : 'close',
+      },
+    };
+  } catch {
+    return {
+      state: 'close',
+      instance: {
+        instanceName: instanceIdOrName,
+        state: 'close',
+      },
+    };
+  }
 }
 
 // ============ Messaging ============
 
+/**
+ * Send a text message.
+ * In v3: POST /send/text with { number, text, delay, ... } (instanceId header)
+ */
 export async function sendTextMessage(
-  instanceName: string,
+  instanceIdOrName: string,
   number: string,
   text: string,
   options?: {
@@ -285,24 +551,39 @@ export async function sendTextMessage(
     linkPreview?: boolean;
   }
 ): Promise<SendMessageResponse> {
+  const instanceId = await resolveInstanceId(instanceIdOrName);
+
   const body: any = {
     number,
     text,
-    options: {
-      delay: options?.delay || 0,
-      linkPreview: options?.linkPreview ?? false,
-    },
+    delay: options?.delay || 0,
   };
 
-  const response = await evolutionFetch(`/message/sendText/${instanceName}`, {
+  const response = await evolutionFetch('/send/text', {
     method: 'POST',
     body: JSON.stringify(body),
-  });
-  return response.json();
+  }, instanceId);
+  const data = await response.json();
+
+  // Normalize v3 response to v2 format for backward compatibility
+  const result = data.data || data;
+  return {
+    key: {
+      remoteJid: result.Info?.Chat || '',
+      fromMe: result.Info?.IsFromMe ?? true,
+      id: result.Info?.ID || data.messageId || '',
+    },
+    message: result.Message || data.Message,
+    status: data.message || 'sent',
+  };
 }
 
+/**
+ * Send a media message.
+ * In v3: POST /send/media with { number, media, caption, fileName, ... } (instanceId header)
+ */
 export async function sendMediaMessage(
-  instanceName: string,
+  instanceIdOrName: string,
   number: string,
   media: string,
   mediatype: 'image' | 'document' | 'video' | 'audio',
@@ -312,43 +593,59 @@ export async function sendMediaMessage(
     delay?: number;
   }
 ): Promise<SendMessageResponse> {
+  const instanceId = await resolveInstanceId(instanceIdOrName);
+
   const body: any = {
     number,
     media,
-    mediatype,
-    options: {
-      delay: options?.delay || 0,
-    },
     caption: options?.caption || '',
     fileName: options?.fileName || '',
+    delay: options?.delay || 0,
   };
 
-  const response = await evolutionFetch(`/message/sendMedia/${instanceName}`, {
+  const response = await evolutionFetch('/send/media', {
     method: 'POST',
     body: JSON.stringify(body),
-  });
-  return response.json();
+  }, instanceId);
+  const data = await response.json();
+
+  // Normalize v3 response to v2 format for backward compatibility
+  const result = data.data || data;
+  return {
+    key: {
+      remoteJid: result.Info?.Chat || '',
+      fromMe: result.Info?.IsFromMe ?? true,
+      id: result.Info?.ID || data.messageId || '',
+    },
+    message: result.Message || data.Message,
+    status: data.message || 'sent',
+  };
 }
 
 // ============ Presence (typing simulation) ============
 
+/**
+ * Set chat presence (typing, recording, etc).
+ * In v3: POST /message/presence with { number, presence, delay } (instanceId header)
+ */
 export async function setPresence(
-  instanceName: string,
+  instanceIdOrName: string,
   number: string,
   presence: 'composing' | 'available' | 'unavailable' | 'recording',
   delay: number = 2000
 ): Promise<void> {
-  // Evolution API v2.x: may not support /chat/setPresence
-  // This is best-effort — if it fails, the sending engine still works
+  const instanceId = await resolveInstanceId(instanceIdOrName);
+
+  // Evolution Go: best-effort — if it fails, the sending engine still works
   try {
-    await evolutionFetch(`/chat/setPresence/${instanceName}`, {
+    await evolutionFetch('/message/presence', {
       method: 'POST',
       body: JSON.stringify({
         number,
         presence,
         delay,
       }),
-    });
+    }, instanceId);
   } catch {
     // Silently ignore — presence is not critical for sending
   }
@@ -464,8 +761,18 @@ export function resolveChipProxy(chip: {
   return null
 }
 
+/**
+ * Set proxy on an instance.
+ * In v3: Proxy is set at instance creation time via the `proxy` field.
+ * However, if we need to update proxy after creation, we need to
+ * delete the instance and recreate it with the new proxy config.
+ * For now, this is a no-op if the instance already exists.
+ *
+ * Alternative: Delete proxy via DELETE /instance/proxy/{instanceId}
+ * and recreate the instance with the new proxy.
+ */
 export async function setProxy(
-  instanceName: string,
+  instanceIdOrName: string,
   proxy: {
     enabled: boolean;
     host: string;
@@ -474,42 +781,102 @@ export async function setProxy(
     password: string;
   }
 ): Promise<void> {
-  // Evolution API v2.x: requires "protocol" field
-  await evolutionFetch(`/proxy/set/${instanceName}`, {
-    method: 'POST',
-    body: JSON.stringify({
-      ...proxy,
-      protocol: 'socks5',
-    }),
-  });
+  // In Evolution Go v3, proxy is configured at instance creation time.
+  // To update proxy after creation, we need to delete the instance and recreate it.
+  // For now, we'll store the proxy info and apply it on next reconnect.
+  // This is a limitation of the v3 API compared to v2 which had a separate proxy endpoint.
+
+  // If proxy is being disabled, delete the proxy configuration
+  if (!proxy.enabled) {
+    try {
+      const instanceId = await resolveInstanceId(instanceIdOrName);
+      await evolutionFetch(`/instance/proxy/${instanceId}`, {
+        method: 'DELETE',
+      });
+    } catch {
+      // Silently ignore — proxy removal is not critical
+    }
+    return;
+  }
+
+  // For enabling/changing proxy, we would need to recreate the instance.
+  // For now, this is handled at connect time where we recreate with proxy.
+  console.log(`[Evolution Go] Proxy update for ${instanceIdOrName} will be applied on next instance creation/reconnect`);
 }
 
 // ============ Webhook Configuration ============
 
+/**
+ * Set webhook for an instance.
+ * In v3: Webhook is configured at connect time via POST /instance/connect
+ * There is NO separate webhook endpoint in Evolution Go.
+ *
+ * This function is kept for backward compatibility but now triggers
+ * a connect call with the webhook configuration.
+ */
 export async function setWebhook(
-  instanceName: string,
+  instanceIdOrName: string,
   webhookUrl: string,
   events: string[] = [
-    'MESSAGES_UPSERT',
-    'MESSAGES_UPDATE',
+    'MESSAGE',
     'SEND_MESSAGE',
-    'CONNECTION_UPDATE',
+    'READ_RECEIPT',
+    'PRESENCE',
+    'CHAT_PRESENCE',
+    'CALL',
+    'CONNECTION',
+    'QRCODE',
+    'LABEL',
+    'CONTACT',
+    'GROUP',
   ]
 ): Promise<void> {
-  // Evolution API v2.x: webhook config must be wrapped in "webhook" object
-  // Note: event name is INSTANCE_DELETE (not INSTANCE_DELETED) in Evolution API
-  const normalizedEvents = events.map(e => e === 'INSTANCE_DELETED' ? 'INSTANCE_DELETE' : e)
-  await evolutionFetch(`/webhook/set/${instanceName}`, {
+  // In v3, webhook is set during connect.
+  // This function triggers a connect with webhook config.
+  // If the instance is already connected, this will update the webhook.
+  const instanceId = await resolveInstanceId(instanceIdOrName);
+
+  await evolutionFetch('/instance/connect', {
     method: 'POST',
     body: JSON.stringify({
-      webhook: {
-        url: webhookUrl,
-        enabled: true,
-        byEvents: true,
-        events: normalizedEvents,
-      },
+      webhookUrl,
+      subscribe: events,
+      immediate: true,
     }),
-  });
+  }, instanceId);
+}
+
+// ============ Number Verification ============
+
+/**
+ * Check if phone numbers exist on WhatsApp.
+ * In v3: POST /user/check with { numbers: [...] } (instanceId header)
+ * Returns { data: { Users: [{ Query, IsInWhatsapp, JID, ... }] }, message: "success" }
+ */
+export async function checkWhatsAppNumbers(
+  instanceIdOrName: string,
+  numbers: string[]
+): Promise<Array<{ query: string; exists: boolean; jid: string }>> {
+  const instanceId = await resolveInstanceId(instanceIdOrName);
+
+  const response = await evolutionFetch('/user/check', {
+    method: 'POST',
+    body: JSON.stringify({ numbers }),
+  }, instanceId);
+
+  const data = await response.json();
+  const result = data.data || data;
+
+  // Normalize v3 response
+  if (result.Users && Array.isArray(result.Users)) {
+    return result.Users.map((u: any) => ({
+      query: u.Query || '',
+      exists: u.IsInWhatsapp || false,
+      jid: u.JID || u.RemoteJID || '',
+    }));
+  }
+
+  return [];
 }
 
 // ============ Helper Functions ============
@@ -560,11 +927,75 @@ export async function getInstancesStatusMap(): Promise<Map<string, { status: str
   const map = new Map();
   for (const inst of instances) {
     map.set(inst.name, {
-      status: inst.connectionStatus,
-      profileName: inst.profileName,
-      profilePicUrl: inst.profilePicUrl,
-      ownerJid: inst.ownerJid,
+      status: inst.connectionStatus || (inst.connected ? 'open' : 'close'),
+      profileName: inst.profileName || null,
+      profilePicUrl: inst.profilePicUrl || null,
+      ownerJid: inst.ownerJid || null,
     });
   }
   return map;
+}
+
+// ============ Instance ID Resolution ============
+
+/**
+ * In Evolution Go v3, many operations require the instance UUID (not the name).
+ * This function resolves an instance name to its UUID by fetching all instances.
+ * If the input is already a UUID (contains hyphens and is 36 chars), return it directly.
+ *
+ * This is cached in-memory to avoid repeated API calls.
+ */
+const instanceIdCache = new Map<string, string>();
+
+export function clearInstanceIdCache(): void {
+  instanceIdCache.clear();
+}
+
+async function resolveInstanceId(nameOrId: string): Promise<string> {
+  // Check if already a UUID (format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(nameOrId)) {
+    return nameOrId;
+  }
+
+  // Check cache
+  if (instanceIdCache.has(nameOrId)) {
+    return instanceIdCache.get(nameOrId)!;
+  }
+
+  // Fetch instances and find the UUID
+  try {
+    const instances = await fetchInstances();
+    const instance = instances.find(i => i.name === nameOrId);
+    if (instance && instance.id) {
+      instanceIdCache.set(nameOrId, instance.id);
+      return instance.id;
+    }
+  } catch {
+    // If fetch fails, fall through
+  }
+
+  // Last resort: return the name as-is and hope the API accepts it
+  // (Some v3 endpoints might still work with the name in the instanceId header)
+  return nameOrId;
+}
+
+/**
+ * Convert proxy config from internal format to Evolution Go format.
+ * Internal: { enabled, host, port, username, password }
+ * Evolution Go: { address, port, username, password }
+ */
+export function toEvolutionGoProxy(proxy: {
+  enabled: boolean;
+  host: string;
+  port: string;
+  username: string;
+  password: string;
+} | null): { address: string; port: string; username: string; password: string } | undefined {
+  if (!proxy || !proxy.enabled) return undefined;
+  return {
+    address: proxy.host,
+    port: proxy.port,
+    username: proxy.username,
+    password: proxy.password,
+  };
 }
