@@ -4,7 +4,7 @@ import { NextResponse } from 'next/server'
 
 /**
  * POST /api/whatsapp/import-instances
- * Import OctupusZap Evolution API instances that are not yet linked to any chip.
+ * Import OctupusZap Evolution Go instances that are not yet linked to any chip.
  * Only imports instances with the OctupusZap_ prefix.
  * Body: { instanceNames?: string[] } — optional filter, imports all unlinked if empty
  */
@@ -13,7 +13,7 @@ export async function POST(request: Request) {
     const body = await request.json().catch(() => ({}))
     const { instanceNames } = body as { instanceNames?: string[] }
 
-    // Fetch only OctupusZap instances from Evolution API
+    // Fetch only OctupusZap instances from Evolution Go
     const instances = await fetchOctupusZapInstances()
 
     // Get all chips that already have an evolution instance linked
@@ -46,7 +46,7 @@ export async function POST(request: Request) {
         const existingByPhone = existingChips.find(c => c.phoneNumber === phoneNumber)
         if (existingByPhone) {
           // Link existing chip to this instance
-          const newStatus = inst.connectionStatus === 'open' ? 'connected' : inst.connectionStatus === 'close' ? 'disconnected' : 'connecting'
+          const newStatus = inst.connected ? 'connected' : 'disconnected'
           await db.chip.update({
             where: { id: existingByPhone.id },
             data: {
@@ -70,7 +70,7 @@ export async function POST(request: Request) {
 
       // Create a new chip for this instance
       const chipName = inst.profileName || inst.name.replace(INSTANCE_PREFIX, '').replace(/_/g, ' ')
-      const newStatus = inst.connectionStatus === 'open' ? 'connected' : inst.connectionStatus === 'close' ? 'disconnected' : 'connecting'
+      const newStatus = inst.connected ? 'connected' : 'disconnected'
 
       try {
         const chip = await db.chip.create({
@@ -122,20 +122,25 @@ export async function POST(request: Request) {
 }
 
 /**
- * POST /api/whatsapp/import-instances
- * Also configures webhooks for all imported instances in the background.
- * This ensures the inbox receives incoming messages.
+ * Configure webhooks for all imported instances in the background.
+ * Uses v3 event names for Evolution Go.
  */
 async function configureWebhooksForImported(imported: Array<{ instanceName: string }>) {
   const webhookUrl = `${process.env.VERCEL_URL ? 'https://' + process.env.VERCEL_URL : process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/whatsapp/webhook`
   for (const item of imported) {
     try {
       await setWebhook(item.instanceName, webhookUrl, [
-        'MESSAGES_UPSERT',
-        'MESSAGES_UPDATE',
+        'MESSAGE',
         'SEND_MESSAGE',
-        'CONNECTION_UPDATE',
-        'INSTANCE_DELETED',
+        'READ_RECEIPT',
+        'PRESENCE',
+        'CHAT_PRESENCE',
+        'CALL',
+        'CONNECTION',
+        'QRCODE',
+        'LABEL',
+        'CONTACT',
+        'GROUP',
       ])
       console.log(`[Import] Webhook configured for ${item.instanceName}`)
     } catch (err) {
