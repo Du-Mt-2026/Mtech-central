@@ -1,12 +1,15 @@
 import { NextResponse } from 'next/server'
-import { testConnection, clearCredentialsCache } from '@/lib/evolution-api'
+import { testAllConnections } from '@/lib/evolution-router'
+import { clearCredentialsCache } from '@/lib/evolution-api'
+import { clearV2CredentialsCache } from '@/lib/evolution-api-v2'
 
-// POST /api/whatsapp/test-connection — Test Evolution API credentials
+// POST /api/whatsapp/test-connection — Test Evolution API credentials (both v2 and v3)
 export async function POST() {
   try {
-    // Clear cache so we test the latest credentials from DB
+    // Clear caches so we test the latest credentials from DB
     clearCredentialsCache()
-    const result = await testConnection()
+    clearV2CredentialsCache()
+    const result = await testAllConnections()
     return NextResponse.json(result)
   } catch (error: any) {
     return NextResponse.json(

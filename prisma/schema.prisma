@@ -45,6 +45,7 @@ model Chip {
 
   // Evolution API integration
   evolutionInstance         String?  @unique
+  evolutionApiVersion      String   @default("v3")  // "v2" = Baileys (Node.js) | "v3" = Go (whatsmeow)
   profileName              String?
   profilePicUrl            String?
   disconnectionReasonCode  Int?

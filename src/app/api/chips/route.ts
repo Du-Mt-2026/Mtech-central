@@ -6,8 +6,19 @@ import {
   generateWireGuardKeys,
 } from '@/lib/wireguard'
 import { addWireGuardPeer } from '@/lib/wireguard-peer-api'
-import { deleteInstance, disconnectInstance, getInstanceName, fetchOctupusZapInstances, INSTANCE_PREFIX, isOctupusZapInstance } from '@/lib/evolution-api'
 import { removeWireGuardPeer } from '@/lib/wireguard-peer-api'
+import {
+  fetchAllInstances,
+  deleteInstance as routerDeleteInstance,
+  disconnectInstance as routerDisconnectInstance,
+  getApiVersion,
+  getInstanceName,
+  INSTANCE_PREFIX,
+  isOctupusZapInstance,
+} from '@/lib/evolution-router'
+
+// Re-export helpers from evolution-api for backward compat
+import { getInstanceName as v3GetInstanceName, INSTANCE_PREFIX as v3InstancePrefix, isOctupusZapInstance as v3IsOctupusZap } from '@/lib/evolution-api'
 
 export async function GET() {
   try {
@@ -54,7 +65,7 @@ export async function GET() {
       }
     }
 
-    // Fetch chips from DB — only OctupusZap_ prefixed or new (no instance yet)
+    // Fetch ALL chips from DB
     let chips = await db.chip.findMany({
       orderBy: { createdAt: 'desc' },
       include: {
@@ -64,29 +75,29 @@ export async function GET() {
       },
     })
 
-    // Fetch real-time status from Evolution Go
-    // This merges Evolution Go instance data with our DB chips
-    let instanceMap = new Map<string, any>()
-    let evoGoReachable = false
+    // Fetch real-time status from BOTH v2 and v3 APIs
+    const instanceMap = new Map<string, any>()
+    let anyApiReachable = false
     try {
-      const instances = await fetchOctupusZapInstances()
+      const instances = await fetchAllInstances()
       for (const inst of instances) {
         instanceMap.set(inst.name, inst)
       }
-      evoGoReachable = true
+      anyApiReachable = true
     } catch {
-      // Evolution Go unavailable — return DB data as-is
+      // APIs unavailable — return DB data as-is
     }
 
-    // Sync cleanup: delete chips whose instances don't exist in Evolution Go
-    // Must be synchronous because Vercel serverless kills background tasks
-    // If Evolution Go is reachable, any chip with an evolutionInstance NOT in
-    // the instanceMap is orphaned (instance was deleted or never existed in Go)
-    if (evoGoReachable) {
+    // Sync cleanup: delete chips whose instances don't exist in ANY API
+    if (anyApiReachable) {
       const orphanedIds: string[] = []
       for (const chip of chips) {
         if (chip.evolutionInstance && !instanceMap.has(chip.evolutionInstance)) {
-          orphanedIds.push(chip.id)
+          // Only orphan if the chip has a v3 instance with OctupusZap_ prefix
+          // v2 instances may not be in the DB yet — don't auto-delete
+          if (v3IsOctupusZap(chip.evolutionInstance)) {
+            orphanedIds.push(chip.id)
+          }
         }
       }
       if (orphanedIds.length > 0) {
@@ -99,35 +110,41 @@ export async function GET() {
           await db.chip.delete({ where: { id } }).catch(() => {})
         }
         console.log(`[Chips Cleanup] Deleted ${orphanedIds.length} orphaned chips`)
-        // Remove orphaned chips from the response
         const orphanedSet = new Set(orphanedIds)
         chips = chips.filter(c => !orphanedSet.has(c.id))
       }
     }
 
-    // Merge real-time Evolution Go status into chips
+    // Merge real-time status into chips
     const mergedChips = chips.map(chip => {
-      const instanceName = chip.evolutionInstance || getInstanceName(chip.id, chip.name)
+      const instanceName = chip.evolutionInstance || v3GetInstanceName(chip.id, chip.name)
       const evoInstance = instanceMap.get(instanceName)
+      const chipApiVersion = getApiVersion(chip)
 
-      // If chip has an evolutionInstance but it doesn't exist in Evolution Go → disconnected
       let realTimeStatus = chip.status
       let realTimeConnected = false
       let realTimeJid: string | null = null
       let realTimeProfileName: string | null = chip.profileName
+      let realTimeProfilePicUrl: string | null = chip.profilePicUrl
+      let realTimeApiVersion: string = chipApiVersion
 
       if (evoInstance) {
         realTimeConnected = evoInstance.connected || false
         realTimeStatus = realTimeConnected ? 'connected' : 'disconnected'
-        realTimeJid = evoInstance.jid || evoInstance.ownerJid || null
+        realTimeJid = evoInstance.ownerJid || null
         realTimeProfileName = evoInstance.profileName || chip.profileName
-      } else if (chip.evolutionInstance && isOctupusZapInstance(chip.evolutionInstance)) {
-        // Instance doesn't exist in Evolution Go anymore
-        realTimeStatus = 'disconnected'
+        realTimeProfilePicUrl = evoInstance.profilePicUrl || chip.profilePicUrl
+        realTimeApiVersion = evoInstance.apiVersion || chipApiVersion
+      } else if (chip.evolutionInstance) {
+        // Instance doesn't exist in any API
+        if (v3IsOctupusZap(chip.evolutionInstance)) {
+          realTimeStatus = 'disconnected'
+        }
+        // v2 instances not found — might just not be linked yet
       }
 
       // Update DB in background if status changed (non-blocking)
-      if (realTimeStatus !== chip.status || (evoInstance && realTimeProfileName !== chip.profileName)) {
+      if (realTimeStatus !== chip.status || (evoInstance && (realTimeProfileName !== chip.profileName || realTimeApiVersion !== chip.evolutionApiVersion))) {
         db.chip.update({
           where: { id: chip.id },
           data: {
@@ -137,7 +154,8 @@ export async function GET() {
               isQrPaired: realTimeStatus === 'connected',
             } : {}),
             ...(realTimeProfileName !== chip.profileName ? { profileName: realTimeProfileName } : {}),
-            ...(realTimeJid && realTimeConnected ? { profilePicUrl: realTimeJid } : {}),
+            ...(realTimeProfilePicUrl !== chip.profilePicUrl ? { profilePicUrl: realTimeProfilePicUrl } : {}),
+            ...(realTimeApiVersion !== chip.evolutionApiVersion ? { evolutionApiVersion: realTimeApiVersion } : {}),
           },
         }).catch(() => {}) // Silently ignore DB update errors
       }
@@ -146,6 +164,8 @@ export async function GET() {
         ...chip,
         status: realTimeStatus,
         profileName: realTimeProfileName,
+        profilePicUrl: realTimeProfilePicUrl,
+        evolutionApiVersion: realTimeApiVersion,
         _evoConnected: realTimeConnected,
         _evoInstanceExists: !!evoInstance,
       }
@@ -161,7 +181,7 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const body = await request.json()
-    const { name, phoneNumber } = body
+    const { name, phoneNumber, evolutionApiVersion } = body
 
     if (!name || !phoneNumber) {
       return NextResponse.json(
@@ -200,6 +220,7 @@ export async function POST(request: Request) {
         wireguardPubKey: publicKey,
         socksPort,
         status: 'disconnected',
+        evolutionApiVersion: evolutionApiVersion || 'v3',  // Default to v3, frontend can specify v2
       },
     })
 
@@ -233,11 +254,12 @@ export async function DELETE(request: NextRequest) {
     const chip = await db.chip.findUnique({ where: { id } })
 
     if (chip) {
-      const instanceName = chip.evolutionInstance || getInstanceName(chip.id, chip.name)
+      const instanceName = chip.evolutionInstance || v3GetInstanceName(chip.id, chip.name)
+      const apiVersion = getApiVersion(chip)
 
-      // Disconnect and delete instance from Evolution Go
-      try { await disconnectInstance(instanceName) } catch { /* may already be disconnected */ }
-      try { await deleteInstance(instanceName) } catch { /* may not exist */ }
+      // Disconnect and delete instance from the correct API
+      try { await routerDisconnectInstance(instanceName, apiVersion) } catch { /* may already be disconnected */ }
+      try { await routerDeleteInstance(instanceName, apiVersion) } catch { /* may not exist */ }
 
       // Remove WireGuard peer from KVM8 server
       if (chip.wireguardPubKey && chip.wireguardIp) {

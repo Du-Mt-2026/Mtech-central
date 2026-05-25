@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { disconnectInstance, getInstanceName, deleteInstance, findInstanceByName } from '@/lib/evolution-api'
+import { disconnectInstance, deleteInstance, getApiVersion } from '@/lib/evolution-router'
+import { getInstanceName } from '@/lib/evolution-api'
 
 export async function POST(request: Request) {
   try {
@@ -15,16 +16,16 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Chip não encontrado' }, { status: 404 })
     }
 
-    // Use the linked instance name from chip, or generate from chip ID/name
     const instanceName = chip.evolutionInstance || getInstanceName(chip.id, chip.name)
+    const apiVersion = getApiVersion(chip)
 
     // Try to disconnect
     try {
-      await disconnectInstance(instanceName)
+      await disconnectInstance(instanceName, apiVersion)
     } catch (err) {
       console.log('Disconnect failed, trying delete:', err)
       try {
-        await deleteInstance(instanceName)
+        await deleteInstance(instanceName, apiVersion)
       } catch (deleteErr) {
         console.log('Delete also failed:', deleteErr)
       }
