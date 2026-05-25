@@ -27,8 +27,9 @@ export async function POST(request: NextRequest) {
 
     const instanceName = chip.evolutionInstance || getInstanceName(chip.id, chip.name)
 
-    // Build webhook URL
-    const webhookUrl = `${process.env.VERCEL_URL ? 'https://' + process.env.VERCEL_URL : process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/whatsapp/webhook`
+    // Build webhook URL — prefer stable NEXT_PUBLIC_APP_URL over deployment-specific VERCEL_URL
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || (process.env.VERCEL_URL ? 'https://' + process.env.VERCEL_URL : 'http://localhost:3000')
+    const webhookUrl = `${appUrl}/api/whatsapp/webhook`
 
     // Resolve proxy config
     const globalProxy = await getGlobalProxy()

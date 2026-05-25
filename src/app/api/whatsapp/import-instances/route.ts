@@ -120,7 +120,9 @@ export async function POST(request: Request) {
  * Configure webhooks for all imported instances in the background.
  */
 async function configureWebhooksForImported(imported: Array<{ instanceName: string }>) {
-  const webhookUrl = `${process.env.VERCEL_URL ? 'https://' + process.env.VERCEL_URL : process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/whatsapp/webhook`
+  // Prefer stable NEXT_PUBLIC_APP_URL over deployment-specific VERCEL_URL
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || (process.env.VERCEL_URL ? 'https://' + process.env.VERCEL_URL : 'http://localhost:3000')
+  const webhookUrl = `${appUrl}/api/whatsapp/webhook`
   for (const item of imported) {
     try {
       await routerSetWebhook(item.instanceName, webhookUrl)

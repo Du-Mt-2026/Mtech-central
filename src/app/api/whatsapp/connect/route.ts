@@ -26,7 +26,10 @@ export async function POST(request: Request) {
     const instanceName = chip.evolutionInstance || v3GetInstanceName(chip.id, chip.name)
 
     // Build webhook URL for this instance
-    const webhookUrl = `${process.env.VERCEL_URL ? 'https://' + process.env.VERCEL_URL : process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/whatsapp/webhook`
+    // IMPORTANT: Use NEXT_PUBLIC_APP_URL (stable production URL) over VERCEL_URL (deployment-specific)
+    // VERCEL_URL changes on every deploy, which breaks existing webhooks in Evolution Go
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || (process.env.VERCEL_URL ? 'https://' + process.env.VERCEL_URL : 'http://localhost:3000')
+    const webhookUrl = `${appUrl}/api/whatsapp/webhook`
 
     // ===== Evolution Go Connection Flow =====
     // Resolve proxy config for this chip
