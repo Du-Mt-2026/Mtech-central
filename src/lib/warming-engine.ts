@@ -30,6 +30,7 @@
 import { sendTextMessage, sendMediaMessage, setPresence, formatPhoneNumber, getConnectionState } from './evolution-api'
 import { db } from './db'
 import { toMins, getCurrentMinutes } from './time-utils'
+import { NURSERY_SCHEDULE, PREWARM_SCHEDULE, type ScheduleEntry, type AntiBanSettings } from './constants'
 
 // ============================================================
 // TYPES
@@ -484,6 +485,139 @@ async function performWarmingPresence(
 }
 
 // ============================================================
+// CHIP PHASE LIMITS — Anti-Ban Integration
+// ============================================================
+
+/**
+ * Get the effective daily limit for a chip based on its warming phase.
+ * This mirrors the sending-engine's getEffectiveDailyLimit logic
+ * so that the warming engine respects the same anti-ban rules.
+ *
+ * Chips in nursery (berçário): 10-80 msgs/day depending on day
+ * Chips in prewarm: 11-200 msgs/day depending on day
+ * Chips ready (aquecido): full daily limit (200 by default)
+ */
+async function getChipEffectiveDailyLimit(
+  chip: { warmingPhase: string | null; warmingEnabled: boolean; dailyLimit: number; warmingStartedAt: string | Date | null; createdAt: string | Date; sentToday: number },
+  antiBanSettings: AntiBanSettings | null
+): Promise<{ limit: number; phase: string; dayInPhase: number; remaining: number }> {
+  const defaultLimit = chip.dailyLimit || 200
+  const phase = chip.warmingPhase || 'nursery'
+
+  // If anti-ban warming is disabled or chip warming is disabled, use chip's dailyLimit
+  if (!antiBanSettings?.warmingEnabled || !chip.warmingEnabled) {
+    return { limit: defaultLimit, phase, dayInPhase: 0, remaining: Math.max(0, defaultLimit - chip.sentToday) }
+  }
+
+  if (phase === 'ready') {
+    const limit = antiBanSettings.readyDailyLimit || defaultLimit
+    return { limit, phase, dayInPhase: 0, remaining: Math.max(0, limit - chip.sentToday) }
+  }
+
+  // Calculate day within phase (using Brasília timezone)
+  const now = new Date()
+  let dayInPhase = 1
+  const warmingStart = chip.warmingStartedAt
+    ? new Date(chip.warmingStartedAt)
+    : chip.createdAt
+      ? new Date(chip.createdAt)
+      : null
+
+  if (warmingStart) {
+    const spFormatter = new Intl.DateTimeFormat('en-US', {
+      year: 'numeric', month: 'numeric', day: 'numeric',
+      timeZone: 'America/Sao_Paulo',
+    })
+    const nowStr = spFormatter.format(now)
+    const startStr = spFormatter.format(warmingStart)
+    const [nm, nd, ny] = nowStr.split('/').map(Number)
+    const [sm, sd, sy] = startStr.split('/').map(Number)
+    const nowDate = new Date(ny, nm - 1, nd)
+    const startDate = new Date(sy, sm - 1, sd)
+    dayInPhase = Math.max(1, Math.floor((nowDate.getTime() - startDate.getTime()) / 86400000) + 1)
+  }
+
+  // Parse schedule for the phase
+  let schedule: ScheduleEntry[] = []
+  try {
+    if (phase === 'nursery') {
+      schedule = JSON.parse(antiBanSettings.nurserySchedule || '[]')
+      if (schedule.length === 0) schedule = NURSERY_SCHEDULE
+    } else if (phase === 'prewarm') {
+      schedule = JSON.parse(antiBanSettings.prewarmSchedule || '[]')
+      if (schedule.length === 0) schedule = PREWARM_SCHEDULE
+    }
+  } catch { /* fallback to defaults */ }
+
+  if (schedule.length === 0) {
+    if (phase === 'nursery') schedule = NURSERY_SCHEDULE
+    else if (phase === 'prewarm') schedule = PREWARM_SCHEDULE
+  }
+
+  // Find limit for current day
+  let limit = 10
+  for (const entry of schedule) {
+    if (dayInPhase >= entry.days[0] && dayInPhase <= entry.days[1]) {
+      limit = entry.limit
+      break
+    }
+  }
+  // If beyond schedule, use last entry's limit
+  if (schedule.length > 0 && dayInPhase > schedule[schedule.length - 1].days[1]) {
+    limit = schedule[schedule.length - 1].limit
+  }
+
+  // Cap at chip's dailyLimit
+  limit = Math.min(limit, chip.dailyLimit || antiBanSettings.dailyLimitPerChip)
+
+  const remaining = Math.max(0, limit - chip.sentToday)
+  return { limit, phase, dayInPhase, remaining }
+}
+
+/**
+ * Load anti-ban settings from DB (cached per invocation)
+ */
+async function loadAntiBanSettings(): Promise<AntiBanSettings | null> {
+  try {
+    const settings = await db.antiBanSettings.findFirst()
+    return settings as unknown as AntiBanSettings | null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Check if ALL chips in a session have hit their daily phase limits.
+ * Used to decide whether to pause the session for the rest of the day.
+ */
+async function checkAllChipsAtDailyLimit(
+  chipIds: string[],
+  antiBanSettings: AntiBanSettings | null
+): Promise<boolean> {
+  const chips = await db.chip.findMany({
+    where: { id: { in: chipIds } },
+    select: {
+      id: true,
+      warmingPhase: true,
+      warmingEnabled: true,
+      dailyLimit: true,
+      warmingStartedAt: true,
+      createdAt: true,
+      sentToday: true,
+    },
+  })
+
+  for (const chip of chips) {
+    const limitInfo = await getChipEffectiveDailyLimit(chip, antiBanSettings)
+    if (limitInfo.remaining > 0) {
+      return false // At least one chip can still send
+    }
+  }
+
+  return true // All chips are at their daily limit
+}
+
+// ============================================================
 // CORE WARMING ENGINE
 // ============================================================
 
@@ -692,6 +826,36 @@ export async function processNextWarmingMessage(
       data: { lastError: `Chip remetente ${senderChip?.name || senderChipId} desconectado` },
     })
     return { processed: false, delayMs: 5000, completed: false, reason: 'sender_disconnected' }
+  }
+
+  // ============================================================
+  // ANTI-BAN: Respect chip's warming phase daily limit
+  // Chips in berçário (nursery) have much lower daily limits!
+  // A chip on Day 1-2 in nursery can only send 10 msgs/day.
+  // This is CRITICAL — sending 150 msgs to a Day 1 chip = instant ban.
+  // ============================================================
+  const antiBanSettings = await loadAntiBanSettings()
+  const senderLimitInfo = await getChipEffectiveDailyLimit(senderChip, antiBanSettings)
+
+  if (senderLimitInfo.remaining <= 0) {
+    // Sender hit its daily limit for its phase — skip this tick
+    // Check if ALL chips have hit their limits (session should pause for today)
+    const allChipsAtLimit = await checkAllChipsAtDailyLimit(chipIds, antiBanSettings)
+    if (allChipsAtLimit) {
+      console.log(`[WarmingEngine] All chips hit their daily phase limits. Pausing session "${session.name}" until tomorrow.`)
+      await db.warmingSession.update({
+        where: { id: sessionId },
+        data: { lastError: `Todos os chips atingiram o limite diário da fase. Retoma amanhã automaticamente.` },
+      })
+      return { processed: false, delayMs: 60000, completed: false, reason: 'all_chips_daily_limit_reached' }
+    }
+
+    return {
+      processed: false,
+      delayMs: 30000,
+      completed: false,
+      reason: `sender_daily_limit_${senderChip.name}_phase_${senderLimitInfo.phase}_day${senderLimitInfo.dayInPhase}`,
+    }
   }
 
   if (!recipientChip?.phoneNumber) {

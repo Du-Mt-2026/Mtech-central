@@ -432,9 +432,15 @@ export function WarmingTab() {
               {/* Chips */}
               <div className="space-y-2">
                 <Label>Chips Participantes * (mín. 2)</Label>
+                {chips.some(c => c.warmingPhase === 'nursery' || !c.warmingPhase) && (
+                  <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-3 text-xs text-amber-700 dark:text-amber-400">
+                    ⚠️ Chips no <strong>Berçário</strong> têm limites diários menores (10-80 msgs/dia conforme o dia).
+                    O aquecimento respeita automaticamente esses limites — a sessão pausa quando todos os chips atingem o limite do dia e retoma no dia seguinte.
+                  </div>
+                )}
                 <div className="border rounded-lg p-3 max-h-60 overflow-y-auto space-y-2">
                   {chips.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">Nenhum chip conectado encontrado</p>
+                    <p className="text-sm text-muted-foreground">Nenhum chip disponível encontrado. Conecte chips na aba Chips primeiro.</p>
                   ) : (
                     chips.map(chip => (
                       <label key={chip.id} className="flex items-center gap-3 p-2 hover:bg-muted rounded cursor-pointer">
@@ -446,9 +452,21 @@ export function WarmingTab() {
                           <span className="text-sm font-medium">{chip.name}</span>
                           <span className="text-xs text-muted-foreground ml-2">{chip.phoneNumber}</span>
                         </div>
-                        <Badge variant="outline" className="text-xs">
-                          {WARMING_PHASE_LABELS[chip.warmingPhase] || chip.warmingPhase}
+                        <Badge
+                          variant="outline"
+                          className={`text-xs ${
+                            chip.warmingPhase === 'nursery' || !chip.warmingPhase
+                              ? 'border-amber-500 text-amber-600'
+                              : chip.warmingPhase === 'prewarm'
+                              ? 'border-blue-500 text-blue-600'
+                              : 'border-green-500 text-green-600'
+                          }`}
+                        >
+                          {WARMING_PHASE_LABELS[chip.warmingPhase] || 'Berçário'}
                         </Badge>
+                        <span className="text-xs text-muted-foreground">
+                          {chip.status === 'connected' ? '🟢' : '🔴'}
+                        </span>
                       </label>
                     ))
                   )}
