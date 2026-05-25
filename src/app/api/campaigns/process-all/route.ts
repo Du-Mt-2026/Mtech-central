@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { getRunningCampaigns, processNextMessage, startCampaign } from '@/lib/sending-engine'
+import { getRunningCampaigns, processNextMessage, startCampaign, performBreakWindowReadingPresence } from '@/lib/sending-engine'
+import { healthCheckDisconnectedChips, processQueue } from '@/lib/reconnection-queue'
+import { processAllWarmingSessions, autoStartScheduledSessions } from '@/lib/warming-engine'
 
 /**
  * Process messages for running campaigns.
@@ -108,6 +110,23 @@ export async function POST(request: NextRequest) {
     }
 
     if (campaignIds.length === 0 && startedCampaigns.length === 0) {
+      // Still process warming sessions even when no campaigns are running
+      try {
+        const autoStarted = await autoStartScheduledSessions()
+        if (autoStarted.length > 0) {
+          console.debug(`[ProcessAll] Auto-started ${autoStarted.length} warming sessions`)
+        }
+        const warmingResult = await processAllWarmingSessions()
+        if (warmingResult.sessions > 0 || warmingResult.messagesSent > 0) {
+          return NextResponse.json({
+            message: 'No campaigns, but warming sessions processed',
+            processed: 0,
+            startedScheduled: 0,
+            warming: warmingResult,
+          })
+        }
+      } catch { /* non-critical */ }
+
       return NextResponse.json({
         message: 'No running or scheduled campaigns to process',
         processed: 0,
@@ -216,6 +235,68 @@ export async function POST(request: NextRequest) {
     } catch { /* non-critical */ }
 
     const totalRemaining = allResults.reduce((sum, r) => sum + (r.remaining || 0), 0)
+
+    // 3. Process reconnection queue — check disconnected chips and reconnect them
+    //    This runs on every cron tick to ensure disconnected chips are recovered
+    let reconnectionResult = { checked: 0, queued: 0, alreadyQueued: 0 }
+    try {
+      // Process the existing queue first (pick next chip to reconnect)
+      await processQueue()
+
+      // Run health check every 5 minutes (not every tick — it's expensive)
+      // Use a simple counter: processQueue runs every tick, healthCheck runs every 5th
+      // We check by looking at whether there's anything in the queue already
+      const stats = await import('@/lib/reconnection-queue').then(m => m.getReconnectionStats())
+      if (stats.queueLength === 0) {
+        // No items in queue — run health check to find disconnected chips
+        reconnectionResult = await healthCheckDisconnectedChips()
+      }
+    } catch (reconnectError: any) {
+      console.error('[ProcessAll] Reconnection health check error:', reconnectError.message)
+      // Non-critical — don't fail the whole cron
+    }
+
+    // 4. ANTI-BAN: Break window reading presence
+    //    During break windows (lunch, meeting), randomly make chips appear online
+    //    briefly as if checking WhatsApp — humans check their phones during breaks.
+    //    This runs only when we're in a break window AND no messages are being sent.
+    let breakReadingCount = 0
+    if (totalProcessed === 0) {
+      try {
+        breakReadingCount = await performBreakWindowReadingPresence()
+        if (breakReadingCount > 0) {
+          console.debug(`[ProcessAll] Break window reading: ${breakReadingCount} chips appeared online briefly`)
+        }
+      } catch (breakError: any) {
+        console.error('[ProcessAll] Break window reading error:', breakError.message)
+        // Non-critical
+      }
+    }
+
+    // 5. CHIP WARMING: Process running warming sessions
+    //    Chips "talk to each other" to generate positive history on WhatsApp servers.
+    //    Auto-start scheduled sessions whose time has come, then process messages.
+    let warmingResult = { sessions: 0, messagesSent: 0, errors: 0 }
+    try {
+      // Auto-start scheduled warming sessions
+      const autoStarted = await autoStartScheduledSessions()
+      if (autoStarted.length > 0) {
+        console.debug(`[ProcessAll] Auto-started ${autoStarted.length} warming sessions`)
+      }
+
+      // Process messages for running warming sessions
+      if (Date.now() - startTime < FUNCTION_TIMEOUT_MS - 5000) {
+        // Only run if we have at least 5s left before timeout
+        warmingResult = await processAllWarmingSessions()
+        if (warmingResult.messagesSent > 0) {
+          console.debug(`[ProcessAll] Warming: ${warmingResult.messagesSent} messages sent across ${warmingResult.sessions} sessions`)
+        }
+      }
+    } catch (warmingError: any) {
+      console.error('[ProcessAll] Warming processing error:', warmingError.message)
+      // Non-critical — don't fail the whole cron
+    }
+
     const elapsedMs = Date.now() - startTime
 
     return NextResponse.json({
@@ -227,6 +308,9 @@ export async function POST(request: NextRequest) {
       startedScheduled: startedCampaigns.length,
       startedCampaigns,
       startErrors: startErrors.length > 0 ? startErrors : undefined,
+      reconnection: reconnectionResult,
+      breakReading: breakReadingCount,
+      warming: warmingResult,
       elapsedMs,
     })
   } catch (error: any) {

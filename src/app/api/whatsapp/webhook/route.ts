@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { removeWireGuardPeer } from '@/lib/wireguard-peer-api'
+import { enqueueReconnection, markChipReconnected, dequeueReconnection } from '@/lib/reconnection-queue'
 import { db } from '@/lib/db'
 
 /**
@@ -71,6 +72,12 @@ export async function POST(request: Request) {
             },
           })
           console.log(`[Webhook] Chip ${chip.name} connected!`)
+
+          // Notify reconnection queue — chip successfully reconnected
+          // This will also auto-resume any paused campaigns
+          await markChipReconnected(chip.id).catch(err => {
+            console.error('[Webhook] Error notifying reconnection queue:', err)
+          })
         }
         break
       }
@@ -94,7 +101,8 @@ export async function POST(request: Request) {
           }
 
           const BAN_CODES = [401, 403, 428, 440]
-          if (disconnectionCode && BAN_CODES.includes(Number(disconnectionCode))) {
+          const isBanned = disconnectionCode && BAN_CODES.includes(Number(disconnectionCode))
+          if (isBanned) {
             updateData.status = 'banned'
             console.log(`[Webhook] Chip ${chip.name} marked as BANNED — disconnection code: ${disconnectionCode}`)
           }
@@ -103,6 +111,21 @@ export async function POST(request: Request) {
             where: { id: chip.id },
             data: updateData,
           })
+
+          // If NOT banned, queue the chip for automatic reconnection
+          // Banned chips need manual intervention — don't auto-reconnect them
+          if (!isBanned) {
+            console.log(`[Webhook] Queueing chip ${chip.name} for auto-reconnection`)
+            // Use setTimeout to avoid blocking the webhook response
+            // (the reconnection will start after the webhook returns 200)
+            setTimeout(() => {
+              enqueueReconnection(chip.id, {
+                reason: `Webhook Disconnected: ${reason || 'unknown'}`,
+              }).catch(err => {
+                console.error('[Webhook] Error queueing reconnection:', err)
+              })
+            }, 1000) // 1 second delay to ensure DB is updated first
+          }
         }
         break
       }

@@ -305,3 +305,102 @@ model InboxMessage {
   @@index([chipId, isRead])
   @@index([instanceName, createdAt])
 }
+
+// ============================================================
+// CHIP WARMING (Aquecimento de Chips)
+// ============================================================
+// Chips novos são "maduros" (aquecidos) antes de irem para operação.
+// O processo simula conversas reais entre chips para gerar
+// histórico positivo nos servidores do WhatsApp.
+//
+// Como funciona:
+//   1. Seleciona N chips para participar da sessão de aquecimento
+//   2. Os chips "conversam entre si" — Chip A manda para Chip B,
+//      que responde para Chip C, que manda áudio para Chip A
+//   3. Mensagens de texto, imagem e áudio são trocadas
+//   4. Tudo com delays gaussianos, presença humanizada, etc.
+//   5. Ao final, os chips têm histórico de conversas bidirecionais
+//
+// Isso reduz drasticamente a chance de ban quando o chip
+// começa a operar na esteira de vendas.
+
+model WarmingSession {
+  id              String   @id @default(cuid())
+  name            String
+
+  // Status: draft | running | paused | completed | cancelled
+  status          String   @default("draft")
+
+  // Estratégia de conversação
+  // "pairs"      — chips são pareados (A↔B, C↔D)
+  // "round_robin" — cada chip fala com o próximo em sequência (A→B→C→A)
+  // "random"     — pares aleatórios a cada mensagem
+  // "group"      — todos os chips conversam em rotação livre
+  strategy        String   @default("round_robin")
+
+  // Pool de chips participantes — JSON array de chip IDs
+  // ["chip_id_1", "chip_id_2", ...]
+  chipIds         String   @default("[]")
+
+  // Templates de mensagens para o aquecimento
+  // JSON array de objetos:
+  // [
+  //   {
+  //     "type": "text"|"image"|"audio",
+  //     "content": "Oi, tudo bem?",
+  //     "variations": ["Oi, tudo bem?", "E aí, como vai?", "Fala! Tudo certo?"],
+  //     "mediaUrl": null,
+  //     "caption": null,
+  //     "weight": 1.0  // peso relativo (texto=1.0, imagem=0.5, áudio=0.5)
+  //   },
+  //   {
+  //     "type": "image",
+  //     "content": "",
+  //     "variations": [],
+  //     "mediaUrl": "https://example.com/foto.jpg",
+  //     "caption": "Olha isso 😄",
+  //     "weight": 0.5
+  //   }
+  // ]
+  messageTemplates String  @default("[]")
+
+  // Configuração do aquecimento
+  messagesPerChip  Int      @default(150)       // Meta de mensagens por chip (envio + recebimento)
+  messagesSent     Int      @default(0)          // Total de mensagens enviadas na sessão
+  messagesFailed   Int      @default(0)          // Total de falhas
+  intervalMin      Int      @default(45)         // Segundos mínimos entre mensagens (mais conservador que campanhas)
+  intervalMax      Int      @default(120)        // Segundos máximos entre mensagens
+  activeHoursStart Int      @default(480)        // Início da janela de envio (minutos desde meia-noite, 480=8:00)
+  activeHoursEnd   Int      @default(1260)       // Fim da janela de envio (1260=21:00)
+  breakWindows     String   @default("[]")       // JSON: [{"start":720,"end":810,"label":"Almoço"}]
+  timezone         String   @default("America/Sao_Paulo")
+
+  // Distribuição de tipos de mensagem (percentuais)
+  // JSON: {"text": 47, "image": 27, "audio": 26}  → 70+40+40 = 150 por chip
+  messageTypeDistribution String @default("{\"text\":47,\"image\":27,\"audio\":26}")
+
+  // Agendamento
+  scheduledAt      DateTime?
+  startedAt        DateTime?
+  completedAt      DateTime?
+  pausedAt         DateTime?
+  lastMessageAt    DateTime?
+
+  // Controle de progresso por chip — JSON
+  // {"chip_id_1": {"sent": 30, "received": 28, "lastSentAt": "..."}, ...}
+  chipProgress     String   @default("{}")
+
+  // Último par que conversou — para round_robin continuar de onde parou
+  // {"lastSenderIdx": 2, "lastRecipientIdx": 5}
+  lastPair         String   @default("{}")
+
+  // Erros e diagnóstico
+  lastError        String?
+  errorCount       Int      @default(0)
+
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([status])
+  @@index([status, scheduledAt])
+}

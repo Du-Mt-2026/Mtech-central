@@ -279,6 +279,14 @@ export async function createInstance(
   const body: any = {
     name: instanceName,
     token,
+    // ANTI-BAN: alwaysOnline=false ensures the chip does NOT appear
+    // permanently online — presence is managed by the sending engine
+    // via setPresence('available'/'unavailable') calls.
+    // A chip that is always online is a known bot signature.
+    alwaysOnline: false,
+    // Reject incoming calls — telemarketing chips don't need calls
+    rejectCall: true,
+    msgRejectCall: 'Desculpa, não posso atender agora.',
   };
 
   // Proxy is set at creation time
@@ -753,6 +761,7 @@ export async function sendTextMessage(
     number,
     text,
     delay: options?.delay || 0,
+    linkPreview: options?.linkPreview ?? false,
   };
 
   const response = await evolutionFetch('/send/text', {
