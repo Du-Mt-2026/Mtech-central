@@ -84,6 +84,7 @@ export async function POST(request: NextRequest) {
         evolutionMsgId: evolutionResponse?.key?.id || null,
         isRead: true,
         isGroup: remoteJid.includes('@g.us'),
+        isCampaign: false,  // Manual reply from inbox — not a campaign blast
       },
     })
 

@@ -31,10 +31,11 @@ export async function GET(request: NextRequest) {
     })
 
     // Get stats for ALL chips in a single query using groupBy
-    // Conversation count per chip (distinct remoteJid)
+    // IMPORTANT: Only count non-campaign messages (isCampaign: false)
+    // Campaign messages are blast messages, not real conversations
     const conversationsPerChip = await db.inboxMessage.groupBy({
       by: ['chipId', 'remoteJid'],
-      where: { chipId: { not: null }, isGroup: false },
+      where: { chipId: { not: null }, isGroup: false, isCampaign: false },
     })
     const convCountMap = new Map<string, number>()
     for (const row of conversationsPerChip) {
@@ -43,10 +44,10 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Unread count per chip
+    // Unread count per chip (only non-campaign messages)
     const unreadPerChip = await db.inboxMessage.groupBy({
       by: ['chipId'],
-      where: { chipId: { not: null }, isRead: false, fromMe: false, isGroup: false },
+      where: { chipId: { not: null }, isRead: false, fromMe: false, isGroup: false, isCampaign: false },
       _count: { id: true },
     })
     const unreadMap = new Map<string, number>()
@@ -56,10 +57,10 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Last message per chip
+    // Last message per chip (only non-campaign)
     const lastMsgPerChip = await db.inboxMessage.groupBy({
       by: ['chipId'],
-      where: { chipId: { not: null } },
+      where: { chipId: { not: null }, isCampaign: false },
       _max: { createdAt: true },
     })
     const lastMsgMap = new Map<string, Date>()

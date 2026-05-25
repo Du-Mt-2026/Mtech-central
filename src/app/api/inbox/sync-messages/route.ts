@@ -30,9 +30,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Chip não encontrado ou sem instância' }, { status: 404 })
     }
 
-    // Count existing messages in inbox for this chip
+    // Count existing non-campaign messages in inbox for this chip
     const messageCount = await db.inboxMessage.count({
-      where: { chipId },
+      where: { chipId, isCampaign: false },
     })
 
     return NextResponse.json({

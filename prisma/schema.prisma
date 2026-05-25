@@ -297,6 +297,7 @@ model InboxMessage {
   evolutionMsgId  String?  @unique
   isRead          Boolean  @default(false)
   isGroup         Boolean  @default(false) // Se a mensagem veio de um grupo
+  isCampaign      Boolean  @default(false) // Se a mensagem foi enviada por campanha (não é conversa real)
   createdAt       DateTime @default(now())
 
   chip            Chip?    @relation(fields: [chipId], references: [id], onDelete: Cascade)
@@ -304,6 +305,7 @@ model InboxMessage {
   @@index([chipId, remoteJid, createdAt])
   @@index([chipId, isRead])
   @@index([instanceName, createdAt])
+  @@index([isCampaign])
 }
 
 // ============================================================

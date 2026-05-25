@@ -29,6 +29,7 @@ export async function GET(request: NextRequest) {
     const where: Record<string, unknown> = {
       chipId,
       isGroup: showGroups ? undefined : false,
+      isCampaign: false,  // Never show campaign blast messages in inbox
     }
     if (!showGroups) where.isGroup = false
 

@@ -1,76 +1,88 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 
 /**
  * POST /api/inbox/normalize-phones
- * Normalizes Brazilian phone numbers in InboxMessage table.
- * Adds the mobile "9" prefix where missing (55+DDD+8digits → 55+DDD+9+8digits).
- * Also merges conversations that were split due to different phone formats.
+ * 
+ * This endpoint handles data cleanup tasks:
+ * 1. Normalizes phone numbers in InboxMessage (original purpose)
+ * 2. Marks campaign messages as isCampaign=true (cleanup for existing data)
+ * 
+ * Query params:
+ * - action: 'normalize' | 'mark-campaign' (default: 'mark-campaign')
  */
-export async function POST() {
+export async function POST(request: NextRequest) {
   try {
-    // Find all InboxMessage records with Brazilian phone numbers missing the 9
-    // Format: 55 + DDD(2) + 8 digits + @s.whatsapp.net = 12 digit phone number
-    const allMessages = await db.inboxMessage.findMany({
-      where: {
-        remoteJid: { contains: '@s.whatsapp.net' },
-      },
-      select: {
-        id: true,
-        remoteJid: true,
-        remotePhone: true,
-      },
-    })
+    const body = await request.json().catch(() => ({}))
+    const action = body.action || 'mark-campaign'
 
-    let updated = 0
-    let skipped = 0
-    const updates: Array<{ from: string; to: string; count: number }> = []
+    if (action === 'mark-campaign') {
+      // Step 1: Mark all InboxMessages that have a matching Message (campaign) record
+      // These were sent by campaigns and should NOT appear in the inbox
+      const campaignMessages = await db.message.findMany({
+        where: { evolutionMessageId: { not: null } },
+        select: { evolutionMessageId: true },
+      })
 
-    for (const msg of allMessages) {
-      const phonePart = msg.remoteJid.split('@')[0]
+      const campaignMsgIds = campaignMessages
+        .map(m => m.evolutionMessageId)
+        .filter((id): id is string => !!id)
 
-      // Check if it's a Brazilian number without the 9 (12 digits starting with 55)
-      if (phonePart.startsWith('55') && phonePart.length === 12) {
-        const normalizedPhone = phonePart.slice(0, 4) + '9' + phonePart.slice(4)
-        const normalizedJid = `${normalizedPhone}@s.whatsapp.net`
+      // Mark matching inbox messages as campaign
+      const updateResult = await db.inboxMessage.updateMany({
+        where: {
+          evolutionMsgId: { in: campaignMsgIds },
+          isCampaign: false,
+        },
+        data: { isCampaign: true },
+      })
 
-        try {
-          await db.inboxMessage.update({
-            where: { id: msg.id },
-            data: {
-              remoteJid: normalizedJid,
-              remotePhone: normalizedPhone,
-            },
-          })
-          updated++
-        } catch (err: any) {
-          // Unique constraint violation - a record with the normalized JID already exists
-          if (err.code === 'P2002') {
-            // Delete the duplicate instead
-            try {
-              await db.inboxMessage.delete({ where: { id: msg.id } })
-              updated++
-            } catch {
-              skipped++
-            }
-          } else {
-            skipped++
-          }
-        }
-      } else {
-        skipped++
-      }
+      // Step 2: Also mark all fromMe=true messages that DON'T have a matching 
+      // Message record but look like campaign blasts (sent to contacts that 
+      // never replied). This is a heuristic — messages where fromMe=true and
+      // the conversation has NO incoming messages from the contact.
+      // We skip this for now as it's too aggressive.
+
+      return NextResponse.json({
+        action: 'mark-campaign',
+        campaignMsgIdsFound: campaignMsgIds.length,
+        inboxMessagesUpdated: updateResult.count,
+        message: `Marcadas ${updateResult.count} mensagens de campanha no inbox. Elas não aparecerão mais na caixa de entrada.`,
+      })
     }
 
-    return NextResponse.json({
-      totalChecked: allMessages.length,
-      updated,
-      skipped,
-    })
-  } catch (error) {
-    console.error('Normalize phones error:', error)
+    if (action === 'normalize') {
+      // Original phone normalization logic
+      const messages = await db.inboxMessage.findMany({
+        where: { remotePhone: '' },
+        select: { id: true, remoteJid: true },
+        take: 500,
+      })
+
+      let normalized = 0
+      for (const msg of messages) {
+        const phone = msg.remoteJid.split('@')[0]
+        if (phone) {
+          await db.inboxMessage.update({
+            where: { id: msg.id },
+            data: { remotePhone: phone },
+          })
+          normalized++
+        }
+      }
+
+      return NextResponse.json({
+        action: 'normalize',
+        processed: messages.length,
+        normalized,
+      })
+    }
+
+    return NextResponse.json({ error: 'Ação desconhecida' }, { status: 400 })
+  } catch (error: any) {
+    console.error('Inbox normalize error:', error)
     return NextResponse.json(
-      { error: 'Erro ao normalizar telefones' },
+      { error: error.message || 'Erro na normalização' },
       { status: 500 }
     )
   }

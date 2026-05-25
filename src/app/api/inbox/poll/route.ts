@@ -17,7 +17,10 @@ export async function GET(request: NextRequest) {
     const since = searchParams.get('since') ? new Date(searchParams.get('since')!) : undefined
 
     // Get latest message timestamp for each conversation
-    const where: Record<string, unknown> = {}
+    // IMPORTANT: Filter out campaign blast messages
+    const where: Record<string, unknown> = {
+      isCampaign: false,
+    }
     if (chipId) where.chipId = chipId
     if (since) where.createdAt = { gt: since }
 
@@ -38,10 +41,10 @@ export async function GET(request: NextRequest) {
       },
     })
 
-    // Get total unread count per chip
+    // Get total unread count per chip (only non-campaign)
     const unreadPerChip = await db.inboxMessage.groupBy({
       by: ['chipId'],
-      where: { chipId: { not: null }, isRead: false, fromMe: false, isGroup: false },
+      where: { chipId: { not: null }, isRead: false, fromMe: false, isGroup: false, isCampaign: false },
       _count: { id: true },
     })
     const unreadMap = new Map<string, number>()

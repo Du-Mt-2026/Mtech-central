@@ -193,7 +193,8 @@ export async function POST(request: Request) {
               },
             })
 
-            // Save to InboxMessage
+            // Save to InboxMessage — but mark as campaign message
+            // These are NOT real conversations, just campaign blast messages
             try {
               const chip = await db.chip.findUnique({ where: { id: existing.chipId } })
               if (chip) {
@@ -212,7 +213,7 @@ export async function POST(request: Request) {
 
                 await db.inboxMessage.upsert({
                   where: { evolutionMsgId: messageId },
-                  update: { remoteJid, remotePhone },
+                  update: { remoteJid, remotePhone, isCampaign: true },
                   create: {
                     instanceName: chip.evolutionInstance || chipInstanceName,
                     chipId: chip.id,
@@ -227,6 +228,7 @@ export async function POST(request: Request) {
                     evolutionMsgId: messageId,
                     isRead: true,
                     isGroup: remoteJid.includes('@g.us'),
+                    isCampaign: true,  // This is a campaign message, not a real conversation
                   },
                 })
               }
@@ -367,6 +369,16 @@ export async function POST(request: Request) {
               if (contact?.name) contactName = contact.name
             }
 
+            // Check if this outgoing message is from a campaign (already in Message table)
+            let isCampaignMsg = false
+            if (fromMe && msgId) {
+              const existingCampaignMsg = await db.message.findFirst({
+                where: { evolutionMessageId: msgId },
+                select: { id: true },
+              })
+              isCampaignMsg = !!existingCampaignMsg
+            }
+
             await db.inboxMessage.upsert({
               where: { evolutionMsgId: msgId },
               update: {
@@ -379,6 +391,7 @@ export async function POST(request: Request) {
                 messageType,
                 mediaUrl,
                 pushName,
+                isCampaign: isCampaignMsg,
               },
               create: {
                 instanceName: chipInstanceName,
@@ -394,6 +407,7 @@ export async function POST(request: Request) {
                 evolutionMsgId: msgId,
                 isRead: fromMe,
                 isGroup,
+                isCampaign: isCampaignMsg,
               },
             })
           }
