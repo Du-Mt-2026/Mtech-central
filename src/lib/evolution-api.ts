@@ -191,19 +191,31 @@ interface SendMessageResponse {
 
 /**
  * Core fetch function for Evolution Go API.
- * Many endpoints require the `instanceId` header (UUID) instead of
- * the instance name in the URL path.
+ *
+ * CRITICAL: Evolution Go v3 uses a TWO-LEVEL auth system:
+ *   1) Global API key: for listing/creating instances (GET /instance/all, POST /instance/create)
+ *   2) Instance token:  for ALL instance-scoped operations (connect, QR, send, status, etc.)
+ *
+ * When `instanceToken` is provided, it replaces the global API key in the `apikey` header.
+ * When `instanceId` is provided, it's sent as the `instanceId` header for instance-scoped routing.
+ *
+ * @param endpoint API endpoint path (e.g. '/instance/connect')
+ * @param options fetch options
+ * @param instanceId UUID of the instance (sent as `instanceId` header)
+ * @param instanceToken Per-instance token (replaces global apikey for instance-scoped calls)
  */
 export async function evolutionFetch(
   endpoint: string,
   options: RequestInit = {},
-  instanceId?: string
+  instanceId?: string,
+  instanceToken?: string
 ) {
   const creds = await getCredentials()
   const url = `${creds.apiUrl}${endpoint}`;
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    'apikey': creds.apiKey,
+    // Instance-scoped operations use the instance token; global operations use the global key
+    'apikey': instanceToken || creds.apiKey,
   };
 
   // Add instanceId header for instance-scoped operations
@@ -242,9 +254,11 @@ export async function createInstance(
     password: string;
   }
 ): Promise<EvolutionInstance> {
+  // Generate a unique token — Evolution Go requires a non-empty token
+  const token = `oz_${instanceName}_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
   const body: any = {
     name: instanceName,
-    token: '',  // Let Evolution Go auto-generate the token
+    token,
   };
 
   // Proxy is set at creation time
@@ -349,7 +363,7 @@ export async function fetchOctupusZapInstances(): Promise<EvolutionInstance[]> {
  * DELETE /instance/delete/{instanceId} (UUID, not name)
  */
 export async function deleteInstance(instanceIdOrName: string): Promise<void> {
-  // Try to resolve UUID from name if needed
+  // Delete uses the GLOBAL API key (not instance token)
   const instanceId = await resolveInstanceId(instanceIdOrName);
   await evolutionFetch(`/instance/delete/${instanceId}`, {
     method: 'DELETE',
@@ -369,7 +383,7 @@ export async function connectInstance(
   webhookUrl?: string,
   subscribeEvents?: string[]
 ): Promise<ConnectResult> {
-  const instanceId = await resolveInstanceId(instanceIdOrName);
+  const { id: instanceId, token: instanceToken } = await resolveInstance(instanceIdOrName);
 
   const body: any = {
     immediate: true,
@@ -395,7 +409,7 @@ export async function connectInstance(
   const response = await evolutionFetch('/instance/connect', {
     method: 'POST',
     body: JSON.stringify(body),
-  }, instanceId);
+  }, instanceId, instanceToken);
 
   const data = await response.json();
 
@@ -430,10 +444,10 @@ export async function connectInstance(
  * Returns { data: { Qrcode: "data:image/png;base64,...", Code: "2@..." }, message: "success" }
  */
 export async function getInstanceQRCode(instanceIdOrName: string): Promise<ConnectResult> {
-  const instanceId = await resolveInstanceId(instanceIdOrName);
+  const { id: instanceId, token: instanceToken } = await resolveInstance(instanceIdOrName);
 
   try {
-    const response = await evolutionFetch('/instance/qr', {}, instanceId);
+    const response = await evolutionFetch('/instance/qr', {}, instanceId, instanceToken);
     const data = await response.json();
 
     const qrData = data.data || data;
@@ -466,13 +480,13 @@ export async function requestPairingCode(
   instanceIdOrName: string,
   phone: string
 ): Promise<string | null> {
-  const instanceId = await resolveInstanceId(instanceIdOrName);
+  const { id: instanceId, token: instanceToken } = await resolveInstance(instanceIdOrName);
 
   try {
     const response = await evolutionFetch('/instance/pair', {
       method: 'POST',
       body: JSON.stringify({ phone }),
-    }, instanceId);
+    }, instanceId, instanceToken);
     const data = await response.json();
     const result = data.data || data;
     return result.PairingCode || result.pairingCode || null;
@@ -486,10 +500,10 @@ export async function requestPairingCode(
  * POST /instance/disconnect (with instanceId header)
  */
 export async function disconnectInstance(instanceIdOrName: string): Promise<void> {
-  const instanceId = await resolveInstanceId(instanceIdOrName);
+  const { id: instanceId, token: instanceToken } = await resolveInstance(instanceIdOrName);
   await evolutionFetch('/instance/disconnect', {
     method: 'POST',
-  }, instanceId);
+  }, instanceId, instanceToken);
 }
 
 /**
@@ -498,10 +512,10 @@ export async function disconnectInstance(instanceIdOrName: string): Promise<void
  * Returns { data: { Connected, LoggedIn, Name }, message: "success" }
  */
 export async function getConnectionState(instanceIdOrName: string): Promise<ConnectionState> {
-  const instanceId = await resolveInstanceId(instanceIdOrName);
+  const { id: instanceId, token: instanceToken } = await resolveInstance(instanceIdOrName);
 
   try {
-    const response = await evolutionFetch('/instance/status', {}, instanceId);
+    const response = await evolutionFetch('/instance/status', {}, instanceId, instanceToken);
     const data = await response.json();
     const status = data.data || data;
 
@@ -539,7 +553,7 @@ export async function sendTextMessage(
     linkPreview?: boolean;
   }
 ): Promise<SendMessageResponse> {
-  const instanceId = await resolveInstanceId(instanceIdOrName);
+  const { id: instanceId, token: instanceToken } = await resolveInstance(instanceIdOrName);
 
   const body: any = {
     number,
@@ -550,7 +564,7 @@ export async function sendTextMessage(
   const response = await evolutionFetch('/send/text', {
     method: 'POST',
     body: JSON.stringify(body),
-  }, instanceId);
+  }, instanceId, instanceToken);
   const data = await response.json();
 
   const result = data.data || data;
@@ -580,7 +594,7 @@ export async function sendMediaMessage(
     delay?: number;
   }
 ): Promise<SendMessageResponse> {
-  const instanceId = await resolveInstanceId(instanceIdOrName);
+  const { id: instanceId, token: instanceToken } = await resolveInstance(instanceIdOrName);
 
   const body: any = {
     number,
@@ -593,7 +607,7 @@ export async function sendMediaMessage(
   const response = await evolutionFetch('/send/media', {
     method: 'POST',
     body: JSON.stringify(body),
-  }, instanceId);
+  }, instanceId, instanceToken);
   const data = await response.json();
 
   const result = data.data || data;
@@ -620,7 +634,7 @@ export async function setPresence(
   presence: 'composing' | 'available' | 'unavailable' | 'recording',
   delay: number = 2000
 ): Promise<void> {
-  const instanceId = await resolveInstanceId(instanceIdOrName);
+  const { id: instanceId, token: instanceToken } = await resolveInstance(instanceIdOrName);
 
   // Best-effort — if it fails, the sending engine still works
   try {
@@ -631,7 +645,7 @@ export async function setPresence(
         presence,
         delay,
       }),
-    }, instanceId);
+    }, instanceId, instanceToken);
   } catch {
     // Silently ignore — presence is not critical for sending
   }
@@ -765,15 +779,14 @@ export async function setProxy(
 ): Promise<void> {
   // Proxy is configured at instance creation time.
   // To update proxy after creation, the instance needs to be deleted and recreated.
-  // For now, we store the proxy info and apply it on next reconnect.
 
   // If proxy is being disabled, delete the proxy configuration
   if (!proxy.enabled) {
     try {
-      const instanceId = await resolveInstanceId(instanceIdOrName);
+      const { id: instanceId, token: instanceToken } = await resolveInstance(instanceIdOrName);
       await evolutionFetch(`/instance/proxy/${instanceId}`, {
         method: 'DELETE',
-      });
+      }, undefined, instanceToken);
     } catch {
       // Silently ignore — proxy removal is not critical
     }
@@ -812,7 +825,7 @@ export async function setWebhook(
 ): Promise<void> {
   // Webhook is set during connect.
   // If the instance is already connected, this will update the webhook.
-  const instanceId = await resolveInstanceId(instanceIdOrName);
+  const { id: instanceId, token: instanceToken } = await resolveInstance(instanceIdOrName);
 
   await evolutionFetch('/instance/connect', {
     method: 'POST',
@@ -821,7 +834,7 @@ export async function setWebhook(
       subscribe: events,
       immediate: true,
     }),
-  }, instanceId);
+  }, instanceId, instanceToken);
 }
 
 // ============ Number Verification ============
@@ -835,12 +848,12 @@ export async function checkWhatsAppNumbers(
   instanceIdOrName: string,
   numbers: string[]
 ): Promise<Array<{ query: string; exists: boolean; jid: string }>> {
-  const instanceId = await resolveInstanceId(instanceIdOrName);
+  const { id: instanceId, token: instanceToken } = await resolveInstance(instanceIdOrName);
 
   const response = await evolutionFetch('/user/check', {
     method: 'POST',
     body: JSON.stringify({ numbers }),
-  }, instanceId);
+  }, instanceId, instanceToken);
 
   const data = await response.json();
   const result = data.data || data;
@@ -914,45 +927,70 @@ export async function getInstancesStatusMap(): Promise<Map<string, { status: str
   return map;
 }
 
-// ============ Instance ID Resolution ============
+// ============ Instance ID & Token Resolution ============
 
 /**
- * Many operations require the instance UUID (not the name).
- * This function resolves an instance name to its UUID by fetching all instances.
- * If the input is already a UUID (contains hyphens and is 36 chars), return it directly.
- * Cached in-memory to avoid repeated API calls.
+ * Resolved instance info: UUID + per-instance token.
+ * Both are required for instance-scoped Evolution Go API calls.
  */
-const instanceIdCache = new Map<string, string>();
-
-export function clearInstanceIdCache(): void {
-  instanceIdCache.clear();
+interface ResolvedInstance {
+  id: string;      // UUID
+  token: string;   // Per-instance token (used as apikey for instance-scoped calls)
 }
 
-async function resolveInstanceId(nameOrId: string): Promise<string> {
-  // Check if already a UUID (format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)
-  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(nameOrId)) {
-    return nameOrId;
+/**
+ * Cache for resolved instance info (name → { id, token }).
+ * Avoids repeated /instance/all calls when doing multiple operations
+ * on the same instance within a single request.
+ */
+const instanceCache = new Map<string, ResolvedInstance>();
+
+export function clearInstanceIdCache(): void {
+  instanceCache.clear();
+}
+
+/**
+ * Resolve an instance name (or UUID) to its UUID + token.
+ * This fetches /instance/all using the GLOBAL API key and finds the matching instance.
+ * The returned token is required for ALL subsequent instance-scoped API calls.
+ */
+async function resolveInstance(nameOrId: string): Promise<ResolvedInstance> {
+  // Check cache first
+  if (instanceCache.has(nameOrId)) {
+    return instanceCache.get(nameOrId)!;
   }
 
-  // Check cache
-  if (instanceIdCache.has(nameOrId)) {
-    return instanceIdCache.get(nameOrId)!;
-  }
-
-  // Fetch instances and find the UUID
+  // Fetch all instances (uses global API key)
   try {
     const instances = await fetchInstances();
-    const instance = instances.find(i => i.name === nameOrId);
+
+    // Find by name or by ID
+    const instance = instances.find(i => i.name === nameOrId || i.id === nameOrId);
     if (instance && instance.id) {
-      instanceIdCache.set(nameOrId, instance.id);
-      return instance.id;
+      const resolved = { id: instance.id, token: instance.token };
+      instanceCache.set(nameOrId, resolved);
+      // Also cache by name if we searched by ID
+      if (instance.name !== nameOrId) {
+        instanceCache.set(instance.name, resolved);
+      }
+      return resolved;
     }
   } catch {
     // If fetch fails, fall through
   }
 
-  // Last resort: return the name as-is
-  return nameOrId;
+  // Last resort: return name as-is with empty token
+  // This will likely fail for instance-scoped operations,
+  // but global operations (like listing) might still work
+  return { id: nameOrId, token: '' };
+}
+
+/**
+ * Backward-compatible helper: resolve instance name to UUID only.
+ */
+async function resolveInstanceId(nameOrId: string): Promise<string> {
+  const resolved = await resolveInstance(nameOrId);
+  return resolved.id;
 }
 
 /**
