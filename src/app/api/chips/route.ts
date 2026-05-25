@@ -10,38 +10,42 @@ import { deleteInstance, disconnectInstance, getInstanceName, fetchOctupusZapIns
 import { removeWireGuardPeer } from '@/lib/wireguard-peer-api'
 
 /**
- * One-time cleanup: delete old chips from the v2 era that don't have the OctupusZap_ prefix.
- * These chips no longer have instances in any Evolution server and should be removed.
- * Runs in the background on each GET request until all old chips are gone.
+ * Cleanup: delete chips whose instances no longer exist in Evolution Go.
+ * This handles both:
+ *   - Old v2-era chips (without OctupusZap_ prefix)
+ *   - Chips with OctupusZap_ prefix but whose instances were deleted from Evolution Go
+ * Runs in the background on each GET request.
  */
-async function cleanupOldChips() {
+async function cleanupOrphanedChips(existingInstanceNames: Set<string>) {
   try {
-    // Find chips that have an evolutionInstance but NOT with OctupusZap_ prefix
-    const oldChips = await db.chip.findMany({
+    // Find all chips that have an evolutionInstance
+    const chipsWithInstance = await db.chip.findMany({
       where: {
         evolutionInstance: { not: null },
-        NOT: {
-          evolutionInstance: { startsWith: INSTANCE_PREFIX },
-        },
       },
       select: { id: true, evolutionInstance: true },
     })
 
-    if (oldChips.length === 0) return
+    // Find chips whose instance doesn't exist in Evolution Go
+    const orphanedChips = chipsWithInstance.filter(
+      chip => !existingInstanceNames.has(chip.evolutionInstance!)
+    )
 
-    console.log(`[Chips Cleanup] Found ${oldChips.length} old chips without ${INSTANCE_PREFIX} prefix, deleting...`)
+    if (orphanedChips.length === 0) return
 
-    for (const chip of oldChips) {
+    console.log(`[Chips Cleanup] Found ${orphanedChips.length} orphaned chips (instance not in Evolution Go), deleting...`)
+
+    for (const chip of orphanedChips) {
       // Delete related records first (same as DELETE handler)
       await db.message.deleteMany({ where: { chipId: chip.id } }).catch(() => {})
       await db.contact.deleteMany({ where: { chipId: chip.id } }).catch(() => {})
       await db.campaignChip.deleteMany({ where: { chipId: chip.id } }).catch(() => {})
       await db.inboxMessage.deleteMany({ where: { chipId: chip.id } }).catch(() => {})
       await db.chip.delete({ where: { id: chip.id } }).catch(() => {})
-      console.log(`[Chips Cleanup] Deleted old chip: ${chip.evolutionInstance} (${chip.id})`)
+      console.log(`[Chips Cleanup] Deleted orphaned chip: ${chip.evolutionInstance} (${chip.id})`)
     }
 
-    console.log(`[Chips Cleanup] Finished deleting ${oldChips.length} old chips`)
+    console.log(`[Chips Cleanup] Finished deleting ${orphanedChips.length} orphaned chips`)
   } catch (error) {
     console.error('[Chips Cleanup] Error:', error)
   }
@@ -108,20 +112,24 @@ export async function GET() {
       },
     })
 
-    // Background cleanup: delete old chips (without OctupusZap_ prefix) from the database
-    // These are remnants from the v2 era that no longer have instances in any Evolution server
-    cleanupOldChips().catch(() => {})
-
     // Fetch real-time status from Evolution Go
     // This merges Evolution Go instance data with our DB chips
     let instanceMap = new Map<string, any>()
+    let existingInstanceNames = new Set<string>()
     try {
       const instances = await fetchOctupusZapInstances()
       for (const inst of instances) {
         instanceMap.set(inst.name, inst)
+        existingInstanceNames.add(inst.name)
       }
     } catch {
       // Evolution Go unavailable — return DB data as-is
+    }
+
+    // Background cleanup: delete chips whose instances don't exist in Evolution Go
+    // This removes both old v2 chips and orphaned OctupusZap_ chips
+    if (existingInstanceNames.size > 0) {
+      cleanupOrphanedChips(existingInstanceNames).catch(() => {})
     }
 
     // Merge real-time Evolution Go status into chips
