@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { sendMediaMessage, formatPhoneNumber, getApiVersion } from '@/lib/evolution-router'
+import { sendMediaMessage, formatPhoneNumber } from '@/lib/evolution-router'
 import { db } from '@/lib/db'
 
 export async function POST(request: Request) {
@@ -29,14 +29,11 @@ export async function POST(request: Request) {
       )
     }
 
-    // Resolve API version: prefer chipId for version lookup, fall back to instanceName
-    let apiVersion: 'v2' | 'v3' = 'v3'
     let effectiveInstanceName = instanceName
 
     if (chipId) {
       const chip = await db.chip.findUnique({ where: { id: chipId } })
       if (chip) {
-        apiVersion = getApiVersion(chip)
         effectiveInstanceName = effectiveInstanceName || chip.evolutionInstance || ''
       }
     }
@@ -57,8 +54,8 @@ export async function POST(request: Request) {
     // Format phone number
     const formattedPhone = formatPhoneNumber(number)
 
-    // Send media message via the correct API (v2 or v3)
-    const result = await sendMediaMessage(effectiveInstanceName, apiVersion, formattedPhone, mediaDataUri, mediatype, {
+    // Send media message via Evolution Go (v3)
+    const result = await sendMediaMessage(effectiveInstanceName, 'v3', formattedPhone, mediaDataUri, mediatype, {
       caption,
       fileName: mediaFile.name,
       delay,
@@ -68,7 +65,6 @@ export async function POST(request: Request) {
       success: true,
       messageId: result.key?.id,
       remoteJid: result.key?.remoteJid,
-      apiVersion,
     })
   } catch (error: any) {
     console.error('Send media error:', error)

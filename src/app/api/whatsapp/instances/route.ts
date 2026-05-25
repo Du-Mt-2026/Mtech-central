@@ -1,11 +1,11 @@
 import { NextResponse } from 'next/server'
-import { fetchAllInstances, getApiVersion } from '@/lib/evolution-router'
+import { fetchAllInstances } from '@/lib/evolution-router'
 import { getInstanceName as v3GetInstanceName, INSTANCE_PREFIX } from '@/lib/evolution-api'
 import { db } from '@/lib/db'
 
 export async function GET() {
   try {
-    // Fetch instances from BOTH v2 and v3 APIs
+    // Fetch instances from Evolution Go (v3) API
     const instances = await fetchAllInstances()
 
     // Create a map of instance name -> instance data
@@ -17,19 +17,10 @@ export async function GET() {
     // Fetch all chips from our database
     const chips = await db.chip.findMany()
 
-    // Update chip statuses based on real-time data from both APIs
+    // Update chip statuses based on real-time data
     const updatedChips: any[] = []
     for (const chip of chips) {
-      const chipApiVersion = getApiVersion(chip)
-
-      // Build instance name based on API version
-      let instanceName: string
-      if (chipApiVersion === 'v2') {
-        instanceName = chip.evolutionInstance || chip.name.replace(/[^a-zA-Z0-9]/g, '_')
-      } else {
-        instanceName = chip.evolutionInstance || v3GetInstanceName(chip.id, chip.name)
-      }
-
+      const instanceName = chip.evolutionInstance || v3GetInstanceName(chip.id, chip.name)
       const evoInstance = instanceMap.get(instanceName)
 
       let evoStatus = 'close'
@@ -39,7 +30,6 @@ export async function GET() {
         evoStatus = evoInstance.connected || evoInstance.connectionStatus === 'open' ? 'open' : 'close'
         newStatus = evoInstance.connected || evoInstance.connectionStatus === 'open' ? 'connected' : 'disconnected'
       } else if (chip.evolutionInstance && chip.evolutionInstance.startsWith(INSTANCE_PREFIX)) {
-        // v3 instance no longer exists
         evoStatus = 'close'
         newStatus = 'disconnected'
       }
@@ -52,7 +42,6 @@ export async function GET() {
             status: newStatus,
             lastSeen: newStatus === 'connected' ? new Date() : chip.lastSeen,
             evolutionInstance: instanceName,
-            evolutionApiVersion: evoInstance?.apiVersion || chipApiVersion,
             ...(newStatus === 'connected' ? { isQrPaired: true } : {}),
           },
         })
@@ -63,7 +52,7 @@ export async function GET() {
         status: newStatus,
         evoInstanceName: instanceName,
         evoStatus,
-        apiVersion: evoInstance?.apiVersion || chipApiVersion,
+        apiVersion: 'v3',
         profileName: evoInstance?.profileName || chip.profileName,
         profilePicUrl: evoInstance?.profilePicUrl || chip.profilePicUrl,
       })

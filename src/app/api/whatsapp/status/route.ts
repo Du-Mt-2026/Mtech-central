@@ -1,4 +1,4 @@
-import { getConnectionState, fetchAllInstances, getApiVersion } from '@/lib/evolution-router'
+import { getConnectionState, fetchAllInstances } from '@/lib/evolution-router'
 import { getInstanceName as v3GetInstanceName, INSTANCE_PREFIX } from '@/lib/evolution-api'
 import { db } from '@/lib/db'
 import { NextResponse } from 'next/server'
@@ -14,18 +14,10 @@ export async function GET(request: Request) {
         return NextResponse.json({ error: 'Chip não encontrado' }, { status: 404 })
       }
 
-      const apiVersion = getApiVersion(chip)
-
-      // Build instance name based on API version
-      let instanceName: string
-      if (apiVersion === 'v2') {
-        instanceName = chip.evolutionInstance || chip.name.replace(/[^a-zA-Z0-9]/g, '_')
-      } else {
-        instanceName = chip.evolutionInstance || v3GetInstanceName(chip.id, chip.name)
-      }
+      const instanceName = chip.evolutionInstance || v3GetInstanceName(chip.id, chip.name)
 
       try {
-        const connectionState = await getConnectionState(instanceName, apiVersion)
+        const connectionState = await getConnectionState(instanceName)
         const state = connectionState.state || 'close'
 
         const newStatus = state === 'open' ? 'connected' : state === 'connecting' ? 'connecting' : 'disconnected'
@@ -46,7 +38,7 @@ export async function GET(request: Request) {
           instanceName,
           state,
           chipStatus: newStatus,
-          apiVersion,
+          apiVersion: 'v3',
         })
       } catch (error) {
         return NextResponse.json({
@@ -54,12 +46,12 @@ export async function GET(request: Request) {
           instanceName,
           state: 'unknown',
           chipStatus: chip.status,
-          apiVersion,
+          apiVersion: 'v3',
         })
       }
     }
 
-    // No chipId — return all instances from BOTH v2 and v3 and sync statuses in real-time
+    // No chipId — return all instances and sync statuses
     const [instances, chips] = await Promise.all([
       fetchAllInstances().catch(() => []),
       db.chip.findMany(),
@@ -69,26 +61,12 @@ export async function GET(request: Request) {
       instances.map((inst: any) => [inst.name, inst] as [string, any])
     )
 
-    // Sync chips status based on real-time data from both APIs
+    // Sync chips status based on real-time data
     for (const chip of chips) {
-      const chipApiVersion = getApiVersion(chip)
-
-      // Skip chips that are clearly on v2 and don't have OctupusZap_ prefix
-      if (chipApiVersion === 'v3' && chip.evolutionInstance && !chip.evolutionInstance.startsWith(INSTANCE_PREFIX)) {
-        continue
-      }
-
-      let instanceName: string
-      if (chipApiVersion === 'v2') {
-        instanceName = chip.evolutionInstance || chip.name.replace(/[^a-zA-Z0-9]/g, '_')
-      } else {
-        instanceName = chip.evolutionInstance || v3GetInstanceName(chip.id, chip.name)
-      }
-
+      const instanceName = chip.evolutionInstance || v3GetInstanceName(chip.id, chip.name)
       const evoInstance = instanceMap.get(instanceName)
 
       if (evoInstance) {
-        // Instance exists — use real-time status
         const newStatus = evoInstance.connected || evoInstance.connectionStatus === 'open' ? 'connected' : 'disconnected'
         if (chip.status !== newStatus) {
           await db.chip.update({
@@ -97,13 +75,11 @@ export async function GET(request: Request) {
               status: newStatus,
               lastSeen: newStatus === 'connected' ? new Date() : chip.lastSeen,
               evolutionInstance: instanceName,
-              evolutionApiVersion: evoInstance.apiVersion || chipApiVersion,
               ...(newStatus === 'connected' ? { isQrPaired: true } : {}),
             },
           })
         }
       } else if (chip.evolutionInstance && chip.evolutionInstance.startsWith(INSTANCE_PREFIX)) {
-        // v3 instance no longer exists — mark as disconnected
         if (chip.status !== 'disconnected') {
           await db.chip.update({
             where: { id: chip.id },

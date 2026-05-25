@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { disconnectInstance, deleteInstance, getApiVersion } from '@/lib/evolution-router'
+import { disconnectInstance, deleteInstance } from '@/lib/evolution-router'
 import { getInstanceName } from '@/lib/evolution-api'
 
 export async function POST(request: Request) {
@@ -17,15 +17,14 @@ export async function POST(request: Request) {
     }
 
     const instanceName = chip.evolutionInstance || getInstanceName(chip.id, chip.name)
-    const apiVersion = getApiVersion(chip)
 
     // Try to disconnect
     try {
-      await disconnectInstance(instanceName, apiVersion)
+      await disconnectInstance(instanceName)
     } catch (err) {
       console.log('Disconnect failed, trying delete:', err)
       try {
-        await deleteInstance(instanceName, apiVersion)
+        await deleteInstance(instanceName)
       } catch (deleteErr) {
         console.log('Delete also failed:', deleteErr)
       }

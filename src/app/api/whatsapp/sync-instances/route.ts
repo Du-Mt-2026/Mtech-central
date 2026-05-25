@@ -1,11 +1,11 @@
-import { fetchAllInstances, getApiVersion } from '@/lib/evolution-router';
+import { fetchAllInstances } from '@/lib/evolution-router';
 import { INSTANCE_PREFIX } from '@/lib/evolution-api';
 import { db } from '@/lib/db';
 import { NextResponse } from 'next/server';
 
 export async function POST(request: Request) {
   try {
-    // Fetch instances from BOTH v2 and v3 APIs
+    // Fetch instances from Evolution Go (v3) API
     const instances = await fetchAllInstances();
 
     // Get all chips that have an evolution instance linked
@@ -21,7 +21,7 @@ export async function POST(request: Request) {
     let synced = 0;
     const unlinked: string[] = [];
 
-    // Process each instance from both APIs
+    // Process each instance
     for (const instance of instances) {
       if (chipInstanceNames.has(instance.name)) {
         // This instance is linked to a chip — sync its status
@@ -37,7 +37,6 @@ export async function POST(request: Request) {
               lastSeen: newStatus === 'connected' ? new Date() : chip.lastSeen,
               profileName: instance.profileName || chip.profileName,
               profilePicUrl: instance.profilePicUrl || chip.profilePicUrl,
-              evolutionApiVersion: instance.apiVersion || chip.evolutionApiVersion,
             },
           });
           synced++;
@@ -49,7 +48,6 @@ export async function POST(request: Request) {
               data: {
                 profileName: instance.profileName || chip.profileName,
                 profilePicUrl: instance.profilePicUrl || chip.profilePicUrl,
-                evolutionApiVersion: instance.apiVersion || chip.evolutionApiVersion,
               },
             });
           }
@@ -64,7 +62,6 @@ export async function POST(request: Request) {
     // Also check for chips whose evolution instances no longer exist
     const instanceNames = new Set(instances.map((inst) => inst.name));
     for (const chip of chips) {
-      // Only care about v3 chips with OctupusZap prefix (v2 chips may just be offline)
       if (chip.evolutionInstance && chip.evolutionInstance.startsWith(INSTANCE_PREFIX) && !instanceNames.has(chip.evolutionInstance)) {
         await db.chip.update({
           where: { id: chip.id },

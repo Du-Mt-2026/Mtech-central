@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { sendTextMessage, setPresence, formatPhoneNumber, getInstanceName, getApiVersion } from '@/lib/evolution-router'
+import { sendTextMessage, setPresence, formatPhoneNumber } from '@/lib/evolution-router'
 import { formatPhoneNumber as v3FormatPhone, getInstanceName as v3GetInstanceName } from '@/lib/evolution-api'
 import { db } from '@/lib/db'
 
@@ -38,12 +38,11 @@ export async function POST(request: Request) {
     if (chip.sentToday >= chip.dailyLimit) return NextResponse.json({ error: 'Limite diário atingido' }, { status: 400 })
 
     const instanceName = chip.evolutionInstance || v3GetInstanceName(chip.id, chip.name)
-    const apiVersion = getApiVersion(chip)
     const formattedPhone = v3FormatPhone(contactPhone)
     const typingDurationMs = calculateTypingDuration(content)
 
     try {
-      await setPresence(instanceName, apiVersion, formattedPhone, 'composing', typingDurationMs)
+      await setPresence(instanceName, 'v3', formattedPhone, 'composing', typingDurationMs)
     } catch (typingErr) {
       console.error('Typing simulation failed:', typingErr)
     }
@@ -52,7 +51,7 @@ export async function POST(request: Request) {
     const sendDelay = delayMs || Math.floor(Math.random() * 800) + 200
     await new Promise(resolve => setTimeout(resolve, sendDelay))
 
-    const result = await sendTextMessage(instanceName, apiVersion, formattedPhone, content)
+    const result = await sendTextMessage(instanceName, 'v3', formattedPhone, content)
 
     if (contactId) {
       await db.message.updateMany({

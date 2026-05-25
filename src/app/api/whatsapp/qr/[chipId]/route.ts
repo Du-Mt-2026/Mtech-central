@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { getInstanceQRCode, getApiVersion } from '@/lib/evolution-router'
+import { getInstanceQRCode } from '@/lib/evolution-router'
 import { getInstanceName as v3GetInstanceName } from '@/lib/evolution-api'
 import { db } from '@/lib/db'
 
@@ -12,20 +12,11 @@ export async function GET(request: Request, { params }: { params: Promise<{ chip
       return NextResponse.json({ error: 'Chip não encontrado' }, { status: 404 })
     }
 
-    const apiVersion = getApiVersion(chip)
+    // Build instance name (v3 uses OctupusZap_ prefix)
+    const instanceName = chip.evolutionInstance || v3GetInstanceName(chip.id, chip.name)
 
-    // Build instance name based on API version
-    let instanceName: string
-    if (apiVersion === 'v2') {
-      // v2 uses the chip name directly (no prefix)
-      instanceName = chip.evolutionInstance || chip.name.replace(/[^a-zA-Z0-9]/g, '_')
-    } else {
-      // v3 uses OctupusZap_ prefix
-      instanceName = chip.evolutionInstance || v3GetInstanceName(chip.id, chip.name)
-    }
-
-    // Fetch QR code via the router (handles both v2 and v3)
-    const qrResult = await getInstanceQRCode(instanceName, apiVersion)
+    // Fetch QR code via the router
+    const qrResult = await getInstanceQRCode(instanceName)
 
     const isConnected = qrResult.state === 'open'
 
@@ -44,7 +35,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ chip
       qrcode: qrResult.qrcode || null,
       code: qrResult.code || null,
       state: qrResult.state,
-      apiVersion,
+      apiVersion: 'v3',
     })
   } catch (error: any) {
     console.error('QR fetch error:', error)

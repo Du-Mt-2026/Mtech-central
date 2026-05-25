@@ -1,20 +1,19 @@
-import { fetchAllInstances, setWebhook as routerSetWebhook, getApiVersion } from '@/lib/evolution-router'
+import { fetchAllInstances, setWebhook as routerSetWebhook } from '@/lib/evolution-router'
 import { INSTANCE_PREFIX } from '@/lib/evolution-api'
 import { db } from '@/lib/db'
 import { NextResponse } from 'next/server'
 
 /**
  * POST /api/whatsapp/import-instances
- * Import Evolution instances (both v2 and v3) that are not yet linked to any chip.
- * v3: Only imports instances with the OctupusZap_ prefix.
- * v2: Imports instances linked in DB or matching chip names.
+ * Import Evolution Go (v3) instances that are not yet linked to any chip.
+ * Only imports instances with the OctupusZap_ prefix.
  */
 export async function POST(request: Request) {
   try {
     const body = await request.json().catch(() => ({}))
     const { instanceNames } = body as { instanceNames?: string[] }
 
-    // Fetch instances from BOTH v2 and v3 APIs
+    // Fetch instances from Evolution Go (v3) API
     const instances = await fetchAllInstances()
 
     // Get all chips that already have an evolution instance linked
@@ -33,12 +32,12 @@ export async function POST(request: Request) {
       unlinked = unlinked.filter(inst => instanceNames.includes(inst.name))
     }
 
-    const imported: Array<{ id: string; name: string; instanceName: string; status: string; apiVersion: string }> = []
+    const imported: Array<{ id: string; name: string; instanceName: string; status: string }> = []
     const skipped: string[] = []
 
     for (const inst of unlinked) {
       // Determine phone number
-      const phoneNumber = inst.number || inst.ownerJid?.replace('@s.whatsapp.net', '') || ''
+      const phoneNumber = inst.ownerJid?.replace('@s.whatsapp.net', '') || ''
 
       // Check if a chip with the same phone number already exists
       if (phoneNumber) {
@@ -50,7 +49,7 @@ export async function POST(request: Request) {
             where: { id: existingByPhone.id },
             data: {
               evolutionInstance: inst.name,
-              evolutionApiVersion: inst.apiVersion,
+              evolutionApiVersion: 'v3',
               status: newStatus,
               profileName: inst.profileName || existingByPhone.profileName,
               profilePicUrl: inst.profilePicUrl || existingByPhone.profilePicUrl,
@@ -62,7 +61,6 @@ export async function POST(request: Request) {
             name: existingByPhone.name,
             instanceName: inst.name,
             status: newStatus,
-            apiVersion: inst.apiVersion,
           })
           continue
         }
@@ -78,7 +76,7 @@ export async function POST(request: Request) {
             name: chipName,
             phoneNumber: phoneNumber || inst.name,
             evolutionInstance: inst.name,
-            evolutionApiVersion: inst.apiVersion,
+            evolutionApiVersion: 'v3',
             status: newStatus,
             profileName: inst.profileName,
             profilePicUrl: inst.profilePicUrl,
@@ -90,7 +88,6 @@ export async function POST(request: Request) {
           name: chip.name,
           instanceName: inst.name,
           status: newStatus,
-          apiVersion: inst.apiVersion,
         })
       } catch (createError: unknown) {
         console.error(`Failed to create chip for instance ${inst.name}:`, createError)
@@ -123,14 +120,13 @@ export async function POST(request: Request) {
 
 /**
  * Configure webhooks for all imported instances in the background.
- * Routes to v2 or v3 webhook setup based on the API version.
  */
-async function configureWebhooksForImported(imported: Array<{ instanceName: string; apiVersion: string }>) {
+async function configureWebhooksForImported(imported: Array<{ instanceName: string }>) {
   const webhookUrl = `${process.env.VERCEL_URL ? 'https://' + process.env.VERCEL_URL : process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/whatsapp/webhook`
   for (const item of imported) {
     try {
-      await routerSetWebhook(item.instanceName, item.apiVersion as 'v2' | 'v3', webhookUrl)
-      console.log(`[Import] Webhook configured for ${item.instanceName} (${item.apiVersion})`)
+      await routerSetWebhook(item.instanceName, 'v3', webhookUrl)
+      console.log(`[Import] Webhook configured for ${item.instanceName}`)
     } catch (err) {
       console.error(`[Import] Failed to configure webhook for ${item.instanceName}:`, err)
     }

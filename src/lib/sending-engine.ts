@@ -10,7 +10,7 @@ import {
   sendMediaMessage as routerSendMedia,
   setPresence as routerSetPresence,
   getConnectionState as routerGetConnectionState,
-  getApiVersion,
+
   formatPhoneNumber,
 } from './evolution-router'
 import { db } from './db'
@@ -569,7 +569,7 @@ async function isInCooldown(chipId: string, settings: AntiBanConfig): Promise<{ 
  * If the chip is disconnected or has a disconnection reason, it may be banned.
  * Returns true if the chip appears to be banned/disconnected.
  */
-async function detectChipBan(chip: { id: string; evolutionInstance: string | null; status: string; disconnectionReasonCode: number | null; evolutionApiVersion?: string }): Promise<{ banned: boolean; reason: string; disconnected: boolean }> {
+async function detectChipBan(chip: { id: string; evolutionInstance: string | null; status: string; disconnectionReasonCode: number | null }): Promise<{ banned: boolean; reason: string; disconnected: boolean }> {
   // Check chip status first (fast)
   // IMPORTANT: "disconnected" is NOT the same as "banned"!
   // A chip that's disconnected might just need reconnection — don't block the campaign entirely.
@@ -593,7 +593,7 @@ async function detectChipBan(chip: { id: string; evolutionInstance: string | nul
   // Try to get live connection state from Evolution API
   if (chip.evolutionInstance) {
     try {
-      const state = await routerGetConnectionState(chip.evolutionInstance, getApiVersion(chip))
+      const state = await routerGetConnectionState(chip.evolutionInstance, 'v3')
       const instanceState = state?.state
       if (instanceState === 'close') {
         // 'close' can mean temporary disconnection OR ban — check disconnection code
@@ -1615,7 +1615,7 @@ export async function processNextMessage(campaignId: string): Promise<{
 
   try {
     const instanceName = chip.evolutionInstance!
-    const apiVersion = getApiVersion(chip)
+    const apiVersion = 'v3'
     const formattedPhone = formatPhoneNumber(message.contact.phone)
 
     // ============================================

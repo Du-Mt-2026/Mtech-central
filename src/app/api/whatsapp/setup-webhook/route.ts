@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { setWebhook, getApiVersion } from '@/lib/evolution-router'
+import { setWebhook } from '@/lib/evolution-router'
 
-// POST /api/whatsapp/setup-webhook — Configure webhook for an existing chip's Evolution instance (v2 or v3)
+// POST /api/whatsapp/setup-webhook — Configure webhook for an existing chip's Evolution instance
 export async function POST(request: Request) {
   try {
     const { chipId } = await request.json()
@@ -23,15 +23,14 @@ export async function POST(request: Request) {
       )
     }
 
-    const apiVersion = getApiVersion(chip)
     const webhookUrl = `${process.env.VERCEL_URL ? 'https://' + process.env.VERCEL_URL : process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/whatsapp/webhook`
 
-    await setWebhook(chip.evolutionInstance, apiVersion, webhookUrl)
+    await setWebhook(chip.evolutionInstance, 'v3', webhookUrl)
 
     return NextResponse.json({
       success: true,
       instanceName: chip.evolutionInstance,
-      apiVersion,
+      apiVersion: 'v3',
       webhookUrl,
     })
   } catch (error: any) {
