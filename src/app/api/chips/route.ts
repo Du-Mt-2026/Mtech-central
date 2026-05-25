@@ -95,18 +95,22 @@ export async function GET() {
     // Sync cleanup: delete chips whose instances don't exist in the corresponding API
     // Only check for orphans on APIs that are actually reachable.
     // If an API is down, we DO NOT delete its chips (they might still exist on the offline server).
+    // IMPORTANT: Only auto-delete OctupusZap_-prefixed chips from v3 to avoid accidentally
+    // deleting v2 chips or v3 chips created manually in the Evolution Go manager.
     if (anyApiReachable) {
       const orphanedIds: string[] = []
       for (const chip of chips) {
         if (chip.evolutionInstance && !instanceMap.has(chip.evolutionInstance)) {
           const chipApiVersion = getApiVersion(chip)
           // Only mark as orphaned if the API that should have this instance is reachable
-          // v3 chip → only orphan if v3 API was reachable and instance not found there
-          // v2 chip → only orphan if v2 API was reachable and instance not found there
+          // AND the instance was created by OctupusZap (has the prefix).
+          // Non-prefixed instances (e.g., "Artur" created in Evolution Go directly)
+          // should NOT be auto-deleted — the user may have just created them.
           if (chipApiVersion === 'v3' && v3Reachable && v3IsOctupusZap(chip.evolutionInstance)) {
             orphanedIds.push(chip.id)
           }
           // Don't auto-delete v2 chips — they may exist on the v2 server with different names
+          // Don't auto-delete v3 chips without OctupusZap_ prefix — they're manually managed
         }
       }
       if (orphanedIds.length > 0) {

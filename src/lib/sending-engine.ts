@@ -5,7 +5,14 @@
 // Serverless-compatible: processes messages with real delays.
 // Vercel Cron calls /api/campaigns/process-all every minute.
 
-import { sendTextMessage, sendMediaMessage, setPresence, formatPhoneNumber, getConnectionState } from './evolution-api'
+import {
+  sendTextMessage as routerSendText,
+  sendMediaMessage as routerSendMedia,
+  setPresence as routerSetPresence,
+  getConnectionState as routerGetConnectionState,
+  getApiVersion,
+  formatPhoneNumber,
+} from './evolution-router'
 import { db } from './db'
 
 // ============================================================
@@ -562,7 +569,7 @@ async function isInCooldown(chipId: string, settings: AntiBanConfig): Promise<{ 
  * If the chip is disconnected or has a disconnection reason, it may be banned.
  * Returns true if the chip appears to be banned/disconnected.
  */
-async function detectChipBan(chip: { id: string; evolutionInstance: string | null; status: string; disconnectionReasonCode: number | null }): Promise<{ banned: boolean; reason: string; disconnected: boolean }> {
+async function detectChipBan(chip: { id: string; evolutionInstance: string | null; status: string; disconnectionReasonCode: number | null; evolutionApiVersion?: string }): Promise<{ banned: boolean; reason: string; disconnected: boolean }> {
   // Check chip status first (fast)
   // IMPORTANT: "disconnected" is NOT the same as "banned"!
   // A chip that's disconnected might just need reconnection — don't block the campaign entirely.
@@ -586,8 +593,8 @@ async function detectChipBan(chip: { id: string; evolutionInstance: string | nul
   // Try to get live connection state from Evolution API
   if (chip.evolutionInstance) {
     try {
-      const state = await getConnectionState(chip.evolutionInstance)
-      const instanceState = state?.instance?.state
+      const state = await routerGetConnectionState(chip.evolutionInstance, getApiVersion(chip))
+      const instanceState = state?.state
       if (instanceState === 'close') {
         // 'close' can mean temporary disconnection OR ban — check disconnection code
         // Only treat as banned if we have a known ban code; otherwise treat as disconnected
@@ -1608,6 +1615,7 @@ export async function processNextMessage(campaignId: string): Promise<{
 
   try {
     const instanceName = chip.evolutionInstance!
+    const apiVersion = getApiVersion(chip)
     const formattedPhone = formatPhoneNumber(message.contact.phone)
 
     // ============================================
@@ -1630,7 +1638,7 @@ export async function processNextMessage(campaignId: string): Promise<{
         console.debug(`[SendingEngine] Recording presence for ${mediaDurationMs}ms (${message.mediatype}) to ${formattedPhone}`)
 
         try {
-          await setPresence(instanceName, `${formattedPhone}@s.whatsapp.net`, 'recording', mediaDurationMs)
+          await routerSetPresence(instanceName, apiVersion, `${formattedPhone}@s.whatsapp.net`, 'recording', mediaDurationMs)
         } catch {
           // Non-fatal — some evoGO versions may not support this endpoint
         }
@@ -1643,7 +1651,7 @@ export async function processNextMessage(campaignId: string): Promise<{
         console.debug(`[SendingEngine] Typing for ${typingDurationMs}ms (${message.content.length} chars) to ${formattedPhone}`)
 
         try {
-          await setPresence(instanceName, `${formattedPhone}@s.whatsapp.net`, 'composing', typingDurationMs)
+          await routerSetPresence(instanceName, apiVersion, `${formattedPhone}@s.whatsapp.net`, 'composing', typingDurationMs)
         } catch {
           // Non-fatal — some evoGO versions may not support this endpoint
         }
@@ -1692,17 +1700,17 @@ export async function processNextMessage(campaignId: string): Promise<{
         }
 
         const caption = mt === 'audio' ? '' : (finalContent || '')
-        result = await sendMediaMessage(instanceName, formattedPhone, message.mediaUrl, mt, {
+        result = await routerSendMedia(instanceName, apiVersion, formattedPhone, message.mediaUrl, mt, {
           caption,
           delay: 0, // We already handled delay via presence simulation
         })
       } else {
-        result = await sendTextMessage(instanceName, formattedPhone, finalContent, {
+        result = await routerSendText(instanceName, apiVersion, formattedPhone, finalContent, {
           delay: 0,
         })
       }
     } else {
-      result = await sendTextMessage(instanceName, formattedPhone, finalContent, {
+      result = await routerSendText(instanceName, apiVersion, formattedPhone, finalContent, {
         delay: 0, // Delay is already handled by presence simulation + interval
       })
     }

@@ -1,6 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { setProxy, resolveChipProxy, getGlobalProxy, deleteInstance, disconnectInstance, getInstanceName } from '@/lib/evolution-api'
+import {
+  deleteInstance as routerDeleteInstance,
+  disconnectInstance as routerDisconnectInstance,
+  getApiVersion,
+  getInstanceName,
+  resolveChipProxy,
+  getGlobalProxy,
+  setWebhook,
+} from '@/lib/evolution-router'
+import { setProxy, getInstanceName as v3GetInstanceName } from '@/lib/evolution-api'
 import { removeWireGuardPeer } from '@/lib/wireguard-peer-api'
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ chipId: string }> }) {
@@ -10,17 +19,18 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ c
     const chip = await db.chip.findUnique({ where: { id: chipId } })
 
     if (chip) {
-      const instanceName = chip.evolutionInstance || getInstanceName(chip.id, chip.name)
+      const apiVersion = getApiVersion(chip)
+      const instanceName = chip.evolutionInstance || v3GetInstanceName(chip.id, chip.name)
 
-      // Disconnect and delete instance from Evolution API
+      // Disconnect and delete instance from the correct Evolution API (v2 or v3)
       try {
-        await disconnectInstance(instanceName)
+        await routerDisconnectInstance(instanceName, apiVersion)
       } catch (err) {
         console.log('[Chip DELETE] Disconnect failed (may already be disconnected):', err)
       }
 
       try {
-        await deleteInstance(instanceName)
+        await routerDeleteInstance(instanceName, apiVersion)
       } catch (err) {
         console.log('[Chip DELETE] Delete instance failed (may not exist):', err)
       }

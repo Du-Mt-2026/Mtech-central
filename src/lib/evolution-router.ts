@@ -66,10 +66,14 @@ export function getApiVersion(chip: { evolutionApiVersion?: string }): ApiVersio
  * OctupusZap_ prefix = v3 (new convention).
  * No prefix = could be v2 (legacy) or v3 without prefix.
  * Best effort — prefer DB record over name heuristics.
+ * 
+ * IMPORTANT: For reliable version detection, always use getApiVersion(chip)
+ * with the chip's DB record instead of this heuristic function.
  */
 export function inferApiVersionFromName(instanceName: string): ApiVersion {
   if (instanceName.startsWith('OctupusZap_')) return 'v3'
-  // Could be v2 or v3 — default to v3
+  // Non-prefixed names could be v2 OR v3 — default to v3
+  // since new instances created outside the site also go to v3
   return 'v3'
 }
 

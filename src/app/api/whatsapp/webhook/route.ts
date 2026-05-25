@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server'
-import { INSTANCE_PREFIX } from '@/lib/evolution-api'
 import { removeWireGuardPeer } from '@/lib/wireguard-peer-api'
 import { db } from '@/lib/db'
 
@@ -45,28 +44,21 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true })
     }
 
-    // For v3 instances: only process OctupusZap instances
-    // For v2 instances: process all (they don't have the OctupusZap_ prefix)
-    const isV3Instance = chipInstanceName.startsWith(INSTANCE_PREFIX)
-    const isV2Instance = !isV3Instance
+    // Determine API version from DB record instead of name prefix.
+    // This handles v3 instances that don't have the OctupusZap_ prefix
+    // (e.g., instances created directly in Evolution Go manager).
+    const linkedChip = await db.chip.findFirst({
+      where: { evolutionInstance: chipInstanceName },
+    })
 
-    // v2 instances that are NOT linked in our DB should be ignored
-    if (isV2Instance) {
-      const linkedChip = await db.chip.findFirst({
-        where: { evolutionInstance: chipInstanceName },
-      })
-      if (!linkedChip) {
-        // Not a chip we manage — skip
-        return NextResponse.json({ ok: true })
-      }
-    } else {
-      // v3 instance but not OctupusZap — skip
-      if (!isV3Instance) {
-        return NextResponse.json({ ok: true })
-      }
+    // If the instance is not linked in our DB, skip it
+    if (!linkedChip) {
+      return NextResponse.json({ ok: true })
     }
 
-    console.log(`[Webhook] Event: ${event} | Instance: ${chipInstanceName} | API: ${isV2Instance ? 'v2' : 'v3'}`)
+    const chipApiVersion = linkedChip.evolutionApiVersion === 'v2' ? 'v2' : 'v3'
+
+    console.log(`[Webhook] Event: ${event} | Instance: ${chipInstanceName} | API: ${chipApiVersion}`)
 
     // === Handle events from BOTH v2 and v3 ===
     switch (event) {
@@ -75,9 +67,7 @@ export async function POST(request: Request) {
       // v2: "CONNECTION_UPDATE" with data.state === 'open'
       case 'Connected':
       case 'PairSuccess': {
-        const chip = await db.chip.findFirst({
-          where: { evolutionInstance: chipInstanceName },
-        })
+        const chip = linkedChip
 
         if (chip) {
           const profileName = data?.Name || data?.name || data?.pushName || null
@@ -100,9 +90,7 @@ export async function POST(request: Request) {
 
       case 'CONNECTION_UPDATE': {
         // v2 connection update
-        const chip = await db.chip.findFirst({
-          where: { evolutionInstance: chipInstanceName },
-        })
+        const chip = linkedChip
 
         if (chip) {
           const state = data?.state || data?.status || ''
@@ -154,9 +142,7 @@ export async function POST(request: Request) {
 
       case 'Disconnected': {
         // v3 disconnection
-        const chip = await db.chip.findFirst({
-          where: { evolutionInstance: chipInstanceName },
-        })
+        const chip = linkedChip
 
         if (chip) {
           const reason = data?.Reason || data?.reason || data?.disconnect_reason || ''
@@ -192,9 +178,7 @@ export async function POST(request: Request) {
       // v2: "QRCODE_UPDATED"
       case 'QRCode':
       case 'QRCODE_UPDATED': {
-        const chip = await db.chip.findFirst({
-          where: { evolutionInstance: chipInstanceName },
-        })
+        const chip = linkedChip
 
         if (chip) {
           // v3 format: data.Code
@@ -217,9 +201,7 @@ export async function POST(request: Request) {
       // ===== Instance Deleted =====
       case 'INSTANCE_DELETED':
       case 'INSTANCE_DELETE': {
-        const chip = await db.chip.findFirst({
-          where: { evolutionInstance: chipInstanceName },
-        })
+        const chip = linkedChip
 
         if (chip) {
           console.log(`[Webhook] Instance ${chipInstanceName} was deleted. Removing chip ${chip.name} from database.`)
