@@ -54,7 +54,7 @@ export async function POST(request: Request) {
           await new Promise(r => setTimeout(r, 1500))
           const qrResult = await getInstanceQRCode(effectiveInstanceName)
           qrcode = qrResult.qrcode ?? null
-          code = code || qrResult.code ?? null
+          code = code ?? qrResult.code ?? null
         } catch {
           // QR code not available yet — will be delivered via webhook
         }
@@ -105,7 +105,7 @@ export async function POST(request: Request) {
         await new Promise(r => setTimeout(r, 1500))
         const qrResult = await getInstanceQRCode(effectiveInstanceName)
         qrcode = qrResult.qrcode ?? null
-        code = code || qrResult.code ?? null
+        code = code ?? qrResult.code ?? null
       } catch {
         // QR code not available yet — will be delivered via webhook
       }
