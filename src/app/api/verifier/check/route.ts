@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { evolutionFetch, getInstanceName, checkWhatsAppNumbers } from '@/lib/evolution-api'
+import { getInstanceName, checkWhatsAppNumbers } from '@/lib/evolution-router'
 import { normalizePhone } from '@/lib/phone-utils'
 
 // Daily verification limit per chip (safe anti-ban threshold)
@@ -83,7 +83,8 @@ export async function POST(request: NextRequest) {
     }
 
     // Call Evolution Go's user/check endpoint to verify which numbers exist on WhatsApp
-    // In v3: POST /user/check with { numbers: [...] } and instanceId header
+    // In v3: POST /user/check with { number: [...] } and instanceId header
+    // Docs: https://docs.evolutionfoundation.com.br/en/evolution-go/check-a-user
     const results = await checkWhatsAppNumbers(instanceName, formattedPhones)
 
     // Normalize results to the format the frontend expects

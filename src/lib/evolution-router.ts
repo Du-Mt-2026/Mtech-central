@@ -206,6 +206,19 @@ export async function setWebhook(
   await v3.setWebhook(instanceName, webhookUrl)
 }
 
+// ============ Number Verification ============
+
+/**
+ * Check if phone numbers exist on WhatsApp.
+ * Uses Evolution Go v3 endpoint: POST /user/check with { number: [...] }
+ */
+export async function checkWhatsAppNumbers(
+  instanceName: string,
+  numbers: string[]
+): Promise<Array<{ query: string; exists: boolean; jid: string }>> {
+  return v3.checkWhatsAppNumbers(instanceName, numbers)
+}
+
 // ============ Test Connection ============
 
 export async function testAllConnections(): Promise<{

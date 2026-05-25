@@ -337,7 +337,7 @@ export async function fetchInstances(): Promise<EvolutionInstance[]> {
   const instances = data.data || data;
   if (!Array.isArray(instances)) return [];
 
-  return instances.map((inst: any) => ({
+  const mapped = instances.map((inst: any) => ({
     id: inst.id || '',
     name: inst.name || '',
     token: inst.token || '',
@@ -367,6 +367,52 @@ export async function fetchInstances(): Promise<EvolutionInstance[]> {
     updatedAt: inst.createdAt || '',
     Proxy: null,
   }));
+
+  // CRITICAL FIX: The /instance/all endpoint's `connected` field is unreliable in Evolution Go v3.
+  // It can show `false` even when the instance is actually Connected+LoggedIn.
+  // We must call /instance/status individually for each instance to get the real status.
+  await enrichInstancesWithRealStatus(mapped);
+
+  return mapped;
+}
+
+/**
+ * Enrich instances with real connection status from /instance/status.
+ * The /instance/all endpoint's `connected` field is unreliable — it shows `false`
+ * even for instances that are Connected+LoggedIn. This function calls /instance/status
+ * for each instance and corrects the `connected` and `connectionStatus` fields.
+ *
+ * Uses batched concurrent requests (5 at a time) to avoid overwhelming the API.
+ */
+async function enrichInstancesWithRealStatus(instances: EvolutionInstance[]): Promise<void> {
+  const BATCH_SIZE = 5;
+
+  for (let i = 0; i < instances.length; i += BATCH_SIZE) {
+    const batch = instances.slice(i, i + BATCH_SIZE);
+
+    await Promise.allSettled(
+      batch.map(async (inst) => {
+        try {
+          const response = await evolutionFetch('/instance/status', {}, inst.id, inst.token);
+          const data = await response.json();
+          const status = data.data || data;
+
+          const realConnected = !!(status.Connected && status.LoggedIn);
+          const realConnecting = !!(status.Connected && !status.LoggedIn);
+
+          inst.connected = realConnected;
+          inst.connectionStatus = realConnected ? 'open' : realConnecting ? 'connecting' : 'close';
+
+          // Also update profileName if available
+          if (status.Name) {
+            inst.profileName = status.Name;
+          }
+        } catch {
+          // If /instance/status fails, keep the /instance/all value
+        }
+      })
+    );
+  }
 }
 
 /**
@@ -564,6 +610,39 @@ export async function getInstanceQRCode(instanceIdOrName: string): Promise<Conne
         instanceName: instanceIdOrName,
         instanceId: instanceId,
       };
+    }
+
+    // Handle "QR code limit reached" — disconnect and reconnect to reset counter
+    if (errMsg.includes('QR code limit reached')) {
+      console.log(`[QR] QR code limit reached for ${instanceIdOrName}, disconnecting and reconnecting...`);
+      try {
+        await evolutionFetch('/instance/disconnect', {
+          method: 'POST',
+        }, instanceId, instanceToken);
+        await new Promise(r => setTimeout(r, 1500));
+
+        // Reconnect to get a fresh session with reset QR counter
+        await evolutionFetch('/instance/connect', {
+          method: 'POST',
+          body: JSON.stringify({ immediate: true }),
+        }, instanceId, instanceToken);
+        await new Promise(r => setTimeout(r, 2000));
+
+        // Try fetching QR code again after reconnect
+        const retryResponse = await evolutionFetch('/instance/qr', {}, instanceId, instanceToken);
+        const retryData = await retryResponse.json();
+        const retryQr = retryData.data || retryData;
+        return {
+          qrcode: retryQr.Qrcode || null,
+          code: retryQr.Code || null,
+          pairingCode: null,
+          state: 'connecting',
+          instanceName: instanceIdOrName,
+          instanceId: instanceId,
+        };
+      } catch (retryErr) {
+        console.error(`[QR] Failed to reset QR limit for ${instanceIdOrName}:`, retryErr);
+      }
     }
 
     // QR code not available yet — instance might still be connecting
@@ -962,8 +1041,9 @@ export async function setWebhook(
 
 /**
  * Check if phone numbers exist on WhatsApp.
- * POST /user/check with { numbers: [...] } (instanceId header)
- * Returns { data: { Users: [{ Query, IsInWhatsapp, JID, ... }] }, message: "success" }
+ * POST /user/check with { number: [...] } (instanceId header)
+ * Official docs: https://docs.evolutionfoundation.com.br/en/evolution-go/check-a-user
+ * Returns { data: { Users: [{ Query, IsInWhatsapp, JID, RemoteJID, LID, VerifiedName }] }, message: "success" }
  */
 export async function checkWhatsAppNumbers(
   instanceIdOrName: string,
@@ -973,7 +1053,7 @@ export async function checkWhatsAppNumbers(
 
   const response = await evolutionFetch('/user/check', {
     method: 'POST',
-    body: JSON.stringify({ numbers }),
+    body: JSON.stringify({ number: numbers }),
   }, instanceId, instanceToken);
 
   const data = await response.json();
