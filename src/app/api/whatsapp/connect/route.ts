@@ -7,7 +7,7 @@ import {
   getGlobalProxy,
   findInstanceByName,
 } from '@/lib/evolution-router'
-import { getInstanceName as v3GetInstanceName, findInstanceByName as v3FindInstanceByName, toEvolutionGoProxy as v3ToEvolutionGoProxy, resolveChipProxy } from '@/lib/evolution-api'
+import { getInstanceName as v3GetInstanceName, findInstanceByName as v3FindInstanceByName, toEvolutionGoProxy as v3ToEvolutionGoProxy, resolveChipProxy, getInstanceQRCode } from '@/lib/evolution-api'
 
 export async function POST(request: Request) {
   try {
@@ -44,6 +44,22 @@ export async function POST(request: Request) {
       // Connect via router
       const connectResult = await routerConnectInstance(effectiveInstanceName, webhookUrl)
 
+      // Evolution Go: QR code comes via webhook, not in connect response.
+      // Try to fetch QR code immediately as fallback.
+      let qrcode: string | null = connectResult.qrcode
+      let code: string | null = connectResult.code || connectResult.pairingCode || null
+      if (!qrcode && connectResult.state !== 'open') {
+        try {
+          // Wait a moment for Evolution Go to generate the QR code
+          await new Promise(r => setTimeout(r, 1500))
+          const qrResult = await getInstanceQRCode(effectiveInstanceName)
+          qrcode = qrResult.qrcode ?? null
+          code = code || qrResult.code ?? null
+        } catch {
+          // QR code not available yet — will be delivered via webhook
+        }
+      }
+
       const isConnected = connectResult.state === 'open'
       const newStatus = isConnected ? 'connected' : 'connecting'
 
@@ -53,7 +69,7 @@ export async function POST(request: Request) {
         data: {
           status: newStatus,
           evolutionInstance: effectiveInstanceName,
-          qrPairingCode: connectResult.code || connectResult.pairingCode || null,
+          qrPairingCode: code,
           lastSeen: isConnected ? new Date() : chip.lastSeen,
           ...(isConnected ? { isQrPaired: true } : {}),
         },
@@ -61,8 +77,8 @@ export async function POST(request: Request) {
 
       return NextResponse.json({
         instanceName: effectiveInstanceName,
-        qrcode: connectResult.qrcode || null,
-        code: connectResult.code || null,
+        qrcode: qrcode || null,
+        code: code || null,
         state: connectResult.state,
       })
     }
@@ -79,6 +95,22 @@ export async function POST(request: Request) {
     // Connect via router
     const connectResult = await routerConnectInstance(effectiveInstanceName, webhookUrl)
 
+    // Evolution Go: QR code comes via webhook, not in connect response.
+    // Try to fetch QR code immediately as fallback.
+    let qrcode: string | null = connectResult.qrcode
+    let code: string | null = connectResult.code || connectResult.pairingCode || null
+    if (!qrcode && connectResult.state !== 'open') {
+      try {
+        // Wait a moment for Evolution Go to generate the QR code
+        await new Promise(r => setTimeout(r, 1500))
+        const qrResult = await getInstanceQRCode(effectiveInstanceName)
+        qrcode = qrResult.qrcode ?? null
+        code = code || qrResult.code ?? null
+      } catch {
+        // QR code not available yet — will be delivered via webhook
+      }
+    }
+
     const isConnected = connectResult.state === 'open'
     const newStatus = isConnected ? 'connected' : 'connecting'
 
@@ -88,7 +120,7 @@ export async function POST(request: Request) {
       data: {
         status: newStatus,
         evolutionInstance: effectiveInstanceName,
-        qrPairingCode: connectResult.code || connectResult.pairingCode || null,
+        qrPairingCode: code,
         lastSeen: isConnected ? new Date() : chip.lastSeen,
         ...(isConnected ? { isQrPaired: true } : {}),
       },
@@ -96,8 +128,8 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       instanceName: effectiveInstanceName,
-      qrcode: connectResult.qrcode || null,
-      code: connectResult.code || null,
+      qrcode: qrcode || null,
+      code: code || null,
       state: connectResult.state,
     })
   } catch (error: any) {
