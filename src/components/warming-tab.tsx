@@ -255,6 +255,16 @@ export function WarmingTab() {
       return
     }
 
+    // Validar que todos os chips selecionados estão conectados
+    const disconnectedChips = formChipIds
+      .map(id => chips.find(c => c.id === id))
+      .filter((c): c is Chip => !!c && c.status !== 'connected')
+    if (disconnectedChips.length > 0) {
+      const names = disconnectedChips.map(c => c.name).join(', ')
+      toast.error(`Chips desconectados: ${names}. Conecte-os na aba Chips antes de criar a sessão.`)
+      return
+    }
+
     try {
       const res = await fetch('/api/warming', {
         method: 'POST',
@@ -351,6 +361,11 @@ export function WarmingTab() {
 
   // Toggle chip selection
   const toggleChip = (chipId: string) => {
+    const chip = chips.find(c => c.id === chipId)
+    if (chip && chip.status !== 'connected') {
+      toast.error(`Chip "${chip.name}" não está conectado. Conecte-o na aba Chips antes de usar no aquecimento.`)
+      return
+    }
     setFormChipIds(prev =>
       prev.includes(chipId)
         ? prev.filter(id => id !== chipId)
@@ -442,33 +457,41 @@ export function WarmingTab() {
                   {chips.length === 0 ? (
                     <p className="text-sm text-muted-foreground">Nenhum chip disponível encontrado. Conecte chips na aba Chips primeiro.</p>
                   ) : (
-                    chips.map(chip => (
-                      <label key={chip.id} className="flex items-center gap-3 p-2 hover:bg-muted rounded cursor-pointer">
-                        <Checkbox
-                          checked={formChipIds.includes(chip.id)}
-                          onCheckedChange={() => toggleChip(chip.id)}
-                        />
-                        <div className="flex-1">
-                          <span className="text-sm font-medium">{chip.name}</span>
-                          <span className="text-xs text-muted-foreground ml-2">{chip.phoneNumber}</span>
-                        </div>
-                        <Badge
-                          variant="outline"
-                          className={`text-xs ${
-                            chip.warmingPhase === 'nursery' || !chip.warmingPhase
-                              ? 'border-amber-500 text-amber-600'
-                              : chip.warmingPhase === 'prewarm'
-                              ? 'border-blue-500 text-blue-600'
-                              : 'border-green-500 text-green-600'
-                          }`}
-                        >
-                          {WARMING_PHASE_LABELS[chip.warmingPhase] || 'Berçário'}
-                        </Badge>
-                        <span className="text-xs text-muted-foreground">
-                          {chip.status === 'connected' ? '🟢' : '🔴'}
-                        </span>
-                      </label>
-                    ))
+                    chips.map(chip => {
+                      const isConnected = chip.status === 'connected'
+                      return (
+                        <label key={chip.id} className={`flex items-center gap-3 p-2 rounded ${isConnected ? 'hover:bg-muted cursor-pointer' : 'opacity-50 cursor-not-allowed'}`}>
+                          <Checkbox
+                            checked={formChipIds.includes(chip.id)}
+                            onCheckedChange={() => toggleChip(chip.id)}
+                            disabled={!isConnected}
+                          />
+                          <div className="flex-1">
+                            <span className="text-sm font-medium">{chip.name}</span>
+                            <span className="text-xs text-muted-foreground ml-2">{chip.phoneNumber}</span>
+                          </div>
+                          <Badge
+                            variant="outline"
+                            className={`text-xs ${
+                              chip.warmingPhase === 'nursery' || !chip.warmingPhase
+                                ? 'border-amber-500 text-amber-600'
+                                : chip.warmingPhase === 'prewarm'
+                                ? 'border-blue-500 text-blue-600'
+                                : 'border-green-500 text-green-600'
+                            }`}
+                          >
+                            {WARMING_PHASE_LABELS[chip.warmingPhase] || 'Berçário'}
+                          </Badge>
+                          {!isConnected ? (
+                            <Badge variant="outline" className="text-xs border-red-500 text-red-600">
+                              Desconectado
+                            </Badge>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">🟢</span>
+                          )}
+                        </label>
+                      )
+                    })
                   )}
                 </div>
                 {formChipIds.length > 0 && formChipIds.length < 3 && (

@@ -666,7 +666,14 @@ export async function startWarmingSession(sessionId: string): Promise<void> {
 
   const connectedChips = chips.filter(c => c.status === 'connected' && c.evolutionInstance)
   if (connectedChips.length < MIN_CHIPS_FOR_WARMING) {
-    throw new Error(`Apenas ${connectedChips.length} chips estão conectados. Mínimo: ${MIN_CHIPS_FOR_WARMING}`)
+    const disconnectedNames = chips
+      .filter(c => c.status !== 'connected' || !c.evolutionInstance)
+      .map(c => `${c.name} (${c.status}${!c.evolutionInstance ? ', sem instância' : ''})`)
+      .join(', ')
+    throw new Error(
+      `Apenas ${connectedChips.length} de ${chips.length} chips estão conectados. Mínimo: ${MIN_CHIPS_FOR_WARMING}. ` +
+      `Chips desconectados: ${disconnectedNames}. Conecte-os antes de iniciar.`
+    )
   }
 
   // Update chipIds to only include connected chips

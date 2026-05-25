@@ -62,6 +62,16 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Apenas ' + chips.length + ' chips encontrados no banco. Mínimo: 3 chips para grafo social natural' }, { status: 400 })
     }
 
+    // Validate that ALL chips are connected and have an Evolution instance
+    const disconnectedChips = chips.filter(c => c.status !== 'connected' || !c.evolutionInstance)
+    if (disconnectedChips.length > 0) {
+      const names = disconnectedChips.map(c => c.id).join(', ')
+      return NextResponse.json(
+        { error: `${disconnectedChips.length} chip(s) desconectado(s) ou sem instância Evolution. Conecte todos os chips antes de criar a sessão de aquecimento. IDs: ${names}` },
+        { status: 400 }
+      )
+    }
+
     // Use default templates if not provided
     const templates = messageTemplates || DEFAULT_WARMING_TEMPLATES
 
