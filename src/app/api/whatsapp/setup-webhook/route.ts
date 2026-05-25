@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { setWebhook } from '@/lib/evolution-api'
+import { setWebhook, getApiVersion } from '@/lib/evolution-router'
 
-// POST /api/whatsapp/setup-webhook — Configure webhook for an existing chip's Evolution Go instance
+// POST /api/whatsapp/setup-webhook — Configure webhook for an existing chip's Evolution instance (v2 or v3)
 export async function POST(request: Request) {
   try {
     const { chipId } = await request.json()
@@ -18,30 +18,20 @@ export async function POST(request: Request) {
 
     if (!chip.evolutionInstance) {
       return NextResponse.json(
-        { error: 'Chip não possui instância Evolution Go vinculada' },
+        { error: 'Chip não possui instância Evolution vinculada' },
         { status: 400 }
       )
     }
 
+    const apiVersion = getApiVersion(chip)
     const webhookUrl = `${process.env.VERCEL_URL ? 'https://' + process.env.VERCEL_URL : process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/whatsapp/webhook`
 
-    await setWebhook(chip.evolutionInstance, webhookUrl, [
-      'MESSAGE',
-      'SEND_MESSAGE',
-      'READ_RECEIPT',
-      'PRESENCE',
-      'CHAT_PRESENCE',
-      'CALL',
-      'CONNECTION',
-      'QRCODE',
-      'LABEL',
-      'CONTACT',
-      'GROUP',
-    ])
+    await setWebhook(chip.evolutionInstance, apiVersion, webhookUrl)
 
     return NextResponse.json({
       success: true,
       instanceName: chip.evolutionInstance,
+      apiVersion,
       webhookUrl,
     })
   } catch (error: any) {

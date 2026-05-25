@@ -631,7 +631,7 @@ function ChipsTab() {
   const [selectedChipConfig, setSelectedChipConfig] = useState<{ config: string; chip: Partial<Chip> } | null>(null)
   const [qrCodeUrl, setQrCodeUrl] = useState('')
   const [copied, setCopied] = useState(false)
-  const [newChip, setNewChip] = useState({ name: '', phoneNumber: '' })
+  const [newChip, setNewChip] = useState({ name: '', phoneNumber: '', evolutionApiVersion: 'v3' as 'v2' | 'v3' })
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
   const [proxyForm, setProxyForm] = useState({ socks5Host: '', socks5Port: 1080, socks5User: '', socks5Pass: '' })
 
@@ -1004,7 +1004,7 @@ function ChipsTab() {
       if (!res.ok) { const data = await res.json(); throw new Error(data.error) }
       toast.success('Chip criado com sucesso!')
       setAddDialogOpen(false)
-      setNewChip({ name: '', phoneNumber: '' })
+      setNewChip({ name: '', phoneNumber: '', evolutionApiVersion: 'v3' as 'v2' | 'v3' })
       fetchChips()
     } catch (err: unknown) { toast.error((err as Error).message || 'Erro ao criar chip') }
   }
@@ -1199,6 +1199,29 @@ function ChipsTab() {
                 <Label>Número do Telefone</Label>
                 <Input placeholder="Ex: 11999990001" value={newChip.phoneNumber} onChange={e => setNewChip(prev => ({ ...prev, phoneNumber: e.target.value }))} />
               </div>
+              <div className="space-y-2">
+                <Label>Servidor Evolution API</Label>
+                <Select value={newChip.evolutionApiVersion} onValueChange={(val: string) => setNewChip(prev => ({ ...prev, evolutionApiVersion: val as 'v2' | 'v3' }))}>
+                  <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="v3">
+                      <div className="flex items-center gap-2">
+                        <div className="size-2 rounded-full bg-emerald-500" />
+                        <span>Evolution v3 (Go/whatsmeow)</span>
+                      </div>
+                    </SelectItem>
+                    <SelectItem value="v2">
+                      <div className="flex items-center gap-2">
+                        <div className="size-2 rounded-full bg-amber-500" />
+                        <span>Evolution v2 (Baileys/Node.js)</span>
+                      </div>
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  v3 = Evolution Go (recomendado) &bull; v2 = Evolution Baileys (legado)
+                </p>
+              </div>
             </div>
             <DialogFooter>
               <DialogClose asChild><Button variant="outline">Cancelar</Button></DialogClose>
@@ -1263,6 +1286,13 @@ function ChipsTab() {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
                           <CardTitle className="truncate text-base">{chip.profileName || chip.name}</CardTitle>
+                          <Badge variant="outline" className="gap-1 text-[10px] px-1.5 py-0 shrink-0">
+                            {(chip as any).evolutionApiVersion === 'v2' ? (
+                              <><div className="size-1.5 rounded-full bg-amber-500" /> v2</>
+                            ) : (
+                              <><div className="size-1.5 rounded-full bg-emerald-500" /> v3</>
+                            )}
+                          </Badge>
                           {chip.disconnectionReasonCode && (
                             <Badge variant="destructive" className="gap-1 text-[10px] px-1.5 py-0 shrink-0">
                               <WifiOff className="size-3" />

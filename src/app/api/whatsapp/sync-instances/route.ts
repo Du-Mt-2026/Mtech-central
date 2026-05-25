@@ -1,11 +1,12 @@
-import { fetchOctupusZapInstances, INSTANCE_PREFIX } from '@/lib/evolution-api';
+import { fetchAllInstances, getApiVersion } from '@/lib/evolution-router';
+import { INSTANCE_PREFIX } from '@/lib/evolution-api';
 import { db } from '@/lib/db';
 import { NextResponse } from 'next/server';
 
 export async function POST(request: Request) {
   try {
-    // Fetch only OctupusZap instances from Evolution Go (real-time)
-    const instances = await fetchOctupusZapInstances();
+    // Fetch instances from BOTH v2 and v3 APIs
+    const instances = await fetchAllInstances();
 
     // Get all chips that have an evolution instance linked
     const chips = await db.chip.findMany({
@@ -20,11 +21,12 @@ export async function POST(request: Request) {
     let synced = 0;
     const unlinked: string[] = [];
 
-    // Process each OctupusZap Evolution Go instance
+    // Process each instance from both APIs
     for (const instance of instances) {
       if (chipInstanceNames.has(instance.name)) {
         // This instance is linked to a chip — sync its status
-        const newStatus = instance.connected ? 'connected' : 'disconnected';
+        const isConnected = instance.connected || instance.connectionStatus === 'open'
+        const newStatus = isConnected ? 'connected' : 'disconnected';
 
         const chip = chips.find((c) => c.evolutionInstance === instance.name);
         if (chip && chip.status !== newStatus) {
@@ -35,7 +37,7 @@ export async function POST(request: Request) {
               lastSeen: newStatus === 'connected' ? new Date() : chip.lastSeen,
               profileName: instance.profileName || chip.profileName,
               profilePicUrl: instance.profilePicUrl || chip.profilePicUrl,
-              disconnectionReasonCode: instance.disconnectionReasonCode ?? null,
+              evolutionApiVersion: instance.apiVersion || chip.evolutionApiVersion,
             },
           });
           synced++;
@@ -47,26 +49,23 @@ export async function POST(request: Request) {
               data: {
                 profileName: instance.profileName || chip.profileName,
                 profilePicUrl: instance.profilePicUrl || chip.profilePicUrl,
-                disconnectionReasonCode: instance.disconnectionReasonCode ?? null,
+                evolutionApiVersion: instance.apiVersion || chip.evolutionApiVersion,
               },
             });
           }
           synced++;
         }
       } else {
-        // This OctupusZap instance is not linked to any chip yet
+        // This instance is not linked to any chip yet
         unlinked.push(instance.name);
       }
     }
 
-    // Also check for chips whose evolution instances no longer exist in Evolution Go
+    // Also check for chips whose evolution instances no longer exist
     const instanceNames = new Set(instances.map((inst) => inst.name));
     for (const chip of chips) {
-      // Only care about chips with OctupusZap prefix
-      if (chip.evolutionInstance && !chip.evolutionInstance.startsWith(INSTANCE_PREFIX)) {
-        continue;
-      }
-      if (chip.evolutionInstance && !instanceNames.has(chip.evolutionInstance)) {
+      // Only care about v3 chips with OctupusZap prefix (v2 chips may just be offline)
+      if (chip.evolutionInstance && chip.evolutionInstance.startsWith(INSTANCE_PREFIX) && !instanceNames.has(chip.evolutionInstance)) {
         await db.chip.update({
           where: { id: chip.id },
           data: { status: 'disconnected', isQrPaired: false },
@@ -79,8 +78,7 @@ export async function POST(request: Request) {
       synced,
       unlinked,
       totalInstances: instances.length,
-      totalChips: chips.filter(c => c.evolutionInstance?.startsWith(INSTANCE_PREFIX)).length,
-      prefix: INSTANCE_PREFIX,
+      totalChips: chips.length,
     });
   } catch (error) {
     console.error('Error syncing WhatsApp instances:', error);

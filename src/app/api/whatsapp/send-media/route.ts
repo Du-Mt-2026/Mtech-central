@@ -1,11 +1,12 @@
 import { NextResponse } from 'next/server'
-import { sendMediaMessage, formatPhoneNumber } from '@/lib/evolution-api'
+import { sendMediaMessage, formatPhoneNumber, getApiVersion } from '@/lib/evolution-router'
 import { db } from '@/lib/db'
 
 export async function POST(request: Request) {
   try {
     const formData = await request.formData()
 
+    const chipId = formData.get('chipId') as string
     const instanceName = formData.get('instanceName') as string
     const number = formData.get('number') as string
     const mediatype = formData.get('mediatype') as 'image' | 'document' | 'video' | 'audio'
@@ -13,9 +14,9 @@ export async function POST(request: Request) {
     const caption = (formData.get('caption') as string) || ''
     const delay = formData.get('delay') ? parseInt(formData.get('delay') as string) : undefined
 
-    if (!instanceName || !number || !mediatype || !mediaFile) {
+    if (!number || !mediatype || !mediaFile) {
       return NextResponse.json(
-        { error: 'instanceName, number, mediatype e media são obrigatórios' },
+        { error: 'number, mediatype e media são obrigatórios' },
         { status: 400 }
       )
     }
@@ -24,6 +25,25 @@ export async function POST(request: Request) {
     if (!validMediaTypes.includes(mediatype)) {
       return NextResponse.json(
         { error: `mediatype deve ser um de: ${validMediaTypes.join(', ')}` },
+        { status: 400 }
+      )
+    }
+
+    // Resolve API version: prefer chipId for version lookup, fall back to instanceName
+    let apiVersion: 'v2' | 'v3' = 'v3'
+    let effectiveInstanceName = instanceName
+
+    if (chipId) {
+      const chip = await db.chip.findUnique({ where: { id: chipId } })
+      if (chip) {
+        apiVersion = getApiVersion(chip)
+        effectiveInstanceName = effectiveInstanceName || chip.evolutionInstance || ''
+      }
+    }
+
+    if (!effectiveInstanceName) {
+      return NextResponse.json(
+        { error: 'instanceName ou chipId é obrigatório' },
         { status: 400 }
       )
     }
@@ -37,8 +57,8 @@ export async function POST(request: Request) {
     // Format phone number
     const formattedPhone = formatPhoneNumber(number)
 
-    // Send media message via Evolution API
-    const result = await sendMediaMessage(instanceName, formattedPhone, mediaDataUri, mediatype, {
+    // Send media message via the correct API (v2 or v3)
+    const result = await sendMediaMessage(effectiveInstanceName, apiVersion, formattedPhone, mediaDataUri, mediatype, {
       caption,
       fileName: mediaFile.name,
       delay,
@@ -48,6 +68,7 @@ export async function POST(request: Request) {
       success: true,
       messageId: result.key?.id,
       remoteJid: result.key?.remoteJid,
+      apiVersion,
     })
   } catch (error: any) {
     console.error('Send media error:', error)

@@ -1,20 +1,21 @@
-import { fetchOctupusZapInstances, INSTANCE_PREFIX, setWebhook } from '@/lib/evolution-api'
+import { fetchAllInstances, setWebhook as routerSetWebhook, getApiVersion } from '@/lib/evolution-router'
+import { INSTANCE_PREFIX } from '@/lib/evolution-api'
 import { db } from '@/lib/db'
 import { NextResponse } from 'next/server'
 
 /**
  * POST /api/whatsapp/import-instances
- * Import OctupusZap Evolution Go instances that are not yet linked to any chip.
- * Only imports instances with the OctupusZap_ prefix.
- * Body: { instanceNames?: string[] } — optional filter, imports all unlinked if empty
+ * Import Evolution instances (both v2 and v3) that are not yet linked to any chip.
+ * v3: Only imports instances with the OctupusZap_ prefix.
+ * v2: Imports instances linked in DB or matching chip names.
  */
 export async function POST(request: Request) {
   try {
     const body = await request.json().catch(() => ({}))
     const { instanceNames } = body as { instanceNames?: string[] }
 
-    // Fetch only OctupusZap instances from Evolution Go
-    const instances = await fetchOctupusZapInstances()
+    // Fetch instances from BOTH v2 and v3 APIs
+    const instances = await fetchAllInstances()
 
     // Get all chips that already have an evolution instance linked
     const existingChips = await db.chip.findMany()
@@ -24,17 +25,15 @@ export async function POST(request: Request) {
         .map(c => c.evolutionInstance!)
     )
 
-    // Find unlinked instances (already filtered by prefix)
+    // Find unlinked instances
     let unlinked = instances.filter(inst => !existingInstanceNames.has(inst.name))
 
     // Filter by requested names if provided
     if (instanceNames && instanceNames.length > 0) {
-      // Only allow importing names that have the OctupusZap prefix
-      const safeNames = instanceNames.filter(n => n.startsWith(INSTANCE_PREFIX))
-      unlinked = unlinked.filter(inst => safeNames.includes(inst.name))
+      unlinked = unlinked.filter(inst => instanceNames.includes(inst.name))
     }
 
-    const imported: Array<{ id: string; name: string; instanceName: string; status: string }> = []
+    const imported: Array<{ id: string; name: string; instanceName: string; status: string; apiVersion: string }> = []
     const skipped: string[] = []
 
     for (const inst of unlinked) {
@@ -46,15 +45,15 @@ export async function POST(request: Request) {
         const existingByPhone = existingChips.find(c => c.phoneNumber === phoneNumber)
         if (existingByPhone) {
           // Link existing chip to this instance
-          const newStatus = inst.connected ? 'connected' : 'disconnected'
+          const newStatus = inst.connected || inst.connectionStatus === 'open' ? 'connected' : 'disconnected'
           await db.chip.update({
             where: { id: existingByPhone.id },
             data: {
               evolutionInstance: inst.name,
+              evolutionApiVersion: inst.apiVersion,
               status: newStatus,
               profileName: inst.profileName || existingByPhone.profileName,
               profilePicUrl: inst.profilePicUrl || existingByPhone.profilePicUrl,
-              disconnectionReasonCode: inst.disconnectionReasonCode ?? null,
               lastSeen: newStatus === 'connected' ? new Date() : existingByPhone.lastSeen,
             },
           })
@@ -63,6 +62,7 @@ export async function POST(request: Request) {
             name: existingByPhone.name,
             instanceName: inst.name,
             status: newStatus,
+            apiVersion: inst.apiVersion,
           })
           continue
         }
@@ -70,7 +70,7 @@ export async function POST(request: Request) {
 
       // Create a new chip for this instance
       const chipName = inst.profileName || inst.name.replace(INSTANCE_PREFIX, '').replace(/_/g, ' ')
-      const newStatus = inst.connected ? 'connected' : 'disconnected'
+      const newStatus = inst.connected || inst.connectionStatus === 'open' ? 'connected' : 'disconnected'
 
       try {
         const chip = await db.chip.create({
@@ -78,10 +78,10 @@ export async function POST(request: Request) {
             name: chipName,
             phoneNumber: phoneNumber || inst.name,
             evolutionInstance: inst.name,
+            evolutionApiVersion: inst.apiVersion,
             status: newStatus,
             profileName: inst.profileName,
             profilePicUrl: inst.profilePicUrl,
-            disconnectionReasonCode: inst.disconnectionReasonCode ?? null,
             lastSeen: newStatus === 'connected' ? new Date() : undefined,
           },
         })
@@ -90,6 +90,7 @@ export async function POST(request: Request) {
           name: chip.name,
           instanceName: inst.name,
           status: newStatus,
+          apiVersion: inst.apiVersion,
         })
       } catch (createError: unknown) {
         console.error(`Failed to create chip for instance ${inst.name}:`, createError)
@@ -110,7 +111,6 @@ export async function POST(request: Request) {
       totalInstances: instances.length,
       alreadyLinked: instances.length - unlinked.length,
       newImports: imported.length,
-      prefix: INSTANCE_PREFIX,
     })
   } catch (error) {
     console.error('Error importing instances:', error)
@@ -123,26 +123,14 @@ export async function POST(request: Request) {
 
 /**
  * Configure webhooks for all imported instances in the background.
- * Uses v3 event names for Evolution Go.
+ * Routes to v2 or v3 webhook setup based on the API version.
  */
-async function configureWebhooksForImported(imported: Array<{ instanceName: string }>) {
+async function configureWebhooksForImported(imported: Array<{ instanceName: string; apiVersion: string }>) {
   const webhookUrl = `${process.env.VERCEL_URL ? 'https://' + process.env.VERCEL_URL : process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/whatsapp/webhook`
   for (const item of imported) {
     try {
-      await setWebhook(item.instanceName, webhookUrl, [
-        'MESSAGE',
-        'SEND_MESSAGE',
-        'READ_RECEIPT',
-        'PRESENCE',
-        'CHAT_PRESENCE',
-        'CALL',
-        'CONNECTION',
-        'QRCODE',
-        'LABEL',
-        'CONTACT',
-        'GROUP',
-      ])
-      console.log(`[Import] Webhook configured for ${item.instanceName}`)
+      await routerSetWebhook(item.instanceName, item.apiVersion as 'v2' | 'v3', webhookUrl)
+      console.log(`[Import] Webhook configured for ${item.instanceName} (${item.apiVersion})`)
     } catch (err) {
       console.error(`[Import] Failed to configure webhook for ${item.instanceName}:`, err)
     }

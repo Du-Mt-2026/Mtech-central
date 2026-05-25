@@ -1,19 +1,16 @@
 import { NextResponse } from 'next/server'
-import { INSTANCE_PREFIX, deleteInstance } from '@/lib/evolution-api'
+import { INSTANCE_PREFIX } from '@/lib/evolution-api'
 import { removeWireGuardPeer } from '@/lib/wireguard-peer-api'
 import { db } from '@/lib/db'
 
 /**
- * Webhook endpoint for Evolution Go (v3) API status updates.
- * Evolution Go calls this when:
- * - Messages are sent/delivered/read
- * - Connection status changes (connected/disconnected)
- * - New messages arrive
- * - QR codes are generated
- * - Instance is deleted or connection is lost
+ * Webhook endpoint for BOTH Evolution v2 and v3 API status updates.
  *
- * Evolution Go v3 webhook format:
- * { event: "Message"|"Connected"|"Disconnected"|"QRCode"|"SEND_MESSAGE"|"READ_RECEIPT"|..., data: {...}, instanceId: "uuid" }
+ * v3 webhook format:
+ *   { event: "Message"|"Connected"|"Disconnected"|"QRCode"|"SEND_MESSAGE"|"READ_RECEIPT"|..., data: {...}, instanceId: "uuid" }
+ *
+ * v2 webhook format:
+ *   { event: "APPLICATION_STARTUP"|"QRCODE_UPDATED"|"CONNECTION_UPDATE"|"MESSAGES_UPSERT"|"MESSAGES_DELETE"|"SEND_MESSAGE"|"MESSAGE_READ", instance: { instanceName: "xxx" }, data: {...} }
  */
 export async function POST(request: Request) {
   try {
@@ -23,11 +20,15 @@ export async function POST(request: Request) {
     const data = body.data
     const instanceId = body.instanceId || ''
 
-    // For v3 webhooks: find the chip by instanceId (UUID) or by instance name
+    // === Resolve instance name from either v2 or v3 format ===
     let chipInstanceName = ''
 
-    if (instanceId) {
-      // Try to resolve the instance name from the UUID
+    // v2 format: instance name is in body.instance.instanceName
+    if (body.instance?.instanceName) {
+      chipInstanceName = body.instance.instanceName
+    }
+    // v3 format: instanceId is a UUID, need to look up the name
+    else if (instanceId) {
       try {
         const { fetchInstances } = await import('@/lib/evolution-api')
         const instances = await fetchInstances()
@@ -44,16 +45,34 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true })
     }
 
-    // Only process OctupusZap instances
-    if (!chipInstanceName.startsWith(INSTANCE_PREFIX)) {
-      return NextResponse.json({ ok: true })
+    // For v3 instances: only process OctupusZap instances
+    // For v2 instances: process all (they don't have the OctupusZap_ prefix)
+    const isV3Instance = chipInstanceName.startsWith(INSTANCE_PREFIX)
+    const isV2Instance = !isV3Instance
+
+    // v2 instances that are NOT linked in our DB should be ignored
+    if (isV2Instance) {
+      const linkedChip = await db.chip.findFirst({
+        where: { evolutionInstance: chipInstanceName },
+      })
+      if (!linkedChip) {
+        // Not a chip we manage — skip
+        return NextResponse.json({ ok: true })
+      }
+    } else {
+      // v3 instance but not OctupusZap — skip
+      if (!isV3Instance) {
+        return NextResponse.json({ ok: true })
+      }
     }
 
-    console.log(`[Webhook] Event: ${event} | Instance: ${chipInstanceName}`)
+    console.log(`[Webhook] Event: ${event} | Instance: ${chipInstanceName} | API: ${isV2Instance ? 'v2' : 'v3'}`)
 
-    // Handle different v3 events
+    // === Handle events from BOTH v2 and v3 ===
     switch (event) {
       // ===== Connection Events =====
+      // v3: "Connected" | "PairSuccess"
+      // v2: "CONNECTION_UPDATE" with data.state === 'open'
       case 'Connected':
       case 'PairSuccess': {
         const chip = await db.chip.findFirst({
@@ -79,7 +98,62 @@ export async function POST(request: Request) {
         break
       }
 
+      case 'CONNECTION_UPDATE': {
+        // v2 connection update
+        const chip = await db.chip.findFirst({
+          where: { evolutionInstance: chipInstanceName },
+        })
+
+        if (chip) {
+          const state = data?.state || data?.status || ''
+          const isConnected = state === 'open' || state === 'CONNECTED'
+
+          if (isConnected) {
+            const profileName = data?.name || data?.pushName || null
+            await db.chip.update({
+              where: { id: chip.id },
+              data: {
+                status: 'connected',
+                isQrPaired: true,
+                lastSeen: new Date(),
+                ...(profileName ? { profileName } : {}),
+              },
+            })
+            console.log(`[Webhook v2] Chip ${chip.name} connected!`)
+          } else if (state === 'close' || state === 'DISCONNECTED') {
+            const reason = data?.reason || data?.disconnect_reason || ''
+            const disconnectionCode = data?.code || null
+
+            const updateData: Record<string, unknown> = {
+              status: 'disconnected',
+              isQrPaired: false,
+              qrPairingCode: null,
+            }
+
+            if (disconnectionCode) {
+              updateData.disconnectionReasonCode = disconnectionCode
+              const BAN_CODES = [401, 403, 428, 440]
+              if (BAN_CODES.includes(Number(disconnectionCode))) {
+                updateData.status = 'banned'
+                console.log(`[Webhook v2] Chip ${chip.name} BANNED — code: ${disconnectionCode}`)
+              }
+            }
+
+            if (reason) {
+              console.log(`[Webhook v2] Instance ${chipInstanceName} disconnected. Reason: ${reason}`)
+            }
+
+            await db.chip.update({
+              where: { id: chip.id },
+              data: updateData,
+            })
+          }
+        }
+        break
+      }
+
       case 'Disconnected': {
+        // v3 disconnection
         const chip = await db.chip.findFirst({
           where: { evolutionInstance: chipInstanceName },
         })
@@ -99,7 +173,6 @@ export async function POST(request: Request) {
             updateData.disconnectionReasonCode = disconnectionCode
           }
 
-          // Check for ban codes
           const BAN_CODES = [401, 403, 428, 440]
           if (disconnectionCode && BAN_CODES.includes(Number(disconnectionCode))) {
             updateData.status = 'banned'
@@ -114,14 +187,19 @@ export async function POST(request: Request) {
         break
       }
 
-      // ===== QR Code Event =====
-      case 'QRCode': {
+      // ===== QR Code Events =====
+      // v3: "QRCode"
+      // v2: "QRCODE_UPDATED"
+      case 'QRCode':
+      case 'QRCODE_UPDATED': {
         const chip = await db.chip.findFirst({
           where: { evolutionInstance: chipInstanceName },
         })
 
         if (chip) {
-          const code = data?.Code || data?.code || null
+          // v3 format: data.Code
+          // v2 format: data.code or data.qrcode?.code
+          const code = data?.Code || data?.code || data?.qrcode?.code || null
 
           await db.chip.update({
             where: { id: chip.id },
@@ -161,8 +239,11 @@ export async function POST(request: Request) {
       }
 
       // ===== Message Send Confirmation =====
-      case 'SEND_MESSAGE': {
-        const messageId = data?.Info?.ID
+      case 'SEND_MESSAGE':
+      case 'SEND_MESSAGE_ACK': {
+        // v3: data.Info.ID
+        // v2: data.key?.id or data.messageId
+        const messageId = data?.Info?.ID || data?.key?.id || data?.messageId
 
         if (messageId) {
           const existing = await db.message.findFirst({
@@ -184,7 +265,7 @@ export async function POST(request: Request) {
               const chip = await db.chip.findUnique({ where: { id: existing.chipId } })
               if (chip) {
                 const contact = await db.contact.findUnique({ where: { id: existing.contactId } })
-                let remoteJid = data?.Info?.Chat || `${contact?.phone || ''}@s.whatsapp.net`
+                let remoteJid = data?.Info?.Chat || data?.key?.remoteJid || `${contact?.phone || ''}@s.whatsapp.net`
                 let remotePhone = contact?.phone || ''
 
                 // Normalize Brazilian phone
@@ -222,7 +303,7 @@ export async function POST(request: Request) {
           } else {
             // No campaign message — save directly to inbox
             try {
-              const rawRemoteJid = data?.Info?.Chat || ''
+              const rawRemoteJid = data?.Info?.Chat || data?.key?.remoteJid || ''
               const addressingMode = data?.Info?.AddressingMode
               const remoteJidAlt = data?.Info?.RecipientAlt || null
               let remoteJid = (addressingMode === 'lid' && remoteJidAlt) ? remoteJidAlt : rawRemoteJid
@@ -238,8 +319,8 @@ export async function POST(request: Request) {
               const remotePhone = remoteJid.split('@')[0]
               const chip = await db.chip.findFirst({ where: { evolutionInstance: chipInstanceName } })
 
-              // v3 uses data.Message
-              const msg = data?.Message || {}
+              // Extract message content from either v3 (data.Message) or v2 (data.message or data.msg)
+              const msg = data?.Message || data?.message || data?.msg || {}
               let messageContent = ''
               let messageType = 'text'
               let mediaUrl: string | null = null
@@ -289,11 +370,12 @@ export async function POST(request: Request) {
       }
 
       // ===== Read Receipt =====
-      case 'READ_RECEIPT': {
-        if (data?.Info?.ID) {
-          const evolutionId = data.Info.ID
+      case 'READ_RECEIPT':
+      case 'MESSAGE_READ': {
+        const msgId = data?.Info?.ID || data?.key?.id
+        if (msgId) {
           const message = await db.message.findFirst({
-            where: { evolutionMessageId: evolutionId },
+            where: { evolutionMessageId: msgId },
           })
 
           if (message) {
@@ -311,18 +393,30 @@ export async function POST(request: Request) {
       }
 
       // ===== Incoming/Outgoing Messages =====
-      case 'Message': {
-        const chatJid = data?.Info?.Chat || ''
+      // v3: "Message"
+      // v2: "MESSAGES_UPSERT"
+      case 'Message':
+      case 'MESSAGES_UPSERT': {
+        // v2 uses data.messages array, v3 uses single message
+        const messages = event === 'MESSAGES_UPSERT'
+          ? (data?.messages || [data])
+          : [data]
 
-        if (chatJid) {
+        for (const msgData of messages) {
           try {
-            const msgId = data?.Info?.ID || ''
-            const fromMe = data?.Info?.IsFromMe ?? false
-            const pushName = data?.Info?.PushName || null
+            // v3 format: data.Info.Chat, data.Info.ID, data.Info.IsFromMe, data.Message
+            // v2 format: data.key.remoteJid, data.key.id, data.key.fromMe, data.message
+            const chatJid = msgData?.Info?.Chat || msgData?.key?.remoteJid || ''
 
-            // Handle LID resolution
-            const addressingMode = data?.Info?.AddressingMode || ''
-            const remoteJidAlt = data?.Info?.RecipientAlt || null
+            if (!chatJid) continue
+
+            const msgId = msgData?.Info?.ID || msgData?.key?.id || ''
+            const fromMe = msgData?.Info?.IsFromMe ?? msgData?.key?.fromMe ?? false
+            const pushName = msgData?.Info?.PushName || msgData?.pushName || null
+
+            // Handle LID resolution (v3)
+            const addressingMode = msgData?.Info?.AddressingMode || ''
+            const remoteJidAlt = msgData?.Info?.RecipientAlt || null
             let remoteJid = (addressingMode === 'lid' && remoteJidAlt) ? remoteJidAlt : chatJid
 
             // Normalize Brazilian phone numbers
@@ -335,8 +429,8 @@ export async function POST(request: Request) {
 
             const isGroup = remoteJid.includes('@g.us')
 
-            // Extract message content (v3 format: data.Message)
-            const msg = data?.Message || {}
+            // Extract message content
+            const msg = msgData?.Message || msgData?.message || {}
             let messageContent = ''
             let messageType = 'text'
             let mediaUrl: string | null = null
@@ -432,6 +526,12 @@ export async function POST(request: Request) {
             console.error('[Webhook] Error saving inbox message:', inboxErr)
           }
         }
+        break
+      }
+
+      case 'APPLICATION_STARTUP': {
+        // v2 sends this on instance start — just log it
+        console.log(`[Webhook v2] Application startup for ${chipInstanceName}`)
         break
       }
 
