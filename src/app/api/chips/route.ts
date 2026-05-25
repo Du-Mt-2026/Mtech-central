@@ -67,23 +67,25 @@ export async function GET() {
     // Fetch real-time status from Evolution Go
     // This merges Evolution Go instance data with our DB chips
     let instanceMap = new Map<string, any>()
-    let existingInstanceNames = new Set<string>()
+    let evoGoReachable = false
     try {
       const instances = await fetchOctupusZapInstances()
       for (const inst of instances) {
         instanceMap.set(inst.name, inst)
-        existingInstanceNames.add(inst.name)
       }
+      evoGoReachable = true
     } catch {
       // Evolution Go unavailable — return DB data as-is
     }
 
     // Sync cleanup: delete chips whose instances don't exist in Evolution Go
     // Must be synchronous because Vercel serverless kills background tasks
-    if (existingInstanceNames.size > 0) {
+    // If Evolution Go is reachable, any chip with an evolutionInstance NOT in
+    // the instanceMap is orphaned (instance was deleted or never existed in Go)
+    if (evoGoReachable) {
       const orphanedIds: string[] = []
       for (const chip of chips) {
-        if (chip.evolutionInstance && !existingInstanceNames.has(chip.evolutionInstance)) {
+        if (chip.evolutionInstance && !instanceMap.has(chip.evolutionInstance)) {
           orphanedIds.push(chip.id)
         }
       }
