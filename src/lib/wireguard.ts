@@ -59,3 +59,4 @@ export function generateSocksPort(usedPorts: number[]): number {
   }
   throw new Error('No available SOCKS ports')
 }
+
