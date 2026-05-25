@@ -250,8 +250,8 @@ export function WarmingTab() {
       toast.error('Nome é obrigatório')
       return
     }
-    if (formChipIds.length < 2) {
-      toast.error('Selecione pelo menos 2 chips')
+    if (formChipIds.length < 3) {
+      toast.error('Selecione pelo menos 3 chips — 2 chips trocando msgs só entre si é detectável pelo Meta (grafo social artificial)')
       return
     }
 
@@ -431,7 +431,7 @@ export function WarmingTab() {
 
               {/* Chips */}
               <div className="space-y-2">
-                <Label>Chips Participantes * (mín. 2)</Label>
+                <Label>Chips Participantes * (mín. 3)</Label>
                 {chips.some(c => c.warmingPhase === 'nursery' || !c.warmingPhase) && (
                   <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-3 text-xs text-amber-700 dark:text-amber-400">
                     ⚠️ Chips no <strong>Berçário</strong> têm limites diários menores (10-80 msgs/dia conforme o dia).
@@ -471,9 +471,14 @@ export function WarmingTab() {
                     ))
                   )}
                 </div>
-                {formChipIds.length > 0 && (
-                  <p className="text-xs text-muted-foreground">
-                    {formChipIds.length} chip(s) selecionado(s)
+                {formChipIds.length > 0 && formChipIds.length < 3 && (
+                  <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3 text-xs text-red-700 dark:text-red-400">
+                    ⛔ <strong>Risco de ban!</strong> Apenas {formChipIds.length} chip(s) selecionado(s). O Meta detecta quando 2 números só conversam entre si — é um padrão de bot network. Use pelo menos 3 chips para criar um grafo social natural (cada chip fala com múltiplos contatos).
+                  </div>
+                )}
+                {formChipIds.length >= 3 && (
+                  <p className="text-xs text-green-600 dark:text-green-400">
+                    ✓ {formChipIds.length} chips selecionados — grafo social natural ✓
                   </p>
                 )}
               </div>
@@ -571,7 +576,7 @@ export function WarmingTab() {
                 <Button
                   className="bg-green-600 hover:bg-green-700"
                   onClick={handleCreate}
-                  disabled={!formName.trim() || formChipIds.length < 2}
+                  disabled={!formName.trim() || formChipIds.length < 3}
                 >
                   Criar Sessão
                 </Button>

@@ -89,7 +89,11 @@ const OFFLINE_DELAY_MIN_MS = 3000
 const OFFLINE_DELAY_MAX_MS = 15000
 
 // Mínimo de chips para uma sessão de aquecimento
-const MIN_CHIPS_FOR_WARMING = 2
+// IMPORTANTE: Mínimo de 3 chips para evitar detecção pelo Meta.
+// Apenas 2 chips trocando todas as msgs entre si cria um padrão de grafo social
+// artificial (2 números que SÓ falam entre si = bot network detectável).
+// Com 3+ chips, cada chip conversa com múltiplos contatos = comportamento natural.
+const MIN_CHIPS_FOR_WARMING = 3
 
 // Máximo de mensagens enviadas por tick do cron (para não estourar timeout)
 const MAX_MESSAGES_PER_TICK = 5

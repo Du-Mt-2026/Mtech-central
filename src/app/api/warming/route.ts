@@ -48,8 +48,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Nome é obrigatório' }, { status: 400 })
     }
 
-    if (!chipIds || chipIds.length < 2) {
-      return NextResponse.json({ error: 'Precisa de pelo menos 2 chips' }, { status: 400 })
+    if (!chipIds || chipIds.length < 3) {
+      return NextResponse.json({ error: 'Precisa de pelo menos 3 chips — 2 chips só entre si cria padrão detectável pelo Meta (grafo social artificial)' }, { status: 400 })
     }
 
     // Validate chips exist
@@ -58,8 +58,8 @@ export async function POST(request: NextRequest) {
       select: { id: true, status: true, evolutionInstance: true },
     })
 
-    if (chips.length < 2) {
-      return NextResponse.json({ error: 'Chips não encontrados no banco de dados' }, { status: 400 })
+    if (chips.length < 3) {
+      return NextResponse.json({ error: 'Apenas ' + chips.length + ' chips encontrados no banco. Mínimo: 3 chips para grafo social natural' }, { status: 400 })
     }
 
     // Use default templates if not provided
