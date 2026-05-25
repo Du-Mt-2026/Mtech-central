@@ -21,7 +21,39 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    // Add pausedAt column to Campaign table if it doesn't exist
+    const body = await req.json().catch(() => ({}))
+    const action = body.action || 'default'
+
+    // Mark existing campaign messages in inbox as isCampaign=true
+    if (action === 'mark-campaign-inbox') {
+      // Find all InboxMessages that match a campaign Message record
+      const campaignMessages = await db.message.findMany({
+        where: { evolutionMessageId: { not: null } },
+        select: { evolutionMessageId: true },
+      })
+
+      const campaignMsgIds = campaignMessages
+        .map(m => m.evolutionMessageId)
+        .filter((id): id is string => !!id)
+
+      const updateResult = await db.inboxMessage.updateMany({
+        where: {
+          evolutionMsgId: { in: campaignMsgIds },
+          isCampaign: false,
+        },
+        data: { isCampaign: true },
+      })
+
+      return NextResponse.json({
+        success: true,
+        action: 'mark-campaign-inbox',
+        campaignMsgIdsFound: campaignMsgIds.length,
+        inboxMessagesUpdated: updateResult.count,
+        message: `Marcadas ${updateResult.count} mensagens de campanha no inbox. Elas desaparecerão da caixa de entrada.`,
+      })
+    }
+
+    // Default: Add pausedAt column to Campaign table if it doesn't exist
     await db.$executeRawUnsafe(`
       ALTER TABLE "Campaign" ADD COLUMN IF NOT EXISTS "pausedAt" TIMESTAMP(3)
     `)
