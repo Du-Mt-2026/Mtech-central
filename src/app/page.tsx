@@ -5367,7 +5367,12 @@ function InboxTab() {
       case 'sticker': return <Smile className="size-3.5" />
       case 'location': return <MapPin className="size-3.5" />
       case 'contact': return <User className="size-3.5" />
-      default: return null
+      case 'template': return <FileText className="size-3.5" />
+      case 'reaction': return <Heart className="size-3.5" />
+      case 'poll': return <BarChart3 className="size-3.5" />
+      case 'group_invite': return <Users className="size-3.5" />
+      case 'deleted': return <X className="size-3.5" />
+      default: return <MessageSquare className="size-3.5" />
     }
   }
 
@@ -5511,7 +5516,14 @@ function InboxTab() {
                             <MsgTypeIcon type={conv.lastMessage.type} />
                           )}
                           <p className={`text-xs truncate ${conv.unreadCount > 0 ? 'text-foreground font-medium' : 'text-muted-foreground'}`}>
-                            {conv.lastMessage.content || `Mensagem de ${conv.lastMessage.type}`}
+                            {(() => {
+                              const c = conv.lastMessage.content || ''
+                              // Hide raw JSON from display (old messages saved before parser fix)
+                              if (c.startsWith('{') || c.startsWith('[')) {
+                                return `Mensagem de ${conv.lastMessage.type}`
+                              }
+                              return c || `Mensagem de ${conv.lastMessage.type}`
+                            })()}
                           </p>
                         </div>
                         {conv.unreadCount > 0 && (
@@ -5603,7 +5615,18 @@ function InboxTab() {
                                   ? 'bg-primary text-primary-foreground rounded-br-md'
                                   : 'bg-background border rounded-bl-md'
                               }`}>
-                                {/* Media preview */}
+                                {/* Sticker */}
+                                {msg.mediaUrl && msg.messageType === 'sticker' && (
+                                  <div className="mb-1.5 rounded-lg overflow-hidden max-w-48">
+                                    <img
+                                      src={msg.mediaUrl}
+                                      alt="Figurinha"
+                                      className="max-w-full max-h-48 object-contain rounded-lg"
+                                      onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
+                                    />
+                                  </div>
+                                )}
+                                {/* Image */}
                                 {msg.mediaUrl && msg.messageType === 'image' && (
                                   <div className="mb-1.5 rounded-lg overflow-hidden">
                                     <img
@@ -5614,32 +5637,90 @@ function InboxTab() {
                                     />
                                   </div>
                                 )}
+                                {/* Video */}
                                 {msg.mediaUrl && msg.messageType === 'video' && (
                                   <div className="mb-1.5 rounded-lg overflow-hidden bg-black/10 flex items-center justify-center h-32">
                                     <Video className="size-8 text-muted-foreground" />
                                   </div>
                                 )}
+                                {/* Audio / Voice */}
                                 {msg.mediaUrl && msg.messageType === 'audio' && (
                                   <div className="mb-1.5 flex items-center gap-2 px-1 py-0.5">
                                     <Mic className="size-4" />
                                     <span className="text-xs">Mensagem de voz</span>
                                   </div>
                                 )}
+                                {/* Document */}
                                 {msg.mediaUrl && msg.messageType === 'document' && (
                                   <div className="mb-1.5 flex items-center gap-2 px-1 py-0.5">
                                     <FileIcon className="size-4" />
                                     <span className="text-xs">Documento</span>
                                   </div>
                                 )}
-                                {/* Text content */}
-                                {msg.messageContent && (
-                                  <p className="text-sm whitespace-pre-wrap break-words">{msg.messageContent}</p>
+                                {/* Template message indicator */}
+                                {msg.messageType === 'template' && !msg.messageContent && (
+                                  <div className="mb-1.5 flex items-center gap-2 px-1 py-0.5">
+                                    <FileText className="size-4" />
+                                    <span className="text-xs">Mensagem de template</span>
+                                  </div>
                                 )}
+                                {/* Reaction */}
+                                {msg.messageType === 'reaction' && (
+                                  <div className="text-lg">{msg.messageContent?.replace('Reação: ', '') || '👍'}</div>
+                                )}
+                                {/* Contact */}
+                                {msg.messageType === 'contact' && (
+                                  <div className="mb-1.5 flex items-center gap-2 px-1 py-0.5">
+                                    <User className="size-4" />
+                                    <span className="text-xs">{msg.messageContent}</span>
+                                  </div>
+                                )}
+                                {/* Location */}
+                                {msg.messageType === 'location' && (
+                                  <div className="mb-1.5 flex items-center gap-2 px-1 py-0.5">
+                                    <MapPin className="size-4" />
+                                    <span className="text-xs">{msg.messageContent}</span>
+                                  </div>
+                                )}
+                                {/* Group invite */}
+                                {msg.messageType === 'group_invite' && (
+                                  <div className="mb-1.5 flex items-center gap-2 px-1 py-0.5">
+                                    <Users className="size-4" />
+                                    <span className="text-xs">{msg.messageContent}</span>
+                                  </div>
+                                )}
+                                {/* Poll */}
+                                {msg.messageType === 'poll' && (
+                                  <div className="mb-1.5 flex items-center gap-2 px-1 py-0.5">
+                                    <BarChart3 className="size-4" />
+                                    <span className="text-xs">{msg.messageContent}</span>
+                                  </div>
+                                )}
+                                {/* Deleted message */}
+                                {msg.messageType === 'deleted' && (
+                                  <p className="text-sm italic text-muted-foreground">Mensagem apagada</p>
+                                )}
+                                {/* Text content — show for all types that have it (except deleted/reaction) */}
+                                {msg.messageContent && msg.messageType !== 'deleted' && msg.messageType !== 'reaction' && (() => {
+                                  const c = msg.messageContent
+                                  // Hide raw JSON from old messages (saved before parser fix)
+                                  if (c.startsWith('{') || c.startsWith('[')) {
+                                    return <p className="text-sm italic text-muted-foreground">Mensagem de {msg.messageType}</p>
+                                  }
+                                  return <p className={`text-sm whitespace-pre-wrap break-words ${
+                                    msg.messageType === 'template' ? 'italic text-muted-foreground' : ''
+                                  }`}>{c}</p>
+                                })()}
                                 {/* Time */}
                                 <div className={`flex items-center gap-1 mt-1 ${isMe ? 'justify-end' : 'justify-start'}`}>
                                   <span className={`text-[10px] ${isMe ? 'text-primary-foreground/70' : 'text-muted-foreground'}`}>
                                     {new Date(msg.createdAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
                                   </span>
+                                  {msg.messageType !== 'text' && msg.messageType !== 'image' && msg.messageType !== 'video' && msg.messageType !== 'audio' && msg.messageType !== 'document' && msg.messageType !== 'sticker' && msg.messageType !== 'deleted' && msg.messageType !== 'reaction' && (
+                                    <span className={`text-[9px] ${isMe ? 'text-primary-foreground/50' : 'text-muted-foreground/60'}`}>
+                                      {msg.messageType}
+                                    </span>
+                                  )}
                                 </div>
                               </div>
                             </div>

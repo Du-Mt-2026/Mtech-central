@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { removeWireGuardPeer } from '@/lib/wireguard-peer-api'
 import { enqueueReconnection, markChipReconnected, dequeueReconnection } from '@/lib/reconnection-queue'
 import { db } from '@/lib/db'
+import { parseWhatsAppMessage } from '@/lib/whatsapp-message-parser'
 
 /**
  * Webhook endpoint for Evolution Go (v3) API status updates.
@@ -251,18 +252,12 @@ export async function POST(request: Request) {
               const remotePhone = remoteJid.split('@')[0]
               const chip = await db.chip.findFirst({ where: { evolutionInstance: chipInstanceName } })
 
-              // Extract message content from v3 format (data.Message)
+              // Extract message content using unified parser
               const msg = data?.Message || {}
-              let messageContent = ''
-              let messageType = 'text'
-              let mediaUrl: string | null = null
-
-              if (msg.conversation) messageContent = msg.conversation
-              else if (msg.extendedTextMessage?.text) messageContent = msg.extendedTextMessage.text
-              else if (msg.imageMessage) { messageContent = msg.imageMessage.caption || ''; messageType = 'image'; mediaUrl = msg.imageMessage.url || null }
-              else if (msg.videoMessage) { messageContent = msg.videoMessage.caption || ''; messageType = 'video'; mediaUrl = msg.videoMessage.url || null }
-              else if (msg.audioMessage) { messageType = 'audio'; mediaUrl = msg.audioMessage.url || null }
-              else if (msg.documentMessage) { messageContent = msg.documentMessage.caption || ''; messageType = 'document'; mediaUrl = msg.documentMessage.url || null }
+              const parsed = parseWhatsAppMessage(msg)
+              const messageContent = parsed.content
+              const messageType = parsed.type
+              const mediaUrl = parsed.mediaUrl
 
               if (messageContent || messageType !== 'text') {
                 let contactName: string | null = chip?.profileName || chip?.name || null
@@ -350,51 +345,12 @@ export async function POST(request: Request) {
 
           const isGroup = remoteJid.includes('@g.us')
 
-          // Extract message content
+          // Extract message content using the unified parser
           const msg = data?.Message || {}
-          let messageContent = ''
-          let messageType = 'text'
-          let mediaUrl: string | null = null
-
-          if (msg.conversation) {
-            messageContent = msg.conversation
-          } else if (msg.extendedTextMessage?.text) {
-            messageContent = msg.extendedTextMessage.text
-          } else if (msg.imageMessage) {
-            messageContent = msg.imageMessage.caption || ''
-            messageType = 'image'
-            mediaUrl = msg.imageMessage.url || null
-          } else if (msg.videoMessage) {
-            messageContent = msg.videoMessage.caption || ''
-            messageType = 'video'
-            mediaUrl = msg.videoMessage.url || null
-          } else if (msg.audioMessage) {
-            messageContent = ''
-            messageType = 'audio'
-            mediaUrl = msg.audioMessage.url || null
-          } else if (msg.documentMessage) {
-            messageContent = msg.documentMessage.caption || ''
-            messageType = 'document'
-            mediaUrl = msg.documentMessage.url || null
-          } else if (msg.stickerMessage) {
-            messageContent = ''
-            messageType = 'sticker'
-            mediaUrl = msg.stickerMessage.url || null
-          } else if (msg.contactMessage) {
-            messageContent = msg.contactMessage.displayName || ''
-            messageType = 'contact'
-          } else if (msg.locationMessage) {
-            messageContent = `${msg.locationMessage.degreesLatitude || msg.locationMessage.degreesLat}, ${msg.locationMessage.degreesLongitude || msg.locationMessage.degreesLong}`
-            messageType = 'location'
-          } else if (msg.documentWithCaptionMessage?.message?.documentMessage) {
-            const doc = msg.documentWithCaptionMessage.message.documentMessage
-            messageContent = doc.caption || ''
-            messageType = 'document'
-            mediaUrl = doc.URL || doc.url || null
-          } else {
-            messageContent = JSON.stringify(msg).substring(0, 500)
-            messageType = 'unknown'
-          }
+          const parsed = parseWhatsAppMessage(msg)
+          const messageContent = parsed.content
+          const messageType = parsed.type
+          const mediaUrl = parsed.mediaUrl
 
           if (messageContent || messageType !== 'text') {
             const remotePhone = remoteJid.split('@')[0]
