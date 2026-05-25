@@ -400,8 +400,9 @@ export async function POST(req: NextRequest) {
     // Step 6.6: Backfill existing campaign messages into InboxMessage
     try {
       // Find campaign messages that are NOT yet in InboxMessage
+      // CRITICAL: Mark as isCampaign=true so they don't appear as real conversations in inbox
       const backfillCount = await db.$executeRawUnsafe(`
-        INSERT INTO "InboxMessage" ("id", "instanceName", "chipId", "remoteJid", "remotePhone", "fromMe", "messageContent", "messageType", "mediaUrl", "pushName", "contactName", "evolutionMsgId", "isRead", "isGroup", "createdAt")
+        INSERT INTO "InboxMessage" ("id", "instanceName", "chipId", "remoteJid", "remotePhone", "fromMe", "messageContent", "messageType", "mediaUrl", "pushName", "contactName", "evolutionMsgId", "isRead", "isGroup", "isCampaign", "createdAt")
         SELECT
           CONCAT('inbox_', m.id) as id,
           c."evolutionInstance" as "instanceName",
@@ -417,6 +418,7 @@ export async function POST(req: NextRequest) {
           m."evolutionMessageId" as "evolutionMsgId",
           true as "isRead",
           false as "isGroup",
+          true as "isCampaign",
           COALESCE(m."sentAt", m."createdAt") as "createdAt"
         FROM "Message" m
         JOIN "Chip" c ON c.id = m."chipId"
@@ -433,9 +435,48 @@ export async function POST(req: NextRequest) {
           WHERE im.id = CONCAT('inbox_', m.id)
         )
       `)
-      results.push(`InboxMessage: backfill inseriu ${backfillCount} mensagens de campanha`)
+      results.push(`InboxMessage: backfill inseriu ${backfillCount} mensagens de campanha (isCampaign=true)`)
     } catch (backfillErr: any) {
       results.push(`InboxMessage: backfill - ${backfillErr.message}`)
+    }
+
+    // Step 6.7: Mark chip-to-chip (warming) messages as isCampaign
+    // These are phantom conversations from the warming engine that appear as real chats
+    try {
+      const warmingMarked = await db.$executeRawUnsafe(`
+        UPDATE "InboxMessage" im
+        SET "isCampaign" = true
+        WHERE im."isCampaign" = false
+        AND EXISTS (
+          SELECT 1 FROM "Chip" c
+          WHERE (
+            c."phoneNumber" = im."remotePhone"
+            OR c."phoneNumber" LIKE '%' || REPLACE(im."remotePhone", '55', '')
+          )
+        )
+      `)
+      results.push(`InboxMessage: ${warmingMarked} mensagens chip-to-chip (aquecimento) marcadas como isCampaign=true`)
+    } catch (warmingErr: any) {
+      results.push(`InboxMessage: warming cleanup - ${warmingErr.message}`)
+    }
+
+    // Step 6.8: Ensure isCampaign column exists on InboxMessage
+    try {
+      const inboxCols = await db.$queryRaw<Array<{ column_name: string }>>`
+        SELECT column_name FROM information_schema.columns
+        WHERE table_name = 'InboxMessage'
+        ORDER BY ordinal_position
+      `
+      const inboxColNames = inboxCols.map(c => c.column_name)
+
+      if (!inboxColNames.includes('isCampaign')) {
+        await db.$executeRawUnsafe(`ALTER TABLE "InboxMessage" ADD COLUMN IF NOT EXISTS "isCampaign" BOOLEAN NOT NULL DEFAULT false`)
+        results.push('InboxMessage: adicionada coluna isCampaign')
+      } else {
+        results.push('InboxMessage: isCampaign já existe')
+      }
+    } catch (colErr: any) {
+      results.push(`InboxMessage: isCampaign column check - ${colErr.message}`)
     }
 
     // Step 7: Sync Campaign table — add statusReason column

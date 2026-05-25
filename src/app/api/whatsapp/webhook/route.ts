@@ -236,7 +236,7 @@ export async function POST(request: Request) {
               console.error('[Webhook] Error saving sent message to inbox:', inboxErr)
             }
           } else {
-            // No campaign message — save directly to inbox
+            // No campaign message — could be a warming message (chip-to-chip) or manual send
             try {
               const rawRemoteJid = data?.Info?.Chat || ''
               const addressingMode = data?.Info?.AddressingMode
@@ -254,6 +254,23 @@ export async function POST(request: Request) {
               const remotePhone = remoteJid.split('@')[0]
               const chip = await db.chip.findFirst({ where: { evolutionInstance: chipInstanceName } })
 
+              // 🔍 CRITICAL: Detect chip-to-chip messages (warming)
+              // If the remote phone belongs to another chip in the system, this is a warming message,
+              // NOT a real conversation. Mark as isCampaign to hide from inbox.
+              let isChipToChip = false
+              if (remotePhone) {
+                const recipientChip = await db.chip.findFirst({
+                  where: {
+                    OR: [
+                      { phoneNumber: remotePhone },
+                      { phoneNumber: { contains: remotePhone.replace(/^55/, '') } },
+                    ],
+                  },
+                  select: { id: true },
+                })
+                isChipToChip = !!recipientChip
+              }
+
               // Extract message content using unified parser
               const msg = data?.Message || {}
               const parsed = parseWhatsAppMessage(msg)
@@ -270,9 +287,12 @@ export async function POST(request: Request) {
                   if (contact?.name) contactName = contact.name
                 }
 
+                // Chip-to-chip messages are warming, not real conversations — hide from inbox
+                const shouldHideFromInbox = isChipToChip
+
                 await db.inboxMessage.upsert({
                   where: { evolutionMsgId: messageId },
-                  update: { remoteJid, remotePhone },
+                  update: { remoteJid, remotePhone, isCampaign: shouldHideFromInbox },
                   create: {
                     instanceName: chipInstanceName,
                     chipId: chip?.id || null,
@@ -287,8 +307,13 @@ export async function POST(request: Request) {
                     evolutionMsgId: messageId,
                     isRead: true,
                     isGroup: remoteJid.includes('@g.us'),
+                    isCampaign: shouldHideFromInbox,
                   },
                 })
+
+                if (isChipToChip) {
+                  console.log(`[Webhook] Chip-to-chip (warming) message detected: ${chipInstanceName} → ${remotePhone}, hiding from inbox`)
+                }
               }
             } catch (inboxErr) {
               console.error('[Webhook] Error saving direct send to inbox:', inboxErr)
@@ -377,6 +402,25 @@ export async function POST(request: Request) {
                 select: { id: true },
               })
               isCampaignMsg = !!existingCampaignMsg
+            }
+
+            // 🔍 CRITICAL: Detect chip-to-chip messages (warming)
+            // If the remote phone belongs to another chip, this is a warming message.
+            // Also check: if the sender (pushName or linked chip) is a chip AND the recipient is a chip.
+            if (!isCampaignMsg && remotePhone) {
+              const recipientChip = await db.chip.findFirst({
+                where: {
+                  OR: [
+                    { phoneNumber: remotePhone },
+                    { phoneNumber: { contains: remotePhone.replace(/^55/, '') } },
+                  ],
+                },
+                select: { id: true },
+              })
+              if (recipientChip) {
+                isCampaignMsg = true // Chip-to-chip = warming, hide from inbox
+                console.log(`[Webhook] Chip-to-chip (warming) message detected: ${chipInstanceName} ↔ ${remotePhone}, hiding from inbox`)
+              }
             }
 
             await db.inboxMessage.upsert({
