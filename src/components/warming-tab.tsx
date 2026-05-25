@@ -37,7 +37,7 @@ import {
 import { Textarea } from '@/components/ui/textarea'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Separator } from '@/components/ui/separator'
-import { useToast } from '@/hooks/use-toast'
+import { toast } from 'sonner'
 
 // ============================================================
 // TYPES
@@ -158,7 +158,6 @@ function formatDate(dateStr: string | null): string {
 // ============================================================
 
 export function WarmingTab() {
-  const { toast } = useToast()
   const [sessions, setSessions] = useState<WarmingSession[]>([])
   const [chips, setChips] = useState<Chip[]>([])
   const [selectedSession, setSelectedSession] = useState<WarmingStats | null>(null)
@@ -190,13 +189,19 @@ export function WarmingTab() {
     }
   }, [])
 
-  // Fetch chips
+  // Fetch chips — show ALL chips that have an Evolution instance (connected or not)
+  // Chips need to be connected to actually warm, but we show disconnected ones too
+  // so the user knows which ones need to be connected first.
   const fetchChips = useCallback(async () => {
     try {
       const res = await fetch('/api/chips')
       if (res.ok) {
         const data = await res.json()
-        setChips((data.chips || []).filter((c: Chip) => c.status === 'connected' && c.evolutionInstance))
+        // API returns array directly, not { chips: [...] }
+        const chipList = Array.isArray(data) ? data : (data.chips || [])
+        // Show chips that have an evolutionInstance (can send messages) OR are connected
+        // This way disconnected chips still appear so user knows to connect them
+        setChips(chipList.filter((c: any) => c.evolutionInstance || c.status === 'connected'))
       }
     } catch (error: any) {
       console.error('Error fetching chips:', error)
@@ -242,11 +247,11 @@ export function WarmingTab() {
   // Create session
   const handleCreate = async () => {
     if (!formName.trim()) {
-      toast({ title: 'Erro', description: 'Nome é obrigatório', variant: 'destructive' })
+      toast.error('Nome é obrigatório')
       return
     }
     if (formChipIds.length < 2) {
-      toast({ title: 'Erro', description: 'Selecione pelo menos 2 chips', variant: 'destructive' })
+      toast.error('Selecione pelo menos 2 chips')
       return
     }
 
@@ -267,16 +272,16 @@ export function WarmingTab() {
       })
 
       if (res.ok) {
-        toast({ title: 'Sessão criada!', description: `"${formName}" pronta para aquecimento` })
+        toast.success(`Sessão criada! "${formName}" pronta para aquecimento`)
         setCreateOpen(false)
         resetForm()
         fetchSessions()
       } else {
         const data = await res.json()
-        toast({ title: 'Erro', description: data.error || 'Erro ao criar sessão', variant: 'destructive' })
+        toast.error(data.error || 'Erro ao criar sessão')
       }
     } catch (error: any) {
-      toast({ title: 'Erro', description: error.message, variant: 'destructive' })
+      toast.error(error.message)
     }
   }
 
@@ -298,22 +303,23 @@ export function WarmingTab() {
     try {
       const res = await fetch(`/api/warming/${sessionId}/${action}`, { method: 'POST' })
       if (res.ok) {
-        toast({
-          title: action === 'start' ? 'Aquecimento iniciado!' :
-                 action === 'pause' ? 'Aquecimento pausado' :
-                 action === 'resume' ? 'Aquecimento retomado' :
-                 'Aquecimento cancelado',
-        })
+        const msgs: Record<string, string> = {
+          start: 'Aquecimento iniciado!',
+          pause: 'Aquecimento pausado',
+          resume: 'Aquecimento retomado',
+          cancel: 'Aquecimento cancelado',
+        }
+        toast.success(msgs[action] || 'Ação realizada')
         fetchSessions()
         if (detailOpen && selectedSession?.id === sessionId) {
           fetchStats(sessionId)
         }
       } else {
         const data = await res.json()
-        toast({ title: 'Erro', description: data.error, variant: 'destructive' })
+        toast.error(data.error)
       }
     } catch (error: any) {
-      toast({ title: 'Erro', description: error.message, variant: 'destructive' })
+      toast.error(error.message)
     } finally {
       setActionLoading(null)
     }
@@ -331,7 +337,7 @@ export function WarmingTab() {
     try {
       const res = await fetch(`/api/warming/${sessionId}`, { method: 'DELETE' })
       if (res.ok) {
-        toast({ title: 'Sessão deletada' })
+        toast.success('Sessão deletada')
         fetchSessions()
         if (detailOpen && selectedSession?.id === sessionId) {
           setDetailOpen(false)
@@ -339,7 +345,7 @@ export function WarmingTab() {
         }
       }
     } catch (error: any) {
-      toast({ title: 'Erro', description: error.message, variant: 'destructive' })
+      toast.error(error.message)
     }
   }
 
