@@ -313,7 +313,7 @@ export async function createInstance(
     ignoreStatus: inst.ignoreStatus || false,
     createdAt: inst.createdAt || new Date().toISOString(),
     disconnect_reason: inst.disconnect_reason || '',
-    connectionStatus: inst.connected ? 'open' : 'close',
+    connectionStatus: (inst.connected ? 'open' : 'close') as 'open' | 'close' | 'connecting',
     ownerJid: inst.jid || null,
     profileName: null,
     profilePicUrl: null,
@@ -356,7 +356,7 @@ export async function fetchInstances(): Promise<EvolutionInstance[]> {
     ignoreStatus: inst.ignoreStatus || false,
     createdAt: inst.createdAt || '',
     disconnect_reason: inst.disconnect_reason || '',
-    connectionStatus: inst.connected ? 'open' : 'close',
+    connectionStatus: (inst.connected ? 'open' : 'close') as 'open' | 'close' | 'connecting',
     ownerJid: inst.jid || null,
     profileName: null,
     profilePicUrl: null,
@@ -401,7 +401,7 @@ async function enrichInstancesWithRealStatus(instances: EvolutionInstance[]): Pr
           const realConnecting = !!(status.Connected && !status.LoggedIn);
 
           inst.connected = realConnected;
-          inst.connectionStatus = realConnected ? 'open' : realConnecting ? 'connecting' : 'close';
+          inst.connectionStatus = (realConnected ? 'open' : realConnecting ? 'connecting' : 'close') as 'open' | 'close' | 'connecting';
 
           // Also update profileName if available
           if (status.Name) {
