@@ -9,48 +9,6 @@ import { addWireGuardPeer } from '@/lib/wireguard-peer-api'
 import { deleteInstance, disconnectInstance, getInstanceName, fetchOctupusZapInstances, INSTANCE_PREFIX, isOctupusZapInstance } from '@/lib/evolution-api'
 import { removeWireGuardPeer } from '@/lib/wireguard-peer-api'
 
-/**
- * Cleanup: delete chips whose instances no longer exist in Evolution Go.
- * This handles both:
- *   - Old v2-era chips (without OctupusZap_ prefix)
- *   - Chips with OctupusZap_ prefix but whose instances were deleted from Evolution Go
- * Runs in the background on each GET request.
- */
-async function cleanupOrphanedChips(existingInstanceNames: Set<string>) {
-  try {
-    // Find all chips that have an evolutionInstance
-    const chipsWithInstance = await db.chip.findMany({
-      where: {
-        evolutionInstance: { not: null },
-      },
-      select: { id: true, evolutionInstance: true },
-    })
-
-    // Find chips whose instance doesn't exist in Evolution Go
-    const orphanedChips = chipsWithInstance.filter(
-      chip => !existingInstanceNames.has(chip.evolutionInstance!)
-    )
-
-    if (orphanedChips.length === 0) return
-
-    console.log(`[Chips Cleanup] Found ${orphanedChips.length} orphaned chips (instance not in Evolution Go), deleting...`)
-
-    for (const chip of orphanedChips) {
-      // Delete related records first (same as DELETE handler)
-      await db.message.deleteMany({ where: { chipId: chip.id } }).catch(() => {})
-      await db.contact.deleteMany({ where: { chipId: chip.id } }).catch(() => {})
-      await db.campaignChip.deleteMany({ where: { chipId: chip.id } }).catch(() => {})
-      await db.inboxMessage.deleteMany({ where: { chipId: chip.id } }).catch(() => {})
-      await db.chip.delete({ where: { id: chip.id } }).catch(() => {})
-      console.log(`[Chips Cleanup] Deleted orphaned chip: ${chip.evolutionInstance} (${chip.id})`)
-    }
-
-    console.log(`[Chips Cleanup] Finished deleting ${orphanedChips.length} orphaned chips`)
-  } catch (error) {
-    console.error('[Chips Cleanup] Error:', error)
-  }
-}
-
 export async function GET() {
   try {
     // Reset daily counters for all chips if a new day has started
@@ -97,13 +55,7 @@ export async function GET() {
     }
 
     // Fetch chips from DB — only OctupusZap_ prefixed or new (no instance yet)
-    const chips = await db.chip.findMany({
-      where: {
-        OR: [
-          { evolutionInstance: { startsWith: INSTANCE_PREFIX } },
-          { evolutionInstance: null },
-        ],
-      },
+    let chips = await db.chip.findMany({
       orderBy: { createdAt: 'desc' },
       include: {
         vendedor: {
@@ -126,10 +78,29 @@ export async function GET() {
       // Evolution Go unavailable — return DB data as-is
     }
 
-    // Background cleanup: delete chips whose instances don't exist in Evolution Go
-    // This removes both old v2 chips and orphaned OctupusZap_ chips
+    // Sync cleanup: delete chips whose instances don't exist in Evolution Go
+    // Must be synchronous because Vercel serverless kills background tasks
     if (existingInstanceNames.size > 0) {
-      cleanupOrphanedChips(existingInstanceNames).catch(() => {})
+      const orphanedIds: string[] = []
+      for (const chip of chips) {
+        if (chip.evolutionInstance && !existingInstanceNames.has(chip.evolutionInstance)) {
+          orphanedIds.push(chip.id)
+        }
+      }
+      if (orphanedIds.length > 0) {
+        console.log(`[Chips Cleanup] Deleting ${orphanedIds.length} orphaned chips...`)
+        for (const id of orphanedIds) {
+          await db.message.deleteMany({ where: { chipId: id } }).catch(() => {})
+          await db.contact.deleteMany({ where: { chipId: id } }).catch(() => {})
+          await db.campaignChip.deleteMany({ where: { chipId: id } }).catch(() => {})
+          await db.inboxMessage.deleteMany({ where: { chipId: id } }).catch(() => {})
+          await db.chip.delete({ where: { id } }).catch(() => {})
+        }
+        console.log(`[Chips Cleanup] Deleted ${orphanedIds.length} orphaned chips`)
+        // Remove orphaned chips from the response
+        const orphanedSet = new Set(orphanedIds)
+        chips = chips.filter(c => !orphanedSet.has(c.id))
+      }
     }
 
     // Merge real-time Evolution Go status into chips
