@@ -53,6 +53,42 @@ export async function POST(req: NextRequest) {
       })
     }
 
+    // Mark chip-to-chip (warming) messages as isCampaign
+    // These are phantom conversations from the warming engine between chips
+    if (action === 'mark-warming-inbox') {
+      // Get all chip phone numbers
+      const chips = await db.chip.findMany({
+        select: { phoneNumber: true, name: true },
+      })
+
+      let totalUpdated = 0
+
+      for (const chip of chips) {
+        // Find inbox messages where the remote phone matches a chip's phone number
+        // This means the message was chip-to-chip (warming), not a real conversation
+        const updated = await db.inboxMessage.updateMany({
+          where: {
+            isCampaign: false,
+            OR: [
+              { remotePhone: chip.phoneNumber },
+              { remotePhone: { contains: chip.phoneNumber.replace(/^55/, '') } },
+              { remotePhone: { contains: chip.phoneNumber } },
+            ],
+          },
+          data: { isCampaign: true },
+        })
+        totalUpdated += updated.count
+      }
+
+      return NextResponse.json({
+        success: true,
+        action: 'mark-warming-inbox',
+        chipsChecked: chips.length,
+        inboxMessagesUpdated: totalUpdated,
+        message: `Marcadas ${totalUpdated} mensagens chip-to-chip (aquecimento) como isCampaign. Elas desaparecerão da caixa de entrada.`,
+      })
+    }
+
     // Default: Add pausedAt column to Campaign table if it doesn't exist
     await db.$executeRawUnsafe(`
       ALTER TABLE "Campaign" ADD COLUMN IF NOT EXISTS "pausedAt" TIMESTAMP(3)
