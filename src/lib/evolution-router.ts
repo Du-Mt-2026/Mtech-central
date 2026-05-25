@@ -172,7 +172,7 @@ export async function getAllInstancesStatusMap(): Promise<Map<string, {
 export async function createInstance(
   instanceName: string,
   apiVersion: ApiVersion,
-  proxyConfig?: { address: string; port: string; username: string; password: string }
+  proxyConfig?: { host: string; port: string; username: string; password: string; protocol?: string }
 ): Promise<UnifiedInstance> {
   if (apiVersion === 'v2') {
     const inst = await v2.createV2Instance(instanceName)

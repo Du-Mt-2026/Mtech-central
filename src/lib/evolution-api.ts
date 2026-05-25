@@ -267,10 +267,11 @@ export async function evolutionFetch(
 export async function createInstance(
   instanceName: string,
   proxyConfig?: {
-    address: string;
+    host: string;
     port: string;
     username: string;
     password: string;
+    protocol?: string;
   }
 ): Promise<EvolutionInstance> {
   // Generate a unique token — Evolution Go requires a non-empty token
@@ -750,29 +751,35 @@ export function resolveChipProxy(chip: {
 }, globalProxy?: { enabled: boolean; host: string; port: string; username: string; password: string } | null): { enabled: boolean; host: string; port: string; username: string; password: string } | null {
   // 1) Explicit SOCKS5 configuration on the chip
   if (chip.proxyMode === 'socks5' && chip.socks5Host && chip.socks5Port) {
+    // Evolution Go API rejects empty passwords for proxy config.
+    // Only return proxy if there's at least a non-empty password.
+    if (!chip.socks5Pass) return null;
     return {
       enabled: true,
       host: chip.socks5Host,
       port: String(chip.socks5Port),
       username: chip.socks5User || '',
-      password: chip.socks5Pass || '',
+      password: chip.socks5Pass,
     }
   }
 
   // 2) Auto-detect: chip has WireGuard IP → Every Proxy on the phone
-  //    Every Proxy on Android defaults to port 8080 for SOCKS5
-  if (chip.wireguardIp) {
+  //    Every Proxy on Android defaults to port 8080 for SOCKS5.
+  //    IMPORTANT: Only auto-detect if the chip has proxy credentials configured,
+  //    otherwise the Evolution Go API will reject the empty password.
+  //    Most chips have WireGuard IPs but don't actually run Every Proxy.
+  if (chip.wireguardIp && chip.socks5Pass) {
     return {
       enabled: true,
       host: chip.wireguardIp,
       port: String(chip.socksPort || 8080),
       username: chip.socks5User || '',
-      password: chip.socks5Pass || '',
+      password: chip.socks5Pass,
     }
   }
 
   // 3) Global SOCKS5 proxy from Settings (auto-applies to all chips)
-  if (globalProxy && globalProxy.enabled && globalProxy.host && globalProxy.port) {
+  if (globalProxy && globalProxy.enabled && globalProxy.host && globalProxy.port && globalProxy.password) {
     return globalProxy
   }
 
@@ -1015,7 +1022,7 @@ async function resolveInstanceId(nameOrId: string): Promise<string> {
 /**
  * Convert proxy config from internal format to Evolution Go format.
  * Internal: { enabled, host, port, username, password }
- * Evolution Go: { address, port, username, password }
+ * Evolution Go: { host, port, username, password, protocol }
  */
 export function toEvolutionGoProxy(proxy: {
   enabled: boolean;
@@ -1023,12 +1030,15 @@ export function toEvolutionGoProxy(proxy: {
   port: string;
   username: string;
   password: string;
-} | null): { address: string; port: string; username: string; password: string } | undefined {
+} | null): { host: string; port: string; username: string; password: string; protocol: string } | undefined {
   if (!proxy || !proxy.enabled) return undefined;
+  // Evolution Go API requires non-empty password and uses 'host' (not 'address')
+  if (!proxy.password) return undefined;
   return {
-    address: proxy.host,
+    host: proxy.host,
     port: proxy.port,
-    username: proxy.username,
+    username: proxy.username || 'none',
     password: proxy.password,
+    protocol: 'socks5',
   };
 }
