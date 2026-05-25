@@ -1,6 +1,5 @@
-// Evolution API Router — Now v3-only (Evolution Go / whatsmeow)
-// All v2 (Baileys) support has been removed. This module re-exports
-// v3 functions for backward compatibility with existing route imports.
+// Evolution API Router — v3-only (Evolution Go / whatsmeow)
+// All v2 (Baileys) support has been removed.
 
 import * as v3 from './evolution-api'
 
@@ -37,20 +36,10 @@ export interface UnifiedConnectResult {
   instanceId?: string
 }
 
-// ============ Version Resolution ============
-
-/**
- * Always returns 'v3' — v2 support has been removed.
- * Kept for backward compatibility with existing call sites.
- */
-export function getApiVersion(_chip?: { evolutionApiVersion?: string }): 'v3' {
-  return 'v3'
-}
-
 // ============ Fetch Instances ============
 
 /**
- * Fetch all instances from Evolution Go (v3) API.
+ * Fetch all instances from Evolution Go API.
  */
 export async function fetchAllInstances(): Promise<UnifiedInstance[]> {
   const instances = await v3.fetchInstances()
@@ -92,7 +81,6 @@ export async function getAllInstancesStatusMap(): Promise<Map<string, {
 
 export async function createInstance(
   instanceName: string,
-  _apiVersion?: string,
   proxyConfig?: { host: string; port: string; username: string; password: string; protocol?: string }
 ): Promise<UnifiedInstance> {
   const inst = await v3.createInstance(instanceName, proxyConfig)
@@ -110,14 +98,12 @@ export async function createInstance(
 
 export async function deleteInstance(
   instanceName: string,
-  _apiVersion?: string,
 ): Promise<void> {
   await v3.deleteInstance(instanceName)
 }
 
 export async function connectInstance(
   instanceName: string,
-  _apiVersion?: string,
   webhookUrl?: string,
 ): Promise<UnifiedConnectResult> {
   const result = await v3.connectInstance(instanceName, webhookUrl)
@@ -148,7 +134,6 @@ export async function connectInstance(
 
 export async function getInstanceQRCode(
   instanceName: string,
-  _apiVersion?: string,
 ): Promise<UnifiedConnectResult> {
   const result = await v3.getInstanceQRCode(instanceName)
   return {
@@ -163,14 +148,12 @@ export async function getInstanceQRCode(
 
 export async function disconnectInstance(
   instanceName: string,
-  _apiVersion?: string,
 ): Promise<void> {
   await v3.disconnectInstance(instanceName)
 }
 
 export async function getConnectionState(
   instanceName: string,
-  _apiVersion?: string,
 ): Promise<{ state: 'open' | 'close' | 'connecting'; instanceName: string }> {
   const result = await v3.getConnectionState(instanceName)
   return {
@@ -183,7 +166,6 @@ export async function getConnectionState(
 
 export async function sendTextMessage(
   instanceName: string,
-  _apiVersion: string = 'v3',
   number: string,
   text: string,
   options?: { delay?: number; linkPreview?: boolean }
@@ -193,7 +175,6 @@ export async function sendTextMessage(
 
 export async function sendMediaMessage(
   instanceName: string,
-  _apiVersion: string = 'v3',
   number: string,
   media: string,
   mediatype: 'image' | 'document' | 'video' | 'audio',
@@ -204,7 +185,6 @@ export async function sendMediaMessage(
 
 export async function setPresence(
   instanceName: string,
-  _apiVersion: string = 'v3',
   number: string,
   presence: 'composing' | 'available' | 'unavailable' | 'recording',
   delay: number = 2000
@@ -216,7 +196,6 @@ export async function setPresence(
 
 export async function setWebhook(
   instanceName: string,
-  _apiVersion: string = 'v3',
   webhookUrl: string,
 ): Promise<void> {
   await v3.setWebhook(instanceName, webhookUrl)
@@ -225,8 +204,9 @@ export async function setWebhook(
 // ============ Test Connection ============
 
 export async function testAllConnections(): Promise<{
-  v3: { success: boolean; error?: string; instanceCount?: number }
+  success: boolean;
+  error?: string;
+  instanceCount?: number
 }> {
-  const result = await v3.testConnection()
-  return { v3: result }
+  return v3.testConnection()
 }

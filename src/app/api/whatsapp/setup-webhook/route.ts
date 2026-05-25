@@ -25,12 +25,11 @@ export async function POST(request: Request) {
 
     const webhookUrl = `${process.env.VERCEL_URL ? 'https://' + process.env.VERCEL_URL : process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/whatsapp/webhook`
 
-    await setWebhook(chip.evolutionInstance, 'v3', webhookUrl)
+    await setWebhook(chip.evolutionInstance, webhookUrl)
 
     return NextResponse.json({
       success: true,
       instanceName: chip.evolutionInstance,
-      apiVersion: 'v3',
       webhookUrl,
     })
   } catch (error: any) {

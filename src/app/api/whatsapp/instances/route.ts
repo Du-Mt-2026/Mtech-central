@@ -5,7 +5,7 @@ import { db } from '@/lib/db'
 
 export async function GET() {
   try {
-    // Fetch instances from Evolution Go (v3) API
+    // Fetch instances from Evolution Go API
     const instances = await fetchAllInstances()
 
     // Create a map of instance name -> instance data
@@ -52,7 +52,6 @@ export async function GET() {
         status: newStatus,
         evoInstanceName: instanceName,
         evoStatus,
-        apiVersion: 'v3',
         profileName: evoInstance?.profileName || chip.profileName,
         profilePicUrl: evoInstance?.profilePicUrl || chip.profilePicUrl,
       })

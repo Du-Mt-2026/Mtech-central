@@ -38,7 +38,6 @@ export async function GET(request: Request) {
           instanceName,
           state,
           chipStatus: newStatus,
-          apiVersion: 'v3',
         })
       } catch (error) {
         return NextResponse.json({
@@ -46,7 +45,6 @@ export async function GET(request: Request) {
           instanceName,
           state: 'unknown',
           chipStatus: chip.status,
-          apiVersion: 'v3',
         })
       }
     }

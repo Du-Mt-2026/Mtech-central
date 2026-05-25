@@ -155,7 +155,6 @@ export async function GET() {
         status: realTimeStatus,
         profileName: realTimeProfileName,
         profilePicUrl: realTimeProfilePicUrl,
-        evolutionApiVersion: 'v3',
         _evoConnected: realTimeConnected,
         _evoInstanceExists: !!evoInstance,
       }
@@ -210,7 +209,6 @@ export async function POST(request: Request) {
         wireguardPubKey: publicKey,
         socksPort,
         status: 'disconnected',
-        evolutionApiVersion: 'v3',
       },
     })
 

@@ -12,7 +12,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ chip
       return NextResponse.json({ error: 'Chip não encontrado' }, { status: 404 })
     }
 
-    // Build instance name (v3 uses OctupusZap_ prefix)
+    // Build instance name
     const instanceName = chip.evolutionInstance || v3GetInstanceName(chip.id, chip.name)
 
     // Fetch QR code via the router
@@ -35,7 +35,6 @@ export async function GET(request: Request, { params }: { params: Promise<{ chip
       qrcode: qrResult.qrcode || null,
       code: qrResult.code || null,
       state: qrResult.state,
-      apiVersion: 'v3',
     })
   } catch (error: any) {
     console.error('QR fetch error:', error)

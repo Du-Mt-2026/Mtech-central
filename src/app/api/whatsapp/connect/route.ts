@@ -22,13 +22,13 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Chip não encontrado' }, { status: 404 })
     }
 
-    // Build instance name (v3 uses OctupusZap_ prefix)
+    // Build instance name
     const instanceName = chip.evolutionInstance || v3GetInstanceName(chip.id, chip.name)
 
     // Build webhook URL for this instance
     const webhookUrl = `${process.env.VERCEL_URL ? 'https://' + process.env.VERCEL_URL : process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/whatsapp/webhook`
 
-    // ===== Evolution Go (v3) Connection Flow =====
+    // ===== Evolution Go Connection Flow =====
     // Resolve proxy config for this chip
     const globalProxy = await getGlobalProxy()
     const proxyConfig = resolveChipProxy(chip, globalProxy)
@@ -38,11 +38,11 @@ export async function POST(request: Request) {
 
     if (!existing) {
       // Create new instance in Evolution Go
-      const newInstance = await createInstance(instanceName, 'v3', proxyConfig ? v3ToEvolutionGoProxy(proxyConfig) : undefined)
+      const newInstance = await createInstance(instanceName, proxyConfig ? v3ToEvolutionGoProxy(proxyConfig) : undefined)
       const effectiveInstanceName = newInstance.name || instanceName
 
       // Connect via router
-      const connectResult = await routerConnectInstance(effectiveInstanceName, 'v3', webhookUrl)
+      const connectResult = await routerConnectInstance(effectiveInstanceName, webhookUrl)
 
       const isConnected = connectResult.state === 'open'
       const newStatus = isConnected ? 'connected' : 'connecting'
@@ -53,7 +53,6 @@ export async function POST(request: Request) {
         data: {
           status: newStatus,
           evolutionInstance: effectiveInstanceName,
-          evolutionApiVersion: 'v3',
           qrPairingCode: connectResult.code || connectResult.pairingCode || null,
           lastSeen: isConnected ? new Date() : chip.lastSeen,
           ...(isConnected ? { isQrPaired: true } : {}),
@@ -65,13 +64,12 @@ export async function POST(request: Request) {
         qrcode: connectResult.qrcode || null,
         code: connectResult.code || null,
         state: connectResult.state,
-        apiVersion: 'v3',
       })
     }
 
     // Instance exists — update webhook
     try {
-      await setWebhook(existing.name || instanceName, 'v3', webhookUrl)
+      await setWebhook(existing.name || instanceName, webhookUrl)
     } catch (webhookErr) {
       console.error('Failed to set webhook:', webhookErr)
     }
@@ -79,7 +77,7 @@ export async function POST(request: Request) {
     const effectiveInstanceName = existing.name || instanceName
 
     // Connect via router
-    const connectResult = await routerConnectInstance(effectiveInstanceName, 'v3', webhookUrl)
+    const connectResult = await routerConnectInstance(effectiveInstanceName, webhookUrl)
 
     const isConnected = connectResult.state === 'open'
     const newStatus = isConnected ? 'connected' : 'connecting'
@@ -90,7 +88,6 @@ export async function POST(request: Request) {
       data: {
         status: newStatus,
         evolutionInstance: effectiveInstanceName,
-        evolutionApiVersion: 'v3',
         qrPairingCode: connectResult.code || connectResult.pairingCode || null,
         lastSeen: isConnected ? new Date() : chip.lastSeen,
         ...(isConnected ? { isQrPaired: true } : {}),
@@ -102,7 +99,6 @@ export async function POST(request: Request) {
       qrcode: connectResult.qrcode || null,
       code: connectResult.code || null,
       state: connectResult.state,
-      apiVersion: 'v3',
     })
   } catch (error: any) {
     console.error('WhatsApp connect error:', error)

@@ -42,7 +42,7 @@ export async function POST(request: Request) {
     const typingDurationMs = calculateTypingDuration(content)
 
     try {
-      await setPresence(instanceName, 'v3', formattedPhone, 'composing', typingDurationMs)
+      await setPresence(instanceName, formattedPhone, 'composing', typingDurationMs)
     } catch (typingErr) {
       console.error('Typing simulation failed:', typingErr)
     }
@@ -51,7 +51,7 @@ export async function POST(request: Request) {
     const sendDelay = delayMs || Math.floor(Math.random() * 800) + 200
     await new Promise(resolve => setTimeout(resolve, sendDelay))
 
-    const result = await sendTextMessage(instanceName, 'v3', formattedPhone, content)
+    const result = await sendTextMessage(instanceName, formattedPhone, content)
 
     if (contactId) {
       await db.message.updateMany({

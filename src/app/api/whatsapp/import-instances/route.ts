@@ -5,7 +5,7 @@ import { NextResponse } from 'next/server'
 
 /**
  * POST /api/whatsapp/import-instances
- * Import Evolution Go (v3) instances that are not yet linked to any chip.
+ * Import Evolution Go instances that are not yet linked to any chip.
  * Only imports instances with the OctupusZap_ prefix.
  */
 export async function POST(request: Request) {
@@ -13,7 +13,7 @@ export async function POST(request: Request) {
     const body = await request.json().catch(() => ({}))
     const { instanceNames } = body as { instanceNames?: string[] }
 
-    // Fetch instances from Evolution Go (v3) API
+    // Fetch instances from Evolution Go API
     const instances = await fetchAllInstances()
 
     // Get all chips that already have an evolution instance linked
@@ -49,7 +49,6 @@ export async function POST(request: Request) {
             where: { id: existingByPhone.id },
             data: {
               evolutionInstance: inst.name,
-              evolutionApiVersion: 'v3',
               status: newStatus,
               profileName: inst.profileName || existingByPhone.profileName,
               profilePicUrl: inst.profilePicUrl || existingByPhone.profilePicUrl,
@@ -76,7 +75,6 @@ export async function POST(request: Request) {
             name: chipName,
             phoneNumber: phoneNumber || inst.name,
             evolutionInstance: inst.name,
-            evolutionApiVersion: 'v3',
             status: newStatus,
             profileName: inst.profileName,
             profilePicUrl: inst.profilePicUrl,
@@ -125,7 +123,7 @@ async function configureWebhooksForImported(imported: Array<{ instanceName: stri
   const webhookUrl = `${process.env.VERCEL_URL ? 'https://' + process.env.VERCEL_URL : process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/whatsapp/webhook`
   for (const item of imported) {
     try {
-      await routerSetWebhook(item.instanceName, 'v3', webhookUrl)
+      await routerSetWebhook(item.instanceName, webhookUrl)
       console.log(`[Import] Webhook configured for ${item.instanceName}`)
     } catch (err) {
       console.error(`[Import] Failed to configure webhook for ${item.instanceName}:`, err)

@@ -593,7 +593,7 @@ async function detectChipBan(chip: { id: string; evolutionInstance: string | nul
   // Try to get live connection state from Evolution API
   if (chip.evolutionInstance) {
     try {
-      const state = await routerGetConnectionState(chip.evolutionInstance, 'v3')
+      const state = await routerGetConnectionState(chip.evolutionInstance)
       const instanceState = state?.state
       if (instanceState === 'close') {
         // 'close' can mean temporary disconnection OR ban — check disconnection code
@@ -1615,7 +1615,6 @@ export async function processNextMessage(campaignId: string): Promise<{
 
   try {
     const instanceName = chip.evolutionInstance!
-    const apiVersion = 'v3'
     const formattedPhone = formatPhoneNumber(message.contact.phone)
 
     // ============================================
@@ -1638,7 +1637,7 @@ export async function processNextMessage(campaignId: string): Promise<{
         console.debug(`[SendingEngine] Recording presence for ${mediaDurationMs}ms (${message.mediatype}) to ${formattedPhone}`)
 
         try {
-          await routerSetPresence(instanceName, apiVersion, `${formattedPhone}@s.whatsapp.net`, 'recording', mediaDurationMs)
+          await routerSetPresence(instanceName, `${formattedPhone}@s.whatsapp.net`, 'recording', mediaDurationMs)
         } catch {
           // Non-fatal — some evoGO versions may not support this endpoint
         }
@@ -1651,7 +1650,7 @@ export async function processNextMessage(campaignId: string): Promise<{
         console.debug(`[SendingEngine] Typing for ${typingDurationMs}ms (${message.content.length} chars) to ${formattedPhone}`)
 
         try {
-          await routerSetPresence(instanceName, apiVersion, `${formattedPhone}@s.whatsapp.net`, 'composing', typingDurationMs)
+          await routerSetPresence(instanceName, `${formattedPhone}@s.whatsapp.net`, 'composing', typingDurationMs)
         } catch {
           // Non-fatal — some evoGO versions may not support this endpoint
         }
@@ -1700,17 +1699,17 @@ export async function processNextMessage(campaignId: string): Promise<{
         }
 
         const caption = mt === 'audio' ? '' : (finalContent || '')
-        result = await routerSendMedia(instanceName, apiVersion, formattedPhone, message.mediaUrl, mt, {
+        result = await routerSendMedia(instanceName, formattedPhone, message.mediaUrl, mt, {
           caption,
           delay: 0, // We already handled delay via presence simulation
         })
       } else {
-        result = await routerSendText(instanceName, apiVersion, formattedPhone, finalContent, {
+        result = await routerSendText(instanceName, formattedPhone, finalContent, {
           delay: 0,
         })
       }
     } else {
-      result = await routerSendText(instanceName, apiVersion, formattedPhone, finalContent, {
+      result = await routerSendText(instanceName, formattedPhone, finalContent, {
         delay: 0, // Delay is already handled by presence simulation + interval
       })
     }

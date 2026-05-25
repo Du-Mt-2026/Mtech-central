@@ -1208,7 +1208,7 @@ function ChipsTab() {
                 <Label>Servidor Evolution API</Label>
                 <div className="flex items-center gap-2 text-sm text-emerald-600">
                   <div className="size-2 rounded-full bg-emerald-500" />
-                  <span>Evolution v3 (Go/whatsmeow)</span>
+                  <span>Evolution API (Go/whatsmeow)</span>
                 </div>
               </div>
             </div>

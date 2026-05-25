@@ -3,13 +3,10 @@ import { removeWireGuardPeer } from '@/lib/wireguard-peer-api'
 import { db } from '@/lib/db'
 
 /**
- * Webhook endpoint for BOTH Evolution v2 and v3 API status updates.
+ * Webhook endpoint for Evolution Go (v3) API status updates.
  *
  * v3 webhook format:
  *   { event: "Message"|"Connected"|"Disconnected"|"QRCode"|"SEND_MESSAGE"|"READ_RECEIPT"|..., data: {...}, instanceId: "uuid" }
- *
- * v2 webhook format:
- *   { event: "APPLICATION_STARTUP"|"QRCODE_UPDATED"|"CONNECTION_UPDATE"|"MESSAGES_UPSERT"|"MESSAGES_DELETE"|"SEND_MESSAGE"|"MESSAGE_READ", instance: { instanceName: "xxx" }, data: {...} }
  */
 export async function POST(request: Request) {
   try {
@@ -19,15 +16,11 @@ export async function POST(request: Request) {
     const data = body.data
     const instanceId = body.instanceId || ''
 
-    // === Resolve instance name from either v2 or v3 format ===
+    // === Resolve instance name from v3 format ===
     let chipInstanceName = ''
 
-    // v2 format: instance name is in body.instance.instanceName
-    if (body.instance?.instanceName) {
-      chipInstanceName = body.instance.instanceName
-    }
     // v3 format: instanceId is a UUID, need to look up the name
-    else if (instanceId) {
+    if (instanceId) {
       try {
         const { fetchInstances } = await import('@/lib/evolution-api')
         const instances = await fetchInstances()
@@ -44,9 +37,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true })
     }
 
-    // Determine API version from DB record instead of name prefix.
-    // This handles v3 instances that don't have the OctupusZap_ prefix
-    // (e.g., instances created directly in Evolution Go manager).
+    // Find the chip linked to this instance
     const linkedChip = await db.chip.findFirst({
       where: { evolutionInstance: chipInstanceName },
     })
@@ -56,15 +47,11 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true })
     }
 
-    const chipApiVersion = linkedChip.evolutionApiVersion === 'v2' ? 'v2' : 'v3'
+    console.log(`[Webhook] Event: ${event} | Instance: ${chipInstanceName}`)
 
-    console.log(`[Webhook] Event: ${event} | Instance: ${chipInstanceName} | API: ${chipApiVersion}`)
-
-    // === Handle events from BOTH v2 and v3 ===
+    // === Handle v3 events ===
     switch (event) {
       // ===== Connection Events =====
-      // v3: "Connected" | "PairSuccess"
-      // v2: "CONNECTION_UPDATE" with data.state === 'open'
       case 'Connected':
       case 'PairSuccess': {
         const chip = linkedChip
@@ -88,60 +75,7 @@ export async function POST(request: Request) {
         break
       }
 
-      case 'CONNECTION_UPDATE': {
-        // v2 connection update
-        const chip = linkedChip
-
-        if (chip) {
-          const state = data?.state || data?.status || ''
-          const isConnected = state === 'open' || state === 'CONNECTED'
-
-          if (isConnected) {
-            const profileName = data?.name || data?.pushName || null
-            await db.chip.update({
-              where: { id: chip.id },
-              data: {
-                status: 'connected',
-                isQrPaired: true,
-                lastSeen: new Date(),
-                ...(profileName ? { profileName } : {}),
-              },
-            })
-            console.log(`[Webhook v2] Chip ${chip.name} connected!`)
-          } else if (state === 'close' || state === 'DISCONNECTED') {
-            const reason = data?.reason || data?.disconnect_reason || ''
-            const disconnectionCode = data?.code || null
-
-            const updateData: Record<string, unknown> = {
-              status: 'disconnected',
-              isQrPaired: false,
-              qrPairingCode: null,
-            }
-
-            if (disconnectionCode) {
-              updateData.disconnectionReasonCode = disconnectionCode
-              const BAN_CODES = [401, 403, 428, 440]
-              if (BAN_CODES.includes(Number(disconnectionCode))) {
-                updateData.status = 'banned'
-                console.log(`[Webhook v2] Chip ${chip.name} BANNED — code: ${disconnectionCode}`)
-              }
-            }
-
-            if (reason) {
-              console.log(`[Webhook v2] Instance ${chipInstanceName} disconnected. Reason: ${reason}`)
-            }
-
-            await db.chip.update({
-              where: { id: chip.id },
-              data: updateData,
-            })
-          }
-        }
-        break
-      }
-
       case 'Disconnected': {
-        // v3 disconnection
         const chip = linkedChip
 
         if (chip) {
@@ -174,16 +108,11 @@ export async function POST(request: Request) {
       }
 
       // ===== QR Code Events =====
-      // v3: "QRCode"
-      // v2: "QRCODE_UPDATED"
-      case 'QRCode':
-      case 'QRCODE_UPDATED': {
+      case 'QRCode': {
         const chip = linkedChip
 
         if (chip) {
-          // v3 format: data.Code
-          // v2 format: data.code or data.qrcode?.code
-          const code = data?.Code || data?.code || data?.qrcode?.code || null
+          const code = data?.Code || data?.code || null
 
           await db.chip.update({
             where: { id: chip.id },
@@ -223,9 +152,7 @@ export async function POST(request: Request) {
       // ===== Message Send Confirmation =====
       case 'SEND_MESSAGE':
       case 'SEND_MESSAGE_ACK': {
-        // v3: data.Info.ID
-        // v2: data.key?.id or data.messageId
-        const messageId = data?.Info?.ID || data?.key?.id || data?.messageId
+        const messageId = data?.Info?.ID
 
         if (messageId) {
           const existing = await db.message.findFirst({
@@ -247,7 +174,7 @@ export async function POST(request: Request) {
               const chip = await db.chip.findUnique({ where: { id: existing.chipId } })
               if (chip) {
                 const contact = await db.contact.findUnique({ where: { id: existing.contactId } })
-                let remoteJid = data?.Info?.Chat || data?.key?.remoteJid || `${contact?.phone || ''}@s.whatsapp.net`
+                let remoteJid = data?.Info?.Chat || `${contact?.phone || ''}@s.whatsapp.net`
                 let remotePhone = contact?.phone || ''
 
                 // Normalize Brazilian phone
@@ -285,7 +212,7 @@ export async function POST(request: Request) {
           } else {
             // No campaign message — save directly to inbox
             try {
-              const rawRemoteJid = data?.Info?.Chat || data?.key?.remoteJid || ''
+              const rawRemoteJid = data?.Info?.Chat || ''
               const addressingMode = data?.Info?.AddressingMode
               const remoteJidAlt = data?.Info?.RecipientAlt || null
               let remoteJid = (addressingMode === 'lid' && remoteJidAlt) ? remoteJidAlt : rawRemoteJid
@@ -301,8 +228,8 @@ export async function POST(request: Request) {
               const remotePhone = remoteJid.split('@')[0]
               const chip = await db.chip.findFirst({ where: { evolutionInstance: chipInstanceName } })
 
-              // Extract message content from either v3 (data.Message) or v2 (data.message or data.msg)
-              const msg = data?.Message || data?.message || data?.msg || {}
+              // Extract message content from v3 format (data.Message)
+              const msg = data?.Message || {}
               let messageContent = ''
               let messageType = 'text'
               let mediaUrl: string | null = null
@@ -352,9 +279,8 @@ export async function POST(request: Request) {
       }
 
       // ===== Read Receipt =====
-      case 'READ_RECEIPT':
-      case 'MESSAGE_READ': {
-        const msgId = data?.Info?.ID || data?.key?.id
+      case 'READ_RECEIPT': {
+        const msgId = data?.Info?.ID
         if (msgId) {
           const message = await db.message.findFirst({
             where: { evolutionMessageId: msgId },
@@ -375,145 +301,128 @@ export async function POST(request: Request) {
       }
 
       // ===== Incoming/Outgoing Messages =====
-      // v3: "Message"
-      // v2: "MESSAGES_UPSERT"
-      case 'Message':
-      case 'MESSAGES_UPSERT': {
-        // v2 uses data.messages array, v3 uses single message
-        const messages = event === 'MESSAGES_UPSERT'
-          ? (data?.messages || [data])
-          : [data]
+      case 'Message': {
+        try {
+          // v3 format: data.Info.Chat, data.Info.ID, data.Info.IsFromMe, data.Message
+          const chatJid = data?.Info?.Chat || ''
 
-        for (const msgData of messages) {
-          try {
-            // v3 format: data.Info.Chat, data.Info.ID, data.Info.IsFromMe, data.Message
-            // v2 format: data.key.remoteJid, data.key.id, data.key.fromMe, data.message
-            const chatJid = msgData?.Info?.Chat || msgData?.key?.remoteJid || ''
+          if (!chatJid) break
 
-            if (!chatJid) continue
+          const msgId = data?.Info?.ID || ''
+          const fromMe = data?.Info?.IsFromMe ?? false
+          const pushName = data?.Info?.PushName || null
 
-            const msgId = msgData?.Info?.ID || msgData?.key?.id || ''
-            const fromMe = msgData?.Info?.IsFromMe ?? msgData?.key?.fromMe ?? false
-            const pushName = msgData?.Info?.PushName || msgData?.pushName || null
+          // Handle LID resolution (v3)
+          const addressingMode = data?.Info?.AddressingMode || ''
+          const remoteJidAlt = data?.Info?.RecipientAlt || null
+          let remoteJid = (addressingMode === 'lid' && remoteJidAlt) ? remoteJidAlt : chatJid
 
-            // Handle LID resolution (v3)
-            const addressingMode = msgData?.Info?.AddressingMode || ''
-            const remoteJidAlt = msgData?.Info?.RecipientAlt || null
-            let remoteJid = (addressingMode === 'lid' && remoteJidAlt) ? remoteJidAlt : chatJid
-
-            // Normalize Brazilian phone numbers
-            const jidSuffix = remoteJid.split('@')[1] || ''
-            let phonePart = remoteJid.split('@')[0]
-            if (phonePart.startsWith('55') && phonePart.length === 12 && jidSuffix === 's.whatsapp.net') {
-              phonePart = phonePart.slice(0, 4) + '9' + phonePart.slice(4)
-              remoteJid = `${phonePart}@${jidSuffix}`
-            }
-
-            const isGroup = remoteJid.includes('@g.us')
-
-            // Extract message content
-            const msg = msgData?.Message || msgData?.message || {}
-            let messageContent = ''
-            let messageType = 'text'
-            let mediaUrl: string | null = null
-
-            if (msg.conversation) {
-              messageContent = msg.conversation
-            } else if (msg.extendedTextMessage?.text) {
-              messageContent = msg.extendedTextMessage.text
-            } else if (msg.imageMessage) {
-              messageContent = msg.imageMessage.caption || ''
-              messageType = 'image'
-              mediaUrl = msg.imageMessage.url || null
-            } else if (msg.videoMessage) {
-              messageContent = msg.videoMessage.caption || ''
-              messageType = 'video'
-              mediaUrl = msg.videoMessage.url || null
-            } else if (msg.audioMessage) {
-              messageContent = ''
-              messageType = 'audio'
-              mediaUrl = msg.audioMessage.url || null
-            } else if (msg.documentMessage) {
-              messageContent = msg.documentMessage.caption || ''
-              messageType = 'document'
-              mediaUrl = msg.documentMessage.url || null
-            } else if (msg.stickerMessage) {
-              messageContent = ''
-              messageType = 'sticker'
-              mediaUrl = msg.stickerMessage.url || null
-            } else if (msg.contactMessage) {
-              messageContent = msg.contactMessage.displayName || ''
-              messageType = 'contact'
-            } else if (msg.locationMessage) {
-              messageContent = `${msg.locationMessage.degreesLatitude || msg.locationMessage.degreesLat}, ${msg.locationMessage.degreesLongitude || msg.locationMessage.degreesLong}`
-              messageType = 'location'
-            } else if (msg.documentWithCaptionMessage?.message?.documentMessage) {
-              const doc = msg.documentWithCaptionMessage.message.documentMessage
-              messageContent = doc.caption || ''
-              messageType = 'document'
-              mediaUrl = doc.URL || doc.url || null
-            } else {
-              messageContent = JSON.stringify(msg).substring(0, 500)
-              messageType = 'unknown'
-            }
-
-            if (messageContent || messageType !== 'text') {
-              const remotePhone = remoteJid.split('@')[0]
-
-              const chip = await db.chip.findFirst({
-                where: { evolutionInstance: chipInstanceName },
-              })
-
-              let contactName: string | null = pushName
-              if (!fromMe && chip) {
-                const contact = await db.contact.findFirst({
-                  where: { phone: { contains: remotePhone.replace(/^55/, '') } },
-                })
-                if (contact?.name) contactName = contact.name
-              }
-
-              await db.inboxMessage.upsert({
-                where: { evolutionMsgId: msgId },
-                update: {
-                  remoteJid,
-                  remotePhone,
-                  chipId: chip?.id || null,
-                  contactName,
-                  fromMe,
-                  messageContent,
-                  messageType,
-                  mediaUrl,
-                  pushName,
-                },
-                create: {
-                  instanceName: chipInstanceName,
-                  chipId: chip?.id || null,
-                  remoteJid,
-                  remotePhone,
-                  fromMe,
-                  messageContent,
-                  messageType,
-                  mediaUrl,
-                  pushName,
-                  contactName,
-                  evolutionMsgId: msgId,
-                  isRead: fromMe,
-                  isGroup,
-                },
-              })
-            }
-
-            console.log(`[Webhook] Saved ${fromMe ? 'outgoing' : 'incoming'} message on ${chipInstanceName}`)
-          } catch (inboxErr) {
-            console.error('[Webhook] Error saving inbox message:', inboxErr)
+          // Normalize Brazilian phone numbers
+          const jidSuffix = remoteJid.split('@')[1] || ''
+          let phonePart = remoteJid.split('@')[0]
+          if (phonePart.startsWith('55') && phonePart.length === 12 && jidSuffix === 's.whatsapp.net') {
+            phonePart = phonePart.slice(0, 4) + '9' + phonePart.slice(4)
+            remoteJid = `${phonePart}@${jidSuffix}`
           }
-        }
-        break
-      }
 
-      case 'APPLICATION_STARTUP': {
-        // v2 sends this on instance start — just log it
-        console.log(`[Webhook v2] Application startup for ${chipInstanceName}`)
+          const isGroup = remoteJid.includes('@g.us')
+
+          // Extract message content
+          const msg = data?.Message || {}
+          let messageContent = ''
+          let messageType = 'text'
+          let mediaUrl: string | null = null
+
+          if (msg.conversation) {
+            messageContent = msg.conversation
+          } else if (msg.extendedTextMessage?.text) {
+            messageContent = msg.extendedTextMessage.text
+          } else if (msg.imageMessage) {
+            messageContent = msg.imageMessage.caption || ''
+            messageType = 'image'
+            mediaUrl = msg.imageMessage.url || null
+          } else if (msg.videoMessage) {
+            messageContent = msg.videoMessage.caption || ''
+            messageType = 'video'
+            mediaUrl = msg.videoMessage.url || null
+          } else if (msg.audioMessage) {
+            messageContent = ''
+            messageType = 'audio'
+            mediaUrl = msg.audioMessage.url || null
+          } else if (msg.documentMessage) {
+            messageContent = msg.documentMessage.caption || ''
+            messageType = 'document'
+            mediaUrl = msg.documentMessage.url || null
+          } else if (msg.stickerMessage) {
+            messageContent = ''
+            messageType = 'sticker'
+            mediaUrl = msg.stickerMessage.url || null
+          } else if (msg.contactMessage) {
+            messageContent = msg.contactMessage.displayName || ''
+            messageType = 'contact'
+          } else if (msg.locationMessage) {
+            messageContent = `${msg.locationMessage.degreesLatitude || msg.locationMessage.degreesLat}, ${msg.locationMessage.degreesLongitude || msg.locationMessage.degreesLong}`
+            messageType = 'location'
+          } else if (msg.documentWithCaptionMessage?.message?.documentMessage) {
+            const doc = msg.documentWithCaptionMessage.message.documentMessage
+            messageContent = doc.caption || ''
+            messageType = 'document'
+            mediaUrl = doc.URL || doc.url || null
+          } else {
+            messageContent = JSON.stringify(msg).substring(0, 500)
+            messageType = 'unknown'
+          }
+
+          if (messageContent || messageType !== 'text') {
+            const remotePhone = remoteJid.split('@')[0]
+
+            const chip = await db.chip.findFirst({
+              where: { evolutionInstance: chipInstanceName },
+            })
+
+            let contactName: string | null = pushName
+            if (!fromMe && chip) {
+              const contact = await db.contact.findFirst({
+                where: { phone: { contains: remotePhone.replace(/^55/, '') } },
+              })
+              if (contact?.name) contactName = contact.name
+            }
+
+            await db.inboxMessage.upsert({
+              where: { evolutionMsgId: msgId },
+              update: {
+                remoteJid,
+                remotePhone,
+                chipId: chip?.id || null,
+                contactName,
+                fromMe,
+                messageContent,
+                messageType,
+                mediaUrl,
+                pushName,
+              },
+              create: {
+                instanceName: chipInstanceName,
+                chipId: chip?.id || null,
+                remoteJid,
+                remotePhone,
+                fromMe,
+                messageContent,
+                messageType,
+                mediaUrl,
+                pushName,
+                contactName,
+                evolutionMsgId: msgId,
+                isRead: fromMe,
+                isGroup,
+              },
+            })
+          }
+
+          console.log(`[Webhook] Saved ${fromMe ? 'outgoing' : 'incoming'} message on ${chipInstanceName}`)
+        } catch (inboxErr) {
+          console.error('[Webhook] Error saving inbox message:', inboxErr)
+        }
         break
       }
 

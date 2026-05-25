@@ -55,7 +55,7 @@ export async function POST(request: Request) {
     const formattedPhone = formatPhoneNumber(number)
 
     // Send media message via Evolution Go (v3)
-    const result = await sendMediaMessage(effectiveInstanceName, 'v3', formattedPhone, mediaDataUri, mediatype, {
+    const result = await sendMediaMessage(effectiveInstanceName, formattedPhone, mediaDataUri, mediatype, {
       caption,
       fileName: mediaFile.name,
       delay,
