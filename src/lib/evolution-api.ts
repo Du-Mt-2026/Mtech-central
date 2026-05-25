@@ -539,12 +539,21 @@ export async function getConnectionState(instanceIdOrName: string): Promise<Conn
     const data = await response.json();
     const status = data.data || data;
 
+    // In Evolution Go v3:
+    //   Connected: true + LoggedIn: true  → WhatsApp session is active (open)
+    //   Connected: true + LoggedIn: false → WebSocket connected, waiting for QR scan (connecting)
+    //   Connected: false                  → Disconnected (close)
+    const state: 'open' | 'close' | 'connecting' =
+      status.Connected && status.LoggedIn ? 'open' :
+      status.Connected && !status.LoggedIn ? 'connecting' :
+      'close'
+
     return {
       data: status,
-      state: status.Connected ? 'open' : 'close',
+      state,
       instance: {
         instanceName: instanceIdOrName,
-        state: status.Connected ? 'open' : 'close',
+        state,
       },
     };
   } catch {
