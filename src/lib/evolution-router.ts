@@ -110,12 +110,17 @@ export async function connectInstance(
 
   // If not connected yet, try to fetch QR code
   let qrcode = result.qrcode
-  if (!qrcode && result.state !== 'open') {
+  let state = result.state || 'close'
+  if (!qrcode && state !== 'open') {
     try {
       const qrResult = await v3.getInstanceQRCode(instanceName)
       qrcode = qrResult.qrcode
       if (qrResult.code && !result.code) {
         result.code = qrResult.code
+      }
+      // If QR fetch returns 'open' (session already logged in), update state
+      if (qrResult.state === 'open') {
+        state = 'open'
       }
     } catch {
       // QR not available yet
@@ -126,7 +131,7 @@ export async function connectInstance(
     qrcode: qrcode ?? null,
     code: result.code || null,
     pairingCode: result.pairingCode || result.code || null,
-    state: (result.state || 'close') as 'open' | 'close' | 'connecting',
+    state: state as 'open' | 'close' | 'connecting',
     instanceName,
     instanceId: result.instanceId,
   }

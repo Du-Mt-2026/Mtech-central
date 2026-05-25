@@ -397,6 +397,9 @@ export async function deleteInstance(instanceIdOrName: string): Promise<void> {
  * POST /instance/connect with { webhookUrl, subscribe, immediate }
  * The webhook is configured at connect time.
  * QR code is received via webhook event, not in the connect response.
+ *
+ * If the instance has "QR code limit reached" or is in a stuck state,
+ * we disconnect first to reset the session, then reconnect.
  */
 export async function connectInstance(
   instanceIdOrName: string,
@@ -404,6 +407,60 @@ export async function connectInstance(
   subscribeEvents?: string[]
 ): Promise<ConnectResult> {
   const { id: instanceId, token: instanceToken } = await resolveInstance(instanceIdOrName);
+
+  // Check if instance is already logged in — no need to reconnect
+  try {
+    const statusResponse = await evolutionFetch('/instance/status', {}, instanceId, instanceToken);
+    const statusData = await statusResponse.json();
+    const status = statusData.data || statusData;
+
+    if (status.Connected && status.LoggedIn) {
+      // Already logged in — just update webhook if needed
+      if (webhookUrl) {
+        try {
+          await evolutionFetch('/instance/connect', {
+            method: 'POST',
+            body: JSON.stringify({
+              webhookUrl,
+              subscribe: subscribeEvents || [
+                'MESSAGE', 'SEND_MESSAGE', 'READ_RECEIPT', 'PRESENCE',
+                'CHAT_PRESENCE', 'CALL', 'CONNECTION', 'QRCODE',
+                'LABEL', 'CONTACT', 'GROUP',
+              ],
+              immediate: true,
+            }),
+          }, instanceId, instanceToken);
+        } catch {
+          // Webhook update failed — not critical
+        }
+      }
+
+      return {
+        state: 'open',
+        instanceName: instanceIdOrName,
+        instanceId: instanceId,
+        qrcode: null,
+        code: null,
+        pairingCode: null,
+      };
+    }
+
+    // If Connected but not LoggedIn, disconnect first to reset QR code counter
+    // This fixes "QR code limit reached" and stuck sessions
+    if (status.Connected && !status.LoggedIn) {
+      try {
+        await evolutionFetch('/instance/disconnect', {
+          method: 'POST',
+        }, instanceId, instanceToken);
+        // Wait a moment for the disconnect to take effect
+        await new Promise(r => setTimeout(r, 1000));
+      } catch {
+        // Disconnect might fail if already disconnected — that's ok
+      }
+    }
+  } catch {
+    // Status check failed — proceed with connect anyway
+  }
 
   const body: any = {
     immediate: true,
@@ -462,6 +519,10 @@ export async function connectInstance(
  * Get QR code for an instance.
  * GET /instance/qr (with instanceId header)
  * Returns { data: { Qrcode: "data:image/png;base64,...", Code: "2@..." }, message: "success" }
+ *
+ * Handles common errors:
+ * - "session already logged in" → returns state 'open' (already connected)
+ * - "no QR code available" → returns null QR (still generating)
  */
 export async function getInstanceQRCode(instanceIdOrName: string): Promise<ConnectResult> {
   const { id: instanceId, token: instanceToken } = await resolveInstance(instanceIdOrName);
@@ -469,6 +530,18 @@ export async function getInstanceQRCode(instanceIdOrName: string): Promise<Conne
   try {
     const response = await evolutionFetch('/instance/qr', {}, instanceId, instanceToken);
     const data = await response.json();
+
+    // Handle "session already logged in" error — instance is actually connected
+    if (data.error === 'session already logged in') {
+      return {
+        qrcode: null,
+        code: null,
+        pairingCode: null,
+        state: 'open',
+        instanceName: instanceIdOrName,
+        instanceId: instanceId,
+      };
+    }
 
     const qrData = data.data || data;
     return {
@@ -479,7 +552,20 @@ export async function getInstanceQRCode(instanceIdOrName: string): Promise<Conne
       instanceName: instanceIdOrName,
       instanceId: instanceId,
     };
-  } catch {
+  } catch (err: any) {
+    // Check if the error message contains "session already logged in"
+    const errMsg = err?.message || String(err)
+    if (errMsg.includes('session already logged in') || errMsg.includes('already logged in')) {
+      return {
+        qrcode: null,
+        code: null,
+        pairingCode: null,
+        state: 'open',
+        instanceName: instanceIdOrName,
+        instanceId: instanceId,
+      };
+    }
+
     // QR code not available yet — instance might still be connecting
     return {
       qrcode: null,

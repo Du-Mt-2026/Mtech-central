@@ -48,19 +48,24 @@ export async function POST(request: Request) {
       // Try to fetch QR code immediately as fallback.
       let qrcode: string | null = connectResult.qrcode
       let code: string | null = connectResult.code || connectResult.pairingCode || null
-      if (!qrcode && connectResult.state !== 'open') {
+      let effectiveState: string = connectResult.state || 'close'
+      if (!qrcode && effectiveState !== 'open') {
         try {
           // Wait a moment for Evolution Go to generate the QR code
           await new Promise(r => setTimeout(r, 1500))
           const qrResult = await getInstanceQRCode(effectiveInstanceName)
           qrcode = qrResult.qrcode ?? null
           code = code ?? qrResult.code ?? null
+          // If QR fetch returns 'open' (session already logged in), update state
+          if (qrResult.state === 'open') {
+            effectiveState = 'open'
+          }
         } catch {
           // QR code not available yet — will be delivered via webhook
         }
       }
 
-      const isConnected = connectResult.state === 'open'
+      const isConnected = effectiveState === 'open'
       const newStatus = isConnected ? 'connected' : 'connecting'
 
       // Update chip in database
@@ -79,7 +84,7 @@ export async function POST(request: Request) {
         instanceName: effectiveInstanceName,
         qrcode: qrcode || null,
         code: code || null,
-        state: connectResult.state,
+        state: effectiveState,
       })
     }
 
@@ -99,19 +104,24 @@ export async function POST(request: Request) {
     // Try to fetch QR code immediately as fallback.
     let qrcode: string | null = connectResult.qrcode
     let code: string | null = connectResult.code || connectResult.pairingCode || null
-    if (!qrcode && connectResult.state !== 'open') {
+    let effectiveState: string = connectResult.state || 'close'
+    if (!qrcode && effectiveState !== 'open') {
       try {
         // Wait a moment for Evolution Go to generate the QR code
         await new Promise(r => setTimeout(r, 1500))
         const qrResult = await getInstanceQRCode(effectiveInstanceName)
         qrcode = qrResult.qrcode ?? null
         code = code ?? qrResult.code ?? null
+        // If QR fetch returns 'open' (session already logged in), update state
+        if (qrResult.state === 'open') {
+          effectiveState = 'open'
+        }
       } catch {
         // QR code not available yet — will be delivered via webhook
       }
     }
 
-    const isConnected = connectResult.state === 'open'
+    const isConnected = effectiveState === 'open'
     const newStatus = isConnected ? 'connected' : 'connecting'
 
     // Update chip in database
@@ -130,7 +140,7 @@ export async function POST(request: Request) {
       instanceName: effectiveInstanceName,
       qrcode: qrcode || null,
       code: code || null,
-      state: connectResult.state,
+      state: effectiveState,
     })
   } catch (error: any) {
     console.error('WhatsApp connect error:', error)
