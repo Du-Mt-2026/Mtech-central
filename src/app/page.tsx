@@ -14,7 +14,7 @@ import {
   Sparkles, Heart, Star, AlertTriangle, Info, ChevronDown,
   Pencil, LayoutList, Database, WifiOff, ArrowDownToLine, Save, XCircle, ShieldBan,
   Inbox, LogOut, RotateCcw, Film, Music, File as FileIcon, ImageIcon, Key, Paperclip, MapPin, Link2,
-  Baby, CheckCircle2, Video, MoreVertical, Mic, User, Smile, BookmarkPlus, GripVertical, Loader2
+  Baby, CheckCircle2, Video, MoreVertical, Mic, User, Smile, BookmarkPlus, GripVertical, Loader2, Eraser
 } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardAction } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -5385,9 +5385,42 @@ function InboxTab() {
             <div className="p-3 border-b">
               <div className="flex items-center justify-between mb-2">
                 <h3 className="font-semibold text-sm">Chips</h3>
-                <Button variant="ghost" size="icon" className="size-7" onClick={() => fetchChips()}>
-                  <RefreshCw className="size-3.5" />
-                </Button>
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 px-2 text-[10px] text-orange-600 hover:text-orange-700 hover:bg-orange-50"
+                    onClick={async () => {
+                      try {
+                        toast.loading('Limpando mensagens de aquecimento...')
+                        const res = await fetch('/api/admin/migrate', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ action: 'mark-warming-inbox' }),
+                        })
+                        const data = await res.json()
+                        toast.dismiss()
+                        if (data.success) {
+                          toast.success(`${data.inboxMessagesUpdated || 0} mensagens de aquecimento removidas da caixa de entrada`)
+                          fetchChips()
+                          fetchConversations(true)
+                        } else {
+                          toast.error(data.error || 'Erro ao limpar')
+                        }
+                      } catch {
+                        toast.dismiss()
+                        toast.error('Erro ao conectar ao servidor')
+                      }
+                    }}
+                    title="Remover conversas fantasmas de aquecimento entre chips"
+                  >
+                    <Eraser className="size-3 mr-1" />
+                    Limpar
+                  </Button>
+                  <Button variant="ghost" size="icon" className="size-7" onClick={() => fetchChips()}>
+                    <RefreshCw className="size-3.5" />
+                  </Button>
+                </div>
               </div>
               <div className="relative">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
