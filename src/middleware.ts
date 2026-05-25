@@ -12,6 +12,7 @@ const PUBLIC_API_ROUTES = [
   '/api/campaigns/process-all', // cron-job.org endpoint (protected by CRON_SECRET in code — NOT session cookie)
   '/api/sync/',                 // Linvix sync endpoint (protected by CRON_SECRET in code)
   '/api/upload/serve',         // Serves uploaded media files (needs to be public so Evolution API can fetch media URLs)
+  '/api/inbox/normalize-phones', // Data cleanup (protected by CRON_SECRET in code)
 ]
 
 // Role hierarchy: master > admin > operador
