@@ -5140,11 +5140,13 @@ interface InboxConversation {
   remotePhone: string
   contactName: string
   pushName: string | null
-  lastMessage: { content: string; type: string; fromMe: boolean }
+  groupName: string | null
+  lastMessage: { content: string; type: string; fromMe: boolean; senderName: string | null }
   lastMessageAt: string
   unreadCount: number
   totalMessages: number
   isGroup: boolean
+  participantCount: number | null
   chip: { id: string; name: string; phoneNumber: string; profilePicUrl: string | null; status: string } | null
 }
 
@@ -5529,14 +5531,26 @@ function InboxTab() {
                           : ''
                       } ${conv.unreadCount > 0 ? 'bg-primary/5' : ''}`}
                     >
-                      <div className="size-10 rounded-full bg-gradient-to-br from-blue-100 to-blue-50 dark:from-blue-900/30 dark:to-blue-800/20 flex items-center justify-center text-blue-600 dark:text-blue-400 font-bold text-sm shrink-0">
-                        {conv.contactName.charAt(0).toUpperCase()}
+                      <div className={`size-10 rounded-full flex items-center justify-center font-bold text-sm shrink-0 ${
+                        conv.isGroup
+                          ? 'bg-gradient-to-br from-emerald-100 to-emerald-50 dark:from-emerald-900/30 dark:to-emerald-800/20 text-emerald-600 dark:text-emerald-400'
+                          : 'bg-gradient-to-br from-blue-100 to-blue-50 dark:from-blue-900/30 dark:to-blue-800/20 text-blue-600 dark:text-blue-400'
+                      }`}>
+                        {conv.isGroup ? <Users className="size-4" /> : conv.contactName.charAt(0).toUpperCase()}
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between gap-2">
-                          <p className={`text-sm truncate ${conv.unreadCount > 0 ? 'font-bold' : 'font-medium'}`}>
-                            {conv.contactName}
-                          </p>
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <p className={`text-sm truncate ${conv.unreadCount > 0 ? 'font-bold' : 'font-medium'}`}>
+                              {conv.contactName}
+                            </p>
+                            {conv.isGroup && (
+                              <Badge variant="secondary" className="text-[9px] px-1 py-0 shrink-0">
+                                <Users className="size-2.5 mr-0.5" />
+                                {conv.participantCount || conv.totalMessages}
+                              </Badge>
+                            )}
+                          </div>
                           <span className="text-[10px] text-muted-foreground shrink-0">
                             {formatTime(conv.lastMessageAt)}
                           </span>
@@ -5550,6 +5564,10 @@ function InboxTab() {
                           )}
                           <p className={`text-xs truncate ${conv.unreadCount > 0 ? 'text-foreground font-medium' : 'text-muted-foreground'}`}>
                             {(() => {
+                              // For groups: show sender name prefix
+                              if (conv.isGroup && conv.lastMessage.senderName && conv.lastMessage.senderName !== 'unknown') {
+                                return `${conv.lastMessage.senderName}: ${conv.lastMessage.content || `Mensagem de ${conv.lastMessage.type}`}`
+                              }
                               const c = conv.lastMessage.content || ''
                               // Hide raw JSON from display (old messages saved before parser fix)
                               if (c.startsWith('{') || c.startsWith('[')) {
@@ -5588,13 +5606,27 @@ function InboxTab() {
               <>
                 {/* Chat Header */}
                 <div className="px-4 py-3 border-b bg-background flex items-center gap-3">
-                  <div className="size-10 rounded-full bg-gradient-to-br from-blue-100 to-blue-50 dark:from-blue-900/30 dark:to-blue-800/20 flex items-center justify-center text-blue-600 dark:text-blue-400 font-bold text-sm">
-                    {selectedConversation.contactName.charAt(0).toUpperCase()}
+                  <div className={`size-10 rounded-full flex items-center justify-center font-bold text-sm ${
+                    selectedConversation.isGroup
+                      ? 'bg-gradient-to-br from-emerald-100 to-emerald-50 dark:from-emerald-900/30 dark:to-emerald-800/20 text-emerald-600 dark:text-emerald-400'
+                      : 'bg-gradient-to-br from-blue-100 to-blue-50 dark:from-blue-900/30 dark:to-blue-800/20 text-blue-600 dark:text-blue-400'
+                  }`}>
+                    {selectedConversation.isGroup ? <Users className="size-5" /> : selectedConversation.contactName.charAt(0).toUpperCase()}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-sm">{selectedConversation.contactName}</p>
+                    <div className="flex items-center gap-1.5">
+                      <p className="font-semibold text-sm truncate">{selectedConversation.contactName}</p>
+                      {selectedConversation.isGroup && (
+                        <Badge variant="secondary" className="text-[9px] px-1.5 py-0 shrink-0">
+                          <Users className="size-2.5 mr-0.5" />Grupo
+                        </Badge>
+                      )}
+                    </div>
                     <p className="text-xs text-muted-foreground">
-                      {selectedConversation.remotePhone}
+                      {selectedConversation.isGroup
+                        ? `${selectedConversation.participantCount || '?'} participantes`
+                        : selectedConversation.remotePhone
+                      }
                       {selectedConversation.chip && ` • via ${selectedConversation.chip.name}`}
                     </p>
                   </div>
@@ -5633,6 +5665,14 @@ function InboxTab() {
                           return prevDate !== currDate
                         })()
 
+                        // Skip empty messages (no content and no media) — these are ghost entries
+                        const hasContent = msg.messageContent || msg.mediaUrl || ['reaction', 'deleted', 'sticker', 'image', 'video', 'audio', 'document'].includes(msg.messageType)
+                        if (!hasContent) return null
+
+                        // For group messages, show the sender's name above the bubble
+                        const isGroupMsg = selectedConversation.isGroup && !isMe
+                        const senderDisplayName = msg.pushName || msg.contactName || null
+
                         return (
                           <React.Fragment key={msg.id}>
                             {showDate && (
@@ -5641,6 +5681,16 @@ function InboxTab() {
                                   {new Date(msg.createdAt).toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' })}
                                 </Badge>
                               </div>
+                            )}
+                            {/* Group sender name */}
+                            {isGroupMsg && senderDisplayName && senderDisplayName !== 'unknown' && (
+                              <p className={`text-[10px] font-medium ${
+                                senderDisplayName.length > 15 ? 'text-gray-500' :
+                                ['a','e','i','o','u'].some(v => senderDisplayName[0]?.toLowerCase() === v) ? 'text-purple-600' :
+                                'text-blue-600'
+                              } ml-2 mb-0.5`}>
+                                {senderDisplayName}
+                              </p>
                             )}
                             <div className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
                               <div className={`max-w-[75%] rounded-2xl px-3.5 py-2 ${

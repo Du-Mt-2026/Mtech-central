@@ -355,7 +355,7 @@ export async function POST(request: Request) {
 
           const msgId = data?.Info?.ID || ''
           const fromMe = data?.Info?.IsFromMe ?? false
-          const pushName = data?.Info?.PushName || null
+          const pushName: string | null = data?.Info?.PushName || null
 
           // Handle LID resolution (v3)
           const addressingMode = data?.Info?.AddressingMode || ''
@@ -372,6 +372,12 @@ export async function POST(request: Request) {
 
           const isGroup = remoteJid.includes('@g.us')
 
+          // PushName fallback for group messages: try alternative fields
+          let senderName = pushName
+          if (!senderName && isGroup) {
+            senderName = data?.Info?.SenderName || data?.ContextInfo?.PushName || data?.Participant || null
+          }
+
           // Extract message content using the unified parser
           const msg = data?.Message || {}
           const parsed = parseWhatsAppMessage(msg)
@@ -386,12 +392,46 @@ export async function POST(request: Request) {
               where: { evolutionInstance: chipInstanceName },
             })
 
-            let contactName: string | null = pushName
-            if (!fromMe && chip) {
-              const contact = await db.contact.findFirst({
-                where: { phone: { contains: remotePhone.replace(/^55/, '') } },
-              })
-              if (contact?.name) contactName = contact.name
+            // For individual chats: contactName = contact name (from pushName or Contact table)
+            // For groups: contactName = group name (subject), pushName = sender name
+            let contactName: string | null = null
+            let pushNameForDb: string | null = senderName || pushName  // For groups: sender's name
+
+            if (isGroup) {
+              // For GROUP messages: contactName should be the GROUP NAME (subject),
+              // NOT the pushName of the sender. The sender's name stays in pushName.
+              // Try to get group name from webhook data first (fastest)
+              const groupSubject = data?.Info?.GroupSubject || data?.ChatName || data?.Info?.ChatName || null
+              if (groupSubject) {
+                contactName = groupSubject
+              } else {
+                // Fallback: try Evolution API group metadata (best-effort, don't block)
+                try {
+                  const { fetchGroupMetadata } = await import('@/lib/evolution-api')
+                  if (chip?.evolutionInstance) {
+                    const groupMeta = await fetchGroupMetadata(chip.evolutionInstance, remoteJid)
+                    if (groupMeta?.subject) {
+                      contactName = groupMeta.subject
+                    }
+                  }
+                } catch {
+                  // Skip — group name will be resolved in conversations API
+                }
+              }
+              // For groups, if we still don't have a name, use a placeholder
+              if (!contactName || contactName === pushNameForDb) {
+                const groupPhone = remoteJid.split('@')[0]
+                contactName = `Grupo ${groupPhone.slice(-4)}`
+              }
+            } else {
+              // Individual chat: use pushName or contact name
+              contactName = pushName
+              if (!fromMe && chip) {
+                const contact = await db.contact.findFirst({
+                  where: { phone: { contains: remotePhone.replace(/^55/, '') } },
+                })
+                if (contact?.name) contactName = contact.name
+              }
             }
 
             // Check if this outgoing message is from a campaign (already in Message table)
@@ -434,7 +474,7 @@ export async function POST(request: Request) {
                 messageContent,
                 messageType,
                 mediaUrl,
-                pushName,
+                pushName: pushNameForDb,
                 isCampaign: isCampaignMsg,
               },
               create: {
@@ -446,7 +486,7 @@ export async function POST(request: Request) {
                 messageContent,
                 messageType,
                 mediaUrl,
-                pushName,
+                pushName: pushNameForDb,
                 contactName,
                 evolutionMsgId: msgId,
                 isRead: fromMe,

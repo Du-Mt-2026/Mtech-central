@@ -854,6 +854,37 @@ export async function setPresence(
   }
 }
 
+// ============ Group Metadata ============
+
+/**
+ * Fetch group metadata (name, subject, participants) from Evolution API.
+ * GET /group/fetchMetadata with { groupJid } (instanceId header)
+ * Evolution Go v3 endpoint for group info.
+ */
+export async function fetchGroupMetadata(
+  instanceIdOrName: string,
+  groupJid: string
+): Promise<{ subject: string; participants: number; id: string } | null> {
+  const { id: instanceId, token: instanceToken } = await resolveInstance(instanceIdOrName);
+
+  try {
+    const res = await evolutionFetch(`/group/fetchMetadata?groupJid=${encodeURIComponent(groupJid)}`, {
+      method: 'GET',
+    }, instanceId, instanceToken);
+
+    if (!res.ok) return null;
+
+    const data = await res.json();
+    return {
+      subject: data?.subject || data?.name || data?.Subject || data?.Name || null,
+      participants: data?.participants?.length || data?.size || 0,
+      id: data?.id || groupJid,
+    };
+  } catch {
+    return null;
+  }
+}
+
 // ============ Proxy Configuration ============
 
 // Cache for global proxy settings (avoids DB query on every call)
