@@ -1,6 +1,7 @@
 /**
- * WireGuard Peer Management — calls the KVM8 API
+ * WireGuard Peer Management — calls the KVM4 WireGuard Peer API
  * to add/remove peers on the WireGuard server automatically.
+ * API runs on KVM4 port 51821.
  */
 
 const WG_API_URL = process.env.WIREGUARD_API_URL || ''

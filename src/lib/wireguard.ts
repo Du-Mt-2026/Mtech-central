@@ -29,10 +29,13 @@ export function getServerEndpoint(): string {
 }
 
 // Generate the next available WireGuard IP
-// Range: 10.0.0.3 to 10.0.0.254 (avoiding .1 server, .2 existing peer)
+// Range: 10.0.0.100 to 10.0.0.254 for chips
+// Reserved: 10.0.0.1 to 10.0.0.99 for infrastructure (KVM4=10.0.0.1, KVM8=10.0.0.2, etc.)
+const WG_CHIP_IP_START = parseInt(process.env.WIREGUARD_CHIP_IP_START || '100', 10)
+
 export function generateWireGuardIp(usedIps: string[]): string {
   const baseIp = process.env.WIREGUARD_SUBNET || '10.0.0'
-  for (let i = 2; i <= 254; i++) {
+  for (let i = WG_CHIP_IP_START; i <= 254; i++) {
     const ip = `${baseIp}.${i}`
     if (!usedIps.includes(ip)) {
       return ip
