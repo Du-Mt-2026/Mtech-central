@@ -953,12 +953,17 @@ function ChipsTab() {
     } catch (err: unknown) {
       const rawMessage = (err as Error).message || 'Erro ao atualizar QR Code'
       let friendlyMessage = 'Não foi possível gerar o QR Code. Tente novamente.'
-      if (rawMessage.includes('URL ou API Key')) {
+      if (rawMessage.includes('não configurada') || rawMessage.includes('URL ou API Key')) {
         friendlyMessage = 'Evolution API não configurada. Vá em Configurações e defina a URL e API Key.'
+      } else if (rawMessage.includes('timeout') || rawMessage.includes('não respondeu')) {
+        friendlyMessage = 'O servidor Evolution API está demorando para responder ou está offline. Tente novamente em alguns minutos.'
       } else if (rawMessage.includes('404')) {
         friendlyMessage = 'Instância não encontrada na Evolution API. Tente sincronizar primeiro.'
+      } else if (rawMessage.includes('ECONNREFUSED') || rawMessage.includes('fetch failed')) {
+        friendlyMessage = 'Não foi possível conectar ao servidor Evolution API. Verifique se o servidor está online.'
       } else {
         console.error('QR refresh error:', rawMessage)
+        friendlyMessage = rawMessage
       }
       setQrError(friendlyMessage)
     } finally {

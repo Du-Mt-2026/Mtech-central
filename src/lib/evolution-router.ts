@@ -77,15 +77,21 @@ export function inferApiVersionFromName(instanceName: string): ApiVersion {
 
 /**
  * Fetch all instances from both v2 and v3 APIs.
- * Returns a unified list.
+ * Returns a unified list. Each API is queried independently with its own timeout.
+ * If one API is down/offline, the other still returns results.
  */
 export async function fetchAllInstances(): Promise<UnifiedInstance[]> {
   const results: UnifiedInstance[] = []
 
-  // Fetch v3 instances
-  try {
-    const v3Instances = await v3.fetchInstances()
-    for (const inst of v3Instances) {
+  // Fetch both APIs in parallel — each has its own 15s timeout
+  const [v3Result, v2Result] = await Promise.allSettled([
+    v3.fetchInstances(),
+    v2.fetchV2Instances(),
+  ])
+
+  // Process v3 instances
+  if (v3Result.status === 'fulfilled') {
+    for (const inst of v3Result.value) {
       results.push({
         name: inst.name,
         id: inst.id,
@@ -98,14 +104,13 @@ export async function fetchAllInstances(): Promise<UnifiedInstance[]> {
         apiVersion: 'v3',
       })
     }
-  } catch (err) {
-    console.error('[Router] Failed to fetch v3 instances:', err)
+  } else {
+    console.error('[Router] Failed to fetch v3 instances:', v3Result.reason?.message || v3Result.reason)
   }
 
-  // Fetch v2 instances
-  try {
-    const v2Instances = await v2.fetchV2Instances()
-    for (const inst of v2Instances) {
+  // Process v2 instances
+  if (v2Result.status === 'fulfilled') {
+    for (const inst of v2Result.value) {
       results.push({
         name: inst.name,
         id: inst.id,
@@ -121,8 +126,8 @@ export async function fetchAllInstances(): Promise<UnifiedInstance[]> {
         disconnectionAt: inst.disconnectionAt || null,
       })
     }
-  } catch (err) {
-    console.error('[Router] Failed to fetch v2 instances:', err)
+  } else {
+    console.error('[Router] Failed to fetch v2 instances:', v2Result.reason?.message || v2Result.reason)
   }
 
   return results

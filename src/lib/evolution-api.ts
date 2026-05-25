@@ -211,6 +211,11 @@ export async function evolutionFetch(
   instanceToken?: string
 ) {
   const creds = await getCredentials()
+
+  if (!creds.apiUrl || !creds.apiKey) {
+    throw new Error('Evolution Go API não configurada. Defina a URL e API Key nas configurações.')
+  }
+
   const url = `${creds.apiUrl}${endpoint}`;
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -223,20 +228,34 @@ export async function evolutionFetch(
     headers['instanceId'] = instanceId;
   }
 
-  const response = await fetch(url, {
-    ...options,
-    headers: {
-      ...headers,
-      ...(options.headers as Record<string, string> || {}),
-    },
-  });
+  // Use AbortController with a 15s timeout to avoid hanging when the API server is down
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), 15_000)
 
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`Evolution Go API error (${response.status}): ${error}`);
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+      headers: {
+        ...headers,
+        ...(options.headers as Record<string, string> || {}),
+      },
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Evolution Go API error (${response.status}): ${error}`);
+    }
+
+    return response;
+  } catch (err: any) {
+    if (err.name === 'AbortError') {
+      throw new Error(`Evolution Go API não respondeu (timeout de 15s). O servidor pode estar offline.`)
+    }
+    throw err
+  } finally {
+    clearTimeout(timeoutId)
   }
-
-  return response;
 }
 
 // ============ Instance Management ============

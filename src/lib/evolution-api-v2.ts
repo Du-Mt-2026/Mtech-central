@@ -62,23 +62,42 @@ export function clearV2CredentialsCache(): void {
 
 async function v2Fetch(endpoint: string, options: RequestInit = {}): Promise<Response> {
   const creds = await getV2Credentials()
-  const url = `${creds.apiUrl}${endpoint}`
 
-  const response = await fetch(url, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      'apikey': creds.apiKey,
-      ...(options.headers as Record<string, string> || {}),
-    },
-  })
-
-  if (!response.ok) {
-    const error = await response.text()
-    throw new Error(`Evolution v2 API error (${response.status}): ${error}`)
+  if (!creds.apiUrl || !creds.apiKey) {
+    throw new Error('Evolution v2 API não configurada. Defina a URL e API Key nas configurações.')
   }
 
-  return response
+  const url = `${creds.apiUrl}${endpoint}`
+
+  // Use AbortController with a 15s timeout to avoid hanging when the API server is down
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), 15_000)
+
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': creds.apiKey,
+        ...(options.headers as Record<string, string> || {}),
+      },
+    })
+
+    if (!response.ok) {
+      const error = await response.text()
+      throw new Error(`Evolution v2 API error (${response.status}): ${error}`)
+    }
+
+    return response
+  } catch (err: any) {
+    if (err.name === 'AbortError') {
+      throw new Error(`Evolution v2 API não respondeu (timeout de 15s). O servidor pode estar offline.`)
+    }
+    throw err
+  } finally {
+    clearTimeout(timeoutId)
+  }
 }
 
 // ============ Instance Types ============

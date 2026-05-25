@@ -78,26 +78,35 @@ export async function GET() {
     // Fetch real-time status from BOTH v2 and v3 APIs
     const instanceMap = new Map<string, any>()
     let anyApiReachable = false
+    let v3Reachable = false
+    let v2Reachable = false
     try {
       const instances = await fetchAllInstances()
       for (const inst of instances) {
         instanceMap.set(inst.name, inst)
+        if (inst.apiVersion === 'v3') v3Reachable = true
+        if (inst.apiVersion === 'v2') v2Reachable = true
       }
-      anyApiReachable = true
+      anyApiReachable = instances.length > 0 || v3Reachable || v2Reachable
     } catch {
       // APIs unavailable — return DB data as-is
     }
 
-    // Sync cleanup: delete chips whose instances don't exist in ANY API
+    // Sync cleanup: delete chips whose instances don't exist in the corresponding API
+    // Only check for orphans on APIs that are actually reachable.
+    // If an API is down, we DO NOT delete its chips (they might still exist on the offline server).
     if (anyApiReachable) {
       const orphanedIds: string[] = []
       for (const chip of chips) {
         if (chip.evolutionInstance && !instanceMap.has(chip.evolutionInstance)) {
-          // Only orphan if the chip has a v3 instance with OctupusZap_ prefix
-          // v2 instances may not be in the DB yet — don't auto-delete
-          if (v3IsOctupusZap(chip.evolutionInstance)) {
+          const chipApiVersion = getApiVersion(chip)
+          // Only mark as orphaned if the API that should have this instance is reachable
+          // v3 chip → only orphan if v3 API was reachable and instance not found there
+          // v2 chip → only orphan if v2 API was reachable and instance not found there
+          if (chipApiVersion === 'v3' && v3Reachable && v3IsOctupusZap(chip.evolutionInstance)) {
             orphanedIds.push(chip.id)
           }
+          // Don't auto-delete v2 chips — they may exist on the v2 server with different names
         }
       }
       if (orphanedIds.length > 0) {
