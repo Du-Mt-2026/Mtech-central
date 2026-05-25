@@ -186,8 +186,8 @@ export async function createInstance(
       connected: inst.connected || false,
       connectionStatus: inst.connected ? 'open' : 'close',
       ownerJid: inst.jid || inst.ownerJid || null,
-      profileName: inst.profileName,
-      profilePicUrl: inst.profilePicUrl,
+      profileName: inst.profileName || null,
+      profilePicUrl: inst.profilePicUrl || null,
       integration: 'WHATSAPP-GO',
       apiVersion: 'v3',
     }
@@ -224,7 +224,7 @@ export async function connectInstance(
     const result = await v2.connectV2Instance(instanceName)
 
     // Normalize QR code format from v2
-    let qrcode: string | null = null
+    let qrcode: string | null | undefined = null
     if (result.qrcode?.base64) {
       qrcode = result.qrcode.base64.startsWith('data:')
         ? result.qrcode.base64
@@ -232,10 +232,10 @@ export async function connectInstance(
     }
 
     return {
-      qrcode,
+      qrcode: qrcode ?? null,
       code: result.code || result.pairingCode || null,
       pairingCode: result.pairingCode || result.code || null,
-      state: result.state || 'close',
+      state: (result.state || 'close') as 'open' | 'close' | 'connecting',
       instanceName,
       apiVersion: 'v2',
     }
@@ -257,10 +257,10 @@ export async function connectInstance(
     }
 
     return {
-      qrcode,
+      qrcode: qrcode ?? null,
       code: result.code || null,
       pairingCode: result.pairingCode || result.code || null,
-      state: result.state || 'close',
+      state: (result.state || 'close') as 'open' | 'close' | 'connecting',
       instanceName,
       instanceId: result.instanceId,
       apiVersion: 'v3',
@@ -277,27 +277,27 @@ export async function getInstanceQRCode(
 ): Promise<UnifiedConnectResult> {
   if (apiVersion === 'v2') {
     const result = await v2.getV2QRCode(instanceName)
-    let qrcode: string | null = null
+    let qrcode: string | null | undefined = null
     if (result.qrcode?.base64) {
       qrcode = result.qrcode.base64.startsWith('data:')
         ? result.qrcode.base64
         : `data:image/png;base64,${result.qrcode.base64}`
     }
     return {
-      qrcode,
+      qrcode: qrcode ?? null,
       code: result.code || null,
       pairingCode: result.pairingCode || null,
-      state: result.state || 'close',
+      state: (result.state || 'close') as 'open' | 'close' | 'connecting',
       instanceName,
       apiVersion: 'v2',
     }
   } else {
     const result = await v3.getInstanceQRCode(instanceName)
     return {
-      qrcode: result.qrcode || null,
+      qrcode: result.qrcode ?? null,
       code: result.code || null,
       pairingCode: result.pairingCode || null,
-      state: result.state || 'close',
+      state: (result.state || 'close') as 'open' | 'close' | 'connecting',
       instanceName,
       instanceId: result.instanceId,
       apiVersion: 'v3',
@@ -327,11 +327,12 @@ export async function getConnectionState(
   apiVersion: ApiVersion,
 ): Promise<{ state: 'open' | 'close' | 'connecting'; instanceName: string }> {
   if (apiVersion === 'v2') {
-    return v2.getV2ConnectionState(instanceName)
+    const v2result = await v2.getV2ConnectionState(instanceName)
+    return { state: v2result.state as 'open' | 'close' | 'connecting', instanceName }
   } else {
     const result = await v3.getConnectionState(instanceName)
     return {
-      state: result.state || 'close',
+      state: (result.state || 'close') as 'open' | 'close' | 'connecting',
       instanceName,
     }
   }

@@ -97,14 +97,42 @@ export async function POST(request: Request) {
       if (!existing) {
         // Create new instance in Evolution Go
         const newInstance = await createInstance(instanceName, 'v3', proxyConfig ? v3ToEvolutionGoProxy(proxyConfig) : undefined)
-        existing = newInstance
-      } else {
-        // Instance exists — update webhook
-        try {
-          await setWebhook(existing.name || instanceName, 'v3', webhookUrl)
-        } catch (webhookErr) {
-          console.error('Failed to set webhook:', webhookErr)
-        }
+        // newInstance is a UnifiedInstance, use its name
+        const effectiveInstanceName = newInstance.name || instanceName
+
+        // Connect via router
+        const connectResult = await routerConnectInstance(effectiveInstanceName, 'v3', webhookUrl)
+
+        const isConnected = connectResult.state === 'open'
+        const newStatus = isConnected ? 'connected' : 'connecting'
+
+        // Update chip in database
+        await db.chip.update({
+          where: { id: chipId },
+          data: {
+            status: newStatus,
+            evolutionInstance: effectiveInstanceName,
+            evolutionApiVersion: 'v3',
+            qrPairingCode: connectResult.code || connectResult.pairingCode || null,
+            lastSeen: isConnected ? new Date() : chip.lastSeen,
+            ...(isConnected ? { isQrPaired: true } : {}),
+          },
+        })
+
+        return NextResponse.json({
+          instanceName: effectiveInstanceName,
+          qrcode: connectResult.qrcode || null,
+          code: connectResult.code || null,
+          state: connectResult.state,
+          apiVersion: 'v3',
+        })
+      }
+
+      // Instance exists — update webhook
+      try {
+        await setWebhook(existing.name || instanceName, 'v3', webhookUrl)
+      } catch (webhookErr) {
+        console.error('Failed to set webhook:', webhookErr)
       }
 
       const effectiveInstanceName = existing.name || instanceName
