@@ -8,7 +8,7 @@ import {
   getGlobalProxy,
   findInstanceByName,
 } from '@/lib/evolution-router'
-import { getInstanceName as v3GetInstanceName, findInstanceByName as v3FindInstanceByName, toEvolutionGoProxy as v3ToEvolutionGoProxy, resolveChipProxy, getInstanceQRCode, getConnectionState as v3GetConnectionState } from '@/lib/evolution-api'
+import { getInstanceName as v3GetInstanceName, findInstanceByName as v3FindInstanceByName, toEvolutionGoProxy as v3ToEvolutionGoProxy, resolveChipProxy, getInstanceQRCode, getConnectionState as v3GetConnectionState, clearInstanceIdCache } from '@/lib/evolution-api'
 
 export async function POST(request: Request) {
   try {
@@ -42,18 +42,31 @@ export async function POST(request: Request) {
 
     // ===== BUG FIX: Stale session detection =====
     // If the chip is marked as disconnected in our DB but the Evolution API
-    // instance still has an active WhatsApp session (Connected+LoggedIn), the
-    // user clicked "Conectar WhatsApp" expecting to see a QR code. Simply
-    // disconnecting is NOT enough — Evolution Go preserves the session and
-    // auto-reconnects, skipping the QR code again.
+    // instance still has a stored WhatsApp session, the user clicked
+    // "Conectar WhatsApp" expecting to see a QR code. Simply disconnecting
+    // is NOT enough — Evolution Go preserves the session and auto-reconnects,
+    // skipping the QR code again.
+    //
+    // This can happen in two scenarios:
+    //   1) state === 'open' → Connected+LoggedIn (fully active session)
+    //   2) state === 'connecting' with a stored jid → Connected but not LoggedIn,
+    //      yet the stored session allows Evolution Go to auto-restore on connect,
+    //      which returns state='open' with no QR code.
     //
     // Fix: Delete the instance entirely and recreate it from scratch.
     // This forces Evolution Go to generate a brand new session and QR code.
     if (existing && chip.status !== 'connected') {
+      // Check if the Evolution Go instance has a stored WhatsApp session (jid).
+      // If it does, calling /instance/connect will auto-restore the session
+      // and return state='open' with no QR code — the user expects a QR code.
+      const storedJid = existing.jid || existing.ownerJid || ''
+      const hasStoredSession = storedJid.length > 0
       try {
         const realState = await v3GetConnectionState(existing.name || instanceName)
-        if (realState.state === 'open') {
-          console.log(`[Connect] Chip "${chip.name}" is "${chip.status}" in DB but Evolution instance is connected. Deleting and recreating instance for fresh QR code.`)
+        const needsRecreate = realState.state === 'open' ||
+          (realState.state === 'connecting' && hasStoredSession)
+        if (needsRecreate) {
+          console.log(`[Connect] Chip "${chip.name}" is "${chip.status}" in DB but Evolution instance has stale session (state=${realState.state}, jid=${storedJid}). Deleting and recreating for fresh QR code.`)
           try {
             await routerDisconnectInstance(existing.name || instanceName)
           } catch { /* may fail if already disconnected */ }
@@ -62,6 +75,9 @@ export async function POST(request: Request) {
           } catch { /* may fail if already deleted */ }
           // Wait for deletion to take effect
           await new Promise(r => setTimeout(r, 2000))
+          // Clear instance ID cache — the old UUID/token is now invalid
+          // after deletion; subsequent calls must re-resolve from /instance/all
+          clearInstanceIdCache()
           // Clear the existing reference so the code below creates a fresh instance
           existing = null
         }
