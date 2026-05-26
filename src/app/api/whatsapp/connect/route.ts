@@ -3,10 +3,11 @@ import { db } from '@/lib/db'
 import {
   createInstance,
   connectInstance as routerConnectInstance,
+  disconnectInstance as routerDisconnectInstance,
   getGlobalProxy,
   findInstanceByName,
 } from '@/lib/evolution-router'
-import { getInstanceName as v3GetInstanceName, findInstanceByName as v3FindInstanceByName, toEvolutionGoProxy as v3ToEvolutionGoProxy, resolveChipProxy, getInstanceQRCode } from '@/lib/evolution-api'
+import { getInstanceName as v3GetInstanceName, findInstanceByName as v3FindInstanceByName, toEvolutionGoProxy as v3ToEvolutionGoProxy, resolveChipProxy, getInstanceQRCode, getConnectionState as v3GetConnectionState } from '@/lib/evolution-api'
 
 export async function POST(request: Request) {
   try {
@@ -37,6 +38,40 @@ export async function POST(request: Request) {
 
     // Check if instance already exists
     let existing = await v3FindInstanceByName(instanceName)
+
+    // ===== BUG FIX: Stale session detection =====
+    // If the chip is marked as disconnected in our DB but the Evolution API
+    // instance is actually Connected+LoggedIn, the user clicked "Conectar WhatsApp"
+    // expecting to see a QR code. The old code would immediately return state='open'
+    // (because the Evolution instance is connected), showing "Conectado!" without
+    // ever displaying the QR code.
+    //
+    // Fix: If the chip DB status is NOT 'connected' but the Evolution instance IS
+    // connected, we force-disconnect the Evolution instance first to clear the
+    // stale session, then reconnect to generate a fresh QR code.
+    if (existing && chip.status !== 'connected') {
+      try {
+        const realState = await v3GetConnectionState(existing.name || instanceName)
+        if (realState.state === 'open') {
+          console.log(`[Connect] Chip "${chip.name}" is "${chip.status}" in DB but Evolution instance is connected. Force-disconnecting to generate fresh QR code.`)
+          // Disconnect the stale Evolution session
+          try {
+            await routerDisconnectInstance(existing.name || instanceName)
+            // Wait for disconnection to take effect
+            await new Promise(r => setTimeout(r, 2000))
+          } catch (disconnectErr) {
+            console.warn(`[Connect] Failed to disconnect stale instance, proceeding anyway:`, disconnectErr)
+          }
+          // Mark chip as disconnected in DB to reflect the state change
+          await db.chip.update({
+            where: { id: chipId },
+            data: { status: 'disconnected', isQrPaired: false, qrPairingCode: null },
+          })
+        }
+      } catch {
+        // Status check failed — proceed with normal connect flow
+      }
+    }
 
     if (!existing) {
       // Create new instance in Evolution Go

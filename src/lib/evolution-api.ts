@@ -469,7 +469,10 @@ export async function connectInstance(
     const status = statusData.data || statusData;
 
     if (status.Connected && status.LoggedIn) {
-      // Already logged in — just update webhook if needed
+      // Already logged in — update webhook via /instance/connect if needed.
+      // NOTE: Calling /instance/connect on an already-Connected+LoggedIn instance
+      // is safe — it simply updates the webhook configuration without disrupting
+      // the active session or generating a new QR code.
       if (webhookUrl) {
         try {
           await evolutionFetch('/instance/connect', {
