@@ -44,9 +44,9 @@ export function generateWireGuardIp(usedIps: string[]): string {
   throw new Error('No available WireGuard IPs')
 }
 
-// Generate SOCKS port — default 8080 (Every Proxy default port on Android)
+// Generate SOCKS port — default 8084 (Every Proxy default port on Android)
 export function generateSocksPort(usedPorts: number[]): number {
-  for (let port = 8080; port <= 8099; port++) {
+  for (let port = 8084; port <= 8099; port++) {
     if (!usedPorts.includes(port)) {
       return port
     }

@@ -1007,7 +1007,7 @@ function ChipsTab() {
   const openProxyDialog = async (chip: Chip) => {
     setSelectedChip(chip)
     setProxyTestResult(null)
-    setProxyForm({ socks5Host: chip.socks5Host, socks5Port: chip.socks5Port || chip.socksPort || 8080, socks5User: chip.socks5User, socks5Pass: chip.socks5Pass })
+    setProxyForm({ socks5Host: chip.socks5Host, socks5Port: chip.socks5Port || chip.socksPort || 8084, socks5User: chip.socks5User, socks5Pass: chip.socks5Pass })
     // Try to load WireGuard config too
     try {
       const res = await fetch(`/api/wireguard/${chip.id}`)
@@ -1236,13 +1236,9 @@ function ChipsTab() {
                   <div className={`absolute top-0 left-0 right-0 h-1 ${chip.status === 'connected' ? 'bg-gradient-to-r from-emerald-400 to-teal-500' : chip.status === 'error' ? 'bg-gradient-to-r from-rose-400 to-pink-500' : chip.status === 'connecting' ? 'bg-gradient-to-r from-amber-400 to-orange-500' : 'bg-zinc-300'}`} />
                   <CardHeader className="pb-3">
                     <div className="flex items-center gap-3">
-                      {chip.profilePicUrl ? (
-                        <img src={chip.profilePicUrl} alt={chip.profileName || chip.name} className={`size-12 rounded-xl object-cover ring-2 ${chip.status === 'connected' ? 'ring-emerald-500/30' : 'ring-zinc-300'}`} />
-                      ) : (
-                        <div className="flex size-12 items-center justify-center rounded-xl bg-violet-100 dark:bg-violet-900/30">
-                          <Smartphone className="size-6 text-violet-600 dark:text-violet-400" />
-                        </div>
-                      )}
+                      <div className={`flex size-12 items-center justify-center rounded-xl ${chip.status === 'connected' ? 'bg-emerald-100 dark:bg-emerald-900/30' : 'bg-violet-100 dark:bg-violet-900/30'}`}>
+                        <Smartphone className={`size-6 ${chip.status === 'connected' ? 'text-emerald-600 dark:text-emerald-400' : 'text-violet-600 dark:text-violet-400'}`} />
+                      </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
                           <CardTitle className="truncate text-base">{chip.profileName || chip.name}</CardTitle>
@@ -1529,13 +1525,9 @@ function ChipsTab() {
                           checked={selectedInstances.has(inst.name)}
                           onCheckedChange={() => toggleInstanceSelection(inst.name)}
                         />
-                        {inst.profilePicUrl ? (
-                          <img src={inst.profilePicUrl} alt={inst.profileName || inst.name} className="size-9 rounded-lg object-cover" />
-                        ) : (
-                          <div className="flex size-9 items-center justify-center rounded-lg bg-zinc-100 dark:bg-zinc-800">
-                            <Smartphone className="size-4 text-zinc-500" />
-                          </div>
-                        )}
+                        <div className="flex size-9 items-center justify-center rounded-lg bg-violet-100 dark:bg-violet-900/30">
+                          <Smartphone className="size-4 text-violet-600 dark:text-violet-400" />
+                        </div>
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium truncate">{inst.profileName || inst.name}</p>
                           <div className="flex items-center gap-2">
@@ -1743,7 +1735,7 @@ function ChipsTab() {
                       </p>
                       <ol className="text-xs text-purple-700 dark:text-purple-300 space-y-1 list-decimal ml-4">
                         <li>Vá na aba <strong>SOCKS5</strong></li>
-                        <li>Confira a <strong>porta</strong> (padrão: 8080)</li>
+                        <li>Confira a <strong>porta</strong> (padrão: 8084)</li>
                         <li>Ative o <strong>switch</strong> para ligar o proxy</li>
                       </ol>
                     </div>
@@ -1763,16 +1755,16 @@ function ChipsTab() {
                       <div className="flex items-center gap-2 text-xs">
                         <span className="text-blue-600 dark:text-blue-400">Porta SOCKS5:</span>
                         <code className="bg-white dark:bg-zinc-800 px-2 py-0.5 rounded font-mono text-blue-800 dark:text-blue-200 border">
-                          {selectedChip?.socksPort || 8080}
+                          {selectedChip?.socksPort || 8084}
                         </code>
                       </div>
                       <div className="flex items-center gap-2 text-xs">
                         <span className="text-blue-600 dark:text-blue-400">Proxy completo:</span>
                         <code className="bg-white dark:bg-zinc-800 px-2 py-0.5 rounded font-mono text-blue-800 dark:text-blue-200 border">
-                          {selectedChip?.wireguardIp || selectedChipConfig?.chip.wireguardIp || '0.0.0.0'}:{selectedChip?.socksPort || 8080}
+                          {selectedChip?.wireguardIp || selectedChipConfig?.chip.wireguardIp || '0.0.0.0'}:{selectedChip?.socksPort || 8084}
                         </code>
                         {selectedChip?.wireguardIp && (
-                          <Button variant="ghost" size="sm" className="h-5 px-1" onClick={() => copyToClipboard(`${selectedChip.wireguardIp}:${selectedChip.socksPort || 8080}`)}>
+                          <Button variant="ghost" size="sm" className="h-5 px-1" onClick={() => copyToClipboard(`${selectedChip.wireguardIp}:${selectedChip.socksPort || 8084}`)}>
                             <Copy className="size-3" />
                           </Button>
                         )}
@@ -1837,7 +1829,7 @@ function ChipsTab() {
                       {proxyTestResult ? (proxyTestResult.reachable && proxyTestResult.socks5Valid ? 'Proxy Online' : proxyTestResult.reachable ? 'Parcialmente Acessível' : 'Proxy Offline') : 'Aguardando Teste'}
                     </p>
                     <p className="text-xs text-muted-foreground mt-1">
-                      {selectedChip?.wireguardIp ? `${selectedChip.wireguardIp}:${selectedChip.socksPort || 8080}` : 'Nenhum proxy configurado'}
+                      {selectedChip?.wireguardIp ? `${selectedChip.wireguardIp}:${selectedChip.socksPort || 8084}` : 'Nenhum proxy configurado'}
                     </p>
                   </div>
                 </div>
@@ -1888,7 +1880,7 @@ function ChipsTab() {
                 </div>
                 <div className="space-y-2">
                   <Label>Porta</Label>
-                  <Input type="number" placeholder="8080" value={proxyForm.socks5Port} onChange={e => setProxyForm(p => ({ ...p, socks5Port: parseInt(e.target.value) || 0 }))} />
+                  <Input type="number" placeholder="8084" value={proxyForm.socks5Port} onChange={e => setProxyForm(p => ({ ...p, socks5Port: parseInt(e.target.value) || 0 }))} />
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-2">
@@ -6042,7 +6034,7 @@ function ConfiguracoesTab() {
     resetHour: 0, defaultProxyMode: 'none', globalDailyLimit: 1000,
     emailNotifications: true, timezone: 'America/Sao_Paulo',
     evolutionApiUrl: '', evolutionApiKey: '',
-    socks5Host: '', socks5Port: '8080', socks5User: '', socks5Pass: '',
+    socks5Host: '', socks5Port: '8084', socks5User: '', socks5Pass: '',
   })
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -6250,9 +6242,9 @@ function ConfiguracoesTab() {
               </div>
               <div className="space-y-2">
                 <Label>Porta do Proxy</Label>
-                <Input placeholder="8080" value={config.socks5Port}
+                <Input placeholder="8084" value={config.socks5Port}
                   onChange={e => setConfig(p => ({ ...p, socks5Port: e.target.value }))} />
-                <p className="text-xs text-muted-foreground">Porta SOCKS5 do Every Proxy (padrão: 8080)</p>
+                <p className="text-xs text-muted-foreground">Porta SOCKS5 do Every Proxy (padrão: 8084)</p>
               </div>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
