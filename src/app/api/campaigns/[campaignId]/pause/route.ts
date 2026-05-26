@@ -28,6 +28,7 @@ export async function POST(
         status: 'paused',
         statusReason: 'Pausada manualmente pelo usuário',
         pausedAt: new Date(),
+        nextSendAt: null, // Clear interval lock so campaign doesn't get stuck
       },
       include: {
         chips: { include: { chip: true } },

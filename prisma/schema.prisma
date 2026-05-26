@@ -30,6 +30,7 @@ model Chip {
   sentToday        Int      @default(0)
   lastResetAt      DateTime @default(now())
   cooldownUntil    DateTime?
+  nextSendAt       DateTime?                     // Anti-ban: próxima vez que este chip pode enviar (persiste intervalo entre invocações serverless)
   warmingEnabled   Boolean  @default(true)
   warmingPhase     String   @default("nursery")   // "nursery" (berçário) | "prewarm" (pré-aquecido) | "ready" (pronto)
   warmingStartedAt DateTime?                      // When warming actually started (first send or manual). Null = never sent, always Day 1
@@ -193,6 +194,7 @@ model Campaign {
   // Status reason — explains why a campaign was paused/stopped (e.g., chip banned, chip disconnected)
   statusReason     String?
   pausedAt         DateTime?
+  nextSendAt       DateTime?                     // Anti-ban: próxima vez que esta campanha pode enviar QUALQUER mensagem (persiste intervalo entre invocações serverless)
 
   // Vendedor association — this campaign sends on behalf of this vendedor
   vendedorId String?

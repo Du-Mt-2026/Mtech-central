@@ -36,7 +36,7 @@ export async function POST(
 
     const updated = await db.campaign.update({
       where: { id: campaignId },
-      data: { status: 'running', statusReason: null, pausedAt: null },
+      data: { status: 'running', statusReason: null, pausedAt: null, nextSendAt: null },
       include: {
         chips: { include: { chip: true } },
         sequenceSteps: { orderBy: { stepOrder: 'asc' } },

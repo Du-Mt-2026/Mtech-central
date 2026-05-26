@@ -925,7 +925,7 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
       console.debug(`[SendingEngine] Campaign ${campaignId} already has ${existingMessages} messages — marking as running`)
       await tx.campaign.update({
         where: { id: campaignId },
-        data: { status: 'running', startedAt: new Date() },
+        data: { status: 'running', startedAt: new Date(), nextSendAt: null },
       })
       return { canProceed: false, messageCount: existingMessages }
     }
@@ -1122,7 +1122,7 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
   // ============================================================
   await db.campaign.update({
     where: { id: campaignId },
-    data: { status: 'running', startedAt: new Date() },
+    data: { status: 'running', startedAt: new Date(), nextSendAt: null },
   })
 
   console.debug(`[SendingEngine] Campaign ${campaignId} is now RUNNING with ${createResult.count} messages`)
@@ -1161,7 +1161,7 @@ export async function processNextMessage(campaignId: string): Promise<{
   // Get campaign anti-ban settings
   const campaignInfo = await db.campaign.findUnique({
     where: { id: campaignId },
-    select: { antiBanEnabled: true, warmingMode: true, sendIntervalMin: true, sendIntervalMax: true },
+    select: { antiBanEnabled: true, warmingMode: true, sendIntervalMin: true, sendIntervalMax: true, nextSendAt: true },
   })
   const antiBanEnabled = campaignInfo?.antiBanEnabled ?? true
   const warmingMode = campaignInfo?.warmingMode || 'normal'
@@ -1170,6 +1170,29 @@ export async function processNextMessage(campaignId: string): Promise<{
   const campaignIntervalMax = campaignInfo?.sendIntervalMax
 
   const settings = await getAntiBanSettings()
+
+  // ============================================
+  // CHECK CAMPAIGN nextSendAt — anti-ban interval persistence
+  // ============================================
+  // If the campaign has a nextSendAt in the future, we must wait.
+  // This persists the interval across serverless invocations (Vercel Cron).
+  // Without this, when the function timeout truncates a 60s delay to only 20s,
+  // the next cron tick would immediately send another message.
+  if (antiBanEnabled && campaignInfo?.nextSendAt) {
+    const now = Date.now()
+    const nextSendTime = new Date(campaignInfo.nextSendAt).getTime()
+    if (nextSendTime > now) {
+      const waitMs = nextSendTime - now
+      console.debug(`[SendingEngine] Campaign nextSendAt not reached — waiting ${Math.round(waitMs/1000)}s (until ${campaignInfo.nextSendAt.toISOString()})`)
+      return {
+        processed: false,
+        delayMs: waitMs,
+        remaining: -1,
+        completed: false,
+        reason: `campaign_interval_wait`,
+      }
+    }
+  }
 
   // CHECK SENDING WINDOW — don't send outside business hours
   if (antiBanEnabled && !isWithinSendingWindow(settings)) {
@@ -1235,7 +1258,7 @@ export async function processNextMessage(campaignId: string): Promise<{
     if (stillSending === 0) {
       await db.campaign.update({
         where: { id: campaignId },
-        data: { status: 'completed', completedAt: new Date() },
+        data: { status: 'completed', completedAt: new Date(), nextSendAt: null },
       })
       return { processed: false, delayMs: 0, remaining: 0, completed: true }
     }
@@ -1366,7 +1389,7 @@ export async function processNextMessage(campaignId: string): Promise<{
     if (stillPending === 0) {
       await db.campaign.update({
         where: { id: campaignId },
-        data: { status: 'completed', completedAt: new Date() },
+        data: { status: 'completed', completedAt: new Date(), nextSendAt: null },
       })
       return { processed: false, delayMs: 0, remaining: 0, completed: true }
     }
@@ -1449,6 +1472,7 @@ export async function processNextMessage(campaignId: string): Promise<{
           status: 'paused',
           statusReason: `Pausada automaticamente: chip ${message.chip.name} desconectou e não há outros chips disponíveis na campanha`,
           pausedAt: new Date(),
+          nextSendAt: null,
         },
       })
       console.debug(`[SendingEngine] Campaign ${campaignId} PAUSED — chip ${message.chip.name} disconnected, no other campaign chips available`)
@@ -1522,6 +1546,7 @@ export async function processNextMessage(campaignId: string): Promise<{
           status: 'paused',
           statusReason: `Pausada automaticamente: chip ${message.chip.name} foi banido e não há outros chips disponíveis na campanha`,
           pausedAt: new Date(),
+          nextSendAt: null,
         },
       })
       console.debug(`[SendingEngine] Campaign ${campaignId} PAUSED — chip ${message.chip.name} banned, no other campaign chips available`)
@@ -1540,6 +1565,7 @@ export async function processNextMessage(campaignId: string): Promise<{
           status: 'paused',
           statusReason: 'Campanha pausada automaticamente — aviso de spam detectado pelo WhatsApp. Retome com cautela.',
           pausedAt: new Date(),
+          nextSendAt: null,
         },
       })
       console.debug(`[SendingEngine] Campaign ${campaignId} PAUSED — WhatsApp warning detected for chip ${message.chip.name}`)
@@ -1596,30 +1622,27 @@ export async function processNextMessage(campaignId: string): Promise<{
     }
   }
 
-  // Check minimum interval for nursery/prewarm chips (smart message spreading)
-  if (antiBanEnabled && settings.warmingEnabled && currentChip.warmingEnabled) {
-    const minIntervalSeconds = getMinimumIntervalForChip(currentChip, settings)
-    if (minIntervalSeconds > 0) {
-      // Find the last message sent by this chip
-      const lastMessage = await db.message.findFirst({
-        where: { chipId: currentChip.id, status: { in: ['sent', 'delivered', 'read'] }, sentAt: { not: null } },
-        orderBy: { sentAt: 'desc' },
-        select: { sentAt: true },
-      })
-      if (lastMessage?.sentAt) {
-        const elapsed = (Date.now() - new Date(lastMessage.sentAt).getTime()) / 1000
-        if (elapsed < minIntervalSeconds) {
-          const waitSeconds = Math.ceil(minIntervalSeconds - elapsed)
-          const phase = currentChip.warmingPhase || 'nursery'
-          console.debug(`[SendingEngine] Chip ${currentChip.name} (${phase}): minimum interval not reached (${Math.round(elapsed)}s/${minIntervalSeconds}s) — waiting ${waitSeconds}s`)
-          return {
-            processed: false,
-            delayMs: waitSeconds * 1000,
-            remaining: -1,
-            completed: false,
-            reason: `min_interval_${phase}_${currentChip.name}`,
-          }
-        }
+  // ============================================
+  // CHECK CHIP nextSendAt — anti-ban interval persistence
+  // ============================================
+  // Replaces the old "minimum interval" check that only worked for warming chips.
+  // Now ALL chips have their interval persisted via nextSendAt, so even when
+  // the serverless function timeout truncates a long delay, the next invocation
+  // will respect the remaining wait time.
+  // This also ensures chips NOT in warming still respect their interval.
+  if (antiBanEnabled && currentChip.nextSendAt) {
+    const now = Date.now()
+    const nextSendTime = new Date(currentChip.nextSendAt).getTime()
+    if (nextSendTime > now) {
+      const waitMs = nextSendTime - now
+      const phase = currentChip.warmingPhase || 'nursery'
+      console.debug(`[SendingEngine] Chip ${currentChip.name} (${phase}) nextSendAt not reached — waiting ${Math.round(waitMs/1000)}s (until ${currentChip.nextSendAt!.toISOString()})`)
+      return {
+        processed: false,
+        delayMs: waitMs,
+        remaining: -1,
+        completed: false,
+        reason: `chip_interval_wait_${currentChip.name}`,
       }
     }
   }
@@ -2007,7 +2030,7 @@ export async function processNextMessage(campaignId: string): Promise<{
     console.debug(`[SendingEngine] Sent message ${message.id} to ${formattedPhone} via ${instanceName}`)
 
     // ============================================
-    // CALCULATE NEXT MESSAGE DELAY
+    // CALCULATE NEXT MESSAGE DELAY + PERSIST nextSendAt
     // ============================================
     // The interval is how long to wait BEFORE processing the next message.
     // Use campaign-specific interval if available, otherwise global settings.
@@ -2033,6 +2056,45 @@ export async function processNextMessage(campaignId: string): Promise<{
     if (modeMultiplier && antiBanEnabled) {
       nextDelay = Math.round(nextDelay * modeMultiplier.intervalMultiplier)
     }
+
+    // ============================================
+    // ENFORCE WARMING PHASE MINIMUM INTERVAL
+    // ============================================
+    // For nursery/prewarm chips, the interval must be at least the phase minimum.
+    // This is applied AFTER the gaussian calculation and mode multiplier,
+    // ensuring that warming chips NEVER send faster than their phase allows.
+    if (antiBanEnabled && currentChip.warmingEnabled && settings.warmingEnabled) {
+      const minIntervalMs = getMinimumIntervalForChip(currentChip, settings) * 1000
+      if (nextDelay < minIntervalMs) {
+        console.debug(`[SendingEngine] Chip ${currentChip.name} (${currentChip.warmingPhase}): bumping delay from ${Math.round(nextDelay/1000)}s to warming minimum ${Math.round(minIntervalMs/1000)}s`)
+        nextDelay = minIntervalMs
+      }
+    }
+
+    // ============================================
+    // PERSIST nextSendAt ON CHIP AND CAMPAIGN
+    // ============================================
+    // This is the KEY fix for the anti-ban jitter not working:
+    // The delay is now saved to the database so that when the serverless
+    // function times out and the next cron tick runs, it will see that
+    // the chip/campaign cannot send yet and will wait.
+    const chipNextSendAt = new Date(Date.now() + nextDelay)
+    const campaignNextSendAt = new Date(Date.now() + nextDelay)
+
+    // Persist chip nextSendAt — this chip cannot send again until this time
+    await db.chip.update({
+      where: { id: message.chipId },
+      data: { nextSendAt: chipNextSendAt },
+    })
+
+    // Persist campaign nextSendAt — this campaign cannot send ANY message until this time
+    // This prevents multiple chips from sending for the same campaign in rapid succession
+    await db.campaign.update({
+      where: { id: campaignId },
+      data: { nextSendAt: campaignNextSendAt },
+    })
+
+    console.debug(`[SendingEngine] Next delay: ${Math.round(nextDelay/1000)}s — chip ${currentChip.name} nextSendAt=${chipNextSendAt.toISOString()}, campaign nextSendAt=${campaignNextSendAt.toISOString()}`)
 
     const remaining = await db.message.count({ where: { campaignId, status: 'pending' } })
 
