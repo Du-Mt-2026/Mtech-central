@@ -1013,7 +1013,7 @@ function ChipsTab() {
   const openProxyDialog = async (chip: Chip) => {
     setSelectedChip(chip)
     setProxyTestResult(null)
-    setProxyForm({ socks5Host: chip.socks5Host, socks5Port: chip.socks5Port || chip.socksPort || 8084, socks5User: chip.socks5User, socks5Pass: chip.socks5Pass })
+    setProxyForm({ socks5Host: chip.socks5Host, socks5Port: chip.wireguardIp ? 8084 : (chip.socks5Port || chip.socksPort || 8084), socks5User: chip.socks5User, socks5Pass: chip.socks5Pass })
     // Try to load WireGuard config too
     try {
       const res = await fetch(`/api/wireguard/${chip.id}`)
@@ -1761,16 +1761,16 @@ function ChipsTab() {
                       <div className="flex items-center gap-2 text-xs">
                         <span className="text-blue-600 dark:text-blue-400">Porta SOCKS5:</span>
                         <code className="bg-white dark:bg-zinc-800 px-2 py-0.5 rounded font-mono text-blue-800 dark:text-blue-200 border">
-                          {selectedChip?.socksPort || 8084}
+                          {selectedChip?.wireguardIp ? 8084 : (selectedChip?.socksPort || 8084)}
                         </code>
                       </div>
                       <div className="flex items-center gap-2 text-xs">
                         <span className="text-blue-600 dark:text-blue-400">Proxy completo:</span>
                         <code className="bg-white dark:bg-zinc-800 px-2 py-0.5 rounded font-mono text-blue-800 dark:text-blue-200 border">
-                          {selectedChip?.wireguardIp || selectedChipConfig?.chip.wireguardIp || '0.0.0.0'}:{selectedChip?.socksPort || 8084}
+                          {selectedChip?.wireguardIp || selectedChipConfig?.chip.wireguardIp || '0.0.0.0'}:{selectedChip?.wireguardIp ? 8084 : (selectedChip?.socksPort || 8084)}
                         </code>
                         {selectedChip?.wireguardIp && (
-                          <Button variant="ghost" size="sm" className="h-5 px-1" onClick={() => copyToClipboard(`${selectedChip.wireguardIp}:${selectedChip.socksPort || 8084}`)}>
+                          <Button variant="ghost" size="sm" className="h-5 px-1" onClick={() => copyToClipboard(`${selectedChip.wireguardIp}:${selectedChip.wireguardIp ? 8084 : (selectedChip.socksPort || 8084)}`)}>
                             <Copy className="size-3" />
                           </Button>
                         )}
@@ -1835,7 +1835,7 @@ function ChipsTab() {
                       {proxyTestResult ? (proxyTestResult.reachable && proxyTestResult.socks5Valid ? 'Proxy Online' : proxyTestResult.reachable ? 'Parcialmente Acessível' : 'Proxy Offline') : 'Aguardando Teste'}
                     </p>
                     <p className="text-xs text-muted-foreground mt-1">
-                      {selectedChip?.wireguardIp ? `${selectedChip.wireguardIp}:${selectedChip.socksPort || 8084}` : 'Nenhum proxy configurado'}
+                      {selectedChip?.wireguardIp ? `${selectedChip.wireguardIp}:${selectedChip.wireguardIp ? 8084 : (selectedChip.socksPort || 8084)}` : 'Nenhum proxy configurado'}
                     </p>
                   </div>
                 </div>

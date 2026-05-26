@@ -1154,7 +1154,7 @@ export function VerificarSection() {
                           <p className="text-sm font-medium truncate">{chip.name}</p>
                           <p className="text-xs text-muted-foreground">{chip.phoneNumber}</p>
                           <p className="text-[10px] text-muted-foreground/70">
-                            Proxy: {chip.proxyMode === 'socks5' && chip.socks5Host ? `SOCKS5 ${chip.socks5Host}:${chip.socks5Port}` : chip.wireguardIp ? `SOCKS5 ${chip.wireguardIp}:${chip.socksPort || 8084} (auto)` : 'Nenhum'}
+                            Proxy: {chip.proxyMode === 'socks5' && chip.socks5Host ? `SOCKS5 ${chip.socks5Host}:${chip.socks5Port}` : chip.wireguardIp ? `SOCKS5 ${chip.wireguardIp}:8084 (auto)` : 'Nenhum'}
                           </p>
                         </div>
                         <div className="text-right">
