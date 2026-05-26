@@ -110,8 +110,8 @@ export async function POST(request: Request) {
         // If campaign is complete, stop
         if (result.completed) break
 
-        // If hard block (ban, window, cooldown), stop this campaign
-        if (!result.processed && ['outside_sending_window', 'whatsapp_warning_detected'].some(r => lastReason.includes(r))) {
+        // If hard block (ban, window, cooldown, warning), stop this campaign
+        if (!result.processed && ['outside_sending_window', 'whatsapp_warning_detected', 'campaign_interval_wait', 'chip_interval_wait', 'cooldown', 'hourly_limit_'].some(r => lastReason.includes(r))) {
           break
         }
 
