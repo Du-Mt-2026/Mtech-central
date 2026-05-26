@@ -3,7 +3,6 @@ import { db } from '@/lib/db'
 import {
   createInstance,
   connectInstance as routerConnectInstance,
-  setWebhook,
   getGlobalProxy,
   findInstanceByName,
 } from '@/lib/evolution-router'
@@ -91,13 +90,12 @@ export async function POST(request: Request) {
       })
     }
 
-    // Instance exists — update webhook
-    try {
-      await setWebhook(existing.name || instanceName, webhookUrl)
-    } catch (webhookErr) {
-      console.error('Failed to set webhook:', webhookErr)
-    }
-
+    // Instance exists — connect directly via router
+    // NOTE: Do NOT call setWebhook() before routerConnectInstance()!
+    // setWebhook() calls POST /instance/connect internally, which triggers
+    // a premature reconnection using the stored session, causing the QR code
+    // to be skipped. routerConnectInstance() already passes the webhookUrl
+    // to its own /instance/connect call, so setWebhook() is redundant.
     const effectiveInstanceName = existing.name || instanceName
 
     // Connect via router

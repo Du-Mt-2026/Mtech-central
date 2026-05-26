@@ -499,19 +499,10 @@ export async function connectInstance(
       };
     }
 
-    // If Connected but not LoggedIn, disconnect first to reset QR code counter
-    // This fixes "QR code limit reached" and stuck sessions
-    if (status.Connected && !status.LoggedIn) {
-      try {
-        await evolutionFetch('/instance/disconnect', {
-          method: 'POST',
-        }, instanceId, instanceToken);
-        // Wait a moment for the disconnect to take effect
-        await new Promise(r => setTimeout(r, 1000));
-      } catch {
-        // Disconnect might fail if already disconnected — that's ok
-      }
-    }
+    // NOTE: We do NOT auto-disconnect when Connected && !LoggedIn anymore.
+    // The previous logic would disconnect instances that were waiting for QR scan,
+    // which invalidated the QR code and caused the "QR code vanishes" bug.
+    // If a disconnect is needed, it should be done explicitly by the caller.
   } catch {
     // Status check failed — proceed with connect anyway
   }

@@ -807,12 +807,18 @@ function ChipsTab() {
         setWhatsappQr(qrSrc)
       }
 
-      // If already connected
+      // If already connected (session was restored — no QR scan needed)
       if (data.status === 'open' || data.state === 'open') {
-        setQrConnected(true)
-        setConnectAttempts(0)
-        fetchChips()
-        return
+        // Only mark as connected if there's no QR code showing
+        // If there's a QR code, the instance is waiting for scan — don't override
+        if (!data.qrcode) {
+          setQrConnected(true)
+          setConnectAttempts(0)
+          fetchChips()
+          toast.success(`WhatsApp já estava conectado: ${chip.name}`)
+          return
+        }
+        // QR code + state=open = race condition, show QR and let polling handle it
       }
 
       // Start polling for connection status
