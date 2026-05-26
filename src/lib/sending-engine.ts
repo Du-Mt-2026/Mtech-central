@@ -1158,10 +1158,10 @@ export async function processNextMessage(campaignId: string): Promise<{
     return { processed: false, delayMs: 0, remaining: -1, completed: false, reason: 'paused' }
   }
 
-  // Get campaign anti-ban settings
+  // Get campaign anti-ban settings (WITHOUT nextSendAt — we handle that atomically below)
   const campaignInfo = await db.campaign.findUnique({
     where: { id: campaignId },
-    select: { antiBanEnabled: true, warmingMode: true, sendIntervalMin: true, sendIntervalMax: true, nextSendAt: true },
+    select: { antiBanEnabled: true, warmingMode: true, sendIntervalMin: true, sendIntervalMax: true },
   })
   const antiBanEnabled = campaignInfo?.antiBanEnabled ?? true
   const warmingMode = campaignInfo?.warmingMode || 'normal'
@@ -1172,18 +1172,56 @@ export async function processNextMessage(campaignId: string): Promise<{
   const settings = await getAntiBanSettings()
 
   // ============================================
-  // CHECK CAMPAIGN nextSendAt — anti-ban interval persistence
+  // ATOMIC CAMPAIGN SLOT CLAIM — anti-ban interval persistence
   // ============================================
-  // If the campaign has a nextSendAt in the future, we must wait.
-  // This persists the interval across serverless invocations (Vercel Cron).
-  // Without this, when the function timeout truncates a 60s delay to only 20s,
-  // the next cron tick would immediately send another message.
-  if (antiBanEnabled && campaignInfo?.nextSendAt) {
-    const now = Date.now()
-    const nextSendTime = new Date(campaignInfo.nextSendAt).getTime()
-    if (nextSendTime > now) {
-      const waitMs = nextSendTime - now
-      console.debug(`[SendingEngine] Campaign nextSendAt not reached — waiting ${Math.round(waitMs/1000)}s (until ${campaignInfo.nextSendAt.toISOString()})`)
+  // CRITICAL FIX: The old non-atomic check-then-set (SELECT nextSendAt, then later UPDATE)
+  // had a race condition — multiple concurrent invocations could all read nextSendAt as
+  // null/expired before any of them wrote the new value, causing burst sends (2-4s gaps).
+  //
+  // This atomic claim uses UPDATE ... WHERE to check AND set nextSendAt in a single
+  // database operation. PostgreSQL row-level locking ensures that concurrent UPDATEs
+  // are serialized — the second UPDATE sees the first's changes and its WHERE clause fails.
+  //
+  // Flow:
+  //   1. Try to set campaign.nextSendAt = NOW() + estimatedDelay WHERE nextSendAt IS NULL OR < NOW()
+  //   2. If count=1: we claimed the slot — proceed to send
+  //   3. If count=0: another invocation has the slot — read their nextSendAt and return wait
+  //   4. After sending, update nextSendAt with the ACTUAL calculated delay
+  //   5. On error, release the claim with a short retry delay
+  if (antiBanEnabled) {
+    // Calculate estimated delay for the claim (use the interval midpoint as a safe estimate)
+    const intervalMin = campaignIntervalMin ?? settings.messageIntervalMin
+    const intervalMax = campaignIntervalMax ?? settings.messageIntervalMax
+    const estimatedDelayMs = gaussianDelaySeconds(intervalMin, intervalMax) * 1000
+
+    // Apply warming mode multiplier to the estimate
+    const modeMultiplier = WARMING_MODE_MULTIPLIERS[warmingMode]
+    const adjustedEstimateMs = modeMultiplier
+      ? Math.round(estimatedDelayMs * modeMultiplier.intervalMultiplier)
+      : estimatedDelayMs
+
+    // Atomic claim: only succeeds if nextSendAt is null or in the past
+    const claimResult = await db.campaign.updateMany({
+      where: {
+        id: campaignId,
+        OR: [
+          { nextSendAt: null },
+          { nextSendAt: { lt: new Date() } },
+        ],
+      },
+      data: { nextSendAt: new Date(Date.now() + adjustedEstimateMs) },
+    })
+
+    if (claimResult.count === 0) {
+      // Another invocation already claimed this campaign's slot — read their wait time
+      const currentCampaign = await db.campaign.findUnique({
+        where: { id: campaignId },
+        select: { nextSendAt: true },
+      })
+      const waitMs = currentCampaign?.nextSendAt
+        ? Math.max(new Date(currentCampaign.nextSendAt).getTime() - Date.now(), 1000)
+        : 5000
+      console.debug(`[SendingEngine] Campaign slot already claimed — waiting ${Math.round(waitMs/1000)}s (until ${currentCampaign?.nextSendAt?.toISOString()})`)
       return {
         processed: false,
         delayMs: waitMs,
@@ -1192,6 +1230,8 @@ export async function processNextMessage(campaignId: string): Promise<{
         reason: `campaign_interval_wait`,
       }
     }
+
+    console.debug(`[SendingEngine] Campaign slot claimed for ${Math.round(adjustedEstimateMs/1000)}s`)
   }
 
   // CHECK SENDING WINDOW — don't send outside business hours
@@ -1200,6 +1240,11 @@ export async function processNextMessage(campaignId: string): Promise<{
     const startMins = toMins(settings.sendingWindowStart)
     const endMins = toMins(settings.sendingWindowEnd)
     console.debug(`[SendingEngine] Outside sending window (${currentMins}min, window: ${startMins}-${endMins}). Pausing.`)
+    // Release the campaign slot claim with a 1-minute wait (next check)
+    await db.campaign.update({
+      where: { id: campaignId },
+      data: { nextSendAt: new Date(Date.now() + 60 * 1000) },
+    })
     return {
       processed: false,
       delayMs: 60 * 1000, // Check again in 1 minute
@@ -1223,6 +1268,11 @@ export async function processNextMessage(campaignId: string): Promise<{
       const endH = Math.floor(breakEndMins / 60)
       const endM = breakEndMins % 60
       console.debug(`[SendingEngine] In break window "${activeBreak.label}" (${String(startH).padStart(2,'0')}:${String(startM).padStart(2,'0')}-${String(endH).padStart(2,'0')}:${String(endM).padStart(2,'0')}). Waiting ${waitMins}min.`)
+      // Release the campaign slot claim with the break window wait time
+      await db.campaign.update({
+        where: { id: campaignId },
+        data: { nextSendAt: new Date(Date.now() + waitMs) },
+      })
       return {
         processed: false,
         delayMs: waitMs,
@@ -1612,6 +1662,8 @@ export async function processNextMessage(campaignId: string): Promise<{
     const hourlySent = currentChip.hourlySent ?? 0
     if (hourlySent >= settings.hourlyLimit) {
       console.debug(`[SendingEngine] Chip ${currentChip.name} hit hourly limit (${hourlySent}/${settings.hourlyLimit}) — waiting`)
+      // Release campaign slot claim with 1-minute wait
+      await db.campaign.update({ where: { id: campaignId }, data: { nextSendAt: new Date(Date.now() + 60 * 1000) } })
       return {
         processed: false,
         delayMs: 60 * 1000, // Check again in 1 minute
@@ -1637,6 +1689,8 @@ export async function processNextMessage(campaignId: string): Promise<{
       const waitMs = nextSendTime - now
       const phase = currentChip.warmingPhase || 'nursery'
       console.debug(`[SendingEngine] Chip ${currentChip.name} (${phase}) nextSendAt not reached — waiting ${Math.round(waitMs/1000)}s (until ${currentChip.nextSendAt!.toISOString()})`)
+      // Release campaign slot claim with the chip's wait time
+      await db.campaign.update({ where: { id: campaignId }, data: { nextSendAt: new Date(Date.now() + waitMs) } })
       return {
         processed: false,
         delayMs: waitMs,
@@ -1681,10 +1735,14 @@ export async function processNextMessage(campaignId: string): Promise<{
 
       // Return with short delay so we can try processing again with the reassigned messages
       const remaining = await db.message.count({ where: { campaignId, status: 'pending' } })
+      // Release campaign slot claim with short delay (messages were reassigned)
+      await db.campaign.update({ where: { id: campaignId }, data: { nextSendAt: new Date(Date.now() + 1000) } })
       return { processed: false, delayMs: 1000, remaining, completed: remaining === 0, reason: `daily_limit_reassigned_${currentChip.name}` }
     }
 
     // No other chips available — truly stuck
+    // Release campaign slot claim with 1-minute wait
+    await db.campaign.update({ where: { id: campaignId }, data: { nextSendAt: new Date(Date.now() + 60 * 1000) } })
     return {
       processed: false,
       delayMs: 60 * 1000,
@@ -1703,6 +1761,8 @@ export async function processNextMessage(campaignId: string): Promise<{
         ? Math.max(cooldownCheck.cooldownUntil.getTime() - Date.now(), 60 * 1000)
         : settings.cooldownMinutes * 60 * 1000
       console.debug(`[SendingEngine] Chip ${currentChip.name} in cooldown — waiting ${Math.round(waitMs/1000)}s`)
+      // Release campaign slot claim with the cooldown wait time
+      await db.campaign.update({ where: { id: campaignId }, data: { nextSendAt: new Date(Date.now() + waitMs) } })
       return {
         processed: false,
         delayMs: waitMs,
@@ -2074,10 +2134,9 @@ export async function processNextMessage(campaignId: string): Promise<{
     // ============================================
     // PERSIST nextSendAt ON CHIP AND CAMPAIGN
     // ============================================
-    // This is the KEY fix for the anti-ban jitter not working:
-    // The delay is now saved to the database so that when the serverless
-    // function times out and the next cron tick runs, it will see that
-    // the chip/campaign cannot send yet and will wait.
+    // This OVERWRITES the estimated claim from the atomic slot claim above
+    // with the ACTUAL calculated delay (which accounts for offline/reading time,
+    // warming minimums, and mode multipliers).
     const chipNextSendAt = new Date(Date.now() + nextDelay)
     const campaignNextSendAt = new Date(Date.now() + nextDelay)
 
@@ -2087,7 +2146,7 @@ export async function processNextMessage(campaignId: string): Promise<{
       data: { nextSendAt: chipNextSendAt },
     })
 
-    // Persist campaign nextSendAt — this campaign cannot send ANY message until this time
+    // Persist campaign nextSendAt — overwrite the claim estimate with the actual delay
     // This prevents multiple chips from sending for the same campaign in rapid succession
     await db.campaign.update({
       where: { id: campaignId },
@@ -2110,6 +2169,15 @@ export async function processNextMessage(campaignId: string): Promise<{
         error: error.message?.substring(0, 500),
       },
     })
+
+    // Release the campaign slot claim with a short retry delay
+    // so other invocations can try again quickly
+    if (antiBanEnabled) {
+      await db.campaign.update({
+        where: { id: campaignId },
+        data: { nextSendAt: new Date(Date.now() + 5000) },
+      })
+    }
 
     const remaining = await db.message.count({ where: { campaignId, status: 'pending' } })
     return { processed: true, delayMs: 5000, remaining, completed: remaining === 0 }

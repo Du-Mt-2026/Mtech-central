@@ -3417,6 +3417,26 @@ function CampanhasTab() {
           // Refresh campaign list to show progress
           fetchCampaigns()
 
+          // ADAPTIVE DELAY between loop iterations
+          // The /api/campaigns/process endpoint already waits internally for the anti-ban delay,
+          // but we still add a minimum gap to prevent hammering the server when the endpoint
+          // returns quickly (e.g., when the campaign slot is already claimed by another invocation).
+          // If the endpoint took a long time (meaning it was processing + waiting), we use a short delay.
+          // If it was quick (meaning nothing was processed or slot was claimed), we wait longer.
+          const responseTimeMs = data.elapsedMs || 0
+          if (data.processed === 0) {
+            // No messages processed — another invocation has the slot or campaign is blocked.
+            // Wait 30 seconds before trying again (no point in hammering the server).
+            await new Promise(r => setTimeout(r, 30000))
+          } else if (responseTimeMs < 10000) {
+            // Processed quickly (< 10s) — the delay was short, wait a bit more
+            await new Promise(r => setTimeout(r, 5000))
+          } else {
+            // Normal processing — the endpoint already waited for the anti-ban delay
+            // Short 2-second gap before next iteration is fine
+            await new Promise(r => setTimeout(r, 2000))
+          }
+
         } catch (err) {
           console.error('[ContinuousProcess] Fetch error:', err)
           // Wait a bit and retry
@@ -7116,16 +7136,21 @@ export default function OctupusZapApp() {
     return () => clearInterval(interval)
   }, [loggedIn])
 
-  // Auto-process campaigns every 60 seconds when logged in
+  // Auto-process campaigns every 120 seconds when logged in
+  // This is a BACKUP — the continuous processing loop is the primary driver.
+  // We use a longer interval (120s instead of 60s) to reduce the chance of
+  // concurrent invocations that could cause race conditions with the sending engine.
+  // The atomic campaign slot claim in the sending engine handles concurrent access,
+  // but reducing unnecessary concurrent calls is still good practice.
   useEffect(() => {
     if (!loggedIn) return
     const processCampaigns = () => {
       fetch('/api/campaigns/process', { method: 'POST' }).catch(() => {})
     }
-    // First process after 10 seconds (give time for page to load)
-    const timeout = setTimeout(processCampaigns, 10000)
-    // Then every 60 seconds
-    const interval = setInterval(processCampaigns, 60000)
+    // First process after 15 seconds (give time for page to load)
+    const timeout = setTimeout(processCampaigns, 15000)
+    // Then every 120 seconds
+    const interval = setInterval(processCampaigns, 120000)
     return () => { clearTimeout(timeout); clearInterval(interval) }
   }, [loggedIn])
 
