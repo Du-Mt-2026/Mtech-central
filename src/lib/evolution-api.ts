@@ -468,6 +468,8 @@ export async function connectInstance(
     const statusData = await statusResponse.json();
     const status = statusData.data || statusData;
 
+    console.log(`[connectInstance] Status check for ${instanceIdOrName}: Connected=${status.Connected}, LoggedIn=${status.LoggedIn}`);
+
     if (status.Connected && status.LoggedIn) {
       // Already logged in — update webhook via /instance/connect if needed.
       // NOTE: Calling /instance/connect on an already-Connected+LoggedIn instance
@@ -540,8 +542,9 @@ export async function connectInstance(
 
   const result = data.data || data;
 
-  // Check if already connected (jid is present)
+  // Check if already connected (jid is present) — session was restored by Evolution Go
   if (result.jid) {
+    console.log(`[connectInstance] Instance ${instanceIdOrName} restored existing session (jid present). State=open.`);
     return {
       state: 'open',
       instanceName: instanceIdOrName,

@@ -4,6 +4,7 @@ import {
   createInstance,
   connectInstance as routerConnectInstance,
   disconnectInstance as routerDisconnectInstance,
+  deleteInstance as routerDeleteInstance,
   getGlobalProxy,
   findInstanceByName,
 } from '@/lib/evolution-router'
@@ -41,32 +42,28 @@ export async function POST(request: Request) {
 
     // ===== BUG FIX: Stale session detection =====
     // If the chip is marked as disconnected in our DB but the Evolution API
-    // instance is actually Connected+LoggedIn, the user clicked "Conectar WhatsApp"
-    // expecting to see a QR code. The old code would immediately return state='open'
-    // (because the Evolution instance is connected), showing "Conectado!" without
-    // ever displaying the QR code.
+    // instance still has an active WhatsApp session (Connected+LoggedIn), the
+    // user clicked "Conectar WhatsApp" expecting to see a QR code. Simply
+    // disconnecting is NOT enough — Evolution Go preserves the session and
+    // auto-reconnects, skipping the QR code again.
     //
-    // Fix: If the chip DB status is NOT 'connected' but the Evolution instance IS
-    // connected, we force-disconnect the Evolution instance first to clear the
-    // stale session, then reconnect to generate a fresh QR code.
+    // Fix: Delete the instance entirely and recreate it from scratch.
+    // This forces Evolution Go to generate a brand new session and QR code.
     if (existing && chip.status !== 'connected') {
       try {
         const realState = await v3GetConnectionState(existing.name || instanceName)
         if (realState.state === 'open') {
-          console.log(`[Connect] Chip "${chip.name}" is "${chip.status}" in DB but Evolution instance is connected. Force-disconnecting to generate fresh QR code.`)
-          // Disconnect the stale Evolution session
+          console.log(`[Connect] Chip "${chip.name}" is "${chip.status}" in DB but Evolution instance is connected. Deleting and recreating instance for fresh QR code.`)
           try {
             await routerDisconnectInstance(existing.name || instanceName)
-            // Wait for disconnection to take effect
-            await new Promise(r => setTimeout(r, 2000))
-          } catch (disconnectErr) {
-            console.warn(`[Connect] Failed to disconnect stale instance, proceeding anyway:`, disconnectErr)
-          }
-          // Mark chip as disconnected in DB to reflect the state change
-          await db.chip.update({
-            where: { id: chipId },
-            data: { status: 'disconnected', isQrPaired: false, qrPairingCode: null },
-          })
+          } catch { /* may fail if already disconnected */ }
+          try {
+            await routerDeleteInstance(existing.name || instanceName)
+          } catch { /* may fail if already deleted */ }
+          // Wait for deletion to take effect
+          await new Promise(r => setTimeout(r, 2000))
+          // Clear the existing reference so the code below creates a fresh instance
+          existing = null
         }
       } catch {
         // Status check failed — proceed with normal connect flow
