@@ -145,59 +145,40 @@ export async function POST(request: NextRequest) {
     let totalProcessed = 0
     let totalSkipped = 0
 
-    // Process each campaign — try to send multiple messages per campaign per tick
+    // Process each campaign — ONE message per campaign per tick when anti-ban is active.
+    // CRITICAL: The old loop (up to 10 messages) truncated delays to fit within the
+    // 25s Vercel timeout, completely defeating the anti-ban interval system.
+    // Now: process 1 message, break, and let the next cron tick handle the next one.
+    // The nextSendAt field on chip+campaign persists the delay across serverless invocations.
     for (const campaignId of campaignIds) {
       let campaignProcessed = 0
       let campaignSkipped = 0
       let lastReason = ''
       let campaignError: string | undefined
 
-      // Process up to 10 messages per campaign per tick
-      for (let attempt = 0; attempt < 10; attempt++) {
-        // Check if we're about to timeout
-        if (Date.now() - startTime > FUNCTION_TIMEOUT_MS) {
-          break
-        }
+      try {
+        const result = await processNextMessage(campaignId)
 
-        try {
-          const result = await processNextMessage(campaignId)
-
-          if (result.processed) {
-            campaignProcessed++
-            totalProcessed++
-          } else {
-            campaignSkipped++
-            totalSkipped++
-            lastReason = result.reason || ''
-          }
-
-          // If no message was processed and the reason is a hard block (ban, window, etc.),
-          // don't retry this campaign in this tick
-          if (!result.processed && ['cooldown', 'outside_sending_window', 'chip_banned', 'whatsapp_warning_detected'].some(r => lastReason.includes(r))) {
-            break
-          }
-
-          // Wait the delay before processing the next message
-          if (result.delayMs > 0) {
-            const remainingTime = FUNCTION_TIMEOUT_MS - (Date.now() - startTime)
-            if (remainingTime < 3000) break // Not enough time to wait + process
-            const waitTime = Math.min(result.delayMs, remainingTime - 3000)
-            if (waitTime > 0) {
-              await new Promise(resolve => setTimeout(resolve, waitTime))
-            }
-          }
-
-          // If campaign is complete, stop processing it
-          if (result.completed) break
-
-        } catch (msgError: any) {
-          // Individual message processing error — don't crash the whole loop
-          console.error(`[ProcessAll] Error processing message for campaign ${campaignId}:`, msgError.message)
-          campaignError = msgError.message
+        if (result.processed) {
+          campaignProcessed++
+          totalProcessed++
+        } else {
           campaignSkipped++
           totalSkipped++
-          break // Stop processing this campaign, move to next
+          lastReason = result.reason || ''
         }
+
+        // If campaign is complete, stop processing it
+        if (result.completed) {
+          // no more messages to process
+        }
+
+      } catch (msgError: any) {
+        // Individual message processing error — don't crash the whole loop
+        console.error(`[ProcessAll] Error processing message for campaign ${campaignId}:`, msgError.message)
+        campaignError = msgError.message
+        campaignSkipped++
+        totalSkipped++
       }
 
       allResults.push({
