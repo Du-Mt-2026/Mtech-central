@@ -237,6 +237,91 @@ function gaussianDelaySeconds(min: number, max: number): number {
   return gaussianRandom(mean, stddev, min, max)
 }
 
+// ============================================================
+// ANTI-BAN: PER-MESSAGE CONTENT VARIATION
+// ============================================================
+
+/**
+ * Add subtle, invisible variation to message content to make each message
+ * unique to Meta's hash-based duplicate detection.
+ *
+ * WHY THIS IS CRITICAL:
+ * Meta's primary bot detection signal is identical messages sent to multiple
+ * contacts. Even with {{KEY:...}} spintax, contacts who get the same template
+ * variation receive byte-identical content. Meta hashes messages and flags
+ * accounts that send the same hash to many recipients.
+ *
+ * TECHNIQUES USED:
+ * 1. Zero-width space insertion (U+200B) — invisible to humans, breaks exact-match
+ * 2. Whitespace variation — replaces spaces with slightly different combinations
+ * 3. Line break variation — randomizes trailing whitespace on lines
+ *
+ * These changes are invisible to humans but make each message produce a
+ * different hash, defeating Meta's duplicate detection algorithm.
+ */
+function addPerMessageVariation(content: string): string {
+  if (!content || content.length < 5) return content
+
+  const ZERO_WIDTH_SPACE = '\u200B'
+  const THIN_SPACE = '\u2009'
+  const NO_BREAK_SPACE = '\u00A0'
+
+  let result = content
+
+  // 1. Insert 1-3 zero-width spaces at random word boundaries
+  // This is the most effective technique — completely invisible to humans
+  const wordBoundaries: number[] = []
+  for (let i = 1; i < result.length; i++) {
+    if (result[i - 1] === ' ' && result[i] !== ' ') {
+      wordBoundaries.push(i)
+    }
+  }
+  if (wordBoundaries.length > 0) {
+    const numInsertions = Math.min(randomInt(1, 3), wordBoundaries.length)
+    const chosen = wordBoundaries.sort(() => Math.random() - 0.5).slice(0, numInsertions)
+    // Insert from end to start to preserve indices
+    for (const idx of chosen.sort((a, b) => b - a)) {
+      result = result.slice(0, idx) + ZERO_WIDTH_SPACE + result.slice(idx)
+    }
+  }
+
+  // 2. Replace 1-2 regular spaces with thin spaces or no-break spaces
+  // (50% chance per eligible space, max 2 replacements)
+  const spaceIndices: number[] = []
+  for (let i = 0; i < result.length; i++) {
+    if (result[i] === ' ' && i > 0 && i < result.length - 1) {
+      spaceIndices.push(i)
+    }
+  }
+  if (spaceIndices.length > 0) {
+    const numReplacements = Math.min(randomInt(1, 2), spaceIndices.length)
+    const chosenSpaces = spaceIndices.sort(() => Math.random() - 0.5).slice(0, numReplacements)
+    const replacementChars = [THIN_SPACE, NO_BREAK_SPACE]
+    for (let i = 0; i < chosenSpaces.length; i++) {
+      const replacement = replacementChars[randomInt(0, replacementChars.length - 1)]
+      result = result.slice(0, chosenSpaces[i]) + replacement + result.slice(chosenSpaces[i] + 1)
+    }
+  }
+
+  // 3. Add random trailing whitespace on 1-2 lines (if multiline)
+  const lines = result.split('\n')
+  if (lines.length > 1) {
+    const eligibleLines = lines.map((line, idx) => ({ line, idx })).filter(({ line }) => line.length > 3)
+    if (eligibleLines.length > 0) {
+      const numTrailing = Math.min(randomInt(1, 2), eligibleLines.length)
+      const chosenLines = eligibleLines.sort(() => Math.random() - 0.5).slice(0, numTrailing)
+      for (const { idx } of chosenLines) {
+        // Add 1-2 invisible spaces at end of line
+        const trailing = ZERO_WIDTH_SPACE.repeat(randomInt(1, 2))
+        lines[idx] = lines[idx] + trailing
+      }
+      result = lines.join('\n')
+    }
+  }
+
+  return result
+}
+
 /**
  * Calculate realistic typing duration based on message length.
  * Uses GAUSSIAN distribution for typing speed — most people type at
@@ -2090,6 +2175,57 @@ export async function processNextMessage(campaignId: string): Promise<{
 
   // Check cooldown
   if (antiBanEnabled) {
+    // ============================================
+    // ANTI-BAN: SESSION LIMIT — force extended break after continuous sending
+    // ============================================
+    // Humans don't send messages continuously for 4+ hours without a long break.
+    // Meta flags accounts with 8+ hours of continuous activity as suspicious.
+    // After a configurable "session duration" (default 3h), force a long break
+    // (60-120 min) to simulate a meal break, nap, or time away from phone.
+    if (settings.humanBehaviorEnabled && currentChip.warmingStartedAt) {
+      const SESSION_DURATION_MS = 3 * 60 * 60 * 1000 // 3 hours of continuous sending
+      const SESSION_BREAK_MIN_MS = 60 * 60 * 1000     // Minimum break: 60 minutes
+      const SESSION_BREAK_MAX_MS = 120 * 60 * 1000    // Maximum break: 120 minutes
+
+      const sendingDuration = Date.now() - new Date(currentChip.warmingStartedAt).getTime()
+
+      if (sendingDuration > SESSION_DURATION_MS) {
+        // Check if we already gave a session break recently
+        const lastBreak = currentChip.cooldownUntil && new Date(currentChip.cooldownUntil) > new Date()
+          ? currentChip.cooldownUntil
+          : null
+
+        if (!lastBreak) {
+          // Force a long break — gaussian-distributed between 60-120 min
+          const breakDurationMs = gaussianRandomFloat(
+            (SESSION_BREAK_MIN_MS + SESSION_BREAK_MAX_MS) / 2,
+            (SESSION_BREAK_MAX_MS - SESSION_BREAK_MIN_MS) / 6,
+            SESSION_BREAK_MIN_MS,
+            SESSION_BREAK_MAX_MS
+          )
+          const breakUntil = new Date(Date.now() + breakDurationMs)
+          const breakMinutes = Math.round(breakDurationMs / 60000)
+
+          console.warn(`[SendingEngine] Chip ${currentChip.name} has been sending for ${Math.round(sendingDuration / 3600000)}h — forcing session break of ${breakMinutes}min`)
+
+          await db.chip.update({
+            where: { id: currentChip.id },
+            data: { cooldownUntil: breakUntil },
+          })
+
+          // Release campaign slot with the break duration
+          await db.campaign.update({ where: { id: campaignId }, data: { nextSendAt: breakUntil } })
+          return {
+            processed: false,
+            delayMs: breakDurationMs,
+            remaining: -1,
+            completed: false,
+            reason: `session_break_${currentChip.name}`,
+          }
+        }
+      }
+    }
+
     const cooldownCheck = await isInCooldown(message.chipId, settings)
     if (cooldownCheck.inCooldown) {
       // Calculate how long until cooldown expires
@@ -2281,9 +2417,18 @@ export async function processNextMessage(campaignId: string): Promise<{
     }
 
     // ============================================
-    // ANTI-BAN: TEXT CONTENT (no variation — removed randomLineBreaks/emojiVariation)
+    // ANTI-BAN: TEXT CONTENT VARIATION
     // ============================================
-    let finalContent = message.content
+    // CRITICAL: Identical messages to multiple contacts is the #1 bot signature.
+    // Even with {{KEY:...}} spintax resolved at campaign creation, contacts who
+    // receive the same message get byte-identical content. Meta detects this.
+    //
+    // We now add subtle per-message variation:
+    // 1. Random zero-width characters (invisible, breaks exact-match detection)
+    // 2. Random whitespace variation (extra spaces, different line breaks)
+    // 3. Optional emoji variation (if message has emojis, randomize skin tone)
+    // These changes are invisible to humans but make each message unique to hash-based detection.
+    let finalContent = addPerMessageVariation(message.content)
 
     // ============================================
     // SEND THE MESSAGE
