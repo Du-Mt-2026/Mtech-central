@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { toMins } from '@/lib/time-utils'
-import { FIELD_DEFAULTS, SECTION_FIELDS, antiBanUpdateSchema, scheduleEntrySchema, breakWindowSchema } from '@/lib/constants'
+import { FIELD_DEFAULTS, SECTION_FIELDS, antiBanUpdateSchema, scheduleEntrySchema, breakWindowSchema, humanBehaviorConfigSchema } from '@/lib/constants'
 import { ZodError } from 'zod'
 
 // GET /api/antiban — Get current anti-ban settings
@@ -179,6 +179,34 @@ export async function PATCH(request: NextRequest) {
         } catch {
           return NextResponse.json(
             { error: 'breakWindows JSON inválido', field: 'breakWindows' },
+            { status: 400 }
+          )
+        }
+      }
+    }
+
+    // Convert humanBehaviorConfig to JSON string for DB storage
+    if (updateData.humanBehaviorConfig !== undefined) {
+      if (typeof updateData.humanBehaviorConfig !== 'string') {
+        // Already validated by Zod — just stringify
+        updateData.humanBehaviorConfig = JSON.stringify(updateData.humanBehaviorConfig)
+      } else {
+        // Validate the JSON string content
+        try {
+          const parsed = JSON.parse(updateData.humanBehaviorConfig as string)
+          const result = humanBehaviorConfigSchema.safeParse(parsed)
+          if (!result.success) {
+            const firstError = result.error.issues[0]
+            return NextResponse.json(
+              { error: `humanBehaviorConfig inválido: ${firstError.message}`, field: `humanBehaviorConfig.${firstError.path.join('.')}` },
+              { status: 400 }
+            )
+          }
+          // Re-stringify with defaults applied by Zod
+          updateData.humanBehaviorConfig = JSON.stringify(result.data)
+        } catch {
+          return NextResponse.json(
+            { error: 'humanBehaviorConfig JSON inválido', field: 'humanBehaviorConfig' },
             { status: 400 }
           )
         }

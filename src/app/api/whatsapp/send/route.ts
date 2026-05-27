@@ -3,16 +3,29 @@ import { sendTextMessage, setPresence, formatPhoneNumber } from '@/lib/evolution
 import { formatPhoneNumber as v3FormatPhone, getInstanceName as v3GetInstanceName } from '@/lib/evolution-api'
 import { db } from '@/lib/db'
 
-function calculateTypingDuration(text: string): number {
+/**
+ * Calculate typing duration for manual inbox replies.
+ * Uses anti-ban settings from DB for consistency, with hardcoded fallbacks.
+ */
+async function calculateTypingDuration(text: string): Promise<number> {
   const TYPING_SPEED_MIN = 6
   const TYPING_SPEED_MAX = 14
-  const TYPING_MIN_MS = 3000
-  const TYPING_MAX_MS = 25000
   const TYPING_PAUSE_CHANCE = 0.3
+
+  // Try to read typing delays from anti-ban settings (respects UI config)
+  let typingMinMs = 3000
+  let typingMaxMs = 25000
+  try {
+    const settings = await db.antiBanSettings.findFirst()
+    if (settings) {
+      typingMinMs = settings.typingMinDelay
+      typingMaxMs = settings.typingMaxDelay
+    }
+  } catch { /* fallback to defaults */ }
 
   const typingSpeed = Math.random() * (TYPING_SPEED_MAX - TYPING_SPEED_MIN) + TYPING_SPEED_MIN
   let durationMs = (text.length / typingSpeed) * 1000
-  durationMs = Math.max(TYPING_MIN_MS, Math.min(TYPING_MAX_MS, durationMs))
+  durationMs = Math.max(typingMinMs, Math.min(typingMaxMs, durationMs))
   if (Math.random() < TYPING_PAUSE_CHANCE) {
     durationMs += Math.floor(Math.random() * 3000) + 1000
   }
@@ -39,7 +52,7 @@ export async function POST(request: Request) {
 
     const instanceName = chip.evolutionInstance || v3GetInstanceName(chip.id, chip.name)
     const formattedPhone = v3FormatPhone(contactPhone)
-    const typingDurationMs = calculateTypingDuration(content)
+    const typingDurationMs = await calculateTypingDuration(content)
 
     try {
       await setPresence(instanceName, formattedPhone, 'composing', typingDurationMs)

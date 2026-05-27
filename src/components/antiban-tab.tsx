@@ -5,7 +5,8 @@ import { motion } from 'framer-motion'
 import {
   RotateCcw, RefreshCw, Type, Timer, Flame, Baby, CheckCircle2,
   Clock, AlertCircle, UserPlus, EyeOff, ShieldAlert, MessageCircle,
-  Plus, Trash2, Star,
+  Plus, Trash2, Star, Brain, ChevronDown, ChevronUp, Activity, Zap,
+  Coffee, Sun, Moon, BarChart3,
 } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -23,9 +24,16 @@ import {
   NURSERY_SCHEDULE,
   PREWARM_SCHEDULE,
   FIELD_DEFAULTS as DEFAULTS,
+  DEFAULT_HUMAN_BEHAVIOR,
   type ScheduleEntry,
   type BreakWindow,
   type AntiBanSettings,
+  type HumanBehaviorConfig,
+  type ClusterConfig,
+  type CooldownPresenceConfig,
+  type DayRhythmConfig,
+  type NonlinearPausesConfig,
+  type PauseTier,
 } from '@/lib/constants'
 import { toMins } from '@/lib/time-utils'
 
@@ -37,6 +45,8 @@ export function AntiBanTab() {
   const [saving, setSaving] = useState(false)
   const [resetDialogOpen, setResetDialogOpen] = useState(false)
   const [resetting, setResetting] = useState(false)
+  const [humanBehaviorExpanded, setHumanBehaviorExpanded] = useState(false)
+  const [humanBehavior, setHumanBehavior] = useState<HumanBehaviorConfig>(DEFAULT_HUMAN_BEHAVIOR)
 
   // Convert minutes-from-midnight to HH:MM string
   const minsToTime = (mins: number) => {
@@ -76,6 +86,11 @@ export function AntiBanTab() {
         const parsed = typeof data.breakWindows === 'string' ? JSON.parse(data.breakWindows) : (data.breakWindows || [])
         setBreakWindows(parseBreakWindows(parsed))
       } catch { setBreakWindows([]) }
+      // Parse humanBehaviorConfig from JSON string
+      try {
+        const hbParsed = typeof data.humanBehaviorConfig === 'string' ? JSON.parse(data.humanBehaviorConfig) : (data.humanBehaviorConfig || DEFAULT_HUMAN_BEHAVIOR)
+        setHumanBehavior(hbParsed)
+      } catch { setHumanBehavior(DEFAULT_HUMAN_BEHAVIOR) }
     } catch { toast.error('Erro ao carregar configurações') }
     finally { setLoading(false) }
   }, [])
@@ -95,6 +110,13 @@ export function AntiBanTab() {
           const parsed = typeof updated.breakWindows === 'string' ? JSON.parse(updated.breakWindows) : (updated.breakWindows || [])
           setBreakWindows(parseBreakWindows(parsed))
         } catch { setBreakWindows([]) }
+      }
+      // Re-parse humanBehaviorConfig if it was updated
+      if (key === 'humanBehaviorConfig') {
+        try {
+          const hbParsed = typeof updated.humanBehaviorConfig === 'string' ? JSON.parse(updated.humanBehaviorConfig) : (updated.humanBehaviorConfig || DEFAULT_HUMAN_BEHAVIOR)
+          setHumanBehavior(hbParsed)
+        } catch { setHumanBehavior(DEFAULT_HUMAN_BEHAVIOR) }
       }
       toast.success('Configuração atualizada!')
     } catch { toast.error('Erro ao atualizar') }
@@ -194,6 +216,20 @@ export function AntiBanTab() {
   // Update readyDailyLimit
   const updateReadyDailyLimit = async (newLimit: number) => {
     await updateSetting('readyDailyLimit', newLimit)
+  }
+
+  // Helper to update a nested path inside humanBehaviorConfig
+  const updateHumanBehavior = async (path: string, value: unknown) => {
+    const updated = { ...humanBehavior }
+    const keys = path.split('.')
+    let obj: Record<string, unknown> = updated as Record<string, unknown>
+    for (let i = 0; i < keys.length - 1; i++) {
+      obj[keys[i]] = { ...(obj[keys[i]] as Record<string, unknown>) }
+      obj = obj[keys[i]] as Record<string, unknown>
+    }
+    obj[keys[keys.length - 1]] = value
+    setHumanBehavior(updated)
+    await updateSetting('humanBehaviorConfig', updated)
   }
 
   const tips = [
@@ -696,6 +732,19 @@ export function AntiBanTab() {
                 </Button>
               </div>
             </div>
+
+            <div className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">
+              <div>
+                <p className="text-xs font-medium">Preview de Links</p>
+                <p className="text-[10px] text-muted-foreground">Mostra preview de URLs nas mensagens (desativado por padrão — previews em massa são detectáveis como bot)</p>
+              </div>
+              <div className="flex items-center gap-1">
+                <Switch checked={settings.linkPreviewEnabled} onCheckedChange={v => updateSetting('linkPreviewEnabled', v)} />
+                <Button variant="ghost" size="icon" className="size-5 text-muted-foreground hover:text-rose-600" onClick={() => resetField('linkPreviewEnabled')} title="Restaurar padrão">
+                  <RotateCcw className="size-2.5" />
+                </Button>
+              </div>
+            </div>
           </CardContent>
         </Card>
 
@@ -829,6 +878,268 @@ export function AntiBanTab() {
               )}
             </div>
           </CardContent>
+        </Card>
+
+        {/* Human Behavior — Collapsible Section */}
+        <Card className="shadow-lg border-0 hover:shadow-xl transition-all duration-200">
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between">
+              <div
+                className="flex items-center gap-2 cursor-pointer flex-1"
+                onClick={() => setHumanBehaviorExpanded(!humanBehaviorExpanded)}
+              >
+                <div className="flex size-7 items-center justify-center rounded-lg bg-cyan-100 dark:bg-cyan-900/30">
+                  <Brain className="size-3.5 text-cyan-600" />
+                </div>
+                <CardTitle className="text-base">Comportamento Humano</CardTitle>
+                <span className="text-[10px] text-muted-foreground ml-1">Simula padrões de uso reais</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Switch checked={settings.humanBehaviorEnabled ?? true} onCheckedChange={v => updateSetting('humanBehaviorEnabled', v)} />
+                <Button variant="ghost" size="sm" className="text-xs text-muted-foreground hover:text-cyan-600 gap-1 h-7" onClick={() => resetSection('humanBehavior', 'Comportamento Humano')} disabled={saving}>
+                  <RotateCcw className="size-3" />
+                </Button>
+                <Button variant="ghost" size="sm" className="text-xs text-muted-foreground gap-1 h-7" onClick={() => setHumanBehaviorExpanded(!humanBehaviorExpanded)}>
+                  {humanBehaviorExpanded ? <ChevronUp className="size-3.5" /> : <ChevronDown className="size-3.5" />}
+                </Button>
+              </div>
+            </div>
+          </CardHeader>
+          {humanBehaviorExpanded && settings.humanBehaviorEnabled !== false && (
+            <CardContent className="space-y-5">
+              {/* Cluster Sending */}
+              <div className="border border-cyan-200 dark:border-cyan-800 rounded-lg p-3 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Zap className="size-4 text-cyan-600" />
+                    <span className="text-xs font-semibold text-cyan-700 dark:text-cyan-400">Envio em Clusters</span>
+                    <span className="text-[10px] text-muted-foreground">Rajadas de mensagens com micro-pausas</span>
+                  </div>
+                  <Switch
+                    checked={humanBehavior.cluster?.enabled ?? true}
+                    onCheckedChange={v => updateHumanBehavior('cluster.enabled', v)}
+                  />
+                </div>
+                {humanBehavior.cluster?.enabled !== false && (
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <Label className="text-[10px] text-muted-foreground">Tamanho do cluster (min-max)</Label>
+                      <div className="flex items-center gap-1.5">
+                        <Input type="number" min={2} max={6} step={1} value={humanBehavior.cluster?.minSize ?? 2} onChange={e => updateHumanBehavior('cluster.minSize', Math.max(2, parseInt(e.target.value) || 2))} className="w-14 h-7 text-[11px]" disabled={saving} />
+                        <span className="text-[10px] text-muted-foreground">-</span>
+                        <Input type="number" min={2} max={8} step={1} value={humanBehavior.cluster?.maxSize ?? 4} onChange={e => updateHumanBehavior('cluster.maxSize', Math.max(2, parseInt(e.target.value) || 4))} className="w-14 h-7 text-[11px]" disabled={saving} />
+                        <span className="text-[10px] text-muted-foreground">msgs</span>
+                      </div>
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[10px] text-muted-foreground">Micro-pausa entre msgs (seg)</Label>
+                      <div className="flex items-center gap-1.5">
+                        <Input type="number" min={1} max={30} step={1} value={humanBehavior.cluster?.microPauseMinSec ?? 3} onChange={e => updateHumanBehavior('cluster.microPauseMinSec', Math.max(1, parseInt(e.target.value) || 3))} className="w-14 h-7 text-[11px]" disabled={saving} />
+                        <span className="text-[10px] text-muted-foreground">-</span>
+                        <Input type="number" min={1} max={60} step={1} value={humanBehavior.cluster?.microPauseMaxSec ?? 8} onChange={e => updateHumanBehavior('cluster.microPauseMaxSec', Math.max(1, parseInt(e.target.value) || 8))} className="w-14 h-7 text-[11px]" disabled={saving} />
+                        <span className="text-[10px] text-muted-foreground">s</span>
+                      </div>
+                    </div>
+                    <div className="space-y-1 col-span-2">
+                      <Label className="text-[10px] text-muted-foreground">Pausa após cluster (seg)</Label>
+                      <div className="flex items-center gap-1.5">
+                        <Input type="number" min={10} max={300} step={5} value={humanBehavior.cluster?.afterClusterPauseMinSec ?? 30} onChange={e => updateHumanBehavior('cluster.afterClusterPauseMinSec', Math.max(10, parseInt(e.target.value) || 30))} className="w-16 h-7 text-[11px]" disabled={saving} />
+                        <span className="text-[10px] text-muted-foreground">-</span>
+                        <Input type="number" min={10} max={600} step={5} value={humanBehavior.cluster?.afterClusterPauseMaxSec ?? 90} onChange={e => updateHumanBehavior('cluster.afterClusterPauseMaxSec', Math.max(10, parseInt(e.target.value) || 90))} className="w-16 h-7 text-[11px]" disabled={saving} />
+                        <span className="text-[10px] text-muted-foreground">s</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                <div className="p-2 bg-muted/50 rounded text-[10px] text-muted-foreground">
+                  Humano: manda 2-4 msgs rápidas, faz pausa, mais 3 msgs, pausa longa...
+                </div>
+              </div>
+
+              {/* Cooldown Presence */}
+              <div className="border border-emerald-200 dark:border-emerald-800 rounded-lg p-3 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Coffee className="size-4 text-emerald-600" />
+                    <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-400">Presença no Cooldown</span>
+                    <span className="text-[10px] text-muted-foreground">Aparece online durante pausas</span>
+                  </div>
+                  <Switch
+                    checked={humanBehavior.cooldownPresence?.enabled ?? true}
+                    onCheckedChange={v => updateHumanBehavior('cooldownPresence.enabled', v)}
+                  />
+                </div>
+                {humanBehavior.cooldownPresence?.enabled !== false && (
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <Label className="text-[10px] text-muted-foreground">Chance de aparecer</Label>
+                      <div className="flex items-center gap-1.5">
+                        <Input type="number" min={5} max={100} step={5} value={humanBehavior.cooldownPresence?.chancePercent ?? 40} onChange={e => updateHumanBehavior('cooldownPresence.chancePercent', Math.max(5, parseInt(e.target.value) || 40))} className="w-16 h-7 text-[11px]" disabled={saving} />
+                        <span className="text-[10px] text-muted-foreground">%</span>
+                      </div>
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[10px] text-muted-foreground">Duração online (seg)</Label>
+                      <div className="flex items-center gap-1.5">
+                        <Input type="number" min={2} max={120} step={1} value={humanBehavior.cooldownPresence?.durationMinSec ?? 5} onChange={e => updateHumanBehavior('cooldownPresence.durationMinSec', Math.max(2, parseInt(e.target.value) || 5))} className="w-14 h-7 text-[11px]" disabled={saving} />
+                        <span className="text-[10px] text-muted-foreground">-</span>
+                        <Input type="number" min={2} max={120} step={1} value={humanBehavior.cooldownPresence?.durationMaxSec ?? 25} onChange={e => updateHumanBehavior('cooldownPresence.durationMaxSec', Math.max(2, parseInt(e.target.value) || 25))} className="w-14 h-7 text-[11px]" disabled={saving} />
+                        <span className="text-[10px] text-muted-foreground">s</span>
+                      </div>
+                    </div>
+                    <div className="space-y-1 col-span-2">
+                      <Label className="text-[10px] text-muted-foreground">Intervalo entre aparições (min)</Label>
+                      <div className="flex items-center gap-1.5">
+                        <Input type="number" min={1} max={30} step={1} value={humanBehavior.cooldownPresence?.intervalMinMin ?? 2} onChange={e => updateHumanBehavior('cooldownPresence.intervalMinMin', Math.max(1, parseInt(e.target.value) || 2))} className="w-14 h-7 text-[11px]" disabled={saving} />
+                        <span className="text-[10px] text-muted-foreground">-</span>
+                        <Input type="number" min={1} max={60} step={1} value={humanBehavior.cooldownPresence?.intervalMaxMin ?? 5} onChange={e => updateHumanBehavior('cooldownPresence.intervalMaxMin', Math.max(1, parseInt(e.target.value) || 5))} className="w-14 h-7 text-[11px]" disabled={saving} />
+                        <span className="text-[10px] text-muted-foreground">min</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                <div className="p-2 bg-muted/50 rounded text-[10px] text-muted-foreground">
+                  Humano: durante pausa, abre WhatsApp pra checar msgs, depois fecha. Bot fica 100% offline = detectável.
+                </div>
+              </div>
+
+              {/* Day Rhythm */}
+              <div className="border border-amber-200 dark:border-amber-800 rounded-lg p-3 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Sun className="size-4 text-amber-600" />
+                    <span className="text-xs font-semibold text-amber-700 dark:text-amber-400">Ritmo do Dia</span>
+                    <span className="text-[10px] text-muted-foreground">Velocidade varia por horário</span>
+                  </div>
+                  <Switch
+                    checked={humanBehavior.dayRhythm?.enabled ?? true}
+                    onCheckedChange={v => updateHumanBehavior('dayRhythm.enabled', v)}
+                  />
+                </div>
+                {humanBehavior.dayRhythm?.enabled !== false && (
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-1.5 w-28">
+                        <Sun className="size-3 text-amber-500" />
+                        <span className="text-[10px] text-muted-foreground">Manhã (9-12h)</span>
+                      </div>
+                      <Input type="number" min={50} max={300} step={5} value={humanBehavior.dayRhythm?.morningFactor ?? 130} onChange={e => updateHumanBehavior('dayRhythm.morningFactor', Math.max(50, parseInt(e.target.value) || 130))} className="w-16 h-7 text-[11px]" disabled={saving} />
+                      <span className="text-[10px] text-muted-foreground">%{((humanBehavior.dayRhythm?.morningFactor ?? 130) > 100) ? ' (mais lento)' : ((humanBehavior.dayRhythm?.morningFactor ?? 130) < 100) ? ' (mais rápido)' : ' (normal)'}</span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-1.5 w-28">
+                        <Sun className="size-3 text-orange-500" />
+                        <span className="text-[10px] text-muted-foreground">Meio-dia (12-14h)</span>
+                      </div>
+                      <Input type="number" min={50} max={300} step={5} value={humanBehavior.dayRhythm?.middayFactor ?? 80} onChange={e => updateHumanBehavior('dayRhythm.middayFactor', Math.max(50, parseInt(e.target.value) || 80))} className="w-16 h-7 text-[11px]" disabled={saving} />
+                      <span className="text-[10px] text-muted-foreground">%{((humanBehavior.dayRhythm?.middayFactor ?? 80) > 100) ? ' (mais lento)' : ((humanBehavior.dayRhythm?.middayFactor ?? 80) < 100) ? ' (mais rápido)' : ' (normal)'}</span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-1.5 w-28">
+                        <Moon className="size-3 text-violet-500" />
+                        <span className="text-[10px] text-muted-foreground">Tarde (14-17h)</span>
+                      </div>
+                      <Input type="number" min={50} max={300} step={5} value={humanBehavior.dayRhythm?.afternoonFactor ?? 100} onChange={e => updateHumanBehavior('dayRhythm.afternoonFactor', Math.max(50, parseInt(e.target.value) || 100))} className="w-16 h-7 text-[11px]" disabled={saving} />
+                      <span className="text-[10px] text-muted-foreground">%{((humanBehavior.dayRhythm?.afternoonFactor ?? 100) > 100) ? ' (mais lento)' : ((humanBehavior.dayRhythm?.afternoonFactor ?? 100) < 100) ? ' (mais rápido)' : ' (normal)'}</span>
+                    </div>
+                  </div>
+                )}
+                <div className="p-2 bg-muted/50 rounded text-[10px] text-muted-foreground">
+                  100% = velocidade normal. &gt;100% = mais lento (multiplica o intervalo). &lt;100% = mais rápido. Humano é mais devagar de manhã e noite.
+                </div>
+              </div>
+
+              {/* Non-linear Pauses */}
+              <div className="border border-violet-200 dark:border-violet-800 rounded-lg p-3 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <BarChart3 className="size-4 text-violet-600" />
+                    <span className="text-xs font-semibold text-violet-700 dark:text-violet-400">Pausas Não-Lineares</span>
+                    <span className="text-[10px] text-muted-foreground">Distribuição realista de pausas</span>
+                  </div>
+                  <Switch
+                    checked={humanBehavior.nonlinearPauses?.enabled ?? true}
+                    onCheckedChange={v => updateHumanBehavior('nonlinearPauses.enabled', v)}
+                  />
+                </div>
+                {humanBehavior.nonlinearPauses?.enabled !== false && (
+                  <div className="space-y-2">
+                    {/* Short */}
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] w-14 text-right text-muted-foreground shrink-0">Curta</span>
+                      <Input type="number" min={0} max={100} step={5} value={humanBehavior.nonlinearPauses?.short?.weight ?? 40} onChange={e => updateHumanBehavior('nonlinearPauses.short.weight', Math.max(0, parseInt(e.target.value) || 40))} className="w-14 h-7 text-[11px]" disabled={saving} />
+                      <span className="text-[10px] text-muted-foreground">%</span>
+                      <Input type="number" min={1} max={60} step={1} value={humanBehavior.nonlinearPauses?.short?.minMin ?? 2} onChange={e => updateHumanBehavior('nonlinearPauses.short.minMin', Math.max(1, parseInt(e.target.value) || 2))} className="w-12 h-7 text-[11px]" disabled={saving} />
+                      <span className="text-[10px] text-muted-foreground">-</span>
+                      <Input type="number" min={1} max={120} step={1} value={humanBehavior.nonlinearPauses?.short?.maxMin ?? 5} onChange={e => updateHumanBehavior('nonlinearPauses.short.maxMin', Math.max(1, parseInt(e.target.value) || 5))} className="w-12 h-7 text-[11px]" disabled={saving} />
+                      <span className="text-[10px] text-muted-foreground">min</span>
+                    </div>
+                    {/* Medium */}
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] w-14 text-right text-muted-foreground shrink-0">Média</span>
+                      <Input type="number" min={0} max={100} step={5} value={humanBehavior.nonlinearPauses?.medium?.weight ?? 40} onChange={e => updateHumanBehavior('nonlinearPauses.medium.weight', Math.max(0, parseInt(e.target.value) || 40))} className="w-14 h-7 text-[11px]" disabled={saving} />
+                      <span className="text-[10px] text-muted-foreground">%</span>
+                      <Input type="number" min={1} max={60} step={1} value={humanBehavior.nonlinearPauses?.medium?.minMin ?? 8} onChange={e => updateHumanBehavior('nonlinearPauses.medium.minMin', Math.max(1, parseInt(e.target.value) || 8))} className="w-12 h-7 text-[11px]" disabled={saving} />
+                      <span className="text-[10px] text-muted-foreground">-</span>
+                      <Input type="number" min={1} max={120} step={1} value={humanBehavior.nonlinearPauses?.medium?.maxMin ?? 15} onChange={e => updateHumanBehavior('nonlinearPauses.medium.maxMin', Math.max(1, parseInt(e.target.value) || 15))} className="w-12 h-7 text-[11px]" disabled={saving} />
+                      <span className="text-[10px] text-muted-foreground">min</span>
+                    </div>
+                    {/* Long */}
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] w-14 text-right text-muted-foreground shrink-0">Longa</span>
+                      <Input type="number" min={0} max={100} step={5} value={humanBehavior.nonlinearPauses?.long?.weight ?? 20} onChange={e => updateHumanBehavior('nonlinearPauses.long.weight', Math.max(0, parseInt(e.target.value) || 20))} className="w-14 h-7 text-[11px]" disabled={saving} />
+                      <span className="text-[10px] text-muted-foreground">%</span>
+                      <Input type="number" min={1} max={60} step={1} value={humanBehavior.nonlinearPauses?.long?.minMin ?? 20} onChange={e => updateHumanBehavior('nonlinearPauses.long.minMin', Math.max(1, parseInt(e.target.value) || 20))} className="w-12 h-7 text-[11px]" disabled={saving} />
+                      <span className="text-[10px] text-muted-foreground">-</span>
+                      <Input type="number" min={1} max={120} step={1} value={humanBehavior.nonlinearPauses?.long?.maxMin ?? 35} onChange={e => updateHumanBehavior('nonlinearPauses.long.maxMin', Math.max(1, parseInt(e.target.value) || 35))} className="w-12 h-7 text-[11px]" disabled={saving} />
+                      <span className="text-[10px] text-muted-foreground">min</span>
+                    </div>
+                    {/* Visual bar */}
+                    <div className="flex h-3 rounded-full overflow-hidden mt-1">
+                      {(() => {
+                        const total = (humanBehavior.nonlinearPauses?.short?.weight ?? 40) + (humanBehavior.nonlinearPauses?.medium?.weight ?? 40) + (humanBehavior.nonlinearPauses?.long?.weight ?? 20)
+                        const shortPct = total > 0 ? ((humanBehavior.nonlinearPauses?.short?.weight ?? 40) / total) * 100 : 33
+                        const medPct = total > 0 ? ((humanBehavior.nonlinearPauses?.medium?.weight ?? 40) / total) * 100 : 33
+                        const longPct = total > 0 ? ((humanBehavior.nonlinearPauses?.long?.weight ?? 20) / total) * 100 : 33
+                        return (
+                          <>
+                            <div className="bg-emerald-400" style={{ width: `${shortPct}%` }} title={`Curta: ${shortPct.toFixed(0)}%`} />
+                            <div className="bg-amber-400" style={{ width: `${medPct}%` }} title={`Média: ${medPct.toFixed(0)}%`} />
+                            <div className="bg-violet-400" style={{ width: `${longPct}%` }} title={`Longa: ${longPct.toFixed(0)}%`} />
+                          </>
+                        )
+                      })()}
+                    </div>
+                  </div>
+                )}
+                <div className="p-2 bg-muted/50 rounded text-[10px] text-muted-foreground">
+                  Humano: pausa curta (foi ao banheiro), média (café), longa (almoçou/ligação). Bot sempre faz a mesma pausa = padrão detectável.
+                </div>
+              </div>
+
+              {/* Summary */}
+              <div className="p-3 bg-cyan-50 dark:bg-cyan-900/20 rounded-lg border border-cyan-200 dark:border-cyan-800">
+                <div className="flex items-center gap-2 mb-1.5">
+                  <Activity className="size-3.5 text-cyan-600" />
+                  <span className="text-[11px] font-semibold text-cyan-700 dark:text-cyan-400">Resumo do Comportamento</span>
+                </div>
+                <p className="text-[10px] text-muted-foreground leading-relaxed">
+                  {humanBehavior.cluster?.enabled !== false && (
+                    <>Clusters de {humanBehavior.cluster?.minSize ?? 2}-{humanBehavior.cluster?.maxSize ?? 4} msgs com pausa de {humanBehavior.cluster?.microPauseMinSec ?? 3}-{humanBehavior.cluster?.microPauseMaxSec ?? 8}s entre elas. </>
+                  )}
+                  {humanBehavior.cooldownPresence?.enabled !== false && (
+                    <>Durante cooldown: {humanBehavior.cooldownPresence?.chancePercent ?? 40}% chance de aparecer online por {humanBehavior.cooldownPresence?.durationMinSec ?? 5}-{humanBehavior.cooldownPresence?.durationMaxSec ?? 25}s a cada {humanBehavior.cooldownPresence?.intervalMinMin ?? 2}-{humanBehavior.cooldownPresence?.intervalMaxMin ?? 5}min. </>
+                  )}
+                  {humanBehavior.dayRhythm?.enabled !== false && (
+                    <>Ritmo: manhã {(humanBehavior.dayRhythm?.morningFactor ?? 130)}%, meio-dia {(humanBehavior.dayRhythm?.middayFactor ?? 80)}%, tarde {(humanBehavior.dayRhythm?.afternoonFactor ?? 100)}%. </>
+                  )}
+                  {humanBehavior.nonlinearPauses?.enabled !== false && (
+                    <>Pausas: {(humanBehavior.nonlinearPauses?.short?.weight ?? 40)}% curta, {(humanBehavior.nonlinearPauses?.medium?.weight ?? 40)}% média, {(humanBehavior.nonlinearPauses?.long?.weight ?? 20)}% longa.</>
+                  )}
+                </p>
+              </div>
+            </CardContent>
+          )}
         </Card>
 
         {/* Tips */}

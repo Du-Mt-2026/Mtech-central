@@ -25,6 +25,101 @@ export const breakWindowSchema = z.object({
   label: z.string().default('Pausa'),
 }).refine(d => d.start < d.end, { message: 'start deve ser menor que end' })
 
+// ============================================================
+// HUMAN BEHAVIOR CONFIG — Zod Schemas
+// ============================================================
+// Makes the bot's timing patterns indistinguishable from a real human.
+// All values come from UI → DB → sending-engine reads dynamically.
+
+export const clusterConfigSchema = z.object({
+  enabled: z.boolean().default(true),
+  minSize: z.number().int().min(2).max(6).default(2),           // Min messages per cluster burst
+  maxSize: z.number().int().min(2).max(8).default(4),           // Max messages per cluster burst
+  microPauseMinSec: z.number().int().min(1).max(30).default(3), // Min pause between cluster msgs (seconds)
+  microPauseMaxSec: z.number().int().min(1).max(60).default(8), // Max pause between cluster msgs (seconds)
+  afterClusterPauseMinSec: z.number().int().min(10).max(300).default(30), // Min pause after cluster (seconds)
+  afterClusterPauseMaxSec: z.number().int().min(10).max(600).default(90), // Max pause after cluster (seconds)
+}).refine(d => d.maxSize >= d.minSize, { message: 'Tamanho máximo deve ser >= mínimo', path: ['maxSize'] })
+  .refine(d => d.microPauseMaxSec >= d.microPauseMinSec, { message: 'Micro-pausa máxima deve ser >= mínima', path: ['microPauseMaxSec'] })
+  .refine(d => d.afterClusterPauseMaxSec >= d.afterClusterPauseMinSec, { message: 'Pausa pós-cluster máxima deve ser >= mínima', path: ['afterClusterPauseMaxSec'] })
+
+export const cooldownPresenceConfigSchema = z.object({
+  enabled: z.boolean().default(true),
+  chancePercent: z.number().int().min(5).max(100).default(40),   // Chance of appearing online during cooldown
+  durationMinSec: z.number().int().min(2).max(120).default(5),   // Min seconds of online appearance
+  durationMaxSec: z.number().int().min(2).max(120).default(25),  // Max seconds of online appearance
+  intervalMinMin: z.number().int().min(1).max(30).default(2),    // Min minutes between online appearances
+  intervalMaxMin: z.number().int().min(1).max(60).default(5),    // Max minutes between online appearances
+}).refine(d => d.durationMaxSec >= d.durationMinSec, { message: 'Duração máxima deve ser >= mínima', path: ['durationMaxSec'] })
+  .refine(d => d.intervalMaxMin >= d.intervalMinMin, { message: 'Intervalo máximo deve ser >= mínimo', path: ['intervalMaxMin'] })
+
+export const dayRhythmConfigSchema = z.object({
+  enabled: z.boolean().default(true),
+  morningFactor: z.number().int().min(50).max(300).default(130),  // Morning (09-12h): 130% = 1.3x slower
+  middayFactor: z.number().int().min(50).max(300).default(80),   // Midday (12-14h): 80% = faster
+  afternoonFactor: z.number().int().min(50).max(300).default(100), // Afternoon (14-17h): 100% = normal
+})
+
+export const pauseTierSchema = z.object({
+  weight: z.number().int().min(0).max(100).default(40),          // Weight for weighted random selection (%)
+  minMin: z.number().int().min(1).max(60).default(2),            // Min duration in minutes
+  maxMin: z.number().int().min(1).max(120).default(5),           // Max duration in minutes
+}).refine(d => d.maxMin >= d.minMin, { message: 'Máximo deve ser >= mínimo', path: ['maxMin'] })
+
+export const nonlinearPausesConfigSchema = z.object({
+  enabled: z.boolean().default(true),
+  short: pauseTierSchema.default({ weight: 40, minMin: 2, maxMin: 5 }),
+  medium: pauseTierSchema.default({ weight: 40, minMin: 8, maxMin: 15 }),
+  long: pauseTierSchema.default({ weight: 20, minMin: 20, maxMin: 35 }),
+}).refine(d => (d.short.weight + d.medium.weight + d.long.weight) > 0, { message: 'Pesos devem somar > 0' })
+
+export const humanBehaviorConfigSchema = z.object({
+  cluster: clusterConfigSchema,
+  cooldownPresence: cooldownPresenceConfigSchema,
+  dayRhythm: dayRhythmConfigSchema,
+  nonlinearPauses: nonlinearPausesConfigSchema,
+})
+
+export type ClusterConfig = z.infer<typeof clusterConfigSchema>
+export type CooldownPresenceConfig = z.infer<typeof cooldownPresenceConfigSchema>
+export type DayRhythmConfig = z.infer<typeof dayRhythmConfigSchema>
+export type PauseTier = z.infer<typeof pauseTierSchema>
+export type NonlinearPausesConfig = z.infer<typeof nonlinearPausesConfigSchema>
+export type HumanBehaviorConfig = z.infer<typeof humanBehaviorConfigSchema>
+
+// Default human behavior config (matches Prisma @default)
+export const DEFAULT_HUMAN_BEHAVIOR: HumanBehaviorConfig = {
+  cluster: {
+    enabled: true,
+    minSize: 2,
+    maxSize: 4,
+    microPauseMinSec: 3,
+    microPauseMaxSec: 8,
+    afterClusterPauseMinSec: 30,
+    afterClusterPauseMaxSec: 90,
+  },
+  cooldownPresence: {
+    enabled: true,
+    chancePercent: 40,
+    durationMinSec: 5,
+    durationMaxSec: 25,
+    intervalMinMin: 2,
+    intervalMaxMin: 5,
+  },
+  dayRhythm: {
+    enabled: true,
+    morningFactor: 130,
+    middayFactor: 80,
+    afternoonFactor: 100,
+  },
+  nonlinearPauses: {
+    enabled: true,
+    short: { weight: 40, minMin: 2, maxMin: 5 },
+    medium: { weight: 40, minMin: 8, maxMin: 15 },
+    long: { weight: 20, minMin: 20, maxMin: 35 },
+  },
+}
+
 export const antiBanUpdateSchema = z.object({
   typingMinDelay: z.number().int().min(1000).optional(),
   typingMaxDelay: z.number().int().min(1000).optional(),
@@ -54,6 +149,12 @@ export const antiBanUpdateSchema = z.object({
   ]).optional(),
   readyDailyLimit: z.number().int().min(10).optional(),
   hourlyLimit: z.number().int().min(5).optional(),
+  linkPreviewEnabled: z.boolean().optional(),
+  humanBehaviorEnabled: z.boolean().optional(),
+  humanBehaviorConfig: z.union([
+    z.string(),
+    humanBehaviorConfigSchema,
+  ]).optional(),
 }).refine(
   d => {
     if (d.typingMinDelay !== undefined && d.typingMaxDelay !== undefined) {
@@ -94,6 +195,9 @@ export interface AntiBanSettings {
   readyDailyLimit: number
   hourlyLimit: number
   breakWindows: string      // JSON string of BreakWindow[]
+  linkPreviewEnabled: boolean
+  humanBehaviorEnabled: boolean
+  humanBehaviorConfig: string    // JSON string of HumanBehaviorConfig
 }
 
 // ============================================================
@@ -163,6 +267,9 @@ export const FIELD_DEFAULTS: Record<string, unknown> = {
   prewarmSchedule: JSON.stringify(PREWARM_SCHEDULE),
   readyDailyLimit: 200,
   hourlyLimit: 30,
+  linkPreviewEnabled: false,
+  humanBehaviorEnabled: true,
+  humanBehaviorConfig: JSON.stringify(DEFAULT_HUMAN_BEHAVIOR),
 }
 
 // Section-to-fields mapping for _resetSection
@@ -170,8 +277,9 @@ export const SECTION_FIELDS: Record<string, string[]> = {
   typing: ['typingMinDelay', 'typingMaxDelay'],
   interval: ['messageIntervalMin', 'messageIntervalMax'],
   warming: ['warmingEnabled', 'nurserySchedule', 'prewarmSchedule', 'readyDailyLimit', 'hourlyLimit'],
-  cooldown: ['dailyLimitPerChip', 'cooldownMinutes', 'cooldownMinutesMax', 'cooldownAfterMessages', 'cooldownAfterMessagesMax', 'stopOnWarning'],
+  cooldown: ['dailyLimitPerChip', 'cooldownMinutes', 'cooldownMinutesMax', 'cooldownAfterMessages', 'cooldownAfterMessagesMax', 'stopOnWarning', 'linkPreviewEnabled'],
   sendingWindow: ['sendingWindowStart', 'sendingWindowEnd', 'timezone', 'breakWindows'],
+  humanBehavior: ['humanBehaviorEnabled', 'humanBehaviorConfig'],
 }
 
 // Allowed fields whitelist for PATCH
@@ -195,6 +303,9 @@ export const ALLOWED_FIELDS = [
   'prewarmSchedule',
   'readyDailyLimit',
   'hourlyLimit',
+  'linkPreviewEnabled',
+  'humanBehaviorEnabled',
+  'humanBehaviorConfig',
 ]
 
 // Warming mode multipliers

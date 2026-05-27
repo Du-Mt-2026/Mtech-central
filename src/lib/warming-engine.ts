@@ -874,10 +874,12 @@ export async function processNextWarmingMessage(
   }
 
   // Check minimum interval for this sender
+  // Use session interval if set, otherwise fall back to anti-ban settings,
+  // then to hardcoded constants as last resort.
   if (senderProgress.lastSentAt) {
     const lastSentTime = new Date(senderProgress.lastSentAt).getTime()
     const elapsed = (Date.now() - lastSentTime) / 1000
-    const minInterval = session.intervalMin || WARMING_INTERVAL_MIN
+    const minInterval = session.intervalMin || antiBanSettings?.messageIntervalMin || WARMING_INTERVAL_MIN
 
     if (elapsed < minInterval) {
       const waitSeconds = Math.ceil(minInterval - elapsed)
@@ -919,7 +921,7 @@ export async function processNextWarmingMessage(
     } else {
       await sendTextMessage(instanceName, formattedPhone, messageContent.content, {
         delay: 0,
-        linkPreview: false,
+        linkPreview: antiBanSettings?.linkPreviewEnabled ?? false,
       })
     }
 
@@ -951,8 +953,10 @@ export async function processNextWarmingMessage(
     console.debug(`[WarmingEngine] ${senderChip.name} → ${recipientChip.name}: [${messageType}] "${messageContent.content.substring(0, 50)}..." (sent: ${senderProgress.sent}, received: ${recipientProgress.received})`)
 
     // Calculate next delay (gaussian)
-    const intervalMin = session.intervalMin || WARMING_INTERVAL_MIN
-    const intervalMax = session.intervalMax || WARMING_INTERVAL_MAX
+    // Use session interval if set, otherwise fall back to anti-ban settings,
+    // then to hardcoded constants as last resort.
+    const intervalMin = session.intervalMin || antiBanSettings?.messageIntervalMin || WARMING_INTERVAL_MIN
+    const intervalMax = session.intervalMax || antiBanSettings?.messageIntervalMax || WARMING_INTERVAL_MAX
     const nextDelay = gaussianRandom(
       (intervalMin + intervalMax) / 2,
       (intervalMax - intervalMin) / 6,
@@ -960,9 +964,14 @@ export async function processNextWarmingMessage(
       intervalMax
     )
 
+    // Return the full delay — don't subtract offlineDelayMs.
+    // The interval is the minimum time between messages, and humanization
+    // (offline delay, typing) is ADDITIONAL time on top of it.
+    // Subtracting it collapses the interval, defeating anti-ban.
+    const effectiveMinMs = (antiBanSettings?.messageIntervalMin || WARMING_INTERVAL_MIN) * 1000
     return {
       processed: true,
-      delayMs: nextDelay * 1000 - offlineDelayMs, // Subtract time already spent
+      delayMs: Math.max(nextDelay * 1000, effectiveMinMs),
       completed: false,
     }
 
@@ -1086,10 +1095,26 @@ export async function processAllWarmingSessions(): Promise<{
           break // Session is done
         }
 
-        // Wait the delay between messages (within tick budget)
+        // Wait the delay between messages — respect the anti-ban interval.
+        // Previously capped at 4s which truncated 45-120s intervals to 4s,
+        // completely defeating the anti-ban purpose. Now:
+        // - If delay fits within the tick budget, wait the full amount
+        // - If delay is too long, don't send more messages this tick
+        //   (the next cron tick will handle it via nextSendAt persistence)
         if (result.delayMs > 0) {
-          const waitMs = Math.min(result.delayMs, 4000) // Cap at 4s within tick
-          await new Promise(resolve => setTimeout(resolve, waitMs))
+          // Don't cap the delay — respect the anti-ban interval from UI settings.
+          // If the delay is longer than a tick, just wait what we can and let
+          // the next tick continue. But for warming, we process 1 message per
+          // attempt, so the delay is the interval to wait before the next message.
+          // We only wait within the tick if delay is reasonable (< 30s).
+          const maxWaitMs = 30000 // 30s max wait within a tick (leaves time for other sessions)
+          if (result.delayMs <= maxWaitMs) {
+            await new Promise(resolve => setTimeout(resolve, result.delayMs))
+          } else {
+            // Delay is too long for this tick — stop processing this session.
+            // The next cron tick will pick it up after the delay elapses.
+            break
+          }
         }
 
         // Stop if hard-blocked reason

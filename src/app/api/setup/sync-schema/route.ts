@@ -214,6 +214,14 @@ export async function POST(req: NextRequest) {
       } else {
         results.push('AntiBanSettings: breakWindows já existe')
       }
+
+      // Add linkPreviewEnabled column
+      if (!absColumnNames.includes('linkPreviewEnabled')) {
+        await db.$executeRawUnsafe(`ALTER TABLE "AntiBanSettings" ADD COLUMN IF NOT EXISTS "linkPreviewEnabled" BOOLEAN NOT NULL DEFAULT false`)
+        results.push('AntiBanSettings: adicionada coluna linkPreviewEnabled')
+      } else {
+        results.push('AntiBanSettings: linkPreviewEnabled já existe')
+      }
     } catch (absError: any) {
       results.push(`Erro na migração AntiBanSettings: ${absError.message}`)
     }

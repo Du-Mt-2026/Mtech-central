@@ -24,7 +24,7 @@ import {
 } from './evolution-router'
 import { db } from './db'
 import type { Chip } from '@prisma/client'
-import { NURSERY_SCHEDULE, PREWARM_SCHEDULE, WARMING_MODE_MULTIPLIERS, type ScheduleEntry, type BreakWindow } from './constants'
+import { NURSERY_SCHEDULE, PREWARM_SCHEDULE, WARMING_MODE_MULTIPLIERS, DEFAULT_HUMAN_BEHAVIOR, humanBehaviorConfigSchema, type ScheduleEntry, type BreakWindow, type HumanBehaviorConfig } from './constants'
 import { toMins, getCurrentMinutes } from './time-utils'
 
 // ============================================================
@@ -55,6 +55,9 @@ interface AntiBanConfig {
   breakWindows: BreakWindow[]
   // Link preview control
   linkPreviewEnabled: boolean  // Whether to allow link previews in sent messages
+  // Human behavior simulation — makes bot patterns undetectable
+  humanBehaviorEnabled: boolean
+  humanBehaviorConfig: HumanBehaviorConfig
 }
 
 // ============================================================
@@ -112,7 +115,9 @@ const DEFAULT_SETTINGS: AntiBanConfig = {
   readyDailyLimit: 200,
   hourlyLimit: 30,
   breakWindows: [],
-  linkPreviewEnabled: false,  // Default OFF — link previews in bulk are a bot signature
+  linkPreviewEnabled: false,  // Default OFF — link previews in bulk are a bot signature. User can enable via UI.
+  humanBehaviorEnabled: true,
+  humanBehaviorConfig: DEFAULT_HUMAN_BEHAVIOR,
 }
 
 /**
@@ -131,6 +136,21 @@ function parseBreakWindows(jsonStr: string | undefined | null): BreakWindow[] {
     }
   } catch { /* ignore */ }
   return []
+}
+
+/**
+ * Parse human behavior config from JSON string, validating with Zod schema.
+ * Falls back to DEFAULT_HUMAN_BEHAVIOR on any parse/validation error.
+ */
+function parseHumanBehaviorConfig(jsonStr: string | undefined | null): HumanBehaviorConfig {
+  if (!jsonStr) return DEFAULT_HUMAN_BEHAVIOR
+  try {
+    const parsed = JSON.parse(jsonStr)
+    const result = humanBehaviorConfigSchema.safeParse(parsed)
+    if (result.success) return result.data
+    console.debug('[SendingEngine] humanBehaviorConfig validation failed, using defaults:', result.error.issues[0]?.message)
+  } catch { /* ignore */ }
+  return DEFAULT_HUMAN_BEHAVIOR
 }
 
 /**
@@ -224,18 +244,25 @@ function gaussianDelaySeconds(min: number, max: number): number {
  * Features:
  * - Gaussian typing speed (mean 10 chars/s, stddev 2.5)
  * - 30% chance of a "thinking pause" (1-4 seconds)
- * - Short messages get minimum 3 seconds
- * - Long messages cap at 25 seconds (Vercel timeout safety)
+ * - Short messages get minimum from UI settings (typingMinDelay)
+ * - Long messages cap at UI settings (typingMaxDelay)
+ *
+ * IMPORTANT: All bounds come from AntiBanSettings (UI-configurable).
+ * If no settings are passed, falls back to hardcoded constants for safety.
  */
-function calculateTypingDuration(text: string): number {
+function calculateTypingDuration(text: string, settings?: { typingMinDelay?: number; typingMaxDelay?: number }): number {
   const charCount = text.length
   // Gaussian typing speed: most people type ~10 chars/s on mobile
   // with standard deviation of 2.5 chars/s
   const typingSpeed = gaussianRandomFloat(10, 2.5, TYPING_SPEED_MIN, TYPING_SPEED_MAX)
   let durationMs = (charCount / typingSpeed) * 1000
 
-  // Clamp to reasonable bounds
-  durationMs = Math.max(TYPING_MIN_MS, Math.min(TYPING_MAX_MS, durationMs))
+  // Clamp to DYNAMIC bounds from UI settings (not hardcoded constants)
+  // This is the core fix: the user sets typingMinDelay/typingMaxDelay in the UI,
+  // and the engine MUST respect those values.
+  const minMs = settings?.typingMinDelay ?? TYPING_MIN_MS
+  const maxMs = settings?.typingMaxDelay ?? TYPING_MAX_MS
+  durationMs = Math.max(minMs, Math.min(maxMs, durationMs))
 
   // 30% chance of a "thinking pause" (1-4 seconds)
   if (Math.random() < TYPING_PAUSE_CHANCE) {
@@ -318,12 +345,17 @@ function getMinimumIntervalForChip(
   chip: ChipWarmingInfo,
   settings: AntiBanConfig
 ): number {
-  if (!chip.warmingEnabled || !settings.warmingEnabled) return 0
-
   const phase = chip.warmingPhase || 'nursery'
 
   if (phase === 'ready') {
-    // Ready/aquecido: use the normal interval from settings (minimum of intervalMin)
+    // Ready/aquecido: ALWAYS return the user's configured minimum interval.
+    // This is critical — ready chips must respect the UI settings.
+    return settings.messageIntervalMin
+  }
+
+  // For nursery/prewarm: if warming is disabled on the chip or in settings,
+  // still return the user's minimum interval as a safety floor.
+  if (!chip.warmingEnabled || !settings.warmingEnabled) {
     return settings.messageIntervalMin
   }
 
@@ -428,14 +460,160 @@ async function getAntiBanSettings(): Promise<AntiBanConfig> {
         cooldownAfterMessagesMax: saved.cooldownAfterMessagesMax,
         // Break windows
         breakWindows: parseBreakWindows(saved.breakWindows),
-        // Link preview — read from DB, default OFF for anti-ban
-        linkPreviewEnabled: false,  // Always OFF for anti-ban — link previews in bulk are detectable
+        // Link preview — read dynamically from DB (user configurable in UI)
+        // Default is OFF for anti-ban (link previews in bulk are detectable)
+        linkPreviewEnabled: saved.linkPreviewEnabled ?? false,
+        // Human behavior simulation — read dynamically from DB
+        humanBehaviorEnabled: saved.humanBehaviorEnabled ?? true,
+        humanBehaviorConfig: parseHumanBehaviorConfig(saved.humanBehaviorConfig),
       }
     }
   } catch {
     // Use defaults
   }
   return DEFAULT_SETTINGS
+}
+
+// ============================================================
+// HUMAN BEHAVIOR SIMULATION — Cluster State & Helpers
+// ============================================================
+
+/**
+ * Per-campaign+chip cluster state — tracks consecutive messages
+ * to implement burst-like sending patterns (cluster sending).
+ *
+ * WHY: Humans don't send messages with perfectly uniform intervals.
+ * They tend to send a few messages in quick succession (a "cluster"),
+ * then pause for a while before the next burst. This makes the
+ * sending pattern look natural instead of metronome-like.
+ */
+interface ClusterState {
+  count: number           // How many messages sent in current cluster
+  inCluster: boolean      // Whether currently in an active cluster
+  targetSize: number      // How many messages this cluster should contain
+}
+
+const clusterStateMap = new Map<string, ClusterState>()
+
+/**
+ * Get the day-rhythm multiplier for the current time.
+ * Humans send at different speeds depending on time of day:
+ *   Morning (9-12h):  slower (1.3x = more interval)
+ *   Midday (12-14h):  faster (0.8x = less interval)
+ *   Afternoon (14-17h): normal (1.0x)
+ *   Outside these:    conservative (use morning factor)
+ *
+ * All values come from settings.humanBehaviorConfig.dayRhythm.
+ */
+function getDayRhythmMultiplier(settings: AntiBanConfig): number {
+  if (!settings.humanBehaviorEnabled) return 1
+  const dayRhythm = settings.humanBehaviorConfig.dayRhythm
+  if (!dayRhythm.enabled) return 1
+
+  const now = new Date()
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    hour: 'numeric',
+    timeZone: settings.timezone,
+  })
+  const hourStr = formatter.format(now)
+  // Parse hour (formatter may return "9 AM" or "9" depending on locale)
+  const hour = parseInt(hourStr, 10)
+  if (isNaN(hour)) return 1
+
+  if (hour >= 9 && hour < 12) {
+    return dayRhythm.morningFactor / 100
+  } else if (hour >= 12 && hour < 14) {
+    return dayRhythm.middayFactor / 100
+  } else if (hour >= 14 && hour < 17) {
+    return dayRhythm.afternoonFactor / 100
+  } else {
+    // Outside 9-17h: use morning factor (conservative = slower)
+    return dayRhythm.morningFactor / 100
+  }
+}
+
+/**
+ * Calculate the delay for the next message using cluster sending logic.
+ * Returns the delay in seconds.
+ *
+ * In a cluster (burst): short micro-pauses between messages (3-8s)
+ * After cluster: longer pause (30-90s) before the next cluster
+ *
+ * All values come from settings.humanBehaviorConfig.cluster.
+ */
+function getClusterDelaySeconds(
+  campaignId: string,
+  chipId: string,
+  settings: AntiBanConfig
+): number | null {
+  if (!settings.humanBehaviorEnabled) return null
+  const cluster = settings.humanBehaviorConfig.cluster
+  if (!cluster.enabled) return null
+
+  const key = `${campaignId}:${chipId}`
+  let state = clusterStateMap.get(key)
+
+  if (!state || !state.inCluster) {
+    // Start a new cluster
+    const targetSize = randomInt(cluster.minSize, cluster.maxSize)
+    state = { count: 0, inCluster: true, targetSize }
+    clusterStateMap.set(key, state)
+  }
+
+  state.count++
+
+  if (state.count < state.targetSize) {
+    // Still in cluster — use micro-pause
+    const delaySec = gaussianDelaySeconds(cluster.microPauseMinSec, cluster.microPauseMaxSec)
+    return delaySec
+  } else {
+    // Cluster complete — use after-cluster pause, then reset
+    const delaySec = gaussianDelaySeconds(cluster.afterClusterPauseMinSec, cluster.afterClusterPauseMaxSec)
+    // Reset cluster state — next call will start a fresh cluster
+    clusterStateMap.delete(key)
+    return delaySec
+  }
+}
+
+/**
+ * Calculate cooldown duration using non-linear pause tiers.
+ * Instead of uniform random between min-max, uses weighted random
+ * selection between short/medium/long pause tiers.
+ *
+ * This produces a more natural distribution where:
+ *   - Short pauses are common (quick breaks)
+ *   - Medium pauses are common (lunch, etc.)
+ *   - Long pauses are less common (extended breaks)
+ *
+ * All values come from settings.humanBehaviorConfig.nonlinearPauses.
+ */
+function getNonlinearPauseMinutes(settings: AntiBanConfig): number | null {
+  if (!settings.humanBehaviorEnabled) return null
+  const nlPauses = settings.humanBehaviorConfig.nonlinearPauses
+  if (!nlPauses.enabled) return null
+
+  const tiers = [
+    { weight: nlPauses.short.weight, minMin: nlPauses.short.minMin, maxMin: nlPauses.short.maxMin },
+    { weight: nlPauses.medium.weight, minMin: nlPauses.medium.minMin, maxMin: nlPauses.medium.maxMin },
+    { weight: nlPauses.long.weight, minMin: nlPauses.long.minMin, maxMin: nlPauses.long.maxMin },
+  ]
+
+  const totalWeight = tiers.reduce((sum, t) => sum + t.weight, 0)
+  if (totalWeight <= 0) return null
+
+  // Weighted random selection
+  let roll = Math.random() * totalWeight
+  let selectedTier = tiers[0]
+  for (const tier of tiers) {
+    roll -= tier.weight
+    if (roll <= 0) {
+      selectedTier = tier
+      break
+    }
+  }
+
+  // Random duration within the selected tier's range
+  return randomFloat(selectedTier.minMin, selectedTier.maxMin)
 }
 
 // ============================================================
@@ -455,23 +633,49 @@ async function getAntiBanSettings(): Promise<AntiBanConfig> {
  *   - During cooldown periods
  *   - NOT during break windows (separate mechanism handles that)
  *
+ * HUMAN BEHAVIOR: When humanBehaviorEnabled + cooldownPresence.enabled,
+ * uses dynamic values from DB for chance, duration, and interval.
+ * Falls back to hardcoded constants when human behavior is disabled.
+ *
  * @param instanceName Evolution API instance name
  * @param jid WhatsApp JID to signal presence to (contact)
+ * @param isCooldown Whether this is during a cooldown period (uses different chance/config)
+ * @param settings AntiBanConfig for reading human behavior settings
  * @returns Duration spent "reading" in ms (0 if skipped)
  */
 async function performIdleReadingPresence(
   instanceName: string,
-  jid: string
+  jid: string,
+  isCooldown: boolean = false,
+  settings?: AntiBanConfig
 ): Promise<number> {
-  // Only do idle reading with configured probability
-  if (Math.random() > IDLE_READING_CHANCE) return 0
+  // Determine chance and duration based on context and human behavior settings
+  let chance: number
+  let durationMinMs: number
+  let durationMaxMs: number
 
-  // Gaussian duration for "reading" — most people read for ~4s, rarely <2s or >8s
+  if (isCooldown && settings?.humanBehaviorEnabled && settings.humanBehaviorConfig.cooldownPresence.enabled) {
+    // Use cooldown presence config from DB — dynamic, user-configurable
+    const cp = settings.humanBehaviorConfig.cooldownPresence
+    chance = cp.chancePercent / 100
+    durationMinMs = cp.durationMinSec * 1000
+    durationMaxMs = cp.durationMaxSec * 1000
+  } else {
+    // Default behavior — use hardcoded constants
+    chance = isCooldown ? IDLE_READING_COOLDOWN_CHANCE : IDLE_READING_CHANCE
+    durationMinMs = IDLE_READING_DURATION_MIN_MS
+    durationMaxMs = IDLE_READING_DURATION_MAX_MS
+  }
+
+  // Only do idle reading with configured probability
+  if (Math.random() > chance) return 0
+
+  // Gaussian duration for "reading" — most people read for a moderate time
   const readingMs = gaussianRandom(
-    (IDLE_READING_DURATION_MIN_MS + IDLE_READING_DURATION_MAX_MS) / 2,
-    (IDLE_READING_DURATION_MAX_MS - IDLE_READING_DURATION_MIN_MS) / 6,
-    IDLE_READING_DURATION_MIN_MS,
-    IDLE_READING_DURATION_MAX_MS
+    (durationMinMs + durationMaxMs) / 2,
+    (durationMaxMs - durationMinMs) / 6,
+    durationMinMs,
+    durationMaxMs
   )
 
   try {
@@ -597,8 +801,13 @@ async function advanceWarmingPhase(chipId: string, settings: AntiBanConfig): Pro
   const daysSinceCreation = Math.floor((now.getTime() - createdAt.getTime()) / (1000 * 60 * 60 * 24)) + 1
 
   if (phase === 'nursery') {
-    // Check if nursery period is complete (14 days)
-    if (daysSinceCreation > 14) {
+    // Derive nursery duration from the schedule's last entry (not hardcoded).
+    // If user customizes the schedule in UI, the engine respects it.
+    const nurserySchedule = settings.nurserySchedule
+    const nurseryDuration = nurserySchedule.length > 0
+      ? nurserySchedule[nurserySchedule.length - 1].days[1]
+      : 14  // Fallback if schedule is empty
+    if (daysSinceCreation > nurseryDuration) {
       // Transition to prewarm phase
       await db.chip.update({
         where: { id: chipId },
@@ -608,14 +817,18 @@ async function advanceWarmingPhase(chipId: string, settings: AntiBanConfig): Pro
           warmingStage: 5, // Legacy compat
         },
       })
-      console.debug(`[SendingEngine] Chip ${chip.name} graduated from NURSERY → PREWARM (day ${daysSinceCreation})`)
+      console.debug(`[SendingEngine] Chip ${chip.name} graduated from NURSERY → PREWARM (day ${daysSinceCreation}, nursery duration: ${nurseryDuration} days)`)
     }
   } else if (phase === 'prewarm') {
-    // Check if prewarm period is complete (20 days from prewarmStartedAt)
+    // Derive prewarm duration from the schedule's last entry (not hardcoded).
+    const prewarmSchedule = settings.prewarmSchedule
+    const prewarmDuration = prewarmSchedule.length > 0
+      ? prewarmSchedule[prewarmSchedule.length - 1].days[1]
+      : 20  // Fallback if schedule is empty
     const prewarmStart = chip.prewarmStartedAt ? new Date(chip.prewarmStartedAt) : createdAt
     const daysSincePrewarm = Math.floor((now.getTime() - prewarmStart.getTime()) / (1000 * 60 * 60 * 24)) + 1
     
-    if (daysSincePrewarm > 20) {
+    if (daysSincePrewarm > prewarmDuration) {
       // Transition to ready
       await db.chip.update({
         where: { id: chipId },
@@ -624,7 +837,7 @@ async function advanceWarmingPhase(chipId: string, settings: AntiBanConfig): Pro
           warmingStage: 6, // Legacy compat — beyond old max
         },
       })
-      console.debug(`[SendingEngine] Chip ${chip.name} graduated from PREWARM → READY (prewarm day ${daysSincePrewarm})`)
+      console.debug(`[SendingEngine] Chip ${chip.name} graduated from PREWARM → READY (prewarm day ${daysSincePrewarm}, prewarm duration: ${prewarmDuration} days)`)
     }
   }
 }
@@ -1220,7 +1433,7 @@ export async function processNextMessage(campaignId: string): Promise<{
       })
       const waitMs = currentCampaign?.nextSendAt
         ? Math.max(new Date(currentCampaign.nextSendAt).getTime() - Date.now(), 1000)
-        : 5000
+        : settings.messageIntervalMin * 1000
       console.debug(`[SendingEngine] Campaign slot already claimed — waiting ${Math.round(waitMs/1000)}s (until ${currentCampaign?.nextSendAt?.toISOString()})`)
       return {
         processed: false,
@@ -1761,6 +1974,31 @@ export async function processNextMessage(campaignId: string): Promise<{
         ? Math.max(cooldownCheck.cooldownUntil.getTime() - Date.now(), 60 * 1000)
         : settings.cooldownMinutes * 60 * 1000
       console.debug(`[SendingEngine] Chip ${currentChip.name} in cooldown — waiting ${Math.round(waitMs/1000)}s`)
+
+      // HUMAN BEHAVIOR: Cooldown Presence — appear online briefly during cooldown
+      // Instead of going 100% offline during cooldown, the chip occasionally
+      // appears "available" for a few seconds, as if checking WhatsApp.
+      // This uses the cooldownPresence config from the DB.
+      if (settings.humanBehaviorEnabled && settings.humanBehaviorConfig.cooldownPresence.enabled) {
+        const cp = settings.humanBehaviorConfig.cooldownPresence
+        const intervalMin = cp.intervalMinMin
+        const intervalMax = cp.intervalMaxMin
+        // Only do cooldown presence if the wait is long enough (at least intervalMin minutes)
+        if (waitMs >= intervalMin * 60 * 1000 && message.chip.evolutionInstance) {
+          const phone = message.contact.phone
+          const formattedPhone = formatPhoneNumber(phone)
+          const jid = `${formattedPhone}@s.whatsapp.net`
+          // Fire-and-forget: don't await, just trigger the presence
+          performIdleReadingPresence(message.chip.evolutionInstance, jid, true, settings)
+            .then(readingMs => {
+              if (readingMs > 0) {
+                console.debug(`[SendingEngine] Cooldown presence: ${readingMs}ms online for chip ${currentChip.name}`)
+              }
+            })
+            .catch(() => { /* non-fatal */ })
+        }
+      }
+
       // Release campaign slot claim with the cooldown wait time
       await db.campaign.update({ where: { id: campaignId }, data: { nextSendAt: new Date(Date.now() + waitMs) } })
       return {
@@ -1851,7 +2089,7 @@ export async function processNextMessage(campaignId: string): Promise<{
       if (isMediaType) {
         // Media messages: use "recording" presence (shows 📷/🎙️ indicator)
         const mediaDurationMs = isAudio
-          ? calculateTypingDuration(message.content)
+          ? calculateTypingDuration(message.content, settings)
           : randomInt(2000, 4000)
 
         console.debug(`[SendingEngine] Recording presence for ${mediaDurationMs}ms (${message.mediatype}) to ${formattedPhone}`)
@@ -1868,7 +2106,7 @@ export async function processNextMessage(campaignId: string): Promise<{
         // HUMANIZED TYPING: Instead of one continuous "digitando...",
         // we simulate stopping and restarting — like a real person who
         // pauses to think, then continues typing.
-        const totalTypingMs = calculateTypingDuration(message.content)
+        const totalTypingMs = calculateTypingDuration(message.content, settings)
         const jid = `${formattedPhone}@s.whatsapp.net`
 
         // Decide if this message will have mid-composition pauses
@@ -2022,7 +2260,7 @@ export async function processNextMessage(campaignId: string): Promise<{
       const intervalMax = campaignIntervalMax ?? settings.messageIntervalMax
       const avgInterval = (intervalMin + intervalMax) / 2
       if (avgInterval >= IDLE_READING_INTERVAL_MIN_S) {
-        readingTimeMs = await performIdleReadingPresence(instanceName, `${formattedPhone}@s.whatsapp.net`)
+        readingTimeMs = await performIdleReadingPresence(instanceName, `${formattedPhone}@s.whatsapp.net`, false, settings)
         if (readingTimeMs > 0) {
           console.debug(`[SendingEngine] Idle reading presence: ${readingTimeMs}ms — simulates checking WhatsApp between sends`)
         }
@@ -2067,15 +2305,25 @@ export async function processNextMessage(campaignId: string): Promise<{
         )
 
         if (chipAfterSend.sentToday % threshold === 0) {
-          // Variable cooldown duration: gaussian-distributed
-          const cooldownMin = settings.cooldownMinutes
-          const cooldownMax = Math.max(settings.cooldownMinutesMax, settings.cooldownMinutes)
-          const cooldownDuration = gaussianRandom(
-            Math.round((cooldownMin + cooldownMax) / 2),
-            (cooldownMax - cooldownMin) / 6,
-            cooldownMin,
-            cooldownMax
-          )
+          // HUMAN BEHAVIOR: Non-linear pauses — weighted random tier selection
+          // instead of uniform gaussian distribution. Produces more natural
+          // distribution with short/medium/long pause tiers.
+          // Falls back to gaussian if human behavior is disabled.
+          let cooldownDuration: number
+          const nonlinearMinutes = getNonlinearPauseMinutes(settings)
+          if (nonlinearMinutes !== null) {
+            cooldownDuration = Math.round(nonlinearMinutes)
+          } else {
+            // Variable cooldown duration: gaussian-distributed (original behavior)
+            const cooldownMin = settings.cooldownMinutes
+            const cooldownMax = Math.max(settings.cooldownMinutesMax, settings.cooldownMinutes)
+            cooldownDuration = gaussianRandom(
+              Math.round((cooldownMin + cooldownMax) / 2),
+              (cooldownMax - cooldownMin) / 6,
+              cooldownMin,
+              cooldownMax
+            )
+          }
 
           const cooldownUntil = new Date(Date.now() + cooldownDuration * 60 * 1000)
           await db.chip.update({
@@ -2099,34 +2347,59 @@ export async function processNextMessage(campaignId: string): Promise<{
     // where moderate intervals are most common and extreme values are rare.
     // Uniform random is a known bot signature.
     //
-    // IMPORTANT: Subtract the offline delay and reading time from the interval
-    // so the total time between messages stays consistent with settings.
-    // Without this, adding 3-15s offline delay + 2-8s reading would make
-    // the effective interval much longer than configured.
+    // IMPORTANT: The interval is the WAIT time between messages.
+    // Humanization (offline delay, idle reading) is ADDITIONAL behavior that
+    // makes the chip appear more human — it does NOT replace the configured interval.
+    // Previously, we subtracted alreadySpentMs from the delay, which collapsed
+    // intervals to as low as 5s. Now the interval is respected as-is.
     const intervalMin = campaignIntervalMin ?? settings.messageIntervalMin
     const intervalMax = campaignIntervalMax ?? settings.messageIntervalMax
-    let nextDelay = gaussianDelaySeconds(intervalMin, intervalMax) * 1000
+    let nextDelay: number
 
-    // Subtract time already spent in delayed-offline and idle-reading
-    // Clamp to minimum 5s to avoid sending too fast
-    const alreadySpentMs = offlineDelayMs + readingTimeMs
-    nextDelay = Math.max(nextDelay - alreadySpentMs, 5000)
+    // HUMAN BEHAVIOR: Cluster Sending — burst-like sending pattern
+    // Instead of always using the full gaussian interval between messages,
+    // send a few messages with short micro-pauses (cluster burst),
+    // then take a longer after-cluster pause before the next burst.
+    // Falls back to normal gaussian interval if cluster is disabled.
+    const clusterDelaySec = getClusterDelaySeconds(campaignId, message.chipId, settings)
+    if (clusterDelaySec !== null) {
+      nextDelay = clusterDelaySec * 1000
+    } else {
+      nextDelay = gaussianDelaySeconds(intervalMin, intervalMax) * 1000
+    }
+
+    // Floor is the user's configured minimum interval — NEVER send faster than this.
+    // This replaces the old hardcoded 5000ms floor that allowed 5s intervals.
+    nextDelay = Math.max(nextDelay, settings.messageIntervalMin * 1000)
 
     const modeMultiplier = WARMING_MODE_MULTIPLIERS[warmingMode]
     if (modeMultiplier && antiBanEnabled) {
       nextDelay = Math.round(nextDelay * modeMultiplier.intervalMultiplier)
     }
 
+    // HUMAN BEHAVIOR: Day Rhythm — time-of-day multiplier
+    // Humans send at different speeds depending on the time of day.
+    // Morning is slower, midday is faster, afternoon is normal.
+    // Applied AFTER all other interval calculations.
+    if (antiBanEnabled && settings.humanBehaviorEnabled && settings.humanBehaviorConfig.dayRhythm.enabled) {
+      const rhythmMultiplier = getDayRhythmMultiplier(settings)
+      nextDelay = Math.round(nextDelay * rhythmMultiplier)
+    }
+
     // ============================================
-    // ENFORCE WARMING PHASE MINIMUM INTERVAL
+    // ENFORCE MINIMUM INTERVAL FOR ALL CHIPS
     // ============================================
     // For nursery/prewarm chips, the interval must be at least the phase minimum.
+    // For ready chips, the interval must be at least the user's configured minimum.
     // This is applied AFTER the gaussian calculation and mode multiplier,
-    // ensuring that warming chips NEVER send faster than their phase allows.
-    if (antiBanEnabled && currentChip.warmingEnabled && settings.warmingEnabled) {
-      const minIntervalMs = getMinimumIntervalForChip(currentChip, settings) * 1000
+    // ensuring that NO chip EVER sends faster than allowed.
+    // Previously this only ran for warming chips, allowing ready chips to
+    // bypass the minimum interval — a critical anti-ban flaw.
+    if (antiBanEnabled) {
+      const effectiveMinInterval = getMinimumIntervalForChip(currentChip, settings)
+      const minIntervalMs = effectiveMinInterval * 1000
       if (nextDelay < minIntervalMs) {
-        console.debug(`[SendingEngine] Chip ${currentChip.name} (${currentChip.warmingPhase}): bumping delay from ${Math.round(nextDelay/1000)}s to warming minimum ${Math.round(minIntervalMs/1000)}s`)
+        console.debug(`[SendingEngine] Chip ${currentChip.name} (${currentChip.warmingPhase || 'ready'}): bumping delay from ${Math.round(nextDelay/1000)}s to minimum ${Math.round(minIntervalMs/1000)}s`)
         nextDelay = minIntervalMs
       }
     }
@@ -2170,17 +2443,18 @@ export async function processNextMessage(campaignId: string): Promise<{
       },
     })
 
-    // Release the campaign slot claim with a short retry delay
-    // so other invocations can try again quickly
+    // Release the campaign slot claim with a retry delay based on user settings
+    // Previously hardcoded to 5000ms (5s) — now respects the configured minimum interval.
+    const errorRetryDelayMs = settings.messageIntervalMin * 1000
     if (antiBanEnabled) {
       await db.campaign.update({
         where: { id: campaignId },
-        data: { nextSendAt: new Date(Date.now() + 5000) },
+        data: { nextSendAt: new Date(Date.now() + errorRetryDelayMs) },
       })
     }
 
     const remaining = await db.message.count({ where: { campaignId, status: 'pending' } })
-    return { processed: true, delayMs: 5000, remaining, completed: remaining === 0 }
+    return { processed: true, delayMs: errorRetryDelayMs, remaining, completed: remaining === 0 }
   }
 }
 
