@@ -885,7 +885,7 @@ async function isInCooldown(chipId: string, settings: AntiBanConfig): Promise<{ 
  */
 type ChipBanInfo = Pick<Chip, 'id' | 'evolutionInstance' | 'status' | 'disconnectionReasonCode'>
 
-async function detectChipBan(chip: ChipBanInfo): Promise<{ banned: boolean; reason: string; disconnected: boolean }> {
+async function detectChipBan(chip: ChipBanInfo): Promise<{ banned: boolean; reason: string; disconnected: boolean; tempBan?: boolean }> {
   // Check chip status first (fast)
   // IMPORTANT: "disconnected" is NOT the same as "banned"!
   // A chip that's disconnected might just need reconnection — don't block the campaign entirely.
@@ -894,8 +894,19 @@ async function detectChipBan(chip: ChipBanInfo): Promise<{ banned: boolean; reas
   }
 
   if (chip.status === 'disconnected') {
-    // Chip is disconnected — not banned, but can't send right now.
-    // Return disconnected=true so the caller can skip to next chip instead of blocking.
+    // Chip is disconnected — check if it's actually a temp ban (Meta doesn't always send ban codes)
+    // Check inbox for WhatsApp restriction messages before assuming simple disconnection
+    const tempBanDetected = await detectTempBanFromInbox(chip.id, chip.evolutionInstance)
+    if (tempBanDetected) {
+      console.warn(`[SendingEngine] Chip ${chip.evolutionInstance} is disconnected but has WhatsApp restriction message — treating as temp ban`)
+      // Update chip status to banned in DB so we don't try to reconnect
+      await db.chip.update({
+        where: { id: chip.id },
+        data: { status: 'banned' },
+      }).catch(() => {})
+      return { banned: true, reason: 'WhatsApp: conta restrita (ban temporário) — detectado por mensagem de aviso no inbox', disconnected: false, tempBan: true }
+    }
+    // No restriction message found — treat as simple disconnection
     return { banned: false, reason: `Chip status: disconnected`, disconnected: true }
   }
 
@@ -912,13 +923,25 @@ async function detectChipBan(chip: ChipBanInfo): Promise<{ banned: boolean; reas
       const state = await routerGetConnectionState(chip.evolutionInstance)
       const instanceState = state?.state
       if (instanceState === 'close') {
-        // 'close' can mean temporary disconnection OR ban — check disconnection code
-        // Only treat as banned if we have a known ban code; otherwise treat as disconnected
+        // 'close' can mean temporary disconnection OR temp ban OR permanent ban
+        // Check for ban code first
         const BAN_CODES = [401, 403, 428, 440]
         if (chip.disconnectionReasonCode && BAN_CODES.includes(chip.disconnectionReasonCode)) {
           return { banned: true, reason: `Evolution API state: close (ban code: ${chip.disconnectionReasonCode})`, disconnected: false }
         }
-        // No ban code — treat as temporary disconnection, not a ban
+        // No ban code — but Meta's temp bans often don't come with codes!
+        // Check inbox for WhatsApp restriction messages ("conta está restringida", "spam", etc.)
+        const tempBanDetected = await detectTempBanFromInbox(chip.id, chip.evolutionInstance)
+        if (tempBanDetected) {
+          console.warn(`[SendingEngine] Chip ${chip.evolutionInstance} has state:close + WhatsApp restriction message — treating as temp ban`)
+          // Update chip status to banned so we don't try to reconnect (which could make it worse)
+          await db.chip.update({
+            where: { id: chip.id },
+            data: { status: 'banned' },
+          }).catch(() => {})
+          return { banned: true, reason: 'WhatsApp: conta restrita (ban temporário) — detectado por mensagem de aviso no inbox', disconnected: false, tempBan: true }
+        }
+        // No ban code AND no restriction message — treat as temporary disconnection
         return { banned: false, reason: 'Evolution API reports connection state: close (no ban code)', disconnected: true }
       }
     } catch {
@@ -928,6 +951,90 @@ async function detectChipBan(chip: ChipBanInfo): Promise<{ banned: boolean; reas
   }
 
   return { banned: false, reason: '', disconnected: false }
+}
+
+/**
+ * Detect temporary WhatsApp bans by checking the chip's inbox for
+ * Meta's restriction messages. WhatsApp sends "Sua conta está restringida"
+ * messages when imposing temp bans, but these don't always come with
+ * a disconnection code in the Evolution API webhook.
+ *
+ * This is critical because:
+ * - Meta's temp bans often disconnect the chip WITHOUT a ban code
+ * - If we try to auto-reconnect a temp-banned chip, Meta may escalate to permanent ban
+ * - The only reliable signal is the restriction message in the inbox
+ */
+async function detectTempBanFromInbox(chipId: string, instanceName: string | null): Promise<boolean> {
+  if (!instanceName) return false
+  try {
+    // Look for WhatsApp restriction messages in the last 24 hours
+    // These come from WhatsApp's official JIDs
+    const WHATSAPP_OFFICIAL_JIDS = [
+      'status@broadcast',
+      'server@whatsapp.com',
+      'system@broadcast',
+    ]
+    // Also check messages from any JID containing these restriction keywords
+    // (WhatsApp sometimes sends from different JIDs)
+    const RESTRICTION_KEYWORDS = [
+      'conta está restringida', 'conta esta restringida',
+      'envio de spam', 'mensagens automáticas', 'mensagens automaticas',
+      'mensagens em massa', 'atividade recente',
+      'account is restricted', 'sending spam',
+      'automated messages', 'bulk messages',
+      'recent activity', 'temporarily restricted',
+      'não será possível', 'nao sera possivel',
+      'iniciar novas conversas', 'start new conversations',
+    ]
+
+    // Check messages from WhatsApp official JIDs
+    const officialWarnings = await db.inboxMessage.findMany({
+      where: {
+        instanceName,
+        fromMe: false,
+        remoteJid: { in: WHATSAPP_OFFICIAL_JIDS },
+        createdAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
+      },
+      take: 20,
+      orderBy: { createdAt: 'desc' },
+    })
+
+    for (const msg of officialWarnings) {
+      const content = (msg.messageContent || '').toLowerCase()
+      if (RESTRICTION_KEYWORDS.some(kw => content.includes(kw))) {
+        console.warn(`[SendingEngine] Temp ban detected via official WhatsApp message: "${msg.messageContent?.substring(0, 80)}..."`)
+        return true
+      }
+    }
+
+    // Also check ALL recent messages for restriction keywords (broader net)
+    // WhatsApp sometimes sends restriction notices from unexpected JIDs
+    const recentMessages = await db.inboxMessage.findMany({
+      where: {
+        instanceName,
+        fromMe: false,
+        isCampaign: false, // Exclude our own campaign messages
+        createdAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
+      },
+      take: 50,
+      orderBy: { createdAt: 'desc' },
+    })
+
+    for (const msg of recentMessages) {
+      const content = (msg.messageContent || '').toLowerCase()
+      // Only match if multiple keywords appear together (reduce false positives)
+      const matchCount = RESTRICTION_KEYWORDS.filter(kw => content.includes(kw)).length
+      if (matchCount >= 2) {
+        console.warn(`[SendingEngine] Temp ban detected via inbox message (${matchCount} keyword matches): "${msg.messageContent?.substring(0, 80)}..."`)
+        return true
+      }
+    }
+
+    return false
+  } catch (err: any) {
+    console.error(`[SendingEngine] Error checking inbox for temp ban: ${err.message}`)
+    return false // Don't assume ban on error
+  }
 }
 
 /**
@@ -1757,13 +1864,15 @@ export async function processNextMessage(campaignId: string): Promise<{
     }
 
     if (banCheck.banned) {
-      console.debug(`[SendingEngine] Chip ${message.chip.name} appears BANNED: ${banCheck.reason}`)
+      const banType = banCheck.tempBan ? 'BAN TEMPORÁRIO' : 'BAN PERMANENTE'
+      console.warn(`[SendingEngine] Chip ${message.chip.name} appears ${banType}: ${banCheck.reason}`)
 
-      // Update chip status to banned
+      // Update chip status to banned (already done by detectChipBan for temp bans,
+      // but do it here too for permanent bans and as safety net)
       await db.chip.update({
         where: { id: message.chip.id },
         data: { status: 'banned' },
-      })
+      }).catch(() => {})
 
       // Find other connected chips that BELONG to this campaign (via CampaignChip)
       const otherChips = await db.chip.findMany({

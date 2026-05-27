@@ -108,14 +108,53 @@ export async function POST(request: Request) {
             console.log(`[Webhook] Chip ${chip.name} marked as BANNED — disconnection code: ${disconnectionCode}`)
           }
 
+          // CRITICAL: Also check for temporary ban (Meta doesn't always send ban codes!)
+          // Temp bans show "conta está restringida" in the inbox but NO disconnection code
+          // If we auto-reconnect a temp-banned chip, Meta may escalate to permanent ban
+          let isTempBanned = false
+          if (!isBanned) {
+            try {
+              const RESTRICTION_KEYWORDS = [
+                'conta está restringida', 'conta esta restringida',
+                'envio de spam', 'mensagens automáticas', 'mensagens automaticas',
+                'mensagens em massa', 'atividade recente',
+                'account is restricted', 'sending spam',
+                'automated messages', 'bulk messages',
+                'não será possível', 'nao sera possivel',
+                'iniciar novas conversas',
+              ]
+              const recentWarnings = await db.inboxMessage.findMany({
+                where: {
+                  instanceName: chip.evolutionInstance || '',
+                  fromMe: false,
+                  createdAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
+                },
+                take: 30,
+                orderBy: { createdAt: 'desc' },
+              })
+              for (const msg of recentWarnings) {
+                const content = (msg.messageContent || '').toLowerCase()
+                const matchCount = RESTRICTION_KEYWORDS.filter(kw => content.includes(kw)).length
+                if (matchCount >= 2) {
+                  isTempBanned = true
+                  updateData.status = 'banned'
+                  console.warn(`[Webhook] Chip ${chip.name} detected as TEMP BANNED via inbox message — NOT queueing for reconnection`)
+                  break
+                }
+              }
+            } catch (err: any) {
+              console.error(`[Webhook] Error checking inbox for temp ban: ${err.message}`)
+            }
+          }
+
           await db.chip.update({
             where: { id: chip.id },
             data: updateData,
           })
 
-          // If NOT banned, queue the chip for automatic reconnection
+          // If NOT banned (neither permanent nor temporary), queue the chip for automatic reconnection
           // Banned chips need manual intervention — don't auto-reconnect them
-          if (!isBanned) {
+          if (!isBanned && !isTempBanned) {
             console.log(`[Webhook] Queueing chip ${chip.name} for auto-reconnection`)
             // Use setTimeout to avoid blocking the webhook response
             // (the reconnection will start after the webhook returns 200)
