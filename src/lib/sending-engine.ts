@@ -22,6 +22,7 @@ import {
 
   formatPhoneNumber,
 } from './evolution-router'
+import { enqueueReconnection } from './reconnection-queue'
 import { db } from './db'
 import type { Chip } from '@prisma/client'
 import { NURSERY_SCHEDULE, PREWARM_SCHEDULE, WARMING_MODE_MULTIPLIERS, DEFAULT_HUMAN_BEHAVIOR, humanBehaviorConfigSchema, type ScheduleEntry, type BreakWindow, type HumanBehaviorConfig } from './constants'
@@ -1720,8 +1721,20 @@ export async function processNextMessage(campaignId: string): Promise<{
         return { processed: false, delayMs: 1000, remaining, completed: remaining === 0, reason: `disconnected_reassigned_${message.chip.name}`, events: [{ type: 'chip_disconnected', chipName: message.chip.name, campaignName: undefined }] }
       }
 
-      // No other campaign chips available — pause the campaign and notify
-      console.debug(`[SendingEngine] No other campaign chips available for disconnected chip ${message.chip.name} — pausing campaign`)
+      // No other campaign chips available — queue chip for reconnection, then pause the campaign
+      console.debug(`[SendingEngine] No other campaign chips available for disconnected chip ${message.chip.name} — queueing reconnection and pausing campaign`)
+
+      // Queue the chip for automatic reconnection (same logic as webhook handler)
+      // When the chip reconnects, autoResumeCampaigns() will resume the campaign
+      try {
+        await enqueueReconnection(message.chip.id, {
+          immediate: true, // High priority — chip is in an active campaign
+          reason: `Sending engine detected disconnection: ${banCheck.reason}`,
+        })
+        console.log(`[SendingEngine] Chip ${message.chip.name} enqueued for auto-reconnection`)
+      } catch (reconnectErr: any) {
+        console.error(`[SendingEngine] Failed to enqueue chip ${message.chip.name} for reconnection: ${reconnectErr.message}`)
+      }
 
       await db.message.update({
         where: { id: message.id },
@@ -1729,17 +1742,18 @@ export async function processNextMessage(campaignId: string): Promise<{
       })
 
       // Pause the campaign — no other chips in this campaign to send
+      // When the chip reconnects, autoResumeCampaigns() will resume it automatically
       await db.campaign.update({
         where: { id: campaignId },
         data: {
           status: 'paused',
-          statusReason: `Pausada automaticamente: chip ${message.chip.name} desconectou e não há outros chips disponíveis na campanha`,
+          statusReason: `Pausada automaticamente: chip ${message.chip.name} desconectou — aguardando reconexão automática`,
           pausedAt: new Date(),
           nextSendAt: null,
         },
       })
-      console.debug(`[SendingEngine] Campaign ${campaignId} PAUSED — chip ${message.chip.name} disconnected, no other campaign chips available`)
-      return { processed: false, delayMs: 0, remaining: -1, completed: false, reason: 'auto_paused_no_campaign_chips', events: [{ type: 'chip_disconnected', chipName: message.chip.name }, { type: 'campaign_auto_paused', reason: 'Chip desconectou e não há outros chips disponíveis' }] }
+      console.debug(`[SendingEngine] Campaign ${campaignId} PAUSED — chip ${message.chip.name} disconnected, queued for reconnection`)
+      return { processed: false, delayMs: 0, remaining: -1, completed: false, reason: 'auto_paused_no_campaign_chips', events: [{ type: 'chip_disconnected', chipName: message.chip.name }, { type: 'campaign_auto_paused', reason: 'Chip desconectou — reconexão automática em andamento' }] }
     }
 
     if (banCheck.banned) {
