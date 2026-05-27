@@ -2435,11 +2435,104 @@ export async function processNextMessage(campaignId: string): Promise<{
   } catch (error: any) {
     console.error(`[SendingEngine] Failed to send message ${message.id}:`, error.message)
 
+    // ============================================
+    // BAN DETECTION FROM SEND ERRORS
+    // ============================================
+    // Evolution API can return HTTP 403/401/428/440 directly on send calls,
+    // BEFORE the Disconnected webhook event arrives. Without this check,
+    // the engine would keep trying to send on a banned chip, wasting time
+    // and potentially triggering additional anti-automation detection.
+    const BAN_CODES = [401, 403, 428, 440]
+    const errorMsg = error.message || ''
+    const isBanFromSendError = BAN_CODES.some(code => errorMsg.includes(`(${code})`))
+
+    if (isBanFromSendError) {
+      console.warn(`[SendingEngine] BAN DETECTED from send error for chip ${message.chip.name}: ${errorMsg.substring(0, 200)}`)
+
+      // Mark chip as banned immediately
+      await db.chip.update({
+        where: { id: message.chipId },
+        data: {
+          status: 'banned',
+          disconnectionReasonCode: parseInt(errorMsg.match(/\((\d{3})\)/)?.[1] || '403'),
+        },
+      })
+
+      // Mark message as failed with ban reason
+      await db.message.update({
+        where: { id: message.id },
+        data: {
+          status: 'failed',
+          error: `Chip banido durante envio: ${errorMsg.substring(0, 300)}`,
+        },
+      })
+
+      // Try to reassign pending messages to other connected chips in this campaign
+      const otherChips = await db.chip.findMany({
+        where: {
+          id: { not: message.chipId },
+          status: 'connected',
+          campaigns: { some: { campaignId } },
+        },
+      })
+
+      if (otherChips.length > 0) {
+        // Reassign pending messages (round-robin)
+        const pendingMessages = await db.message.findMany({
+          where: { campaignId, chipId: message.chipId, status: 'pending' },
+          take: 50,
+        })
+        for (let i = 0; i < pendingMessages.length; i++) {
+          const targetChip = otherChips[i % otherChips.length]
+          await db.message.update({
+            where: { id: pendingMessages[i].id },
+            data: { chipId: targetChip.id },
+          })
+        }
+        console.debug(`[SendingEngine] Reassigned ${pendingMessages.length} pending messages from banned chip ${message.chip.name} to ${otherChips.length} other chips`)
+
+        const remaining = await db.message.count({ where: { campaignId, status: 'pending' } })
+        return {
+          processed: true,
+          delayMs: settings.messageIntervalMin * 1000,
+          remaining,
+          completed: remaining === 0,
+          reason: `banned_reassigned_${message.chip.name}`,
+          events: [{ type: 'chip_banned' }],
+        }
+      } else {
+        // No other chips — auto-pause campaign
+        await db.campaign.update({
+          where: { id: campaignId },
+          data: {
+            status: 'paused',
+            statusReason: `Pausada automaticamente: chip ${message.chip.name} banido durante envio (código 403), sem outros chips disponíveis`,
+            pausedAt: new Date(),
+            nextSendAt: null,
+          },
+        })
+        console.warn(`[SendingEngine] Campaign ${campaignId} auto-paused: chip ${message.chip.name} banned, no other chips available`)
+
+        const remaining = await db.message.count({ where: { campaignId, status: 'pending' } })
+        return {
+          processed: true,
+          delayMs: 0,
+          remaining,
+          completed: remaining === 0,
+          reason: 'auto_paused_banned_no_campaign_chips',
+          events: [{ type: 'chip_banned' }, { type: 'campaign_auto_paused' }],
+        }
+      }
+    }
+
+    // ============================================
+    // GENERIC ERROR HANDLING (non-ban errors)
+    // ============================================
     await db.message.update({
       where: { id: message.id },
       data: {
         status: 'failed',
-        error: error.message?.substring(0, 500),
+        error: errorMsg.substring(0, 500),
       },
     })
 
