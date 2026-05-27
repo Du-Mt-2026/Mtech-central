@@ -2438,13 +2438,31 @@ export async function processNextMessage(campaignId: string): Promise<{
     // ============================================
     // BAN DETECTION FROM SEND ERRORS
     // ============================================
-    // Evolution API can return HTTP 403/401/428/440 directly on send calls,
-    // BEFORE the Disconnected webhook event arrives. Without this check,
-    // the engine would keep trying to send on a banned chip, wasting time
-    // and potentially triggering additional anti-automation detection.
+    // CRITICAL: Evolution API V3 can return HTTP 403 for TWO different reasons:
+    //   1) Instance token is stale/invalid → NOT a ban, just an auth issue
+    //      (the evolutionFetch function auto-retries with token refresh)
+    //   2) WhatsApp actually banned the account → IS a ban
+    //
+    // The Evolution API error format is: "Evolution Go API error (403): <body>"
+    // The WhatsApp ban code 403 comes via the Disconnected webhook with data.Code=403.
+    //
+    // If the auto-retry in evolutionFetch already handled the stale token case,
+    // we should NOT get here for auth issues — only for real WhatsApp bans.
+    // But we still check carefully to avoid false positives.
     const BAN_CODES = [401, 403, 428, 440]
     const errorMsg = error.message || ''
-    const isBanFromSendError = BAN_CODES.some(code => errorMsg.includes(`(${code})`))
+    const isEvolutionAPIError = errorMsg.startsWith('Evolution Go API error')
+    const matchedCode = BAN_CODES.find(code => errorMsg.includes(`(${code})`))
+
+    // Only treat as ban if:
+    //   - It's an Evolution API error with a ban code
+    //   - AND the error body mentions WhatsApp-specific ban indicators
+    //   - OR the auto-retry already failed (meaning it's not just a stale token)
+    const banIndicators = ['ban', 'blocked', 'removed', 'logged out', 'desconectado', 'session ended']
+    const isBanFromSendError = isEvolutionAPIError && matchedCode && (
+      banIndicators.some(ind => errorMsg.toLowerCase().includes(ind)) ||
+      !errorMsg.includes('apikey') // If it mentions apikey, it's an auth issue, not a ban
+    )
 
     if (isBanFromSendError) {
       console.warn(`[SendingEngine] BAN DETECTED from send error for chip ${message.chip.name}: ${errorMsg.substring(0, 200)}`)

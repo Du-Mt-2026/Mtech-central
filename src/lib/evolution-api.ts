@@ -243,8 +243,76 @@ export async function evolutionFetch(
     });
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Evolution Go API error (${response.status}): ${error}`);
+      const errorBody = await response.text();
+
+      // ============================================
+      // 403 AUTO-RETRY WITH TOKEN REFRESH
+      // ============================================
+      // Evolution API V3 returns 403 when:
+      //   1) Instance token changed (server restart, instance recreated)
+      //   2) API key is invalid
+      //   3) Rate limiting (rare)
+      //
+      // This is DIFFERENT from WhatsApp ban code 403 which comes via
+      // the Disconnected webhook event with data.Code = 403.
+      //
+      // When the instance token is stale, we invalidate the cache,
+      // re-resolve the token, and retry ONCE. If it still fails,
+      // it's a real auth error (not a stale cache issue).
+      if (response.status === 403 && instanceId) {
+        console.warn(`[EvolutionAPI] Got 403 for ${endpoint} — instance token may be stale, refreshing cache and retrying...`);
+
+        // Invalidate cache for this instance
+        invalidateInstanceCache(instanceId);
+
+        // Also try clearing by finding the instance name in the cache
+        for (const [key, val] of instanceCache.entries()) {
+          if (val.id === instanceId) {
+            invalidateInstanceCache(key);
+          }
+        }
+
+        try {
+          // Re-resolve with fresh token (forceRefresh=true)
+          const freshInstance = await resolveInstance(instanceId, true);
+
+          // Retry the request with the fresh token
+          const retryHeaders: Record<string, string> = {
+            'Content-Type': 'application/json',
+            'apikey': freshInstance.token || creds.apiKey,
+          };
+          if (freshInstance.id) {
+            retryHeaders['instanceId'] = freshInstance.id;
+          }
+
+          const retryResponse = await fetch(url, {
+            ...options,
+            signal: AbortSignal.timeout(15_000),
+            headers: {
+              ...retryHeaders,
+              ...(options.headers as Record<string, string> || {}),
+            },
+          });
+
+          if (retryResponse.ok) {
+            console.info(`[EvolutionAPI] 403 retry succeeded for ${endpoint} — token was stale`);
+            return retryResponse;
+          }
+
+          // Retry also failed — throw with the retry error
+          const retryError = await retryResponse.text();
+          throw new Error(`Evolution Go API error (${retryResponse.status}): ${retryError}`);
+        } catch (retryErr: any) {
+          // If retry fails with a different error (network, etc.), throw that
+          if (retryErr.message?.startsWith('Evolution Go API error')) {
+            throw retryErr;
+          }
+          // Network/timeout error on retry — fall through to original error
+          console.error(`[EvolutionAPI] 403 retry failed for ${endpoint}:`, retryErr.message);
+        }
+      }
+
+      throw new Error(`Evolution Go API error (${response.status}): ${errorBody}`);
     }
 
     return response;
@@ -1186,9 +1254,21 @@ interface ResolvedInstance {
  * on the same instance within a single request.
  */
 const instanceCache = new Map<string, ResolvedInstance>();
+const instanceCacheTimestamps = new Map<string, number>();
+const INSTANCE_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes — tokens can change on Evolution server restart
 
 export function clearInstanceIdCache(): void {
   instanceCache.clear();
+  instanceCacheTimestamps.clear();
+}
+
+/**
+ * Invalidate cached instance info for a specific instance.
+ * Called when we get a 403 from the Evolution API — the token may have changed.
+ */
+function invalidateInstanceCache(nameOrId: string): void {
+  instanceCache.delete(nameOrId);
+  instanceCacheTimestamps.delete(nameOrId);
 }
 
 /**
@@ -1196,10 +1276,17 @@ export function clearInstanceIdCache(): void {
  * This fetches /instance/all using the GLOBAL API key and finds the matching instance.
  * The returned token is required for ALL subsequent instance-scoped API calls.
  */
-async function resolveInstance(nameOrId: string): Promise<ResolvedInstance> {
-  // Check cache first
-  if (instanceCache.has(nameOrId)) {
-    return instanceCache.get(nameOrId)!;
+async function resolveInstance(nameOrId: string, forceRefresh: boolean = false): Promise<ResolvedInstance> {
+  // Check cache first (with TTL — tokens can change on Evolution server restart)
+  if (!forceRefresh && instanceCache.has(nameOrId)) {
+    const cachedAt = instanceCacheTimestamps.get(nameOrId) || 0
+    const age = Date.now() - cachedAt
+    if (age < INSTANCE_CACHE_TTL_MS) {
+      return instanceCache.get(nameOrId)!;
+    }
+    // Cache expired — clear it
+    instanceCache.delete(nameOrId)
+    instanceCacheTimestamps.delete(nameOrId)
   }
 
   // Fetch all instances (uses global API key)
@@ -1210,10 +1297,13 @@ async function resolveInstance(nameOrId: string): Promise<ResolvedInstance> {
     const instance = instances.find(i => i.name === nameOrId || i.id === nameOrId);
     if (instance && instance.id) {
       const resolved = { id: instance.id, token: instance.token };
+      const now = Date.now()
       instanceCache.set(nameOrId, resolved);
+      instanceCacheTimestamps.set(nameOrId, now);
       // Also cache by name if we searched by ID
       if (instance.name !== nameOrId) {
         instanceCache.set(instance.name, resolved);
+        instanceCacheTimestamps.set(instance.name, now);
       }
       return resolved;
     }
