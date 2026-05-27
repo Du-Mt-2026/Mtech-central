@@ -545,7 +545,7 @@ function getClusterDelaySeconds(
   campaignId: string,
   chipId: string,
   settings: AntiBanConfig
-): number | null {
+): { delaySec: number; isMicroPause: boolean } | null {
   if (!settings.humanBehaviorEnabled) return null
   const cluster = settings.humanBehaviorConfig.cluster
   if (!cluster.enabled) return null
@@ -565,13 +565,13 @@ function getClusterDelaySeconds(
   if (state.count < state.targetSize) {
     // Still in cluster — use micro-pause
     const delaySec = gaussianDelaySeconds(cluster.microPauseMinSec, cluster.microPauseMaxSec)
-    return delaySec
+    return { delaySec, isMicroPause: true }
   } else {
     // Cluster complete — use after-cluster pause, then reset
     const delaySec = gaussianDelaySeconds(cluster.afterClusterPauseMinSec, cluster.afterClusterPauseMaxSec)
     // Reset cluster state — next call will start a fresh cluster
     clusterStateMap.delete(key)
-    return delaySec
+    return { delaySec, isMicroPause: false }
   }
 }
 
@@ -2361,16 +2361,40 @@ export async function processNextMessage(campaignId: string): Promise<{
     // send a few messages with short micro-pauses (cluster burst),
     // then take a longer after-cluster pause before the next burst.
     // Falls back to normal gaussian interval if cluster is disabled.
-    const clusterDelaySec = getClusterDelaySeconds(campaignId, message.chipId, settings)
-    if (clusterDelaySec !== null) {
-      nextDelay = clusterDelaySec * 1000
+    //
+    // CRITICAL: Track whether the delay came from a cluster MICRO-pause
+    // (within a burst) vs an after-cluster pause. Micro-pauses are
+    // intentionally short (3-8s) and must NOT be overridden by the
+    // messageIntervalMin floor — that would destroy the burst pattern
+    // and create a perfectly robotic fixed interval (the exact bug
+    // that caused 2-minute-exact gaps between messages).
+    let isClusterMicroPause = false
+    const clusterResult = getClusterDelaySeconds(campaignId, message.chipId, settings)
+    if (clusterResult !== null) {
+      nextDelay = clusterResult.delaySec * 1000
+      isClusterMicroPause = clusterResult.isMicroPause
     } else {
       nextDelay = gaussianDelaySeconds(intervalMin, intervalMax) * 1000
     }
 
-    // Floor is the user's configured minimum interval — NEVER send faster than this.
-    // This replaces the old hardcoded 5000ms floor that allowed 5s intervals.
-    nextDelay = Math.max(nextDelay, settings.messageIntervalMin * 1000)
+    // ============================================
+    // INTERVAL FLOOR — with cluster micro-pause exception
+    // ============================================
+    // The messageIntervalMin floor prevents sending too fast — BUT it must NOT
+    // override cluster micro-pauses. Cluster micro-pauses (3-8s) are the core
+    // of human-like burst sending. If we floor them to messageIntervalMin (e.g., 120s),
+    // we get a perfectly robotic fixed interval — the exact pattern Meta detects.
+    //
+    // For after-cluster pauses and normal gaussian intervals, the floor applies normally.
+    // For cluster micro-pauses, we skip the messageIntervalMin floor entirely,
+    // but still enforce a minimum of 3 seconds to prevent truly instant sends.
+    if (isClusterMicroPause) {
+      // Cluster micro-pause: allow short delays (minimum 3 seconds for safety)
+      nextDelay = Math.max(nextDelay, 3000)
+    } else {
+      // Normal interval or after-cluster pause: apply messageIntervalMin floor
+      nextDelay = Math.max(nextDelay, settings.messageIntervalMin * 1000)
+    }
 
     const modeMultiplier = WARMING_MODE_MULTIPLIERS[warmingMode]
     if (modeMultiplier && antiBanEnabled) {
@@ -2387,20 +2411,32 @@ export async function processNextMessage(campaignId: string): Promise<{
     }
 
     // ============================================
-    // ENFORCE MINIMUM INTERVAL FOR ALL CHIPS
+    // ENFORCE PHASE MINIMUM INTERVAL
     // ============================================
     // For nursery/prewarm chips, the interval must be at least the phase minimum.
-    // For ready chips, the interval must be at least the user's configured minimum.
-    // This is applied AFTER the gaussian calculation and mode multiplier,
-    // ensuring that NO chip EVER sends faster than allowed.
-    // Previously this only ran for warming chips, allowing ready chips to
-    // bypass the minimum interval — a critical anti-ban flaw.
+    // This safety floor applies even to cluster micro-pauses for warming chips —
+    // new chips should NEVER send too fast, even in bursts.
+    //
+    // For READY chips with cluster micro-pauses: SKIP the phase floor.
+    // Ready chips are trusted to use human-like burst patterns safely.
+    // The cluster micro-pause (3-8s) + after-cluster pause (30-90s) averages
+    // out to a safe rate over time, and the burst pattern looks natural.
     if (antiBanEnabled) {
       const effectiveMinInterval = getMinimumIntervalForChip(currentChip, settings)
       const minIntervalMs = effectiveMinInterval * 1000
-      if (nextDelay < minIntervalMs) {
-        console.debug(`[SendingEngine] Chip ${currentChip.name} (${currentChip.warmingPhase || 'ready'}): bumping delay from ${Math.round(nextDelay/1000)}s to minimum ${Math.round(minIntervalMs/1000)}s`)
+      const chipPhase = currentChip.warmingPhase || 'ready'
+
+      // Only enforce the phase floor for:
+      // 1. Non-micro-pause delays (normal gaussian, after-cluster)
+      // 2. Nursery/prewarm chips even with micro-pauses (safety first for new chips)
+      // For ready chips with micro-pauses: the burst pattern is safe and natural.
+      const shouldEnforcePhaseFloor = !isClusterMicroPause || chipPhase !== 'ready'
+
+      if (shouldEnforcePhaseFloor && nextDelay < minIntervalMs) {
+        console.debug(`[SendingEngine] Chip ${currentChip.name} (${chipPhase}): bumping delay from ${Math.round(nextDelay/1000)}s to minimum ${Math.round(minIntervalMs/1000)}s`)
         nextDelay = minIntervalMs
+      } else if (isClusterMicroPause && chipPhase === 'ready') {
+        console.debug(`[SendingEngine] Chip ${currentChip.name} (ready): cluster micro-pause ${Math.round(nextDelay/1000)}s — skipping phase floor for natural burst pattern`)
       }
     }
 
