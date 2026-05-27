@@ -950,6 +950,59 @@ export async function fetchGroupMetadata(
   }
 }
 
+// ============ Chat Management ============
+
+/**
+ * Fetch all chats from Evolution API for an instance.
+ * Returns chat list with archived status — used to filter out archived
+ * conversations from the inbox.
+ *
+ * Evolution API endpoint: POST /chat/fetchChats/{instance}
+ * Response: Array of chat objects with `id`, `archived`, `lastMsg`, etc.
+ */
+export async function fetchChats(
+  instanceIdOrName: string
+): Promise<Array<{ id: string; archived?: boolean; remoteJid?: string }>> {
+  const { id: instanceId, token: instanceToken } = await resolveInstance(instanceIdOrName);
+
+  try {
+    const res = await evolutionFetch(`/chat/fetchChats`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    }, instanceId, instanceToken);
+
+    if (!res.ok) return [];
+
+    const data = await res.json();
+    // Response can be an array directly or wrapped in a field
+    const chats = Array.isArray(data) ? data : (data?.chats || data?.result || []);
+
+    return chats.map((chat: Record<string, unknown>) => ({
+      id: String(chat.id || ''),
+      archived: Boolean(chat.archived),
+      remoteJid: String(chat.id || chat.remoteJid || chat.jid || ''),
+    }));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Get the set of archived chat JIDs for a specific instance.
+ * Used by the inbox to filter out archived conversations.
+ * Returns a Set of remoteJid strings for fast lookup.
+ */
+export async function getArchivedChatJids(instanceIdOrName: string): Promise<Set<string>> {
+  const chats = await fetchChats(instanceIdOrName);
+  const archived = new Set<string>();
+  for (const chat of chats) {
+    if (chat.archived && chat.remoteJid) {
+      archived.add(chat.remoteJid);
+    }
+  }
+  return archived;
+}
+
 // ============ Proxy Configuration ============
 
 // Cache for global proxy settings (avoids DB query on every call)

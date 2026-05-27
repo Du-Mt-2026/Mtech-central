@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { getArchivedChatJids } from '@/lib/evolution-api'
 
 /**
  * GET /api/inbox/conversations
@@ -25,6 +26,12 @@ export async function GET(request: NextRequest) {
     if (!chipId) {
       return NextResponse.json({ conversations: [] })
     }
+
+    // Fetch chip info ONCE at the top — reused for group metadata, archive filtering, and response
+    const chip = await db.chip.findUnique({
+      where: { id: chipId },
+      select: { id: true, name: true, phoneNumber: true, profilePicUrl: true, status: true, evolutionInstance: true },
+    })
 
     // Build where clause
     const where: Record<string, unknown> = {
@@ -70,10 +77,8 @@ export async function GET(request: NextRequest) {
     const groupNameMap = new Map<string, string>() // jid -> group name
 
     // Try to get group metadata from the chip's Evolution API instance
-    if (groupJids.length > 0) {
+    if (groupJids.length > 0 && chip?.evolutionInstance) {
       try {
-        const chip = await db.chip.findUnique({ where: { id: chipId } })
-        if (chip?.evolutionInstance) {
           const { fetchGroupMetadata } = await import('@/lib/evolution-api')
           for (const jid of groupJids) {
             try {
@@ -85,7 +90,6 @@ export async function GET(request: NextRequest) {
               // Skip if API fails for this group
             }
           }
-        }
       } catch {
         // Skip group metadata fetch if not available
       }
@@ -256,17 +260,37 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Step 4: Sort by last message time (most recent first)
+    // Step 4: Filter out archived chats (from WhatsApp's archive feature)
+    // Users who archive groups in WhatsApp don't want them cluttering the inbox.
+    // We fetch the archived chat list from Evolution API and filter them out.
+    let archivedJids = new Set<string>()
+    try {
+      if (chip?.evolutionInstance) {
+        archivedJids = await getArchivedChatJids(chip.evolutionInstance)
+        if (archivedJids.size > 0) {
+          console.debug(`[Inbox] Filtering out ${archivedJids.size} archived chats for chip ${chip.name}`)
+        }
+      }
+    } catch {
+      // Non-critical — if we can't fetch archived status, show all conversations
+    }
+
+    // Step 5: Sort by last message time (most recent first)
     const conversations = Array.from(conversationMap.values())
+      .filter(c => {
+        // Filter out archived conversations — match both the raw remoteJid
+        // and the LID-mapped JID (some archived JIDs may use different formats)
+        if (archivedJids.has(c.remoteJid)) return false
+        // Also check if any LID variant of this JID is archived
+        const phonePart = c.remoteJid.split('@')[0]
+        for (const archivedJid of archivedJids) {
+          if (archivedJid.startsWith(phonePart + '@')) return false
+        }
+        return true
+      })
       .sort((a, b) => new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime())
 
-    // Step 5: Get chip info
-    const chip = await db.chip.findUnique({
-      where: { id: chipId },
-      select: { id: true, name: true, phoneNumber: true, profilePicUrl: true, status: true },
-    })
-
-    // Step 6: Format response
+    // Step 7: Format response
     const formatted = conversations.map(c => ({
       chipId: c.chipId,
       remoteJid: c.remoteJid,
