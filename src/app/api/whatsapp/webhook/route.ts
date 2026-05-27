@@ -358,9 +358,71 @@ export async function POST(request: Request) {
           const pushName: string | null = data?.Info?.PushName || null
 
           // Handle LID resolution (v3)
+          // CRITICAL: Evolution API V3 (whatsmeow) uses LID (Linked ID) for addressing.
+          // For outgoing messages (fromMe=true), the chatJid may be a LID like:
+          //   1234567890@lid — instead of 5511999990001@s.whatsapp.net
+          // This causes SPLIT CONVERSATIONS: incoming messages use phone@s.whatsapp.net,
+          // outgoing messages use lid@lid — two separate conversations for the same contact.
+          //
+          // Resolution strategy:
+          //   1) If AddressingMode='lid' and RecipientAlt exists → use RecipientAlt (phone JID)
+          //   2) If chatJid is a LID without RecipientAlt → try to resolve from existing inbox
+          //   3) If still unresolved → keep LID but store a mapping for conversation grouping
           const addressingMode = data?.Info?.AddressingMode || ''
           const remoteJidAlt = data?.Info?.RecipientAlt || null
-          let remoteJid = (addressingMode === 'lid' && remoteJidAlt) ? remoteJidAlt : chatJid
+
+          // Determine the canonical JID (phone-based, not LID-based)
+          let remoteJid: string
+          let lidJid: string | null = null  // Store LID for mapping
+
+          if (addressingMode === 'lid' && remoteJidAlt) {
+            // Best case: API gives us both LID and phone JID
+            remoteJid = remoteJidAlt
+            lidJid = chatJid
+          } else if (chatJid.endsWith('@lid')) {
+            // LID without RecipientAlt — need to resolve from existing data
+            lidJid = chatJid
+
+            // Try to find an existing inbox message with this LID as remoteJid
+            // that already has been resolved to a phone JID
+            const existingResolved = await db.inboxMessage.findFirst({
+              where: { remoteJid: chatJid, contactName: { not: null } },
+              select: { remoteJid: true, contactName: true, remotePhone: true },
+            })
+
+            if (existingResolved) {
+              // We've seen this LID before — use the resolved phone
+              // But we still have the same LID, so this doesn't help directly
+              // Try finding a message from the SAME contact but with phone JID
+            }
+
+            // Try to find if we have incoming messages from this contact
+            // by matching pushName or other identifiers
+            const senderPushName = pushName || data?.Info?.PushName || data?.Info?.SenderName
+            const isGroupChat = chatJid.includes('@g.us')
+            if (senderPushName && !isGroupChat) {
+              const matchByName = await db.inboxMessage.findFirst({
+                where: {
+                  pushName: senderPushName,
+                  fromMe: false,
+                  isGroup: false,
+                  remoteJid: { endsWith: '@s.whatsapp.net' },
+                },
+                orderBy: { createdAt: 'desc' },
+                select: { remoteJid: true },
+              })
+              if (matchByName) {
+                remoteJid = matchByName.remoteJid
+              } else {
+                remoteJid = chatJid  // Keep LID — will be resolved later
+              }
+            } else {
+              remoteJid = chatJid  // Keep LID — can't resolve yet
+            }
+          } else {
+            // Normal phone-based JID
+            remoteJid = chatJid
+          }
 
           // Normalize Brazilian phone numbers
           const jidSuffix = remoteJid.split('@')[1] || ''

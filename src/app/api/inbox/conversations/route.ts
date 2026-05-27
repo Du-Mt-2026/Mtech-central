@@ -94,23 +94,88 @@ export async function GET(request: NextRequest) {
     // Step 2.5: Build a fallback group name from existing messages
     // Look for the most common non-empty contactName/pushName pattern in each group
     // Or use the remoteJid phone part
+    //
+    // PRIORITY for group names:
+    //   1) Evolution API fetchGroupMetadata (most reliable — always try first)
+    //   2) contactName from fromMe messages in DB (may be correct)
+    //   3) Fallback to "Grupo XXXX"
+    //
+    // NOTE: Previously we skipped API fetch if we had a groupNameMap entry,
+    // but that entry might be "Grupo XXXX" from the webhook fallback.
+    // We should ALWAYS prefer the API result.
     for (const jid of groupJids) {
-      if (groupNameMap.has(jid)) continue
+      // If we already got the name from the API, skip
+      if (groupNameMap.has(jid) && !groupNameMap.get(jid)?.startsWith('Grupo ')) {
+        continue
+      }
+
       // Try to find a group name from the contactName field of fromMe messages
       // (when we send to a group, sometimes the group name is saved)
       const groupMsgs = allMessages.filter(m => m.remoteJid === jid)
       
       // For groups, look for a consistent name in messages
       // Priority: contactName from fromMe messages (likely group name), then any non-empty pushName
-      const fromMeMsg = groupMsgs.find(m => m.fromMe && m.contactName && m.contactName !== 'unknown')
-      if (fromMeMsg?.contactName) {
+      const fromMeMsg = groupMsgs.find(m => m.fromMe && m.contactName && m.contactName !== 'unknown' && !m.contactName.startsWith('Grupo '))
+      if (fromMeMsg?.contactName && !fromMeMsg.contactName.startsWith('Grupo ')) {
         groupNameMap.set(jid, fromMeMsg.contactName)
+        continue
+      }
+
+      // Try any non-Grupo contactName
+      const anyNamedMsg = groupMsgs.find(m => m.contactName && m.contactName !== 'unknown' && !m.contactName.startsWith('Grupo '))
+      if (anyNamedMsg?.contactName) {
+        groupNameMap.set(jid, anyNamedMsg.contactName)
         continue
       }
       
       // Fallback: use the group phone number as identifier
       const groupPhone = jid.split('@')[0]
       groupNameMap.set(jid, `Grupo ${groupPhone.slice(-4)}`)
+    }
+
+    // Step 2.75: Build LID → phone JID mapping for conversation merging
+    // Evolution API V3 (whatsmeow) uses LID for outgoing messages:
+    //   Outgoing: remoteJid = 123456@lid
+    //   Incoming: remoteJid = 5511999990001@s.whatsapp.net
+    // These are the SAME conversation but with different JIDs.
+    // We need to merge them by mapping LID → phone JID.
+    const lidToPhoneMap = new Map<string, string>() // lid JID → phone JID
+
+    // Strategy 1: Match by remotePhone — if LID messages and phone messages share the same remotePhone
+    const lidMessages = allMessages.filter(m => m.remoteJid.endsWith('@lid'))
+    const phoneMessages = allMessages.filter(m => m.remoteJid.endsWith('@s.whatsapp.net'))
+
+    for (const lidMsg of lidMessages) {
+      const lidPhone = lidMsg.remotePhone
+      if (!lidPhone) continue
+
+      // Find a phone-based message with the same phone number
+      const matchingPhoneMsg = phoneMessages.find(m =>
+        m.remotePhone === lidPhone ||
+        m.remotePhone?.replace(/^55/, '') === lidPhone.replace(/^55/, '')
+      )
+
+      if (matchingPhoneMsg) {
+        lidToPhoneMap.set(lidMsg.remoteJid, matchingPhoneMsg.remoteJid)
+      }
+    }
+
+    // Strategy 2: Match by contactName/pushName for messages without remotePhone match
+    for (const lidMsg of lidMessages) {
+      if (lidToPhoneMap.has(lidMsg.remoteJid)) continue
+      if (!lidMsg.contactName && !lidMsg.pushName) continue
+
+      const nameToMatch = lidMsg.contactName || lidMsg.pushName
+      if (!nameToMatch) continue
+
+      const matchingPhoneMsg = phoneMessages.find(m =>
+        (m.contactName === nameToMatch || m.pushName === nameToMatch) &&
+        !m.isGroup
+      )
+
+      if (matchingPhoneMsg) {
+        lidToPhoneMap.set(lidMsg.remoteJid, matchingPhoneMsg.remoteJid)
+      }
     }
 
     // Step 3: Group by remoteJid to build conversation list
@@ -130,7 +195,10 @@ export async function GET(request: NextRequest) {
     }>()
 
     for (const msg of allMessages) {
-      const key = msg.remoteJid
+      // Resolve LID → phone JID for conversation merging
+      // If this message uses a LID JID, map it to the phone JID so
+      // outgoing (LID) and incoming (phone) messages are in the same conversation
+      const key = lidToPhoneMap.get(msg.remoteJid) || msg.remoteJid
       const existing = conversationMap.get(key)
       
       // Determine sender name for this message
