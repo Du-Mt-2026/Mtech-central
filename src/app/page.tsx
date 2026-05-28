@@ -1248,43 +1248,56 @@ function ChipsTab() {
                 <Card className="shadow-lg hover:shadow-xl transition-all duration-200 border-0 relative overflow-hidden">
                   <div className={`absolute top-0 left-0 right-0 h-1 ${chip.status === 'connected' ? 'bg-gradient-to-r from-emerald-400 to-teal-500' : chip.status === 'error' ? 'bg-gradient-to-r from-rose-400 to-pink-500' : chip.status === 'connecting' ? 'bg-gradient-to-r from-amber-400 to-orange-500' : 'bg-zinc-300'}`} />
                   <CardHeader className="pb-3">
-                    <div className="flex items-center gap-3">
-                      <div className={`flex size-12 items-center justify-center rounded-xl ${chip.status === 'connected' ? 'bg-emerald-100 dark:bg-emerald-900/30' : 'bg-violet-100 dark:bg-violet-900/30'}`}>
-                        <Smartphone className={`size-6 ${chip.status === 'connected' ? 'text-emerald-600 dark:text-emerald-400' : 'text-violet-600 dark:text-violet-400'}`} />
+                    <div className="flex items-center gap-2.5">
+                      <div className={`flex size-10 shrink-0 items-center justify-center rounded-lg ${chip.status === 'connected' ? 'bg-emerald-100 dark:bg-emerald-900/30' : 'bg-violet-100 dark:bg-violet-900/30'}`}>
+                        <Smartphone className={`size-5 ${chip.status === 'connected' ? 'text-emerald-600 dark:text-emerald-400' : 'text-violet-600 dark:text-violet-400'}`} />
                       </div>
-                      <div className="flex-1 min-w-0 overflow-hidden">
-                        <div className="flex items-center gap-2">
-                          <CardTitle className="truncate text-base max-w-[180px]" title={chip.profileName || chip.name}>{chip.profileName || chip.name}</CardTitle>
-                          <Badge variant="outline" className="gap-1 text-[10px] px-1.5 py-0 shrink-0">
-                            <><div className="size-1.5 rounded-full bg-emerald-500" /> v3</>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <CardTitle className="truncate text-sm" title={chip.profileName || chip.name}>{chip.profileName || chip.name}</CardTitle>
+                          <Badge variant="outline" className="gap-0.5 text-[9px] px-1 py-0 shrink-0 leading-none">
+                            v3
                           </Badge>
                           {chip.disconnectionReasonCode && (
-                            <Badge variant="destructive" className="gap-1 text-[10px] px-1.5 py-0 shrink-0">
-                              <WifiOff className="size-3" />
-                              {chip.disconnectionReasonCode === 401 ? 'Dispositivo removido' :
-                               chip.disconnectionReasonCode === 403 ? 'Banido pelo WhatsApp' :
-                               chip.disconnectionReasonCode === 428 ? 'Dispositivo substituído' :
-                               chip.disconnectionReasonCode === 440 ? 'Dispositivo desconectado' :
-                               `Código ${chip.disconnectionReasonCode}`}
-                            </Badge>
+                            <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Badge variant="destructive" className="gap-0.5 text-[9px] px-1 py-0 shrink-0 leading-none">
+                                  <WifiOff className="size-2.5" />
+                                  {chip.disconnectionReasonCode === 401 ? 'Removido' :
+                                   chip.disconnectionReasonCode === 403 ? 'Banido' :
+                                   chip.disconnectionReasonCode === 428 ? 'Substituído' :
+                                   chip.disconnectionReasonCode === 440 ? 'Desconectado' :
+                                   `${chip.disconnectionReasonCode}`}
+                                </Badge>
+                              </TooltipTrigger>
+                              <TooltipContent side="bottom" className="text-xs">
+                                {chip.disconnectionReasonCode === 401 ? 'Dispositivo removido' :
+                                 chip.disconnectionReasonCode === 403 ? 'Banido pelo WhatsApp' :
+                                 chip.disconnectionReasonCode === 428 ? 'Dispositivo substituído' :
+                                 chip.disconnectionReasonCode === 440 ? 'Dispositivo desconectado' :
+                                 `Código ${chip.disconnectionReasonCode}`}
+                              </TooltipContent>
+                            </Tooltip>
+                            </TooltipProvider>
                           )}
                         </div>
-                        <div className="flex items-center gap-2">
-                          <CardDescription className="truncate" title={chip.phoneNumber}>{chip.phoneNumber}</CardDescription>
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <CardDescription className="truncate text-xs" title={chip.phoneNumber}>{chip.phoneNumber}</CardDescription>
                           {chip.evolutionInstance && (
-                            <span className="text-[10px] font-mono text-muted-foreground/70 truncate max-w-28" title={chip.evolutionInstance}>{chip.evolutionInstance.replace(/^OctupusZap_/, '')}</span>
+                            <span className="text-[9px] font-mono text-muted-foreground/70 truncate max-w-20" title={chip.evolutionInstance}>{chip.evolutionInstance.replace(/^OctupusZap_/, '')}</span>
                           )}
                         </div>
                       </div>
-                      <div className="flex flex-col items-end gap-1 shrink-0">
+                      <div className="flex flex-col items-end gap-1 shrink-0 min-w-0">
                         <StatusBadge status={chip.status} />
                         {chip.wireguardIp ? (
-                          <Badge variant="default" className="gap-1 text-[10px] px-1.5 py-0 bg-emerald-600 hover:bg-emerald-700">
-                            <Lock className="size-3" /> Proxy Online
+                          <Badge variant="default" className="gap-0.5 text-[9px] px-1.5 py-0 bg-emerald-600 hover:bg-emerald-700 leading-none">
+                            <Lock className="size-2.5" /> Proxy
                           </Badge>
                         ) : chip.proxyMode === 'socks5' && chip.socks5Host && chip.socks5Pass ? (
-                          <Badge variant="secondary" className="gap-1 text-[10px] px-1.5 py-0 bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 hover:bg-amber-200">
-                            <Server className="size-3" /> Proxy Config
+                          <Badge variant="secondary" className="gap-0.5 text-[9px] px-1.5 py-0 bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 hover:bg-amber-200 leading-none">
+                            <Server className="size-2.5" /> SOCKS5
                           </Badge>
                         ) : null}
                       </div>
@@ -1478,21 +1491,21 @@ function ChipsTab() {
                       </div>
                     </div>
                     <Separator />
-                    <div className="flex gap-2 flex-wrap">
+                    <div className="flex gap-1.5">
                       {chip.status === 'connected' ? (
-                        <Button variant="outline" size="sm" className="gap-1.5 text-xs text-rose-500 hover:text-rose-600 border-rose-200 hover:border-rose-300" onClick={() => setDisconnectConfirm(chip)}>
-                          <X className="size-3.5" /> Desconectar
+                        <Button variant="outline" size="sm" className="gap-1 text-[11px] h-7 px-2 text-rose-500 hover:text-rose-600 border-rose-200 hover:border-rose-300" onClick={() => setDisconnectConfirm(chip)}>
+                          <X className="size-3" /> Desconectar
                         </Button>
                       ) : (
-                        <Button size="sm" className="gap-1.5 text-xs bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 shadow-md" onClick={() => connectWhatsApp(chip)}>
-                          <QrCode className="size-3.5" /> Conectar WhatsApp
+                        <Button size="sm" className="gap-1 text-[11px] h-7 px-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 shadow-md" onClick={() => connectWhatsApp(chip)}>
+                          <QrCode className="size-3" /> WhatsApp
                         </Button>
                       )}
-                      <Button variant="outline" size="sm" className="gap-1.5 text-xs" onClick={() => openProxyDialog(chip)}>
-                        <Globe className="size-3.5" /> Conectar Proxy
+                      <Button variant="outline" size="sm" className="gap-1 text-[11px] h-7 px-2" onClick={() => openProxyDialog(chip)}>
+                        <Globe className="size-3" /> Proxy
                       </Button>
-
-                      <Button variant="outline" size="sm" className="text-rose-500 hover:text-rose-600 gap-1.5 text-xs" onClick={() => setDeleteConfirm(chip.id)}>
+                      <div className="flex-1" />
+                      <Button variant="ghost" size="sm" className="size-7 p-0 text-rose-500 hover:text-rose-600" onClick={() => setDeleteConfirm(chip.id)}>
                         <Trash2 className="size-3.5" />
                       </Button>
                     </div>
