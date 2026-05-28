@@ -24,6 +24,7 @@ model Chip {
   messages         Message[]
   campaigns        CampaignChip[]
   inboxMessages    InboxMessage[]
+  blockedContacts  BlockedContact[]
 
   // Anti-ban fields
   dailyLimit       Int      @default(200)
@@ -169,6 +170,9 @@ model Contact {
   messages      Message[]
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
+
+  // Blocked contact relation (if this contact blocked a chip)
+  blockedRecords BlockedContact[]
 
   // Dynamic custom fields from spreadsheet (JSON string)
   // Stores all extra columns: empresa, vendedor, nota, etc.
@@ -413,4 +417,46 @@ model WarmingSession {
 
   @@index([status])
   @@index([status, scheduledAt])
+}
+
+// ============================================================
+// BLOCKED CONTACTS (Contatos Bloqueados)
+// ============================================================
+// Contatos que provavelmente bloquearam o número do chip.
+// Detectados automaticamente quando mensagens ficam em status
+// 'sent' (não entregues) por mais de 48h.
+//
+// O sending engine PULA esses contatos automaticamente,
+// evitando mandar pra quem já bloqueou (risco de ban).
+//
+// O usuário pode desbloquear manualmente se for falso positivo
+// (ex: telefone desligado por muitos dias por bateria).
+
+model BlockedContact {
+  id            String   @id @default(cuid())
+  chipId        String                            // Chip que tentou enviar
+  chip          Chip     @relation(fields: [chipId], references: [id], onDelete: Cascade)
+  contactPhone  String                            // Phone number of blocked contact (for quick lookup)
+  contactId     String?                           // Optional link to Contact record
+  contact       Contact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
+
+  // Detection details
+  reason        String   @default("undelivered")  // "undelivered" | "manual" | "profile_pic_gone"
+  confidence    String   @default("medium")       // "low" | "medium" | "high"
+  undeliveredCount Int   @default(0)              // How many messages were never delivered to this contact
+  lastSentAt    DateTime?                         // When the last undelivered message was sent
+  detectedAt    DateTime  @default(now())         // When we detected the block
+
+  // User management
+  autoBlocked   Boolean  @default(true)           // true = detected by system, false = manual
+  unblockedAt   DateTime?                         // When user manually unblocked
+  unblockReason String?                           // Why user unblocked (e.g., "false positive — battery was dead")
+
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([chipId, contactPhone])                // One block record per chip+phone
+  @@index([chipId])
+  @@index([contactPhone])
+  @@index([unblockedAt])                          // Filter active blocks (unblockedAt = null)
 }

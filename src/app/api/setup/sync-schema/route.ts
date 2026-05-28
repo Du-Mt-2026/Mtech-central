@@ -540,6 +540,51 @@ export async function POST(req: NextRequest) {
       results.push(`Erro na migração Campaign: ${campError.message}`)
     }
 
+    // Step 8: Create BlockedContact table for blocked contact detection
+    try {
+      const blockedExists = await db.$queryRaw<Array<{ exists: boolean }>>`
+        SELECT EXISTS (
+          SELECT FROM information_schema.tables
+          WHERE table_name = 'BlockedContact'
+        ) as exists
+      `
+
+      if (!blockedExists[0]?.exists) {
+        console.log('[Setup] Creating BlockedContact table...')
+        await db.$executeRawUnsafe(`
+          CREATE TABLE "BlockedContact" (
+            "id" TEXT NOT NULL,
+            "chipId" TEXT NOT NULL,
+            "contactPhone" TEXT NOT NULL,
+            "contactId" TEXT,
+            "reason" TEXT NOT NULL DEFAULT 'undelivered',
+            "confidence" TEXT NOT NULL DEFAULT 'medium',
+            "undeliveredCount" INTEGER NOT NULL DEFAULT 0,
+            "lastSentAt" TIMESTAMP(3),
+            "detectedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            "autoBlocked" BOOLEAN NOT NULL DEFAULT true,
+            "unblockedAt" TIMESTAMP(3),
+            "unblockReason" TEXT,
+            "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT "BlockedContact_pkey" PRIMARY KEY ("id"),
+            CONSTRAINT "BlockedContact_chipId_contactPhone_key" UNIQUE ("chipId", "contactPhone"),
+            CONSTRAINT "BlockedContact_chipId_fkey" FOREIGN KEY ("chipId") REFERENCES "Chip"("id") ON DELETE CASCADE ON UPDATE CASCADE,
+            CONSTRAINT "BlockedContact_contactId_fkey" FOREIGN KEY ("contactId") REFERENCES "Contact"("id") ON DELETE SET NULL ON UPDATE CASCADE
+          )
+        `)
+        // Create indexes
+        await db.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "BlockedContact_chipId_idx" ON "BlockedContact"("chipId")`)
+        await db.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "BlockedContact_contactPhone_idx" ON "BlockedContact"("contactPhone")`)
+        await db.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "BlockedContact_unblockedAt_idx" ON "BlockedContact"("unblockedAt")`)
+        results.push('BlockedContact: tabela criada com sucesso')
+      } else {
+        results.push('BlockedContact: tabela já existe')
+      }
+    } catch (blockedErr: any) {
+      results.push(`Erro ao criar BlockedContact: ${blockedErr.message}`)
+    }
+
     return NextResponse.json({
       success: true,
       message: 'Migração processada',

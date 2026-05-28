@@ -1343,11 +1343,57 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
     throw new Error('Lista de contatos vazia')
   }
 
+  // ============================================================
+  // FILTER OUT BLOCKED CONTACTS
+  // Contacts who blocked the sender chip are auto-skipped.
+  // This prevents wasting campaign quota and avoids ban risk
+  // (sending to blocked contacts is a spam signal for Meta).
+  // ============================================================
+  const chipIds = chips.map(c => c.id)
+  const blockedContacts = await db.blockedContact.findMany({
+    where: {
+      chipId: { in: chipIds },
+      unblockedAt: null, // Only active blocks
+    },
+    select: { chipId: true, contactPhone: true, contactId: true },
+  })
+
+  // Create a Set of blocked phone numbers per chip for fast lookup
+  const blockedPerChip = new Map<string, Set<string>>()
+  for (const bc of blockedContacts) {
+    if (!blockedPerChip.has(bc.chipId)) {
+      blockedPerChip.set(bc.chipId, new Set())
+    }
+    blockedPerChip.get(bc.chipId)!.add(bc.contactPhone)
+  }
+
+  // Also create a global set of blocked contact IDs (for quick filtering)
+  const blockedContactIds = new Set(
+    blockedContacts.filter(bc => bc.contactId).map(bc => bc.contactId!)
+  )
+
+  // Filter contacts: remove those who are blocked on ANY campaign chip
+  const filteredContacts = contacts.filter(contact => {
+    // Check by contact ID first (fast path)
+    if (blockedContactIds.has(contact.id)) return false
+    // Check by phone number against each chip's block list
+    for (const chipId of chipIds) {
+      const blockedPhones = blockedPerChip.get(chipId)
+      if (blockedPhones && blockedPhones.has(contact.phone)) return false
+    }
+    return true
+  })
+
+  const skippedCount = contacts.length - filteredContacts.length
+  if (skippedCount > 0) {
+    console.log(`[SendingEngine] Campaign ${campaignId}: filtered out ${skippedCount} blocked contacts (${filteredContacts.length} remaining)`)
+  }
+
   // Create messages for ALL steps in the sequence
   // For multi-step: each contact gets one message per step, processed in order
   const messagesToCreate: { campaignId: string; chipId: string; contactId: string; content: string; status: "pending"; stepOrder: number; mediaUrl: string | null; mediatype: string | null }[] = []
-  for (let i = 0; i < contacts.length; i++) {
-    const contact = contacts[i]
+  for (let i = 0; i < filteredContacts.length; i++) {
+    const contact = filteredContacts[i]
     const chip = chips[i % chips.length]
 
     for (const step of parsedSteps) {
