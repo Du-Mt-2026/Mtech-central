@@ -212,10 +212,23 @@ export async function POST(request: Request) {
         break
       }
 
-      // ===== Message Send Confirmation =====
+      // ===== Message Send Confirmation & Delivery Tracking =====
       case 'SEND_MESSAGE':
       case 'SEND_MESSAGE_ACK': {
         const messageId = data?.Info?.ID
+
+        // Evolution API v3 ack values (from whatsmeow protocol):
+        //   0 = PENDING  — message queued, not yet sent
+        //   1 = SENT (DEVICE_ACK) — sent from device to WhatsApp server
+        //   2 = RECEIVED (SERVER_ACK) — received by WhatsApp server
+        //   3 = DELIVERED — delivered to recipient's device (double tick ✅✅)
+        //   4 = READ — read by recipient (blue ticks ✅✅)
+        //   5 = PLAYED — played (audio/video)
+        //
+        // CRITICAL: SEND_MESSAGE_ACK fires MULTIPLE times as the message
+        // progresses through ack stages. We must upgrade the status
+        // (never downgrade) and set timestamps accordingly.
+        const ackValue = data?.Info?.Status ?? data?.Status ?? data?.info?.status ?? null
 
         if (messageId) {
           const existing = await db.message.findFirst({
@@ -223,14 +236,50 @@ export async function POST(request: Request) {
           })
 
           if (existing) {
+            // Determine the new status based on ack value
+            // Only UPGRADE status — never downgrade (delivered > sent > pending)
+            let newStatus = existing.status
+            let deliveredAt = existing.deliveredAt
+            let readAt = existing.readAt
+            let sentAt = existing.sentAt
+
+            if (ackValue !== null && ackValue !== undefined) {
+              const ack = Number(ackValue)
+              if (ack >= 4 && existing.status !== 'read') {
+                newStatus = 'read'
+                deliveredAt = deliveredAt || new Date()
+                readAt = new Date()
+              } else if (ack >= 3 && existing.status !== 'read' && existing.status !== 'delivered') {
+                newStatus = 'delivered'
+                deliveredAt = new Date()
+              } else if (ack >= 1 && (existing.status === 'pending' || existing.status === 'sending')) {
+                newStatus = 'sent'
+              }
+            } else {
+              // No ack value — this is the initial SEND_MESSAGE event (just sent)
+              if (existing.status === 'pending' || existing.status === 'sending') {
+                newStatus = 'sent'
+              }
+            }
+
+            sentAt = sentAt || new Date()
+
             await db.message.update({
               where: { id: existing.id },
               data: {
-                status: 'sent',
-                sentAt: existing.sentAt || new Date(),
+                status: newStatus,
+                sentAt,
+                deliveredAt,
+                readAt,
                 evolutionMessageId: messageId,
               },
             })
+
+            if (newStatus === 'delivered') {
+              console.log(`[Webhook] Message ${messageId} DELIVERED (ack=${ackValue})`)
+            } else if (newStatus === 'read') {
+              console.log(`[Webhook] Message ${messageId} READ (ack=${ackValue})`)
+            }
 
             // Save to InboxMessage — but mark as campaign message
             // These are NOT real conversations, just campaign blast messages
@@ -371,15 +420,63 @@ export async function POST(request: Request) {
           })
 
           if (message) {
-            await db.message.update({
-              where: { id: message.id },
-              data: {
-                status: 'read',
-                deliveredAt: message.deliveredAt || new Date(),
-                readAt: new Date(),
-              },
-            })
+            // Only upgrade to 'read' — never downgrade
+            if (message.status !== 'read') {
+              await db.message.update({
+                where: { id: message.id },
+                data: {
+                  status: 'read',
+                  deliveredAt: message.deliveredAt || new Date(),
+                  readAt: new Date(),
+                },
+              })
+              console.log(`[Webhook] Message ${msgId} READ (via READ_RECEIPT event)`)
+            }
           }
+        }
+        break
+      }
+
+      // ===== Message Status Update (delivery tracking backup) =====
+      // Evolution API v3 may also send MESSAGES_UPDATE for ack changes.
+      // This is a safety net in case SEND_MESSAGE_ACK doesn't include the ack value.
+      case 'MESSAGES_UPDATE': {
+        try {
+          // Format varies by Evolution API version — try multiple locations
+          const msgId = data?.Info?.ID || data?.key?.id || data?.id || null
+          const ackValue = data?.Info?.Status ?? data?.Status ?? data?.ack ?? data?.info?.status ?? null
+
+          if (msgId && ackValue !== null && ackValue !== undefined) {
+            const message = await db.message.findFirst({
+              where: { evolutionMessageId: msgId },
+            })
+
+            if (message) {
+              const ack = Number(ackValue)
+              let newStatus = message.status
+              let deliveredAt = message.deliveredAt
+              let readAt = message.readAt
+
+              if (ack >= 4 && message.status !== 'read') {
+                newStatus = 'read'
+                deliveredAt = deliveredAt || new Date()
+                readAt = new Date()
+              } else if (ack >= 3 && message.status !== 'read' && message.status !== 'delivered') {
+                newStatus = 'delivered'
+                deliveredAt = new Date()
+              }
+
+              if (newStatus !== message.status) {
+                await db.message.update({
+                  where: { id: message.id },
+                  data: { status: newStatus, deliveredAt, readAt },
+                })
+                console.log(`[Webhook] MESSAGES_UPDATE: Message ${msgId} → ${newStatus} (ack=${ack})`)
+              }
+            }
+          }
+        } catch (err: any) {
+          console.error('[Webhook] Error processing MESSAGES_UPDATE:', err.message)
         }
         break
       }
@@ -605,8 +702,10 @@ export async function POST(request: Request) {
       }
 
       default:
-        // Log unhandled events for debugging
-        console.log(`[Webhook] Unhandled event: ${event} for ${chipInstanceName}`)
+        // Log unhandled events for debugging (but not too verbosely)
+        if (!['PRESENCE', 'CHAT_PRESENCE', 'CONTACT', 'LABEL'].includes(event)) {
+          console.log(`[Webhook] Unhandled event: ${event} for ${chipInstanceName}`)
+        }
         break
     }
 

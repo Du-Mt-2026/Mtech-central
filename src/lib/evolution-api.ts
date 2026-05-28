@@ -550,9 +550,9 @@ export async function connectInstance(
             body: JSON.stringify({
               webhookUrl,
               subscribe: subscribeEvents || [
-                'MESSAGE', 'SEND_MESSAGE', 'READ_RECEIPT', 'PRESENCE',
+                'MESSAGE', 'SEND_MESSAGE', 'SEND_MESSAGE_ACK', 'READ_RECEIPT', 'PRESENCE',
                 'CHAT_PRESENCE', 'CALL', 'CONNECTION', 'QRCODE',
-                'LABEL', 'CONTACT', 'GROUP',
+                'LABEL', 'CONTACT', 'GROUP', 'MESSAGES_UPDATE',
               ],
               immediate: true,
             }),
@@ -589,6 +589,7 @@ export async function connectInstance(
     body.subscribe = subscribeEvents || [
       'MESSAGE',
       'SEND_MESSAGE',
+      'SEND_MESSAGE_ACK',
       'READ_RECEIPT',
       'PRESENCE',
       'CHAT_PRESENCE',
@@ -598,6 +599,7 @@ export async function connectInstance(
       'LABEL',
       'CONTACT',
       'GROUP',
+      'MESSAGES_UPDATE',
     ];
   }
 
@@ -1174,6 +1176,7 @@ export async function setWebhook(
   events: string[] = [
     'MESSAGE',
     'SEND_MESSAGE',
+    'SEND_MESSAGE_ACK',
     'READ_RECEIPT',
     'PRESENCE',
     'CHAT_PRESENCE',
@@ -1183,6 +1186,7 @@ export async function setWebhook(
     'LABEL',
     'CONTACT',
     'GROUP',
+    'MESSAGES_UPDATE',
   ]
 ): Promise<void> {
   // Webhook is set during connect.
