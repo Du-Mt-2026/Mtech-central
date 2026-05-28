@@ -610,6 +610,8 @@ function ChipsTab() {
   // Proxy test state
   const [proxyTesting, setProxyTesting] = useState(false)
   const [proxyTestResult, setProxyTestResult] = useState<{ reachable: boolean; socks5Valid: boolean; message: string } | null>(null)
+  // Per-chip proxy status: chipId → { online: boolean, checked: boolean }
+  const [proxyStatuses, setProxyStatuses] = useState<Record<string, { online: boolean; checked: boolean }>>({})
 
   // WhatsApp QR Code integration state
   const [whatsappQr, setWhatsappQr] = useState<string | null>(null)
@@ -644,6 +646,47 @@ function ChipsTab() {
     finally { setLoading(false) }
   }, [])
 
+  // Check proxy status for all chips that have WireGuard or SOCKS5 config
+  const checkAllProxies = useCallback(async (chipList: Chip[]) => {
+    const chipsWithProxy = chipList.filter(c => c.wireguardIp || (c.proxyMode === 'socks5' && c.socks5Host && c.socks5Pass))
+    if (chipsWithProxy.length === 0) return
+
+    // Reset statuses to "checking" state
+    setProxyStatuses(prev => {
+      const next = { ...prev }
+      chipsWithProxy.forEach(c => { next[c.id] = { online: false, checked: false } })
+      return next
+    })
+
+    // Test each proxy in parallel (but with a concurrency limit of 3 to not overwhelm the API)
+    const results: Record<string, { online: boolean; checked: boolean }> = {}
+    const BATCH = 3
+    for (let i = 0; i < chipsWithProxy.length; i += BATCH) {
+      const batch = chipsWithProxy.slice(i, i + BATCH)
+      const batchResults = await Promise.allSettled(
+        batch.map(async (c) => {
+          try {
+            const res = await fetch('/api/proxy/test', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ chipId: c.id }),
+            })
+            const data = await res.json()
+            return { id: c.id, online: data.reachable && data.socks5Valid, checked: true }
+          } catch {
+            return { id: c.id, online: false, checked: true }
+          }
+        })
+      )
+      batchResults.forEach(r => {
+        if (r.status === 'fulfilled' && r.value) {
+          results[r.value.id] = { online: r.value.online, checked: r.value.checked }
+        }
+      })
+    }
+    setProxyStatuses(prev => ({ ...prev, ...results }))
+  }, [])
+
   const fetchAntiBanSettings = useCallback(async () => {
     try {
       const res = await fetch('/api/antiban')
@@ -651,7 +694,20 @@ function ChipsTab() {
     } catch { /* silently fail */ }
   }, [])
 
-  useEffect(() => { fetchChips(); fetchAntiBanSettings() }, [fetchChips, fetchAntiBanSettings])
+  useEffect(() => {
+    const init = async () => {
+      await fetchChips()
+      fetchAntiBanSettings()
+    }
+    init()
+  }, [fetchChips, fetchAntiBanSettings])
+
+  // Auto-check proxy statuses when chips are loaded
+  useEffect(() => {
+    if (chips.length > 0) {
+      checkAllProxies(chips)
+    }
+  }, [chips.length, checkAllProxies])
 
   // === Calculate effective daily limit and phase day for a chip ===
   const getChipEffectiveInfo = useCallback((chip: Chip): { effectiveLimit: number; phaseDay: number; phaseMaxDays: number } => {
@@ -1049,13 +1105,17 @@ function ChipsTab() {
         body: JSON.stringify({ chipId: selectedChip.id }),
       })
       const data = await res.json()
+      const isOnline = data.reachable && data.socks5Valid
       setProxyTestResult({
         reachable: data.reachable || false,
         socks5Valid: data.socks5Valid || false,
         message: data.message || data.error || 'Resultado desconhecido',
       })
+      // Also update the per-chip proxy status so the card badge stays in sync
+      setProxyStatuses(prev => ({ ...prev, [selectedChip.id]: { online: isOnline, checked: true } }))
     } catch (err: unknown) {
       setProxyTestResult({ reachable: false, socks5Valid: false, message: (err as Error).message || 'Erro ao testar proxy' })
+      setProxyStatuses(prev => ({ ...prev, [selectedChip.id]: { online: false, checked: true } }))
     } finally {
       setProxyTesting(false)
     }
@@ -1291,14 +1351,26 @@ function ChipsTab() {
                       </div>
                       <div className="flex flex-col items-end gap-1 shrink-0">
                         <StatusBadge status={chip.status} />
-                        {chip.wireguardIp ? (
-                          <Badge variant="default" className="gap-0.5 text-[9px] px-1.5 py-0 bg-emerald-600 hover:bg-emerald-700 leading-none">
-                            <Lock className="size-2.5" /> Proxy
-                          </Badge>
-                        ) : chip.proxyMode === 'socks5' && chip.socks5Host && chip.socks5Pass ? (
-                          <Badge variant="secondary" className="gap-0.5 text-[9px] px-1.5 py-0 bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 hover:bg-amber-200 leading-none">
-                            <Server className="size-2.5" /> SOCKS5
-                          </Badge>
+                        {chip.wireguardIp || (chip.proxyMode === 'socks5' && chip.socks5Host && chip.socks5Pass) ? (
+                          (() => {
+                            const ps = proxyStatuses[chip.id]
+                            const isOnline = ps?.checked && ps?.online
+                            const isChecking = ps && !ps.checked
+                            const isOffline = ps?.checked && !ps.online
+                            return (
+                              <Badge variant="outline" className={`gap-0.5 text-[9px] px-1.5 py-0 leading-none ${
+                                isOnline ? 'bg-emerald-600 text-white border-emerald-600 hover:bg-emerald-700' :
+                                isChecking ? 'bg-zinc-200 text-zinc-500 border-zinc-300 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700' :
+                                isOffline ? 'bg-rose-100 text-rose-600 border-rose-300 dark:bg-rose-900/30 dark:text-rose-400 dark:border-rose-800' :
+                                'bg-zinc-100 text-zinc-500 border-zinc-300 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700'
+                              }`}>
+                                {isOnline ? <><Lock className="size-2.5" /> Proxy Online</> :
+                                 isChecking ? <><RefreshCw className="size-2.5 animate-spin" /> Verificando</> :
+                                 isOffline ? <><WifiOff className="size-2.5" /> Proxy Offline</> :
+                                 <><Lock className="size-2.5" /> Proxy</>}
+                              </Badge>
+                            )
+                          })()
                         ) : null}
                       </div>
                     </div>
