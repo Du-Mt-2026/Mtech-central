@@ -1206,6 +1206,118 @@ export async function setWebhook(
   }, instanceId, instanceToken);
 }
 
+// ============ Chat Read Receipts ============
+
+/**
+ * Mark a chat as read on the WhatsApp side.
+ * POST /chat/markChatAsRead with { remoteJid } (instanceId header)
+ * This tells WhatsApp that the operator has read the messages,
+ * so the sender sees blue ✓✓ on their device.
+ *
+ * Evolution Go v3 endpoint for read receipts.
+ */
+export async function markChatAsRead(
+  instanceIdOrName: string,
+  remoteJid: string
+): Promise<boolean> {
+  const { id: instanceId, token: instanceToken } = await resolveInstance(instanceIdOrName);
+
+  try {
+    const res = await evolutionFetch('/chat/markChatAsRead', {
+      method: 'POST',
+      body: JSON.stringify({ remoteJid }),
+    }, instanceId, instanceToken);
+
+    if (!res.ok) {
+      console.warn(`[markChatAsRead] Failed for ${remoteJid}: ${res.status}`);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.warn(`[markChatAsRead] Error for ${remoteJid}:`, err);
+    return false;
+  }
+}
+
+// ============ Quoted Reply (contextInfo) ============
+
+/**
+ * Send a text message as a reply (quoted message) with contextInfo.
+ * POST /send/text with { number, text, delay, linkPreview, quoted } (instanceId header)
+ *
+ * The `quoted` field contains the message ID being replied to.
+ * Evolution Go v3 supports this via the `quoted` parameter.
+ */
+export async function sendQuotedReply(
+  instanceIdOrName: string,
+  number: string,
+  text: string,
+  quotedMsgId: string,
+  options?: {
+    delay?: number;
+    linkPreview?: boolean;
+  }
+): Promise<SendMessageResponse> {
+  const { id: instanceId, token: instanceToken } = await resolveInstance(instanceIdOrName);
+
+  const body: any = {
+    number,
+    text,
+    delay: options?.delay || 0,
+    linkPreview: options?.linkPreview ?? false,
+    quoted: {
+      key: {
+        id: quotedMsgId,
+      },
+    },
+  };
+
+  const response = await evolutionFetch('/send/text', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  }, instanceId, instanceToken);
+  const data = await response.json();
+
+  const result = data.data || data;
+  return {
+    key: {
+      remoteJid: result.Info?.Chat || '',
+      fromMe: result.Info?.IsFromMe ?? true,
+      id: result.Info?.ID || data.messageId || '',
+    },
+    message: result.Message || data.Message,
+    status: data.message || 'sent',
+  };
+}
+
+// ============ Fetch Profile Picture ============
+
+/**
+ * Fetch a contact's profile picture URL from Evolution API.
+ * POST /chat/fetchProfilePicture with { number } (instanceId header)
+ * Returns the profile picture URL or null.
+ */
+export async function fetchProfilePicture(
+  instanceIdOrName: string,
+  number: string
+): Promise<string | null> {
+  const { id: instanceId, token: instanceToken } = await resolveInstance(instanceIdOrName);
+
+  try {
+    const res = await evolutionFetch('/chat/fetchProfilePicture', {
+      method: 'POST',
+      body: JSON.stringify({ number }),
+    }, instanceId, instanceToken);
+
+    if (!res.ok) return null;
+
+    const data = await res.json();
+    return data?.profilePictureUrl || data?.url || data?.data?.profilePictureUrl || null;
+  } catch {
+    return null;
+  }
+}
+
 // ============ Number Verification ============
 
 /**

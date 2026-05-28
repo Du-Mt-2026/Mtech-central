@@ -25,6 +25,8 @@ model Chip {
   campaigns        CampaignChip[]
   inboxMessages    InboxMessage[]
   blockedContacts  BlockedContact[]
+  groupMetadata    GroupMetadata[]
+  conversations    Conversation[]
 
   // Anti-ban fields
   dailyLimit       Int      @default(200)
@@ -312,12 +314,147 @@ model InboxMessage {
   isCampaign      Boolean  @default(false) // Se a mensagem foi enviada por campanha (não é conversa real)
   createdAt       DateTime @default(now())
 
+  // ============================================================
+  // DELIVERY RECEIPT TRACKING (Chatwoot-like)
+  // ============================================================
+  // WhatsApp ack values (from whatsmeow protocol):
+  //   0 = PENDING  — message queued, not yet sent
+  //   1 = SENT (DEVICE_ACK) — sent from device to WhatsApp server
+  //   2 = RECEIVED (SERVER_ACK) — received by WhatsApp server
+  //   3 = DELIVERED — delivered to recipient's device (double tick ✓✓)
+  //   4 = READ — read by recipient (blue ticks ✓✓)
+  //   5 = PLAYED — played (audio/video)
+  //
+  // Status is MONOTONIC — only upgrades, never downgrades.
+  // This prevents race conditions where "delivered" arrives before "sent".
+  ack             Int      @default(0)     // Raw ack value from Evolution API (0-5)
+  status          String   @default("pending")  // "pending" | "sent" | "delivered" | "read" | "failed"
+  deliveredAt     DateTime?                     // When the message was delivered (double tick)
+  readAt          DateTime?                     // When the message was read (blue tick)
+
+  // ============================================================
+  // QUOTED MESSAGE / REPLY (Chatwoot-like content_attributes)
+  // ============================================================
+  // When someone replies to a message, WhatsApp includes contextInfo
+  // with the original message's stanzaId. We store a reference so
+  // the UI can render the quoted message preview (WhatsApp-style).
+  quotedMsgId     String?                       // evolutionMsgId of the message being replied to
+  quotedContent   String?  @db.Text             // Preview text of the quoted message (for quick display)
+  quotedType      String?                       // Type of quoted message (text, image, etc.)
+  quotedPushName  String?                       // pushName of the sender of the quoted message
+
+  // ============================================================
+  // REACTIONS (WhatsApp-style emoji reactions)
+  // ============================================================
+  // Reactions are stored on the ORIGINAL message, not as separate messages.
+  // When we receive a reactionMessage, we find the target message and
+  // add the emoji to its reactionEmoji field.
+  // Format: JSON array of { "emoji": "👍", "from": "pushName", "fromJid": "remoteJid" }
+  reactionEmoji   String?                       // JSON array of reaction objects
+
+  // ============================================================
+  // ENRICHED MEDIA METADATA
+  // ============================================================
+  fileName        String?                       // Original file name for documents
+  mimeType        String?                       // MIME type of media
+  mediaCaption    String?  @db.Text             // Caption separate from messageContent (for images/videos)
+  mediaDuration   Int?                          // Duration in seconds (for audio/video)
+
   chip            Chip?    @relation(fields: [chipId], references: [id], onDelete: Cascade)
+
+  // v2.1: Link to Conversation (Chatwoot-like) — null for old messages before migration
+  conversationId  String?
+  conversation    Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
 
   @@index([chipId, remoteJid, createdAt])
   @@index([chipId, isRead])
   @@index([instanceName, createdAt])
   @@index([isCampaign])
+  @@index([status])                    // For delivery rate queries
+  @@index([evolutionMsgId])            // For fast ack updates from webhook
+}
+
+// ============================================================
+// GROUP METADATA CACHE
+// ============================================================
+// Caches group names (subjects) to avoid N+1 API calls on every
+// conversation list load. The webhook updates this when group
+// info changes, and the conversations API reads from cache.
+//
+// This follows Chatwoot's pattern of storing group info as
+// Contact metadata, but in a dedicated table for efficiency.
+model GroupMetadata {
+  id              String   @id @default(cuid())
+  groupJid        String   @unique             // Full JID: 123456789-1234567890@g.us
+  subject         String                       // Group name (social name)
+  subjectOwner    String?                      // JID of who set the name
+  subjectAt       DateTime?                    // When the name was last changed
+  participantCount Int     @default(0)          // Number of participants
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Link to chip — group metadata is per-chip because different
+  // chips may see different group info (e.g., if one was removed)
+  chipId          String?
+  chip            Chip?    @relation(fields: [chipId], references: [id], onDelete: Cascade)
+
+  @@index([chipId])
+  @@index([subject])                // For search
+}
+
+// ============================================================
+// CONVERSATION MODEL (Chatwoot-like)
+// ============================================================
+// Replaces the runtime grouping of InboxMessages by remoteJid.
+// Each conversation is a persistent entity with its own metadata,
+// status, and assignee — following Chatwoot's 4-level hierarchy:
+//   Account → Inbox (Chip) → Conversation → Message (InboxMessage)
+//
+// This enables:
+//   - Fast conversation list queries (no runtime aggregation)
+//   - Conversation status management (open/resolved/pending)
+//   - Agent assignment and routing
+//   - Real-time conversation updates via WebSocket
+model Conversation {
+  id              String   @id @default(cuid())
+  chipId          String                            // FK to Chip (= Inbox in Chatwoot)
+  remoteJid       String                            // WhatsApp JID (phone@s.whatsapp.net or group@g.us)
+  remotePhone     String   @default("")             // Extracted phone number
+  contactName     String?                           // Display name (contact or group)
+  pushName        String?                           // WhatsApp push name
+  groupName       String?                           // Group subject (official/social name)
+  isGroup         Boolean  @default(false)          // Whether this is a group conversation
+  isArchived      Boolean  @default(false)          // Soft archive (WhatsApp archive or manual)
+
+  // Chatwoot-like conversation status
+  status          String   @default("open")         // "open" | "resolved" | "pending" | "snoozed"
+
+  // Last activity tracking (for conversation list sorting)
+  lastMessageAt   DateTime @default(now())          // Timestamp of last message
+  lastMessagePreview String? @db.Text               // Preview text of last message
+  lastMessageType String?                           // Type of last message
+  lastMessageFromMe Boolean @default(false)         // Whether last message was from us
+  lastMessageStatus String?                         // Status of last message (for check marks)
+
+  // Unread tracking
+  unreadCount     Int      @default(0)              // Number of unread incoming messages
+
+  // Contact metadata (cached for fast list queries)
+  profilePicUrl   String?                           // Contact profile picture URL
+  participantCount Int?                             // Group participant count
+
+  // Timestamps
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  chip            Chip     @relation(fields: [chipId], references: [id], onDelete: Cascade)
+  messages        InboxMessage[]                    // Messages in this conversation
+
+  @@unique([chipId, remoteJid])                    // One conversation per chip+contact
+  @@index([chipId, lastMessageAt])                 // For sorted conversation list queries
+  @@index([chipId, status])                        // For filtering by status
+  @@index([isArchived])
 }
 
 // ============================================================

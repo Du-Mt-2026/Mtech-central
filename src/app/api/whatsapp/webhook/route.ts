@@ -3,6 +3,7 @@ import { removeWireGuardPeer } from '@/lib/wireguard-peer-api'
 import { enqueueReconnection, markChipReconnected, dequeueReconnection } from '@/lib/reconnection-queue'
 import { db } from '@/lib/db'
 import { parseWhatsAppMessage } from '@/lib/whatsapp-message-parser'
+import { broadcastToChip } from '@/app/api/inbox/events/route'
 
 /**
  * Webhook endpoint for Evolution Go (v3) API status updates.
@@ -221,16 +222,27 @@ export async function POST(request: Request) {
         //   0 = PENDING  — message queued, not yet sent
         //   1 = SENT (DEVICE_ACK) — sent from device to WhatsApp server
         //   2 = RECEIVED (SERVER_ACK) — received by WhatsApp server
-        //   3 = DELIVERED — delivered to recipient's device (double tick ✅✅)
-        //   4 = READ — read by recipient (blue ticks ✅✅)
+        //   3 = DELIVERED — delivered to recipient's device (double tick ✓✓)
+        //   4 = READ — read by recipient (blue ticks ✓✓)
         //   5 = PLAYED — played (audio/video)
         //
         // CRITICAL: SEND_MESSAGE_ACK fires MULTIPLE times as the message
         // progresses through ack stages. We must upgrade the status
         // (never downgrade) and set timestamps accordingly.
+        //
+        // Chatwoot pattern: status is MONOTONIC — only advances.
         const ackValue = data?.Info?.Status ?? data?.Status ?? data?.info?.status ?? null
 
         if (messageId) {
+          // Helper: compute new status from ack value (monotonic upgrade only)
+          const computeNewStatus = (currentStatus: string, currentAck: number, newAck: number) => {
+            const STATUS_ORDER: Record<string, number> = { pending: 0, sent: 1, delivered: 2, read: 3, failed: -1 }
+            const ackToStatus = (a: number): string => a >= 4 ? 'read' : a >= 3 ? 'delivered' : a >= 1 ? 'sent' : 'pending'
+            const candidate = ackToStatus(newAck)
+            return (STATUS_ORDER[candidate] ?? 0) > (STATUS_ORDER[currentStatus] ?? 0) ? candidate : currentStatus
+          }
+
+          // === Update Campaign Message (Message table) ===
           const existing = await db.message.findFirst({
             where: { evolutionMessageId: messageId },
           })
@@ -245,15 +257,12 @@ export async function POST(request: Request) {
 
             if (ackValue !== null && ackValue !== undefined) {
               const ack = Number(ackValue)
-              if (ack >= 4 && existing.status !== 'read') {
-                newStatus = 'read'
+              newStatus = computeNewStatus(existing.status, existing.status === 'pending' ? 0 : existing.status === 'sent' ? 1 : existing.status === 'delivered' ? 2 : existing.status === 'read' ? 3 : 0, ack)
+              if (newStatus === 'read') {
                 deliveredAt = deliveredAt || new Date()
                 readAt = new Date()
-              } else if (ack >= 3 && existing.status !== 'read' && existing.status !== 'delivered') {
-                newStatus = 'delivered'
+              } else if (newStatus === 'delivered') {
                 deliveredAt = new Date()
-              } else if (ack >= 1 && (existing.status === 'pending' || existing.status === 'sending')) {
-                newStatus = 'sent'
               }
             } else {
               // No ack value — this is the initial SEND_MESSAGE event (just sent)
@@ -281,6 +290,16 @@ export async function POST(request: Request) {
               console.log(`[Webhook] Message ${messageId} READ (ack=${ackValue})`)
             }
 
+            // v2.1: SSE broadcast — push status update to inbox clients in real-time
+            try {
+              broadcastToChip(existing.chipId, 'status_update', {
+                messageId,
+                status: newStatus,
+                ack: ackValue,
+                timestamp: Date.now(),
+              })
+            } catch { /* SSE broadcast is non-critical */ }
+
             // Save to InboxMessage — but mark as campaign message
             // These are NOT real conversations, just campaign blast messages
             try {
@@ -299,9 +318,13 @@ export async function POST(request: Request) {
                   remotePhone = phonePart
                 }
 
+                // v2.0: Include ack/status in inbox message upsert
+                const inboxAck = ackValue !== null && ackValue !== undefined ? Number(ackValue) : 1
+                const inboxStatus = inboxAck >= 4 ? 'read' : inboxAck >= 3 ? 'delivered' : inboxAck >= 1 ? 'sent' : 'pending'
+
                 await db.inboxMessage.upsert({
                   where: { evolutionMsgId: messageId },
-                  update: { remoteJid, remotePhone, isCampaign: true },
+                  update: { remoteJid, remotePhone, isCampaign: true, ack: inboxAck, status: inboxStatus, ...(inboxStatus === 'delivered' ? { deliveredAt: new Date() } : {}), ...(inboxStatus === 'read' ? { deliveredAt: new Date(), readAt: new Date() } : {}) },
                   create: {
                     instanceName: chip.evolutionInstance || chipInstanceName,
                     chipId: chip.id,
@@ -316,12 +339,41 @@ export async function POST(request: Request) {
                     evolutionMsgId: messageId,
                     isRead: true,
                     isGroup: remoteJid.includes('@g.us'),
-                    isCampaign: true,  // This is a campaign message, not a real conversation
+                    isCampaign: true,
+                    ack: inboxAck,
+                    status: inboxStatus,
+                    ...(inboxStatus === 'delivered' ? { deliveredAt: new Date() } : {}),
+                    ...(inboxStatus === 'read' ? { deliveredAt: new Date(), readAt: new Date() } : {}),
                   },
                 })
               }
             } catch (inboxErr) {
               console.error('[Webhook] Error saving sent message to inbox:', inboxErr)
+            }
+
+            // === Also update InboxMessage status for this message (delivery receipt) ===
+            // This handles the case where the InboxMessage already exists (from a previous event)
+            // and we just need to update its ack/status
+            try {
+              const inboxMsg = await db.inboxMessage.findUnique({ where: { evolutionMsgId: messageId } })
+              if (inboxMsg && ackValue !== null && ackValue !== undefined) {
+                const ack = Number(ackValue)
+                const currentStatusOrder: Record<string, number> = { pending: 0, sent: 1, delivered: 2, read: 3, failed: -1 }
+                const newAckStatus = ack >= 4 ? 'read' : ack >= 3 ? 'delivered' : ack >= 1 ? 'sent' : 'pending'
+                if ((currentStatusOrder[newAckStatus] ?? 0) > (currentStatusOrder[inboxMsg.status] ?? 0)) {
+                  await db.inboxMessage.update({
+                    where: { id: inboxMsg.id },
+                    data: {
+                      ack,
+                      status: newAckStatus,
+                      ...(newAckStatus === 'delivered' || newAckStatus === 'read' ? { deliveredAt: inboxMsg.deliveredAt || new Date() } : {}),
+                      ...(newAckStatus === 'read' ? { readAt: new Date() } : {}),
+                    },
+                  })
+                }
+              }
+            } catch (ackErr) {
+              console.error('[Webhook] Error updating inbox message ack:', ackErr)
             }
           } else {
             // No campaign message — could be a warming message (chip-to-chip) or manual send
@@ -415,6 +467,7 @@ export async function POST(request: Request) {
       case 'READ_RECEIPT': {
         const msgId = data?.Info?.ID
         if (msgId) {
+          // === Update Campaign Message ===
           const message = await db.message.findFirst({
             where: { evolutionMessageId: msgId },
           })
@@ -433,6 +486,39 @@ export async function POST(request: Request) {
               console.log(`[Webhook] Message ${msgId} READ (via READ_RECEIPT event)`)
             }
           }
+
+          // === v2.0: Update InboxMessage (delivery receipt tracking) ===
+          try {
+            const inboxMsg = await db.inboxMessage.findUnique({
+              where: { evolutionMsgId: msgId },
+            })
+            if (inboxMsg && inboxMsg.status !== 'read' && inboxMsg.fromMe) {
+              const STATUS_ORDER: Record<string, number> = { pending: 0, sent: 1, delivered: 2, read: 3, failed: -1 }
+              if ((STATUS_ORDER['read'] ?? 0) > (STATUS_ORDER[inboxMsg.status] ?? 0)) {
+                await db.inboxMessage.update({
+                  where: { id: inboxMsg.id },
+                  data: {
+                    ack: 4,
+                    status: 'read',
+                    deliveredAt: inboxMsg.deliveredAt || new Date(),
+                    readAt: new Date(),
+                  },
+                })
+                console.log(`[Webhook] InboxMessage ${msgId} READ (via READ_RECEIPT event)`)
+                // v2.1: SSE broadcast
+                try {
+                  broadcastToChip(inboxMsg.chipId || '', 'status_update', {
+                    messageId: msgId,
+                    status: 'read',
+                    ack: 4,
+                    timestamp: Date.now(),
+                  })
+                } catch { /* non-critical */ }
+              }
+            }
+          } catch (err: any) {
+            console.error('[Webhook] Error updating inbox message read receipt:', err.message)
+          }
         }
         break
       }
@@ -440,6 +526,7 @@ export async function POST(request: Request) {
       // ===== Message Status Update (delivery tracking backup) =====
       // Evolution API v3 may also send MESSAGES_UPDATE for ack changes.
       // This is a safety net in case SEND_MESSAGE_ACK doesn't include the ack value.
+      // v2.0: Also updates InboxMessage status (Chatwoot-like delivery receipts)
       case 'MESSAGES_UPDATE': {
         try {
           // Format varies by Evolution API version — try multiple locations
@@ -447,12 +534,17 @@ export async function POST(request: Request) {
           const ackValue = data?.Info?.Status ?? data?.Status ?? data?.ack ?? data?.info?.status ?? null
 
           if (msgId && ackValue !== null && ackValue !== undefined) {
+            const ack = Number(ackValue)
+            const STATUS_ORDER: Record<string, number> = { pending: 0, sent: 1, delivered: 2, read: 3, failed: -1 }
+            const ackToStatus = (a: number): string => a >= 4 ? 'read' : a >= 3 ? 'delivered' : a >= 1 ? 'sent' : 'pending'
+            const candidateStatus = ackToStatus(ack)
+
+            // === Update Campaign Message (Message table) ===
             const message = await db.message.findFirst({
               where: { evolutionMessageId: msgId },
             })
 
             if (message) {
-              const ack = Number(ackValue)
               let newStatus = message.status
               let deliveredAt = message.deliveredAt
               let readAt = message.readAt
@@ -471,8 +563,29 @@ export async function POST(request: Request) {
                   where: { id: message.id },
                   data: { status: newStatus, deliveredAt, readAt },
                 })
-                console.log(`[Webhook] MESSAGES_UPDATE: Message ${msgId} → ${newStatus} (ack=${ack})`)
+                console.log(`[Webhook] MESSAGES_UPDATE: Campaign Message ${msgId} → ${newStatus} (ack=${ack})`)
               }
+            }
+
+            // === v2.0: Update InboxMessage (delivery receipt tracking) ===
+            try {
+              const inboxMsg = await db.inboxMessage.findUnique({
+                where: { evolutionMsgId: msgId },
+              })
+              if (inboxMsg && (STATUS_ORDER[candidateStatus] ?? 0) > (STATUS_ORDER[inboxMsg.status] ?? 0)) {
+                await db.inboxMessage.update({
+                  where: { id: inboxMsg.id },
+                  data: {
+                    ack,
+                    status: candidateStatus,
+                    ...(candidateStatus === 'delivered' || candidateStatus === 'read' ? { deliveredAt: inboxMsg.deliveredAt || new Date() } : {}),
+                    ...(candidateStatus === 'read' ? { readAt: new Date() } : {}),
+                  },
+                })
+                console.log(`[Webhook] MESSAGES_UPDATE: InboxMessage ${msgId} → ${candidateStatus} (ack=${ack})`)
+              }
+            } catch (inboxErr: any) {
+              console.error('[Webhook] Error updating inbox message status from MESSAGES_UPDATE:', inboxErr.message)
             }
           }
         } catch (err: any) {
@@ -661,6 +774,83 @@ export async function POST(request: Request) {
               }
             }
 
+            // === v2.0: Handle reaction messages ===
+            // Reactions are special — they target an existing message.
+            // Instead of creating a new InboxMessage, we add the reaction
+            // to the target message's reactionEmoji field.
+            if (parsed.type === 'reaction' && parsed.reactionTargetId) {
+              try {
+                const targetMsg = await db.inboxMessage.findUnique({
+                  where: { evolutionMsgId: parsed.reactionTargetId },
+                })
+                if (targetMsg) {
+                  // Parse existing reactions or start fresh
+                  let reactions: Array<{ emoji: string; from: string; fromJid: string }> = []
+                  try {
+                    reactions = targetMsg.reactionEmoji ? JSON.parse(targetMsg.reactionEmoji) : []
+                  } catch { reactions = [] }
+
+                  const fromJid = data?.Info?.SenderJid || data?.Info?.Participant || remoteJid
+                  const fromName = pushNameForDb || pushName || 'unknown'
+
+                  if (parsed.reactionEmoji) {
+                    // Add or update reaction
+                    const existingIdx = reactions.findIndex(r => r.fromJid === fromJid)
+                    if (existingIdx >= 0) {
+                      reactions[existingIdx].emoji = parsed.reactionEmoji
+                    } else {
+                      reactions.push({ emoji: parsed.reactionEmoji, from: fromName, fromJid })
+                    }
+                  } else {
+                    // Empty emoji = remove reaction
+                    reactions = reactions.filter(r => r.fromJid !== fromJid)
+                  }
+
+                  await db.inboxMessage.update({
+                    where: { id: targetMsg.id },
+                    data: { reactionEmoji: JSON.stringify(reactions) },
+                  })
+                  console.log(`[Webhook] Reaction "${parsed.reactionEmoji}" on message ${parsed.reactionTargetId} from ${fromName}`)
+                }
+              } catch (reactionErr: any) {
+                console.error('[Webhook] Error processing reaction:', reactionErr.message)
+              }
+
+              // Also save the reaction as a separate InboxMessage (for message history)
+              // but only if it has content (not removal)
+              if (!parsed.reactionEmoji) {
+                // Reaction removed — skip creating a separate message
+                break
+              }
+            }
+
+            // === v2.0: Determine initial status for fromMe messages ===
+            // Outgoing messages start as 'sent' (they've been accepted by the server)
+            // Incoming messages start as 'delivered' (they arrived to us)
+            const initialAck = fromMe ? 1 : 3
+            const initialStatus = fromMe ? 'sent' : 'delivered'
+
+            // === v2.0: Cache group metadata ===
+            if (isGroup && contactName && !contactName.startsWith('Grupo ') && chip?.id) {
+              try {
+                await db.groupMetadata.upsert({
+                  where: { groupJid: remoteJid },
+                  update: {
+                    subject: contactName,
+                    participantCount: 0, // Will be updated by GROUP events
+                    chipId: chip.id,
+                  },
+                  create: {
+                    groupJid: remoteJid,
+                    subject: contactName,
+                    chipId: chip.id,
+                  },
+                })
+              } catch {
+                // Non-critical — group metadata cache is best-effort
+              }
+            }
+
             await db.inboxMessage.upsert({
               where: { evolutionMsgId: msgId },
               update: {
@@ -674,6 +864,18 @@ export async function POST(request: Request) {
                 mediaUrl,
                 pushName: pushNameForDb,
                 isCampaign: isCampaignMsg,
+                // v2.0: Quoted message data
+                quotedMsgId: parsed.quotedMsgId,
+                quotedContent: parsed.quotedContent,
+                quotedType: parsed.quotedType,
+                quotedPushName: parsed.quotedPushName,
+                // v2.0: Enriched media metadata
+                fileName: parsed.fileName,
+                mimeType: parsed.mimeType,
+                mediaCaption: parsed.caption,
+                mediaDuration: parsed.mediaDuration,
+                // v2.0: Status tracking (only upgrade)
+                ...(fromMe ? { ack: initialAck, status: initialStatus } : { ack: initialAck, status: initialStatus }),
               },
               create: {
                 instanceName: chipInstanceName,
@@ -690,11 +892,43 @@ export async function POST(request: Request) {
                 isRead: fromMe,
                 isGroup,
                 isCampaign: isCampaignMsg,
+                // v2.0: Quoted message data
+                quotedMsgId: parsed.quotedMsgId,
+                quotedContent: parsed.quotedContent,
+                quotedType: parsed.quotedType,
+                quotedPushName: parsed.quotedPushName,
+                // v2.0: Enriched media metadata
+                fileName: parsed.fileName,
+                mimeType: parsed.mimeType,
+                mediaCaption: parsed.caption,
+                mediaDuration: parsed.mediaDuration,
+                // v2.0: Status tracking
+                ack: initialAck,
+                status: initialStatus,
+                ...(fromMe && initialStatus === 'sent' ? {} : {}),
+                ...(!fromMe && initialStatus === 'delivered' ? {} : {}),
               },
             })
+
+          // v2.1: SSE broadcast — push new message to inbox clients in real-time
+          if (!isCampaignMsg && linkedChip?.id) {
+            try {
+              broadcastToChip(linkedChip.id, 'new_message', {
+                remoteJid,
+                fromMe,
+                messageType,
+                messageContent: (messageContent || '').substring(0, 200),
+                pushName: pushNameForDb,
+                contactName,
+                isGroup,
+                timestamp: Date.now(),
+              })
+            } catch { /* SSE broadcast is non-critical */ }
           }
 
           console.log(`[Webhook] Saved ${fromMe ? 'outgoing' : 'incoming'} message on ${chipInstanceName}`)
+          } // end if (messageContent || messageType !== 'text')
+
         } catch (inboxErr) {
           console.error('[Webhook] Error saving inbox message:', inboxErr)
         }
@@ -702,6 +936,44 @@ export async function POST(request: Request) {
       }
 
       default:
+        // Handle GROUP events for metadata cache
+        if (event === 'GROUP' || event === 'GROUPS_UPSERT' || event === 'GROUPS_UPDATE') {
+          try {
+            // GROUP event from Evolution API v3:
+            // data contains group metadata: id, subject, participants, owner, etc.
+            const groupJid = data?.id || data?.JID || data?.jid || data?.key?.id || null
+            const subject = data?.subject || data?.name || data?.Subject || data?.Name || null
+            
+            if (groupJid && subject && linkedChip) {
+              const participants = data?.participants || []
+              const participantCount = Array.isArray(participants) ? participants.length : 0
+              
+              await db.groupMetadata.upsert({
+                where: { groupJid },
+                update: {
+                  subject,
+                  participantCount,
+                  chipId: linkedChip.id,
+                  subjectOwner: data?.owner || data?.subjectOwner || null,
+                  subjectAt: data?.subjectTime ? new Date(Number(data.subjectTime) * 1000) : null,
+                },
+                create: {
+                  groupJid,
+                  subject,
+                  participantCount,
+                  chipId: linkedChip.id,
+                  subjectOwner: data?.owner || data?.subjectOwner || null,
+                  subjectAt: data?.subjectTime ? new Date(Number(data.subjectTime) * 1000) : null,
+                },
+              })
+              console.log(`[Webhook] Group metadata cached: ${subject} (${groupJid})`)
+            }
+          } catch (err: any) {
+            console.error('[Webhook] Error caching group metadata:', err.message)
+          }
+          break
+        }
+        
         // Log unhandled events for debugging (but not too verbosely)
         if (!['PRESENCE', 'CHAT_PRESENCE', 'CONTACT', 'LABEL'].includes(event)) {
           console.log(`[Webhook] Unhandled event: ${event} for ${chipInstanceName}`)

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { sendTextMessage, sendMediaMessage } from '@/lib/evolution-api'
+import { sendTextMessage, sendMediaMessage, sendQuotedReply, markChatAsRead } from '@/lib/evolution-api'
 
 /**
  * POST /api/inbox/reply
@@ -12,11 +12,12 @@ import { sendTextMessage, sendMediaMessage } from '@/lib/evolution-api'
  * - content: text content
  * - mediaUrl: optional media URL
  * - mediatype: optional media type (image, video, document, audio)
+ * - quotedMsgId: optional evolutionMsgId of the message being replied to (for quoted reply)
  */
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { chipId, remoteJid, content, mediaUrl, mediatype } = body
+    const { chipId, remoteJid, content, mediaUrl, mediatype, quotedMsgId } = body
 
     if (!chipId || !remoteJid) {
       return NextResponse.json(
@@ -50,9 +51,33 @@ export async function POST(request: NextRequest) {
     const phoneNumber = remoteJid.split('@')[0]
 
     let evolutionResponse
+    let quotedContent: string | null = null
+    let quotedType: string | null = null
+    let quotedPushName: string | null = null
+
+    // If replying to a specific message, fetch its content for the quoted preview
+    if (quotedMsgId) {
+      const quotedMsg = await db.inboxMessage.findFirst({
+        where: { evolutionMsgId: quotedMsgId },
+        select: { messageContent: true, messageType: true, pushName: true },
+      })
+      if (quotedMsg) {
+        quotedContent = quotedMsg.messageContent?.substring(0, 200) || null
+        quotedType = quotedMsg.messageType
+        quotedPushName = quotedMsg.pushName
+      }
+    }
 
     // Send message via Evolution API
-    if (mediaUrl && mediatype) {
+    if (quotedMsgId && !mediaUrl) {
+      // v2.1: Quoted reply (contextInfo) — shows "you replied to: ..." in WhatsApp
+      evolutionResponse = await sendQuotedReply(
+        chip.evolutionInstance,
+        phoneNumber,
+        content,
+        quotedMsgId
+      )
+    } else if (mediaUrl && mediatype) {
       evolutionResponse = await sendMediaMessage(
         chip.evolutionInstance,
         phoneNumber,
@@ -69,6 +94,9 @@ export async function POST(request: NextRequest) {
     }
 
     // Save the sent message to InboxMessage
+    // CRITICAL: Set ack=1, status='sent' immediately so the UI shows ✓ (not clock)
+    // The webhook will upgrade this to delivered/read when the receipt arrives.
+    const evolutionMsgId = evolutionResponse?.key?.id || null
     const savedMessage = await db.inboxMessage.create({
       data: {
         instanceName: chip.evolutionInstance,
@@ -81,12 +109,26 @@ export async function POST(request: NextRequest) {
         mediaUrl: mediaUrl || null,
         pushName: chip.profileName || chip.name,
         contactName: null,
-        evolutionMsgId: evolutionResponse?.key?.id || null,
+        evolutionMsgId,
         isRead: true,
         isGroup: remoteJid.includes('@g.us'),
         isCampaign: false,  // Manual reply from inbox — not a campaign blast
+        ack: 1,             // SENT — message was dispatched to Evolution API
+        status: 'sent',     // Show ✓ immediately (webhook upgrades later)
+        // v2.1: Quoted reply fields (contextInfo)
+        quotedMsgId: quotedMsgId || null,
+        quotedContent,
+        quotedType,
+        quotedPushName,
       },
     })
+
+    // Mark the chat as read on the WhatsApp side (so the contact sees blue ✓✓)
+    try {
+      await markChatAsRead(chip.evolutionInstance, remoteJid)
+    } catch {
+      // Non-critical — best effort
+    }
 
     return NextResponse.json({
       success: true,

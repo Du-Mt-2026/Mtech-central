@@ -1,9 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { markChatAsRead } from '@/lib/evolution-api'
 
 /**
  * GET /api/inbox/messages
  * Returns messages for a specific conversation (chipId + remoteJid)
+ *
+ * v2.0: Now returns delivery receipt status (ack/status), quoted message data,
+ * reaction data, and enriched media metadata — following Chatwoot-like patterns.
  *
  * Query params:
  * - chipId: required - the chip ID
@@ -34,6 +38,17 @@ export async function GET(request: NextRequest) {
       // Campaign messages are visually marked in the UI with a distinct style
     }
 
+    // Also match LID variants of this remoteJid
+    // (Evolution API V3 uses LID for outgoing, phone JID for incoming)
+    const phonePart = remoteJid.split('@')[0]
+    if (remoteJid.endsWith('@s.whatsapp.net')) {
+      where.OR = [
+        { remoteJid },
+        { remoteJid: { startsWith: phonePart } },
+      ]
+      delete where.remoteJid
+    }
+
     if (before) {
       where.createdAt = { lt: new Date(before) }
     }
@@ -54,6 +69,19 @@ export async function GET(request: NextRequest) {
       },
       data: { isRead: true },
     })
+
+    // v2.1: Mark chat as read on WhatsApp side (so sender sees blue ✓✓)
+    try {
+      const chip = await db.chip.findUnique({
+        where: { id: chipId },
+        select: { evolutionInstance: true, status: true },
+      })
+      if (chip?.evolutionInstance && chip.status === 'connected') {
+        await markChatAsRead(chip.evolutionInstance, remoteJid)
+      }
+    } catch {
+      // Non-critical — best effort. If this fails, the DB is still marked as read.
+    }
 
     // Return in chronological order (oldest first)
     const sorted = [...messages].reverse()
