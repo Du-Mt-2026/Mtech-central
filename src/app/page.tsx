@@ -1062,7 +1062,13 @@ function ChipsTab() {
 
   const saveProxy = async () => {
     if (!selectedChip) return
-    await updateChip(selectedChip.id, { ...proxyForm, proxyMode: 'socks5' })
+    // Only set proxyMode='socks5' if all required fields are filled (including password)
+    // Otherwise, the incomplete SOCKS5 config would block WireGuard auto-detect in resolveChipProxy
+    const hasCompleteSocks5Config = proxyForm.socks5Host && proxyForm.socks5Port && proxyForm.socks5Pass
+    await updateChip(selectedChip.id, {
+      ...proxyForm,
+      proxyMode: hasCompleteSocks5Config ? 'socks5' : 'none',
+    })
     setProxyDialogOpen(false)
   }
 

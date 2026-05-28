@@ -1086,15 +1086,18 @@ export function resolveChipProxy(chip: {
   // 1) Explicit SOCKS5 configuration on the chip
   if (chip.proxyMode === 'socks5' && chip.socks5Host && chip.socks5Port) {
     // Evolution Go API rejects empty passwords for proxy config.
-    // Only return proxy if there's at least a non-empty password.
-    if (!chip.socks5Pass) return null;
-    return {
-      enabled: true,
-      host: chip.socks5Host,
-      port: String(chip.socks5Port),
-      username: chip.socks5User || '',
-      password: chip.socks5Pass,
+    // If no password is set, fall through to WireGuard auto-detect (step 2)
+    // instead of returning null, so that chips with WireGuard IPs still get proxy.
+    if (chip.socks5Pass) {
+      return {
+        enabled: true,
+        host: chip.socks5Host,
+        port: String(chip.socks5Port),
+        username: chip.socks5User || '',
+        password: chip.socks5Pass,
+      }
     }
+    // Fall through to WireGuard auto-detect if SOCKS5 config is incomplete
   }
 
   // 2) Auto-detect: chip has WireGuard IP → Every Proxy on the phone
