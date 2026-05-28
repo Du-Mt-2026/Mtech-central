@@ -585,6 +585,67 @@ export async function POST(req: NextRequest) {
       results.push(`Erro ao criar BlockedContact: ${blockedErr.message}`)
     }
 
+    // Step 8: Create Conversation table (Chatwoot-like 4-level hierarchy)
+    try {
+      const convTableExists = await db.$queryRaw<Array<{ exists: boolean }>>`
+        SELECT EXISTS (
+          SELECT FROM information_schema.tables
+          WHERE table_name = 'Conversation'
+        ) AS exists
+      `
+      if (!convTableExists[0]?.exists) {
+        await db.$executeRawUnsafe(`
+          CREATE TABLE "Conversation" (
+            "id" TEXT NOT NULL,
+            "chipId" TEXT NOT NULL,
+            "remoteJid" TEXT NOT NULL,
+            "remotePhone" TEXT NOT NULL DEFAULT '',
+            "contactName" TEXT,
+            "pushName" TEXT,
+            "groupName" TEXT,
+            "isGroup" BOOLEAN NOT NULL DEFAULT false,
+            "isArchived" BOOLEAN NOT NULL DEFAULT false,
+            "status" TEXT NOT NULL DEFAULT 'open',
+            "lastMessageAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            "lastMessagePreview" TEXT,
+            "lastMessageType" TEXT,
+            "lastMessageFromMe" BOOLEAN NOT NULL DEFAULT false,
+            "lastMessageStatus" TEXT,
+            "unreadCount" INTEGER NOT NULL DEFAULT 0,
+            "profilePicUrl" TEXT,
+            "participantCount" INTEGER,
+            "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            CONSTRAINT "Conversation_pkey" PRIMARY KEY ("id"),
+            CONSTRAINT "Conversation_chipId_remoteJid_key" UNIQUE ("chipId", "remoteJid"),
+            CONSTRAINT "Conversation_chipId_fkey" FOREIGN KEY ("chipId") REFERENCES "Chip"("id") ON DELETE CASCADE ON UPDATE CASCADE
+          )
+        `)
+        // Create indexes
+        await db.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "Conversation_chipId_lastMessageAt_idx" ON "Conversation"("chipId", "lastMessageAt")`)
+        await db.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "Conversation_chipId_status_idx" ON "Conversation"("chipId", "status")`)
+        await db.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "Conversation_isArchived_idx" ON "Conversation"("isArchived")`)
+        results.push('Conversation: tabela criada com sucesso')
+      } else {
+        results.push('Conversation: tabela já existe')
+      }
+
+      // Add conversationId column to InboxMessage if not exists
+      const inboxColumns = await db.$queryRaw<Array<{ column_name: string }>>`
+        SELECT column_name FROM information_schema.columns
+        WHERE table_name = 'InboxMessage'
+      `
+      const inboxColumnNames = inboxColumns.map(c => c.column_name)
+      if (!inboxColumnNames.includes('conversationId')) {
+        await db.$executeRawUnsafe(`ALTER TABLE "InboxMessage" ADD COLUMN IF NOT EXISTS "conversationId" TEXT`)
+        results.push('InboxMessage: adicionada coluna conversationId')
+      } else {
+        results.push('InboxMessage: conversationId já existe')
+      }
+    } catch (convErr: any) {
+      results.push(`Erro ao criar Conversation: ${convErr.message}`)
+    }
+
     return NextResponse.json({
       success: true,
       message: 'Migração processada',
