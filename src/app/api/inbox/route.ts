@@ -30,12 +30,27 @@ export async function GET(request: NextRequest) {
       },
     })
 
+    // Find all remoteJids where a contact replied (fromMe: false)
+    // These conversations should appear in inbox even if started by a campaign
+    const repliedJids = await db.inboxMessage.findMany({
+      where: { chipId: { not: null }, fromMe: false, isGroup: false, isCampaign: false },
+      select: { remoteJid: true },
+      distinct: ['remoteJid'],
+    })
+    const repliedJidSet = new Set(repliedJids.map(r => r.remoteJid))
+
     // Get stats for ALL chips in a single query using groupBy
-    // IMPORTANT: Only count non-campaign messages (isCampaign: false)
-    // Campaign messages are blast messages, not real conversations
+    // Include conversations where contacts replied (even if original message was campaign)
     const conversationsPerChip = await db.inboxMessage.groupBy({
       by: ['chipId', 'remoteJid'],
-      where: { chipId: { not: null }, isGroup: false, isCampaign: false },
+      where: {
+        chipId: { not: null },
+        isGroup: false,
+        OR: [
+          { isCampaign: false },  // Real conversations
+          { isCampaign: true, remoteJid: { in: [...repliedJidSet] } },  // Campaign convos with replies
+        ],
+      },
     })
     const convCountMap = new Map<string, number>()
     for (const row of conversationsPerChip) {
@@ -57,10 +72,16 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Last message per chip (only non-campaign)
+    // Last message per chip (include campaign convos with replies for correct ordering)
     const lastMsgPerChip = await db.inboxMessage.groupBy({
       by: ['chipId'],
-      where: { chipId: { not: null }, isCampaign: false },
+      where: {
+        chipId: { not: null },
+        OR: [
+          { isCampaign: false },
+          { isCampaign: true, remoteJid: { in: [...repliedJidSet] } },
+        ],
+      },
       _max: { createdAt: true },
     })
     const lastMsgMap = new Map<string, Date>()

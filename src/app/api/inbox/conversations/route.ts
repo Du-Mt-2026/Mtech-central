@@ -34,9 +34,12 @@ export async function GET(request: NextRequest) {
     })
 
     // Build where clause
+    // Show conversations where there's at least one real (non-campaign) message
+    // OR where a contact replied to a campaign message
+    // This ensures: blast-only contacts stay hidden, but contacts who replied are visible
     const where: Record<string, unknown> = {
       chipId,
-      isCampaign: false,  // Never show campaign blast messages in inbox
+      isCampaign: false,  // Base filter: real conversations
     }
     if (!showGroups) where.isGroup = false
 
@@ -49,9 +52,47 @@ export async function GET(request: NextRequest) {
       ]
     }
 
+    // Also find remoteJids where contacts replied to campaign messages
+    // These conversations should appear in the inbox even though the initial message was a campaign blast
+    const campaignReplies = await db.inboxMessage.findMany({
+      where: {
+        chipId,
+        fromMe: false,     // Contact replied
+        isGroup: showGroups ? undefined : false,
+        isCampaign: false, // The reply itself is not a campaign message
+      },
+      select: { remoteJid: true, remotePhone: true },
+      distinct: ['remoteJid'],
+    })
+    const replyJids = new Set(campaignReplies.map(r => r.remoteJid))
+    // Also get remotePhones to match campaign messages with LID JIDs
+    const replyPhones = new Set(campaignReplies.map(r => r.remotePhone).filter(Boolean))
+
     // Step 1: Get all messages for this chip, ordered by most recent first
+    // Include campaign messages ONLY for remoteJids that have replies
+    const baseWhere: Record<string, unknown> = {
+      chipId,
+      isGroup: showGroups ? undefined : false,
+    }
+    if (search) {
+      baseWhere.OR = [
+        { contactName: { contains: search, mode: 'insensitive' } },
+        { pushName: { contains: search, mode: 'insensitive' } },
+        { remotePhone: { contains: search, mode: 'insensitive' } },
+        { messageContent: { contains: search, mode: 'insensitive' } },
+      ]
+    }
+
+    // Fetch non-campaign messages + campaign messages for replied contacts
     const allMessages = await db.inboxMessage.findMany({
-      where,
+      where: {
+        ...baseWhere,
+        OR: [
+          { isCampaign: false },  // All real conversations
+          { isCampaign: true, remoteJid: { in: [...replyJids] } },  // Campaign messages where contact replied (same JID)
+          ...(replyPhones.size > 0 ? [{ isCampaign: true, remotePhone: { in: [...replyPhones] } }] : []),  // Campaign messages with LID JID but matching phone
+        ],
+      },
       orderBy: { createdAt: 'desc' },
       select: {
         id: true,
@@ -66,6 +107,7 @@ export async function GET(request: NextRequest) {
         contactName: true,
         isRead: true,
         isGroup: true,
+        isCampaign: true,
         createdAt: true,
       },
       take: 1000, // Increased to capture group conversations properly
@@ -190,11 +232,12 @@ export async function GET(request: NextRequest) {
       contactName: string | null
       pushName: string | null
       groupName: string | null
-      lastMessage: { content: string; type: string; fromMe: boolean; senderName: string | null }
+      lastMessage: { content: string; type: string; fromMe: boolean; senderName: string | null; isCampaign: boolean }
       lastMessageAt: Date
       unreadCount: number
       totalMessages: number
       isGroup: boolean
+      hasCampaignMessages: boolean
       participants: Set<string>
     }>()
 
@@ -230,18 +273,24 @@ export async function GET(request: NextRequest) {
             type: msg.messageType,
             fromMe: msg.fromMe,
             senderName: msg.isGroup ? (msg.pushName || null) : null,
+            isCampaign: msg.isCampaign,
           },
           lastMessageAt: msg.createdAt,
-          unreadCount: (!msg.isRead && !msg.fromMe) ? 1 : 0,
+          unreadCount: (!msg.isRead && !msg.fromMe && !msg.isCampaign) ? 1 : 0,  // Don't count campaign as unread
           totalMessages: 1,
           isGroup: msg.isGroup,
+          hasCampaignMessages: msg.isCampaign,
           participants: msg.isGroup ? new Set(msg.pushName ? [msg.pushName] : []) : new Set(),
         })
       } else {
         // Additional message for this remoteJid
         existing.totalMessages++
-        if (!msg.isRead && !msg.fromMe) {
+        if (!msg.isRead && !msg.fromMe && !msg.isCampaign) {
           existing.unreadCount++
+        }
+        // Track if this conversation has campaign messages
+        if (msg.isCampaign) {
+          existing.hasCampaignMessages = true
         }
         // Track unique participants in group
         if (msg.isGroup && msg.pushName) {
@@ -303,6 +352,7 @@ export async function GET(request: NextRequest) {
       unreadCount: c.unreadCount,
       totalMessages: c.totalMessages,
       isGroup: c.isGroup,
+      hasCampaignMessages: c.hasCampaignMessages || false,
       participantCount: c.isGroup ? c.participants.size : null,
       chip: chip ? {
         id: chip.id,

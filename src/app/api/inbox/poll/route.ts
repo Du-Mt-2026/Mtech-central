@@ -17,12 +17,22 @@ export async function GET(request: NextRequest) {
     const since = searchParams.get('since') ? new Date(searchParams.get('since')!) : undefined
 
     // Get latest message timestamp for each conversation
-    // IMPORTANT: Filter out campaign blast messages
+    // Include campaign messages where the contact replied
+    const repliedJids = await db.inboxMessage.findMany({
+      where: { chipId: chipId || undefined, fromMe: false, isGroup: false, isCampaign: false },
+      select: { remoteJid: true },
+      distinct: ['remoteJid'],
+    })
+    const repliedJidSet = new Set(repliedJids.map(r => r.remoteJid))
+
     const where: Record<string, unknown> = {
-      isCampaign: false,
+      ...(chipId ? { chipId } : {}),
+      ...(since ? { createdAt: { gt: since } } : {}),
+      OR: [
+        { isCampaign: false },
+        { isCampaign: true, remoteJid: { in: [...repliedJidSet] } },
+      ],
     }
-    if (chipId) where.chipId = chipId
-    if (since) where.createdAt = { gt: since }
 
     const newMessages = await db.inboxMessage.findMany({
       where,

@@ -14,7 +14,7 @@ import {
   Sparkles, Heart, Star, AlertTriangle, Info, ChevronDown,
   Pencil, LayoutList, Database, WifiOff, ArrowDownToLine, Save, XCircle, ShieldBan,
   Inbox, LogOut, RotateCcw, Film, Music, File as FileIcon, ImageIcon, Key, Paperclip, MapPin, Link2,
-  Baby, CheckCircle2, Video, MoreVertical, Mic, User, Smile, BookmarkPlus, GripVertical, Loader2, Eraser
+  Baby, CheckCircle2, Video, MoreVertical, Mic, User, Smile, BookmarkPlus, GripVertical, Loader2, Eraser, Megaphone
 } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardAction } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -5266,11 +5266,12 @@ interface InboxConversation {
   contactName: string
   pushName: string | null
   groupName: string | null
-  lastMessage: { content: string; type: string; fromMe: boolean; senderName: string | null }
+  lastMessage: { content: string; type: string; fromMe: boolean; senderName: string | null; isCampaign?: boolean }
   lastMessageAt: string
   unreadCount: number
   totalMessages: number
   isGroup: boolean
+  hasCampaignMessages: boolean
   participantCount: number | null
   chip: { id: string; name: string; phoneNumber: string; profilePicUrl: string | null; status: string } | null
 }
@@ -5290,6 +5291,7 @@ interface InboxMsg {
   evolutionMsgId: string | null
   isRead: boolean
   isGroup: boolean
+  isCampaign: boolean
   createdAt: string
 }
 
@@ -5681,7 +5683,10 @@ function InboxTab() {
                           </span>
                         </div>
                         <div className="flex items-center gap-1 mt-0.5">
-                          {conv.lastMessage.fromMe && (
+                          {conv.lastMessage.isCampaign && (
+                            <Megaphone className="size-3 text-emerald-500 shrink-0" />
+                          )}
+                          {conv.lastMessage.fromMe && !conv.lastMessage.isCampaign && (
                             <Check className="size-3 text-muted-foreground shrink-0" />
                           )}
                           {conv.lastMessage.type !== 'text' && (
@@ -5820,9 +5825,18 @@ function InboxTab() {
                             <div className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
                               <div className={`max-w-[75%] rounded-2xl px-3.5 py-2 ${
                                 isMe
-                                  ? 'bg-primary text-primary-foreground rounded-br-md'
+                                  ? msg.isCampaign
+                                    ? 'bg-emerald-700/80 text-white rounded-br-md border border-emerald-600/50'
+                                    : 'bg-primary text-primary-foreground rounded-br-md'
                                   : 'bg-background border rounded-bl-md'
                               }`}>
+                                {/* Campaign message badge */}
+                                {msg.isCampaign && isMe && (
+                                  <div className="flex items-center gap-1 mb-1">
+                                    <Megaphone className="size-3 opacity-70" />
+                                    <span className="text-[9px] font-medium opacity-70 uppercase tracking-wider">Campanha</span>
+                                  </div>
+                                )}
                                 {/* Sticker */}
                                 {msg.mediaUrl && msg.messageType === 'sticker' && (
                                   <div className="mb-1.5 rounded-lg overflow-hidden max-w-48">

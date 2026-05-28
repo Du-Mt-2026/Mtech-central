@@ -29,7 +29,9 @@ export async function GET(request: NextRequest) {
     const where: Record<string, unknown> = {
       chipId,
       remoteJid,
-      isCampaign: false,  // Never show campaign blast messages in inbox
+      // Show ALL messages in a conversation view, including campaign messages
+      // This provides context when a contact replies to a campaign message
+      // Campaign messages are visually marked in the UI with a distinct style
     }
 
     if (before) {
