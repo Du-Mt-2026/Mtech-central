@@ -22,18 +22,18 @@ export async function GET(request: NextRequest) {
       select: { remoteJid: true, remotePhone: true },
       distinct: ['remoteJid'],
     })
-    const contactJidSet = new Set(contactJids.map(r => r.remoteJid))
-    const contactPhoneSet = new Set(contactJids.map(r => r.remotePhone).filter(Boolean))
+    const contactJidArr = Array.from(new Set(contactJids.map(r => r.remoteJid)))
+    const contactPhoneArr = Array.from(new Set(contactJids.map(r => r.remotePhone).filter(Boolean) as string[]))
 
     const where: Record<string, unknown> = {
       ...(chipId ? { chipId } : {}),
       ...(since ? { createdAt: { gt: since } } : {}),
       OR: [
-        { isCampaign: false, remoteJid: { in: [...contactJidSet] } },
-        { isCampaign: true, remoteJid: { in: [...contactJidSet] } },
-        ...(contactPhoneSet.size > 0 ? [
-          { isCampaign: false, remotePhone: { in: [...contactPhoneSet] } },
-          { isCampaign: true, remotePhone: { in: [...contactPhoneSet] } },
+        { isCampaign: false, remoteJid: { in: contactJidArr } },
+        { isCampaign: true, remoteJid: { in: contactJidArr } },
+        ...(contactPhoneArr.length > 0 ? [
+          { isCampaign: false, remotePhone: { in: contactPhoneArr } },
+          { isCampaign: true, remotePhone: { in: contactPhoneArr } },
         ] : []),
       ],
     }

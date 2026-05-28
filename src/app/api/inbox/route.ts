@@ -37,8 +37,8 @@ export async function GET(request: NextRequest) {
       select: { remoteJid: true, remotePhone: true },
       distinct: ['remoteJid'],
     })
-    const contactJidSet = new Set(contactJids.map(r => r.remoteJid))
-    const contactPhoneSet = new Set(contactJids.map(r => r.remotePhone).filter(Boolean))
+    const contactJidArr = Array.from(new Set(contactJids.map(r => r.remoteJid)))
+    const contactPhoneArr = Array.from(new Set(contactJids.map(r => r.remotePhone).filter(Boolean) as string[]))
 
     // Get stats for ALL chips in a single query using groupBy
     // Only count conversations where the contact wrote
@@ -48,11 +48,11 @@ export async function GET(request: NextRequest) {
         chipId: { not: null },
         isGroup: false,
         OR: [
-          { isCampaign: false, remoteJid: { in: [...contactJidSet] } },  // Non-campaign where contact wrote
-          { isCampaign: true, remoteJid: { in: [...contactJidSet] } },  // Campaign where contact replied
-          ...(contactPhoneSet.size > 0 ? [
-            { isCampaign: false, remotePhone: { in: [...contactPhoneSet] } },  // LID-resolved non-campaign
-            { isCampaign: true, remotePhone: { in: [...contactPhoneSet] } },  // LID-resolved campaign
+          { isCampaign: false, remoteJid: { in: contactJidArr } },  // Non-campaign where contact wrote
+          { isCampaign: true, remoteJid: { in: contactJidArr } },  // Campaign where contact replied
+          ...(contactPhoneArr.length > 0 ? [
+            { isCampaign: false, remotePhone: { in: contactPhoneArr } },  // LID-resolved non-campaign
+            { isCampaign: true, remotePhone: { in: contactPhoneArr } },  // LID-resolved campaign
           ] : []),
         ],
       },
@@ -83,11 +83,11 @@ export async function GET(request: NextRequest) {
       where: {
         chipId: { not: null },
         OR: [
-          { isCampaign: false, remoteJid: { in: [...contactJidSet] } },
-          { isCampaign: true, remoteJid: { in: [...contactJidSet] } },
-          ...(contactPhoneSet.size > 0 ? [
-            { isCampaign: false, remotePhone: { in: [...contactPhoneSet] } },
-            { isCampaign: true, remotePhone: { in: [...contactPhoneSet] } },
+          { isCampaign: false, remoteJid: { in: contactJidArr } },
+          { isCampaign: true, remoteJid: { in: contactJidArr } },
+          ...(contactPhoneArr.length > 0 ? [
+            { isCampaign: false, remotePhone: { in: contactPhoneArr } },
+            { isCampaign: true, remotePhone: { in: contactPhoneArr } },
           ] : []),
         ],
       },

@@ -59,11 +59,11 @@ export async function GET(request: NextRequest) {
       select: { remoteJid: true, remotePhone: true },
       distinct: ['remoteJid'],
     })
-    const repliedJids = new Set(contactMessages.map(r => r.remoteJid))
+    const repliedJids = Array.from(new Set(contactMessages.map(r => r.remoteJid)))
     // Also match by remotePhone to handle LID/phone JID splits
-    const repliedPhones = new Set(contactMessages.map(r => r.remotePhone).filter(Boolean))
+    const repliedPhones = Array.from(new Set(contactMessages.map(r => r.remotePhone).filter(Boolean) as string[]))
 
-    if (repliedJids.size === 0 && repliedPhones.size === 0) {
+    if (repliedJids.length === 0 && repliedPhones.length === 0) {
       // No contacts have written anything yet — return empty
       return NextResponse.json({ conversations: [] })
     }
@@ -90,24 +90,24 @@ export async function GET(request: NextRequest) {
     // Non-campaign messages where contact wrote
     visibleOrConditions.push({
       isCampaign: false,
-      remoteJid: { in: [...repliedJids] },
+      remoteJid: { in: repliedJids },
     })
 
     // Campaign messages for contacts that replied (by JID)
     visibleOrConditions.push({
       isCampaign: true,
-      remoteJid: { in: [...repliedJids] },
+      remoteJid: { in: repliedJids },
     })
 
     // Messages matched by phone number (LID resolution)
-    if (repliedPhones.size > 0) {
+    if (repliedPhones.length > 0) {
       visibleOrConditions.push({
         isCampaign: false,
-        remotePhone: { in: [...repliedPhones] },
+        remotePhone: { in: repliedPhones },
       })
       visibleOrConditions.push({
         isCampaign: true,
-        remotePhone: { in: [...repliedPhones] },
+        remotePhone: { in: repliedPhones },
       })
     }
 
