@@ -604,6 +604,7 @@ function ChipsTab() {
   const [copied, setCopied] = useState(false)
   const [newChip, setNewChip] = useState({ name: '', phoneNumber: '' })
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
+  const [disconnectConfirm, setDisconnectConfirm] = useState<Chip | null>(null)
   const [proxyForm, setProxyForm] = useState({ socks5Host: '', socks5Port: 1080, socks5User: '', socks5Pass: '' })
 
   // Proxy test state
@@ -1251,9 +1252,9 @@ function ChipsTab() {
                       <div className={`flex size-12 items-center justify-center rounded-xl ${chip.status === 'connected' ? 'bg-emerald-100 dark:bg-emerald-900/30' : 'bg-violet-100 dark:bg-violet-900/30'}`}>
                         <Smartphone className={`size-6 ${chip.status === 'connected' ? 'text-emerald-600 dark:text-emerald-400' : 'text-violet-600 dark:text-violet-400'}`} />
                       </div>
-                      <div className="flex-1 min-w-0">
+                      <div className="flex-1 min-w-0 overflow-hidden">
                         <div className="flex items-center gap-2">
-                          <CardTitle className="truncate text-base">{chip.profileName || chip.name}</CardTitle>
+                          <CardTitle className="truncate text-base max-w-[180px]" title={chip.profileName || chip.name}>{chip.profileName || chip.name}</CardTitle>
                           <Badge variant="outline" className="gap-1 text-[10px] px-1.5 py-0 shrink-0">
                             <><div className="size-1.5 rounded-full bg-emerald-500" /> v3</>
                           </Badge>
@@ -1269,13 +1270,24 @@ function ChipsTab() {
                           )}
                         </div>
                         <div className="flex items-center gap-2">
-                          <CardDescription className="truncate">{chip.phoneNumber}</CardDescription>
+                          <CardDescription className="truncate" title={chip.phoneNumber}>{chip.phoneNumber}</CardDescription>
                           {chip.evolutionInstance && (
                             <span className="text-[10px] font-mono text-muted-foreground/70 truncate max-w-28" title={chip.evolutionInstance}>{chip.evolutionInstance.replace(/^OctupusZap_/, '')}</span>
                           )}
                         </div>
                       </div>
-                      <StatusBadge status={chip.status} />
+                      <div className="flex flex-col items-end gap-1 shrink-0">
+                        <StatusBadge status={chip.status} />
+                        {chip.wireguardIp ? (
+                          <Badge variant="default" className="gap-1 text-[10px] px-1.5 py-0 bg-emerald-600 hover:bg-emerald-700">
+                            <Lock className="size-3" /> Proxy Online
+                          </Badge>
+                        ) : chip.proxyMode === 'socks5' && chip.socks5Host && chip.socks5Pass ? (
+                          <Badge variant="secondary" className="gap-1 text-[10px] px-1.5 py-0 bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 hover:bg-amber-200">
+                            <Server className="size-3" /> Proxy Config
+                          </Badge>
+                        ) : null}
+                      </div>
                     </div>
                   </CardHeader>
                   <CardContent className="space-y-4">
@@ -1468,7 +1480,7 @@ function ChipsTab() {
                     <Separator />
                     <div className="flex gap-2 flex-wrap">
                       {chip.status === 'connected' ? (
-                        <Button variant="outline" size="sm" className="gap-1.5 text-xs text-rose-500 hover:text-rose-600 border-rose-200 hover:border-rose-300" onClick={() => disconnectWhatsApp(chip)}>
+                        <Button variant="outline" size="sm" className="gap-1.5 text-xs text-rose-500 hover:text-rose-600 border-rose-200 hover:border-rose-300" onClick={() => setDisconnectConfirm(chip)}>
                           <X className="size-3.5" /> Desconectar
                         </Button>
                       ) : (
@@ -1578,6 +1590,10 @@ function ChipsTab() {
       <ConfirmDialog open={!!deleteConfirm} onOpenChange={() => setDeleteConfirm(null)}
         title="Remover Chip" description="Tem certeza que deseja remover este chip? Esta ação não pode ser desfeita."
         onConfirm={() => { if (deleteConfirm) deleteChip(deleteConfirm) }} confirmLabel="Remover" variant="destructive" />
+
+      <ConfirmDialog open={!!disconnectConfirm} onOpenChange={() => setDisconnectConfirm(null)}
+        title="Desconectar WhatsApp" description="Tem certeza que deseja desconectar o WhatsApp deste chip? As mensagens não poderão ser enviadas até reconectar."
+        onConfirm={() => { if (disconnectConfirm) disconnectWhatsApp(disconnectConfirm); setDisconnectConfirm(null) }} confirmLabel="Desconectar" variant="destructive" />
 
       {/* WhatsApp QR Code Dialog */}
       <Dialog open={qrDialogOpen} onOpenChange={closeQrDialog}>
