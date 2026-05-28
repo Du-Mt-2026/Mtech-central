@@ -16,21 +16,25 @@ export async function GET(request: NextRequest) {
     const chipId = searchParams.get('chipId') || undefined
     const since = searchParams.get('since') ? new Date(searchParams.get('since')!) : undefined
 
-    // Get latest message timestamp for each conversation
-    // Include campaign messages where the contact replied
-    const repliedJids = await db.inboxMessage.findMany({
+    // INBOX VISIBILITY: Only include messages where the CONTACT wrote (fromMe: false)
+    const contactJids = await db.inboxMessage.findMany({
       where: { chipId: chipId || undefined, fromMe: false, isGroup: false, isCampaign: false },
-      select: { remoteJid: true },
+      select: { remoteJid: true, remotePhone: true },
       distinct: ['remoteJid'],
     })
-    const repliedJidSet = new Set(repliedJids.map(r => r.remoteJid))
+    const contactJidSet = new Set(contactJids.map(r => r.remoteJid))
+    const contactPhoneSet = new Set(contactJids.map(r => r.remotePhone).filter(Boolean))
 
     const where: Record<string, unknown> = {
       ...(chipId ? { chipId } : {}),
       ...(since ? { createdAt: { gt: since } } : {}),
       OR: [
-        { isCampaign: false },
-        { isCampaign: true, remoteJid: { in: [...repliedJidSet] } },
+        { isCampaign: false, remoteJid: { in: [...contactJidSet] } },
+        { isCampaign: true, remoteJid: { in: [...contactJidSet] } },
+        ...(contactPhoneSet.size > 0 ? [
+          { isCampaign: false, remotePhone: { in: [...contactPhoneSet] } },
+          { isCampaign: true, remotePhone: { in: [...contactPhoneSet] } },
+        ] : []),
       ],
     }
 

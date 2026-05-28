@@ -30,25 +30,30 @@ export async function GET(request: NextRequest) {
       },
     })
 
-    // Find all remoteJids where a contact replied (fromMe: false)
-    // These conversations should appear in inbox even if started by a campaign
-    const repliedJids = await db.inboxMessage.findMany({
+    // INBOX VISIBILITY: Only count conversations where the CONTACT wrote (fromMe: false)
+    // This excludes: campaign-only blasts, outgoing-only chats, chip-to-chip warming
+    const contactJids = await db.inboxMessage.findMany({
       where: { chipId: { not: null }, fromMe: false, isGroup: false, isCampaign: false },
-      select: { remoteJid: true },
+      select: { remoteJid: true, remotePhone: true },
       distinct: ['remoteJid'],
     })
-    const repliedJidSet = new Set(repliedJids.map(r => r.remoteJid))
+    const contactJidSet = new Set(contactJids.map(r => r.remoteJid))
+    const contactPhoneSet = new Set(contactJids.map(r => r.remotePhone).filter(Boolean))
 
     // Get stats for ALL chips in a single query using groupBy
-    // Include conversations where contacts replied (even if original message was campaign)
+    // Only count conversations where the contact wrote
     const conversationsPerChip = await db.inboxMessage.groupBy({
       by: ['chipId', 'remoteJid'],
       where: {
         chipId: { not: null },
         isGroup: false,
         OR: [
-          { isCampaign: false },  // Real conversations
-          { isCampaign: true, remoteJid: { in: [...repliedJidSet] } },  // Campaign convos with replies
+          { isCampaign: false, remoteJid: { in: [...contactJidSet] } },  // Non-campaign where contact wrote
+          { isCampaign: true, remoteJid: { in: [...contactJidSet] } },  // Campaign where contact replied
+          ...(contactPhoneSet.size > 0 ? [
+            { isCampaign: false, remotePhone: { in: [...contactPhoneSet] } },  // LID-resolved non-campaign
+            { isCampaign: true, remotePhone: { in: [...contactPhoneSet] } },  // LID-resolved campaign
+          ] : []),
         ],
       },
     })
@@ -72,14 +77,18 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Last message per chip (include campaign convos with replies for correct ordering)
+    // Last message per chip (only visible conversations for correct ordering)
     const lastMsgPerChip = await db.inboxMessage.groupBy({
       by: ['chipId'],
       where: {
         chipId: { not: null },
         OR: [
-          { isCampaign: false },
-          { isCampaign: true, remoteJid: { in: [...repliedJidSet] } },
+          { isCampaign: false, remoteJid: { in: [...contactJidSet] } },
+          { isCampaign: true, remoteJid: { in: [...contactJidSet] } },
+          ...(contactPhoneSet.size > 0 ? [
+            { isCampaign: false, remotePhone: { in: [...contactPhoneSet] } },
+            { isCampaign: true, remotePhone: { in: [...contactPhoneSet] } },
+          ] : []),
         ],
       },
       _max: { createdAt: true },

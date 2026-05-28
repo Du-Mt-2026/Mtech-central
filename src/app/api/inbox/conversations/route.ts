@@ -33,43 +33,43 @@ export async function GET(request: NextRequest) {
       select: { id: true, name: true, phoneNumber: true, profilePicUrl: true, status: true, evolutionInstance: true },
     })
 
-    // Build where clause
-    // Show conversations where there's at least one real (non-campaign) message
-    // OR where a contact replied to a campaign message
-    // This ensures: blast-only contacts stay hidden, but contacts who replied are visible
-    const where: Record<string, unknown> = {
-      chipId,
-      isCampaign: false,  // Base filter: real conversations
-    }
-    if (!showGroups) where.isGroup = false
+    // ═══════════════════════════════════════════════════════════════════
+    // INBOX VISIBILITY RULES:
+    // 1. Only show conversations where the CONTACT (not the chip owner) sent
+    //    at least one message (fromMe: false). This means:
+    //    - Campaigns where nobody replied → HIDDEN
+    //    - Campaigns where someone replied → VISIBLE (with campaign context)
+    //    - Groups with activity → VISIBLE
+    //    - Personal chats where contact wrote → VISIBLE
+    //    - Chip owner's outgoing-only chats → HIDDEN
+    // 2. For visible conversations, include BOTH campaign and non-campaign
+    //    messages so the user has full context.
+    // ═══════════════════════════════════════════════════════════════════
 
-    if (search) {
-      where.OR = [
-        { contactName: { contains: search, mode: 'insensitive' } },
-        { pushName: { contains: search, mode: 'insensitive' } },
-        { remotePhone: { contains: search, mode: 'insensitive' } },
-        { messageContent: { contains: search, mode: 'insensitive' } },
-      ]
-    }
-
-    // Also find remoteJids where contacts replied to campaign messages
-    // These conversations should appear in the inbox even though the initial message was a campaign blast
-    const campaignReplies = await db.inboxMessage.findMany({
+    // Step 0: Find all remoteJids where the CONTACT actually wrote something
+    // This is the master list of visible conversations.
+    // A contact message is: fromMe=false, isCampaign=false (not chip-to-chip warming)
+    const contactMessages = await db.inboxMessage.findMany({
       where: {
         chipId,
-        fromMe: false,     // Contact replied
+        fromMe: false,     // Contact sent (not chip owner)
+        isCampaign: false, // Not chip-to-chip warming
         isGroup: showGroups ? undefined : false,
-        isCampaign: false, // The reply itself is not a campaign message
       },
       select: { remoteJid: true, remotePhone: true },
       distinct: ['remoteJid'],
     })
-    const replyJids = new Set(campaignReplies.map(r => r.remoteJid))
-    // Also get remotePhones to match campaign messages with LID JIDs
-    const replyPhones = new Set(campaignReplies.map(r => r.remotePhone).filter(Boolean))
+    const repliedJids = new Set(contactMessages.map(r => r.remoteJid))
+    // Also match by remotePhone to handle LID/phone JID splits
+    const repliedPhones = new Set(contactMessages.map(r => r.remotePhone).filter(Boolean))
 
-    // Step 1: Get all messages for this chip, ordered by most recent first
-    // Include campaign messages ONLY for remoteJids that have replies
+    if (repliedJids.size === 0 && repliedPhones.size === 0) {
+      // No contacts have written anything yet — return empty
+      return NextResponse.json({ conversations: [] })
+    }
+
+    // Step 1: Get all messages for visible conversations
+    // Include campaign messages for these contacts so the user has context
     const baseWhere: Record<string, unknown> = {
       chipId,
       isGroup: showGroups ? undefined : false,
@@ -83,15 +83,38 @@ export async function GET(request: NextRequest) {
       ]
     }
 
-    // Fetch non-campaign messages + campaign messages for replied contacts
+    // Build OR conditions for visible conversations
+    // Match by remoteJid (direct) or remotePhone (for LID resolution)
+    const visibleOrConditions: Record<string, unknown>[] = []
+
+    // Non-campaign messages where contact wrote
+    visibleOrConditions.push({
+      isCampaign: false,
+      remoteJid: { in: [...repliedJids] },
+    })
+
+    // Campaign messages for contacts that replied (by JID)
+    visibleOrConditions.push({
+      isCampaign: true,
+      remoteJid: { in: [...repliedJids] },
+    })
+
+    // Messages matched by phone number (LID resolution)
+    if (repliedPhones.size > 0) {
+      visibleOrConditions.push({
+        isCampaign: false,
+        remotePhone: { in: [...repliedPhones] },
+      })
+      visibleOrConditions.push({
+        isCampaign: true,
+        remotePhone: { in: [...repliedPhones] },
+      })
+    }
+
     const allMessages = await db.inboxMessage.findMany({
       where: {
         ...baseWhere,
-        OR: [
-          { isCampaign: false },  // All real conversations
-          { isCampaign: true, remoteJid: { in: [...replyJids] } },  // Campaign messages where contact replied (same JID)
-          ...(replyPhones.size > 0 ? [{ isCampaign: true, remotePhone: { in: [...replyPhones] } }] : []),  // Campaign messages with LID JID but matching phone
-        ],
+        OR: visibleOrConditions,
       },
       orderBy: { createdAt: 'desc' },
       select: {
@@ -110,7 +133,7 @@ export async function GET(request: NextRequest) {
         isCampaign: true,
         createdAt: true,
       },
-      take: 1000, // Increased to capture group conversations properly
+      take: 1000,
     })
 
     // Step 2: Try to fetch group names from Evolution API for group conversations
@@ -238,6 +261,7 @@ export async function GET(request: NextRequest) {
       totalMessages: number
       isGroup: boolean
       hasCampaignMessages: boolean
+      hasContactMessage: boolean  // Track if the contact actually wrote
       participants: Set<string>
     }>()
 
@@ -280,6 +304,7 @@ export async function GET(request: NextRequest) {
           totalMessages: 1,
           isGroup: msg.isGroup,
           hasCampaignMessages: msg.isCampaign,
+          hasContactMessage: !msg.fromMe && !msg.isCampaign,
           participants: msg.isGroup ? new Set(msg.pushName ? [msg.pushName] : []) : new Set(),
         })
       } else {
@@ -291,6 +316,10 @@ export async function GET(request: NextRequest) {
         // Track if this conversation has campaign messages
         if (msg.isCampaign) {
           existing.hasCampaignMessages = true
+        }
+        // Track if the contact actually wrote in this conversation
+        if (!msg.fromMe && !msg.isCampaign) {
+          existing.hasContactMessage = true
         }
         // Track unique participants in group
         if (msg.isGroup && msg.pushName) {
@@ -327,6 +356,10 @@ export async function GET(request: NextRequest) {
     // Step 5: Sort by last message time (most recent first)
     const conversations = Array.from(conversationMap.values())
       .filter(c => {
+        // CRITICAL: Only show conversations where the CONTACT actually wrote
+        // This hides: campaign-only blasts, outgoing-only chats, chip-to-chip warming
+        // Groups always have contact messages (members send messages), so they pass
+        if (!c.hasContactMessage && !c.isGroup) return false
         // Filter out archived conversations — match both the raw remoteJid
         // and the LID-mapped JID (some archived JIDs may use different formats)
         if (archivedJids.has(c.remoteJid)) return false
