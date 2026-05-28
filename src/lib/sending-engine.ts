@@ -2580,6 +2580,57 @@ export async function processNextMessage(campaignId: string): Promise<{
     }
 
     // ============================================
+    // DELIVERY RATE AUTO-ADJUST
+    // ============================================
+    // If the chip's delivery rate is dropping, slow down automatically.
+    // This prevents Meta from flagging the chip as spam when recipients
+    // aren't engaging (which signals "unwanted messages").
+    //
+    // Logic:
+    //   deliveryRate >= 60% → normal speed (1.0x)
+    //   deliveryRate 40-59% → slow down 1.5x
+    //   deliveryRate 20-39% → slow down 2.5x
+    //   deliveryRate < 20%  → slow down 4.0x (critical — may be about to be banned)
+    //
+    // Delivery rate is calculated from the last 50 sent messages on this chip.
+    if (antiBanEnabled) {
+      try {
+        const recentMessages = await db.message.findMany({
+          where: {
+            chipId: currentChip.id,
+            status: { in: ['sent', 'delivered', 'read'] },
+            sentAt: { not: null },
+          },
+          orderBy: { sentAt: 'desc' },
+          take: 50,
+          select: { status: true },
+        })
+
+        if (recentMessages.length >= 10) {
+          const delivered = recentMessages.filter(m => m.status === 'delivered' || m.status === 'read').length
+          const deliveryRate = (delivered / recentMessages.length) * 100
+
+          let deliveryMultiplier = 1.0
+          if (deliveryRate < 20) {
+            deliveryMultiplier = 4.0
+          } else if (deliveryRate < 40) {
+            deliveryMultiplier = 2.5
+          } else if (deliveryRate < 60) {
+            deliveryMultiplier = 1.5
+          }
+
+          if (deliveryMultiplier > 1.0) {
+            nextDelay = Math.round(nextDelay * deliveryMultiplier)
+            console.warn(`[SendingEngine] Delivery rate ${deliveryRate.toFixed(0)}% — slowing down ${deliveryMultiplier}x for chip ${currentChip.name}`)
+          }
+        }
+      } catch (deliveryErr: any) {
+        // Non-critical — if this fails, just use normal speed
+        console.error(`[SendingEngine] Delivery rate check failed: ${deliveryErr.message}`)
+      }
+    }
+
+    // ============================================
     // ENFORCE PHASE MINIMUM INTERVAL
     // ============================================
     // For nursery/prewarm chips, the interval must be at least the phase minimum.
