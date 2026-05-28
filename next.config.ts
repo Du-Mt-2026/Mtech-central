@@ -3,9 +3,7 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   allowedDevOrigins: ["127.0.0.1"],
-  turbopack: {
-    root: '/home/z/Mtech-central',
-  },
+  turbopack: {},
   webpack: (config, { isServer }) => {
     // @ffmpeg/ffmpeg uses Web Workers and WASM — need special handling (fallback for webpack builds)
     if (!isServer) {

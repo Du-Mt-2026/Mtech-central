@@ -6,12 +6,13 @@ import { markChatAsRead } from '@/lib/evolution-api'
  * GET /api/inbox/messages
  * Returns messages for a specific conversation (chipId + remoteJid)
  *
- * v2.0: Now returns delivery receipt status (ack/status), quoted message data,
- * reaction data, and enriched media metadata — following Chatwoot-like patterns.
+ * v2.2: Also searches by remotePhone to find LID-variant messages.
+ * When a conversation uses canonicalJid (s.whatsapp.net), we also
+ * fetch messages where remotePhone matches but remoteJid is @lid.
  *
  * Query params:
  * - chipId: required - the chip ID
- * - remoteJid: required - the contact's JID
+ * - remoteJid: required - the contact's JID (canonical)
  * - before: cursor for pagination (message createdAt)
  * - limit: number of messages to return (default 50)
  */
@@ -30,23 +31,29 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    const where: Record<string, unknown> = {
-      chipId,
-      remoteJid,
-      // Show ALL messages in a conversation view, including campaign messages
-      // This provides context when a contact replies to a campaign message
-      // Campaign messages are visually marked in the UI with a distinct style
+    const phonePart = remoteJid.split('@')[0]
+
+    // Build OR conditions to match ALL JID variants for this contact
+    // This ensures messages from both @lid and @s.whatsapp.net are included
+    const orConditions: Record<string, unknown>[] = [
+      { remoteJid },  // Exact JID match
+    ]
+
+    // Also match by same phone prefix (handles LID ↔ s.whatsapp.net)
+    if (phonePart) {
+      orConditions.push({ remoteJid: { startsWith: phonePart } })
+      // Also match by remotePhone (for cases where remotePhone differs from JID prefix)
+      orConditions.push({ remotePhone: phonePart })
+      // Try without country code
+      const withoutCountryCode = phonePart.replace(/^55/, '')
+      if (withoutCountryCode !== phonePart) {
+        orConditions.push({ remotePhone: { startsWith: withoutCountryCode } })
+      }
     }
 
-    // Also match LID variants of this remoteJid
-    // (Evolution API V3 uses LID for outgoing, phone JID for incoming)
-    const phonePart = remoteJid.split('@')[0]
-    if (remoteJid.endsWith('@s.whatsapp.net')) {
-      where.OR = [
-        { remoteJid },
-        { remoteJid: { startsWith: phonePart } },
-      ]
-      delete where.remoteJid
+    const where: Record<string, unknown> = {
+      chipId,
+      OR: orConditions,
     }
 
     if (before) {
@@ -59,11 +66,11 @@ export async function GET(request: NextRequest) {
       take: limit,
     })
 
-    // Mark unread messages as read
+    // Mark unread messages as read (for ALL JID variants)
     await db.inboxMessage.updateMany({
       where: {
         chipId,
-        remoteJid,
+        OR: orConditions,
         isRead: false,
         fromMe: false,
       },
