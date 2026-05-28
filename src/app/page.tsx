@@ -1247,8 +1247,8 @@ function ChipsTab() {
               <motion.div key={chip.id} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}>
                 <Card className="shadow-lg hover:shadow-xl transition-all duration-200 border-0 relative overflow-hidden">
                   <div className={`absolute top-0 left-0 right-0 h-1 ${chip.status === 'connected' ? 'bg-gradient-to-r from-emerald-400 to-teal-500' : chip.status === 'error' ? 'bg-gradient-to-r from-rose-400 to-pink-500' : chip.status === 'connecting' ? 'bg-gradient-to-r from-amber-400 to-orange-500' : 'bg-zinc-300'}`} />
-                  <CardHeader className="pb-3">
-                    <div className="flex items-center gap-2.5">
+                  <CardHeader className="pb-3 min-w-0 overflow-hidden">
+                    <div className="flex items-center gap-2.5 overflow-hidden">
                       <div className={`flex size-10 shrink-0 items-center justify-center rounded-lg ${chip.status === 'connected' ? 'bg-emerald-100 dark:bg-emerald-900/30' : 'bg-violet-100 dark:bg-violet-900/30'}`}>
                         <Smartphone className={`size-5 ${chip.status === 'connected' ? 'text-emerald-600 dark:text-emerald-400' : 'text-violet-600 dark:text-violet-400'}`} />
                       </div>
