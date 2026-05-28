@@ -1254,7 +1254,7 @@ function ChipsTab() {
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-1.5 min-w-0">
-                          <CardTitle className="truncate text-sm" title={chip.profileName || chip.name}>{chip.profileName || chip.name}</CardTitle>
+                          <CardTitle className="flex-1 min-w-0 truncate text-sm" title={chip.profileName || chip.name}>{chip.profileName || chip.name}</CardTitle>
                           <Badge variant="outline" className="gap-0.5 text-[9px] px-1 py-0 shrink-0 leading-none">
                             v3
                           </Badge>
@@ -1283,13 +1283,13 @@ function ChipsTab() {
                           )}
                         </div>
                         <div className="flex items-center gap-1.5 min-w-0">
-                          <CardDescription className="truncate text-xs" title={chip.phoneNumber}>{chip.phoneNumber}</CardDescription>
+                          <CardDescription className="flex-1 min-w-0 truncate text-xs" title={chip.phoneNumber}>{chip.phoneNumber}</CardDescription>
                           {chip.evolutionInstance && (
                             <span className="text-[9px] font-mono text-muted-foreground/70 truncate max-w-20" title={chip.evolutionInstance}>{chip.evolutionInstance.replace(/^OctupusZap_/, '')}</span>
                           )}
                         </div>
                       </div>
-                      <div className="flex flex-col items-end gap-1 shrink-0 min-w-0">
+                      <div className="flex flex-col items-end gap-1 shrink-0">
                         <StatusBadge status={chip.status} />
                         {chip.wireguardIp ? (
                           <Badge variant="default" className="gap-0.5 text-[9px] px-1.5 py-0 bg-emerald-600 hover:bg-emerald-700 leading-none">
