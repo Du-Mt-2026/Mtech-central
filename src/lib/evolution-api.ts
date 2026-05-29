@@ -355,6 +355,25 @@ export async function createInstance(
     // Reject incoming calls — telemarketing chips don't need calls
     rejectCall: true,
     msgRejectCall: 'Desculpa, não posso atender agora.',
+    // BUG FIX: Events must be specified at instance creation time.
+    // Without this field, Evolution Go creates the instance with events=""
+    // which prevents QR code generation and webhook event delivery.
+    // This was causing all OctupusZap instances to fail QR code scanning.
+    events: [
+      'MESSAGE',
+      'SEND_MESSAGE',
+      'SEND_MESSAGE_ACK',
+      'READ_RECEIPT',
+      'PRESENCE',
+      'CHAT_PRESENCE',
+      'CALL',
+      'CONNECTION',
+      'QRCODE',
+      'LABEL',
+      'CONTACT',
+      'GROUP',
+      'MESSAGES_UPDATE',
+    ],
   };
 
   // Proxy is set at creation time
