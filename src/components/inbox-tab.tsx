@@ -850,7 +850,7 @@ export function InboxTab() {
                       <p className="font-semibold text-sm truncate">
                         {displayName(selectedConversation)}
                       </p>
-                      {selectedConversation.isGroup && (
+                      {selectedConversation.isGroup && !displayName(selectedConversation).startsWith('Grupo') && (
                         <Badge variant="secondary" className="text-[9px] px-1.5 py-0 shrink-0">
                           Grupo
                         </Badge>
