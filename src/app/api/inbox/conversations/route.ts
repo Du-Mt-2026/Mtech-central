@@ -383,6 +383,21 @@ export async function GET(request: NextRequest) {
       }
     } catch { /* non-critical */ }
 
+    // Fetch cached profile pictures from Conversation table
+    const cachedPics = new Map<string, string>()
+    try {
+      const convPics = await db.conversation.findMany({
+        where: { chipId, profilePicUrl: { not: null } },
+        select: { remoteJid: true, remotePhone: true, profilePicUrl: true },
+      })
+      for (const cp of convPics) {
+        if (cp.profilePicUrl) {
+          if (cp.remoteJid) cachedPics.set(cp.remoteJid, cp.profilePicUrl)
+          if (cp.remotePhone) cachedPics.set(cp.remotePhone, cp.profilePicUrl)
+        }
+      }
+    } catch { /* non-critical — Conversation table may not exist yet */ }
+
     const conversations = Array.from(conversationMap.values())
       .filter(c => {
         // Only show conversations where the contact actually wrote
@@ -418,6 +433,7 @@ export async function GET(request: NextRequest) {
       isGroup: c.isGroup,
       hasCampaignMessages: c.hasCampaignMessages || false,
       participantCount: c.isGroup ? c.participants.size : null,
+      profilePicUrl: cachedPics.get(c.canonicalJid) || cachedPics.get(c.remotePhone) || null,  // From Conversation cache or on-demand
       chip: chip ? {
         id: chip.id,
         name: chip.name,
