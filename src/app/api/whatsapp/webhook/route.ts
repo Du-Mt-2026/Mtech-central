@@ -70,9 +70,23 @@ export async function POST(request: Request) {
               isQrPaired: true,
               lastSeen: new Date(),
               ...(profileName ? { profileName } : {}),
-              ...(jid ? { profilePicUrl: jid } : {}),
             },
           })
+
+          // Fetch profile picture asynchronously (don't block the webhook)
+          if (jid) {
+            const phoneFromJid = jid.split('@')[0]
+            import('@/lib/evolution-api').then(({ fetchProfilePicture }) => {
+              fetchProfilePicture(chipInstanceName, phoneFromJid).then(picUrl => {
+                if (picUrl) {
+                  db.chip.update({
+                    where: { id: chip.id },
+                    data: { profilePicUrl: picUrl },
+                  }).catch(() => {})
+                }
+              }).catch(() => {})
+            }).catch(() => {})
+          }
           console.log(`[Webhook] Chip ${chip.name} connected!`)
 
           // Notify reconnection queue — chip successfully reconnected
