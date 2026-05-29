@@ -6,6 +6,7 @@ import { startCampaign } from '@/lib/sending-engine'
 const ALLOWED_FIELDS = [
   'name', 'status', 'sendIntervalMin', 'sendIntervalMax',
   'contactListId', 'scheduledAt', 'antiBanEnabled', 'warmingMode',
+  'nextSendAt',
 ] as const
 
 // Valid status transitions
@@ -181,7 +182,7 @@ export async function PATCH(
     for (const field of ALLOWED_FIELDS) {
       if (field === 'status') continue // Already handled above
       if (body[field] !== undefined) {
-        if (field === 'scheduledAt') {
+        if (field === 'scheduledAt' || field === 'nextSendAt') {
           updateData[field] = body[field] ? new Date(body[field]) : null
         } else {
           updateData[field] = body[field]
