@@ -105,6 +105,204 @@ export async function POST(req: NextRequest) {
       })
     }
 
+    // Fix: Update ack/status for old messages that have ack=0 (pre-v2 data)
+    if (action === 'fix-inbox-ack-status') {
+      // fromMe=false (incoming) should be ack=3 (delivered), status='delivered'
+      const incoming = await db.inboxMessage.updateMany({
+        where: { fromMe: false, ack: 0, status: 'pending' },
+        data: { ack: 3, status: 'delivered' },
+      })
+      // fromMe=true (outgoing) should be ack=1 (sent), status='sent'
+      const outgoing = await db.inboxMessage.updateMany({
+        where: { fromMe: true, ack: 0, status: 'pending' },
+        data: { ack: 1, status: 'sent' },
+      })
+      return NextResponse.json({
+        success: true,
+        action: 'fix-inbox-ack-status',
+        incomingUpdated: incoming.count,
+        outgoingUpdated: outgoing.count,
+        message: `Atualizados ack/status: ${incoming.count} recebidas (delivered), ${outgoing.count} enviadas (sent).`,
+      })
+    }
+
+    // Fix: Extract quotedMsgId from old reaction messages that have raw JSON content
+    if (action === 'fix-reaction-quoted-msgid') {
+      // Find reaction messages with null quotedMsgId but content containing reactionMessage JSON
+      const reactionMessages = await db.inboxMessage.findMany({
+        where: {
+          messageType: 'reaction',
+          quotedMsgId: null,
+          messageContent: { contains: 'reactionMessage' },
+        },
+        select: { id: true, messageContent: true },
+        take: 500,
+      })
+
+      let fixed = 0
+      for (const msg of reactionMessages) {
+        try {
+          // Try to extract the target message ID from the raw JSON
+          const match = msg.messageContent.match(/"key"\s*:\s*\{[^}]*"id"\s*:\s*"([^"]+)"/)
+          if (match && match[1]) {
+            await db.inboxMessage.update({
+              where: { id: msg.id },
+              data: {
+                quotedMsgId: match[1],
+                messageContent: 'Reação', // Clean up the raw JSON
+              },
+            })
+            fixed++
+          }
+        } catch {
+          // Skip individual errors
+        }
+      }
+
+      // Also fix reaction messages with content "Reação: EMOJI" that have null quotedMsgId
+      const simpleReactions = await db.inboxMessage.findMany({
+        where: {
+          messageType: 'reaction',
+          quotedMsgId: null,
+          messageContent: { startsWith: 'Reação:' },
+        },
+        select: { id: true },
+        take: 500,
+      })
+
+      return NextResponse.json({
+        success: true,
+        action: 'fix-reaction-quoted-msgid',
+        rawJsonFixed: fixed,
+        simpleReactionsWithoutTarget: simpleReactions.length,
+        message: `Corrigidos ${fixed} reactionMsgIds a partir de JSON bruto. ${simpleReactions.length} reações sem target (webhook não forneceu o ID).`,
+      })
+    }
+
+    // Fix: Convert old 'unknown' messageType messages to proper types
+    if (action === 'fix-unknown-message-types') {
+      // Messages with content starting with "{" or "[" are likely unparsed messages
+      const unknownJson = await db.inboxMessage.findMany({
+        where: {
+          messageType: 'unknown',
+          messageContent: { startsWith: '{' },
+        },
+        select: { id: true, messageContent: true },
+        take: 500,
+      })
+
+      let fixedToReaction = 0
+      let fixedToDeleted = 0
+      let fixedToOther = 0
+
+      for (const msg of unknownJson) {
+        try {
+          if (msg.messageContent.includes('reactionMessage')) {
+            // This is an old reaction message that wasn't parsed correctly
+            const emojiMatch = msg.messageContent.match(/"text"\s*:\s*"([^"]+)"/)
+            const emoji = emojiMatch ? emojiMatch[1] : ''
+            await db.inboxMessage.update({
+              where: { id: msg.id },
+              data: {
+                messageType: 'reaction',
+                messageContent: emoji ? `Reação: ${emoji}` : 'Reação',
+              },
+            })
+            fixedToReaction++
+          } else if (msg.messageContent.includes('protocolMessage')) {
+            await db.inboxMessage.update({
+              where: { id: msg.id },
+              data: { messageType: 'deleted', messageContent: 'Mensagem apagada' },
+            })
+            fixedToDeleted++
+          } else {
+            // Keep as unknown but clean up content
+            await db.inboxMessage.update({
+              where: { id: msg.id },
+              data: { messageContent: 'Mensagem não suportada' },
+            })
+            fixedToOther++
+          }
+        } catch {
+          // Skip
+        }
+      }
+
+      return NextResponse.json({
+        success: true,
+        action: 'fix-unknown-message-types',
+        fixedToReaction,
+        fixedToDeleted,
+        fixedToOther,
+        message: `Corrigidos tipos: ${fixedToReaction} reações, ${fixedToDeleted} apagadas, ${fixedToOther} outros.`,
+      })
+    }
+
+    // Fix: Backfill reactionEmoji on original messages from standalone reaction messages
+    if (action === 'backfill-reaction-emoji') {
+      // Find all reaction messages that have a quotedMsgId
+      const reactionMessages = await db.inboxMessage.findMany({
+        where: {
+          messageType: 'reaction',
+          quotedMsgId: { not: null },
+        },
+        select: { id: true, quotedMsgId: true, messageContent: true, pushName: true, remoteJid: true },
+        take: 1000,
+      })
+
+      let updated = 0
+      let notFound = 0
+
+      for (const reaction of reactionMessages) {
+        try {
+          // Find the target message by evolutionMsgId
+          const targetMsg = await db.inboxMessage.findFirst({
+            where: {
+              OR: [
+                { evolutionMsgId: reaction.quotedMsgId },
+                { id: reaction.quotedMsgId! },
+              ],
+            },
+          })
+
+          if (targetMsg) {
+            const emoji = reaction.messageContent?.replace('Reação: ', '').trim() || '👍'
+            const fromJid = reaction.remoteJid || ''
+            const fromName = reaction.pushName || 'unknown'
+
+            let reactions: Array<{ emoji: string; from: string; fromJid: string }> = []
+            try {
+              reactions = targetMsg.reactionEmoji ? JSON.parse(targetMsg.reactionEmoji) : []
+            } catch { reactions = [] }
+
+            // Check if this reaction already exists
+            const exists = reactions.some(r => r.fromJid === fromJid && r.emoji === emoji)
+            if (!exists) {
+              reactions.push({ emoji, from: fromName, fromJid })
+              await db.inboxMessage.update({
+                where: { id: targetMsg.id },
+                data: { reactionEmoji: JSON.stringify(reactions) },
+              })
+              updated++
+            }
+          } else {
+            notFound++
+          }
+        } catch {
+          // Skip individual errors
+        }
+      }
+
+      return NextResponse.json({
+        success: true,
+        action: 'backfill-reaction-emoji',
+        reactionsProcessed: reactionMessages.length,
+        targetMessagesUpdated: updated,
+        targetsNotFound: notFound,
+        message: `Backfill: ${updated} mensagens originais tiveram reactionEmoji atualizado. ${notFound} targets não encontrados.`,
+      })
+    }
+
     // Default: Add pausedAt column to Campaign table if it doesn't exist
     await db.$executeRawUnsafe(`
       ALTER TABLE "Campaign" ADD COLUMN IF NOT EXISTS "pausedAt" TIMESTAMP(3)

@@ -6008,10 +6008,10 @@ function InboxTab() {
                         if (!hasContent) return null
 
                         // Hide standalone reaction messages — they should appear as badges on the original message
-                        // But if the target message isn't in the current view, show them as fallback
+                        // Try matching by quotedMsgId (e.g. evolutionMsgId), or by DB id if available
                         if (msg.messageType === 'reaction') {
                           const targetMsgId = msg.quotedMsgId
-                          const targetInList = targetMsgId ? messages.some(m => m.evolutionMsgId === targetMsgId) : false
+                          const targetInList = targetMsgId ? messages.some(m => m.evolutionMsgId === targetMsgId || m.id === targetMsgId) : false
                           if (targetInList) return null // Hide — will be rendered as badge on the target
                         }
 
@@ -6159,7 +6159,10 @@ function InboxTab() {
                                 )}
                                 {/* Reaction (standalone — shown only when target message not in view) */}
                                 {msg.messageType === 'reaction' && (
-                                  <div className="text-lg">{msg.messageContent?.replace('Reação: ', '') || '👍'}</div>
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="text-base">{msg.messageContent?.replace('Reação: ', '').replace('Reação removida', '') || '👍'}</span>
+                                    <span className="text-[10px] text-muted-foreground">reagiu</span>
+                                  </div>
                                 )}
                                 {/* Contact */}
                                 {msg.messageType === 'contact' && (
@@ -6198,7 +6201,12 @@ function InboxTab() {
                                   const c = msg.messageContent
                                   // Hide raw JSON from old messages (saved before parser fix)
                                   if (c.startsWith('{') || c.startsWith('[')) {
-                                    return <p className="text-sm italic text-muted-foreground">Mensagem de {msg.messageType}</p>
+                                    // Try to detect reaction JSON and show emoji
+                                    const reactionMatch = c.match(/"text"\s*:\s*"([^"]+)"/)
+                                    if (reactionMatch && msg.messageType === 'unknown') {
+                                      return <p className="text-sm italic text-muted-foreground">Reação: {reactionMatch[1]}</p>
+                                    }
+                                    return <p className="text-sm italic text-muted-foreground">Mensagem não suportada</p>
                                   }
                                   return <p className={`text-sm whitespace-pre-wrap break-words ${
                                     msg.messageType === 'template' ? 'italic text-muted-foreground' : ''
@@ -6209,9 +6217,9 @@ function InboxTab() {
                                   <span className={`text-[10px] ${isMe ? 'text-primary-foreground/70' : 'text-muted-foreground'}`}>
                                     {new Date(msg.createdAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
                                   </span>
-                                  {msg.messageType !== 'text' && msg.messageType !== 'image' && msg.messageType !== 'video' && msg.messageType !== 'audio' && msg.messageType !== 'document' && msg.messageType !== 'sticker' && msg.messageType !== 'deleted' && msg.messageType !== 'reaction' && (
+                                  {msg.messageType !== 'text' && msg.messageType !== 'image' && msg.messageType !== 'video' && msg.messageType !== 'audio' && msg.messageType !== 'document' && msg.messageType !== 'sticker' && msg.messageType !== 'deleted' && msg.messageType !== 'reaction' && msg.messageType !== 'unknown' && msg.messageType !== 'system' && msg.messageType !== 'contact' && msg.messageType !== 'location' && (
                                     <span className={`text-[9px] ${isMe ? 'text-primary-foreground/50' : 'text-muted-foreground/60'}`}>
-                                      {msg.messageType}
+                                      {msg.messageType === 'template' ? 'template' : msg.messageType === 'button_response' ? 'botão' : msg.messageType === 'list_response' ? 'lista' : msg.messageType === 'poll' ? 'enquete' : msg.messageType === 'group_invite' ? 'convite' : msg.messageType === 'product' ? 'produto' : msg.messageType === 'order' ? 'pedido' : msg.messageType === 'interactive' ? 'interativo' : msg.messageType}
                                     </span>
                                   )}
                                   {/* WhatsApp-style delivery receipt */}
