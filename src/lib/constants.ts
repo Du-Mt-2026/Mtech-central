@@ -73,11 +73,55 @@ export const nonlinearPausesConfigSchema = z.object({
   long: pauseTierSchema.default({ weight: 20, minMin: 20, maxMin: 35 }),
 }).refine(d => (d.short.weight + d.medium.weight + d.long.weight) > 0, { message: 'Pesos devem somar > 0' })
 
+export const typingSimulationConfigSchema = z.object({
+  speedMin: z.number().int().min(1).max(30).default(6),           // Min chars/sec typing speed
+  speedMax: z.number().int().max(30).default(14),                 // Max chars/sec typing speed
+  pauseChance: z.number().int().min(0).max(100).default(30),      // % chance of mid-typing pause
+  pauseMinMs: z.number().int().min(500).max(10000).default(1000), // Min mid-typing pause ms
+  pauseMaxMs: z.number().int().min(500).max(10000).default(4000), // Max mid-typing pause ms
+  longMsgThreshold: z.number().int().min(50).max(500).default(100), // Chars to consider "long message"
+  longMsgPauseChance: z.number().int().min(0).max(100).default(40), // % chance of pause for long msgs
+  segmentsMin: z.number().int().min(2).max(5).default(2),         // Min typing segments for long msgs
+  segmentsMax: z.number().int().min(2).max(6).default(3),         // Max typing segments for long msgs
+}).refine(d => d.speedMax >= d.speedMin, { message: 'Velocidade máxima deve ser >= mínima', path: ['speedMax'] })
+  .refine(d => d.pauseMaxMs >= d.pauseMinMs, { message: 'Pausa máxima deve ser >= mínima', path: ['pauseMaxMs'] })
+  .refine(d => d.segmentsMax >= d.segmentsMin, { message: 'Segmentos máximos deve ser >= mínimos', path: ['segmentsMax'] })
+
+export const presenceConfigSchema = z.object({
+  offlineDelayMinMs: z.number().int().min(1000).max(60000).default(3000),   // Min ms to stay online after send
+  offlineDelayMaxMs: z.number().int().min(1000).max(60000).default(15000),  // Max ms to stay online after send
+  idleReadingChance: z.number().int().min(0).max(100).default(25),           // % chance of idle reading
+  idleReadingDurationMinMs: z.number().int().min(1000).max(30000).default(2000), // Min ms reading
+  idleReadingDurationMaxMs: z.number().int().min(1000).max(30000).default(8000), // Max ms reading
+  idleReadingMinIntervalSec: z.number().int().min(30).max(300).default(60),  // Only idle read if interval >= this
+  preSendOnlineMs: z.number().int().min(500).max(10000).default(1000),       // Ms of "available" before composing
+  preComposePauseMinMs: z.number().int().min(500).max(10000).default(800),   // Min ms pause before composing
+  preComposePauseMaxMs: z.number().int().min(500).max(10000).default(3000),  // Max ms pause before composing
+  mediaRecordingMinMs: z.number().int().min(1000).max(10000).default(2000),  // Min ms "recording" for media
+  mediaRecordingMaxMs: z.number().int().min(1000).max(10000).default(4000),  // Max ms "recording" for media
+}).refine(d => d.offlineDelayMaxMs >= d.offlineDelayMinMs, { message: 'Delay offline máximo deve ser >= mínimo', path: ['offlineDelayMaxMs'] })
+  .refine(d => d.idleReadingDurationMaxMs >= d.idleReadingDurationMinMs, { message: 'Duração leitura máxima deve ser >= mínima', path: ['idleReadingDurationMaxMs'] })
+  .refine(d => d.preComposePauseMaxMs >= d.preComposePauseMinMs, { message: 'Pausa pré-compose máxima deve ser >= mínima', path: ['preComposePauseMaxMs'] })
+  .refine(d => d.mediaRecordingMaxMs >= d.mediaRecordingMinMs, { message: 'Gravação máxima deve ser >= mínima', path: ['mediaRecordingMaxMs'] })
+
+export const deliveryRateConfigSchema = z.object({
+  normalThreshold: z.number().int().min(10).max(100).default(60),   // Delivery rate >= 60% → normal
+  mediumThreshold: z.number().int().min(10).max(100).default(40),   // Delivery rate 40-59% → medium slow
+  mediumMultiplier: z.number().min(1).max(5).default(1.5),           // 1.5x slower
+  lowThreshold: z.number().int().min(5).max(100).default(20),       // Delivery rate 20-39% → slow
+  lowMultiplier: z.number().min(1).max(5).default(2.5),              // 2.5x slower
+  criticalMultiplier: z.number().min(1).max(10).default(4.0),        // Delivery rate < 20% → very slow
+  minSample: z.number().int().min(5).max(100).default(10),           // Min messages to calculate rate
+})
+
 export const humanBehaviorConfigSchema = z.object({
   cluster: clusterConfigSchema,
   cooldownPresence: cooldownPresenceConfigSchema,
   dayRhythm: dayRhythmConfigSchema,
   nonlinearPauses: nonlinearPausesConfigSchema,
+  typingSimulation: typingSimulationConfigSchema.optional(),
+  presence: presenceConfigSchema.optional(),
+  deliveryRate: deliveryRateConfigSchema.optional(),
 })
 
 export type ClusterConfig = z.infer<typeof clusterConfigSchema>
@@ -85,6 +129,9 @@ export type CooldownPresenceConfig = z.infer<typeof cooldownPresenceConfigSchema
 export type DayRhythmConfig = z.infer<typeof dayRhythmConfigSchema>
 export type PauseTier = z.infer<typeof pauseTierSchema>
 export type NonlinearPausesConfig = z.infer<typeof nonlinearPausesConfigSchema>
+export type TypingSimulationConfig = z.infer<typeof typingSimulationConfigSchema>
+export type PresenceConfig = z.infer<typeof presenceConfigSchema>
+export type DeliveryRateConfig = z.infer<typeof deliveryRateConfigSchema>
 export type HumanBehaviorConfig = z.infer<typeof humanBehaviorConfigSchema>
 
 // Default human behavior config (matches Prisma @default)
@@ -117,6 +164,39 @@ export const DEFAULT_HUMAN_BEHAVIOR: HumanBehaviorConfig = {
     short: { weight: 40, minMin: 2, maxMin: 5 },
     medium: { weight: 40, minMin: 8, maxMin: 15 },
     long: { weight: 20, minMin: 20, maxMin: 35 },
+  },
+  typingSimulation: {
+    speedMin: 6,
+    speedMax: 14,
+    pauseChance: 30,
+    pauseMinMs: 1000,
+    pauseMaxMs: 4000,
+    longMsgThreshold: 100,
+    longMsgPauseChance: 40,
+    segmentsMin: 2,
+    segmentsMax: 3,
+  },
+  presence: {
+    offlineDelayMinMs: 3000,
+    offlineDelayMaxMs: 15000,
+    idleReadingChance: 25,
+    idleReadingDurationMinMs: 2000,
+    idleReadingDurationMaxMs: 8000,
+    idleReadingMinIntervalSec: 60,
+    preSendOnlineMs: 1000,
+    preComposePauseMinMs: 800,
+    preComposePauseMaxMs: 3000,
+    mediaRecordingMinMs: 2000,
+    mediaRecordingMaxMs: 4000,
+  },
+  deliveryRate: {
+    normalThreshold: 60,
+    mediumThreshold: 40,
+    mediumMultiplier: 1.5,
+    lowThreshold: 20,
+    lowMultiplier: 2.5,
+    criticalMultiplier: 4.0,
+    minSample: 10,
   },
 }
 
@@ -248,19 +328,19 @@ export const PREWARM_SCHEDULE: ScheduleEntry[] = [
 // Used by: sending-engine.ts (DEFAULT_SETTINGS), antiban/route.ts (_resetToDefaults, _resetSection, _resetField)
 
 export const FIELD_DEFAULTS: Record<string, unknown> = {
-  typingMinDelay: 3000,
-  typingMaxDelay: 15000,
-  messageIntervalMin: 30,
-  messageIntervalMax: 90,
+  typingMinDelay: 5100,
+  typingMaxDelay: 24900,
+  messageIntervalMin: 59,
+  messageIntervalMax: 148,
   dailyLimitPerChip: 200,
   warmingEnabled: true,
-  cooldownMinutes: 30,
-  cooldownMinutesMax: 30,
-  cooldownAfterMessages: 50,
-  cooldownAfterMessagesMax: 50,
+  cooldownMinutes: 8,
+  cooldownMinutesMax: 13,
+  cooldownAfterMessages: 5,
+  cooldownAfterMessagesMax: 9,
   stopOnWarning: true,
-  sendingWindowStart: 480,
-  sendingWindowEnd: 1260,
+  sendingWindowStart: 540,
+  sendingWindowEnd: 1020,
   timezone: 'America/Sao_Paulo',
   breakWindows: '[]',
   nurserySchedule: JSON.stringify(NURSERY_SCHEDULE),

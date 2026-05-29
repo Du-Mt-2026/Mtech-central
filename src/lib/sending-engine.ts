@@ -70,18 +70,25 @@ interface AntiBanConfig {
 // Phase 3: Ready (Aquecido) — chip fully warmed, configurable daily limit
 
 // Typing speed: characters per second (human average is 5-15 for mobile)
+// FALLBACK CONSTANTS — only used when humanBehaviorConfig has no typingSimulation section.
+// The UI/DB is the source of truth. These exist as safety defaults.
 const TYPING_SPEED_MIN = 6    // chars/second (slow typer)
 const TYPING_SPEED_MAX = 14   // chars/second (fast typer)
 const TYPING_MIN_MS = 3000    // minimum typing time (3 seconds even for short messages)
 const TYPING_MAX_MS = 25000   // maximum typing time (25 seconds — avoids Vercel timeout)
 const TYPING_PAUSE_CHANCE = 0.3  // 30% chance of a mid-typing pause (simulates thinking)
+const TYPING_PAUSE_MIN_MS = 1000  // Min mid-typing pause
+const TYPING_PAUSE_MAX_MS = 4000  // Max mid-typing pause
+const TYPING_LONG_MSG_THRESHOLD = 100  // Chars to consider "long message"
+const TYPING_LONG_MSG_PAUSE_CHANCE = 0.4  // 40% chance for long msgs
+const TYPING_SEGMENTS_MIN = 2
+const TYPING_SEGMENTS_MAX = 3
 
 // ============================================================
 // PRESENCE HUMANIZATION CONSTANTS
 // ============================================================
-// Humans don't go offline instantly after sending a message.
-// They stay online for a while, maybe read other chats, then go offline.
-// These constants control the delayed-offline behavior.
+// FALLBACK CONSTANTS — only used when humanBehaviorConfig has no presence section.
+// The UI/DB is the source of truth. These exist as safety defaults.
 const OFFLINE_DELAY_MIN_MS = 3000    // Minimum time to stay "online" after sending (3s)
 const OFFLINE_DELAY_MAX_MS = 15000   // Maximum time to stay "online" after sending (15s)
 
@@ -96,20 +103,71 @@ const IDLE_READING_DURATION_MAX_MS = 8000   // Maximum "reading" time (8s)
 const IDLE_READING_INTERVAL_MIN_S = 60     // Only do idle reading if interval >= 60s
 const IDLE_READING_COOLDOWN_CHANCE = 0.4   // 40% chance of appearing online during cooldown
 
+// ============================================================
+// CONFIG ACCESS HELPERS — read from humanBehaviorConfig (UI/DB) with fallback to constants
+// ============================================================
+// These functions ensure the UI is ALWAYS the source of truth.
+// If the DB has a value, use it. If not, fall back to the hardcoded constants above.
+
+function getTypingConfig(settings: AntiBanConfig) {
+  const ts = settings.humanBehaviorConfig?.typingSimulation
+  return {
+    speedMin: ts?.speedMin ?? TYPING_SPEED_MIN,
+    speedMax: ts?.speedMax ?? TYPING_SPEED_MAX,
+    pauseChance: (ts?.pauseChance ?? TYPING_PAUSE_CHANCE * 100) / 100,
+    pauseMinMs: ts?.pauseMinMs ?? TYPING_PAUSE_MIN_MS,
+    pauseMaxMs: ts?.pauseMaxMs ?? TYPING_PAUSE_MAX_MS,
+    longMsgThreshold: ts?.longMsgThreshold ?? TYPING_LONG_MSG_THRESHOLD,
+    longMsgPauseChance: (ts?.longMsgPauseChance ?? TYPING_LONG_MSG_PAUSE_CHANCE * 100) / 100,
+    segmentsMin: ts?.segmentsMin ?? TYPING_SEGMENTS_MIN,
+    segmentsMax: ts?.segmentsMax ?? TYPING_SEGMENTS_MAX,
+  }
+}
+
+function getPresenceConfig(settings: AntiBanConfig) {
+  const p = settings.humanBehaviorConfig?.presence
+  return {
+    offlineDelayMinMs: p?.offlineDelayMinMs ?? OFFLINE_DELAY_MIN_MS,
+    offlineDelayMaxMs: p?.offlineDelayMaxMs ?? OFFLINE_DELAY_MAX_MS,
+    idleReadingChance: (p?.idleReadingChance ?? IDLE_READING_CHANCE * 100) / 100,
+    idleReadingDurationMinMs: p?.idleReadingDurationMinMs ?? IDLE_READING_DURATION_MIN_MS,
+    idleReadingDurationMaxMs: p?.idleReadingDurationMaxMs ?? IDLE_READING_DURATION_MAX_MS,
+    idleReadingMinIntervalSec: p?.idleReadingMinIntervalSec ?? IDLE_READING_INTERVAL_MIN_S,
+    preSendOnlineMs: p?.preSendOnlineMs ?? 1000,
+    preComposePauseMinMs: p?.preComposePauseMinMs ?? 800,
+    preComposePauseMaxMs: p?.preComposePauseMaxMs ?? 3000,
+    mediaRecordingMinMs: p?.mediaRecordingMinMs ?? 2000,
+    mediaRecordingMaxMs: p?.mediaRecordingMaxMs ?? 4000,
+  }
+}
+
+function getDeliveryRateConfig(settings: AntiBanConfig) {
+  const dr = settings.humanBehaviorConfig?.deliveryRate
+  return {
+    normalThreshold: dr?.normalThreshold ?? 60,
+    mediumThreshold: dr?.mediumThreshold ?? 40,
+    mediumMultiplier: dr?.mediumMultiplier ?? 1.5,
+    lowThreshold: dr?.lowThreshold ?? 20,
+    lowMultiplier: dr?.lowMultiplier ?? 2.5,
+    criticalMultiplier: dr?.criticalMultiplier ?? 4.0,
+    minSample: dr?.minSample ?? 10,
+  }
+}
+
 const DEFAULT_SETTINGS: AntiBanConfig = {
-  typingMinDelay: 3000,
-  typingMaxDelay: 15000,
-  messageIntervalMin: 30,
-  messageIntervalMax: 90,
+  typingMinDelay: 5100,
+  typingMaxDelay: 24900,
+  messageIntervalMin: 59,
+  messageIntervalMax: 148,
   dailyLimitPerChip: 200,
   warmingEnabled: true,
-  cooldownMinutes: 30,
-  cooldownMinutesMax: 30,
-  cooldownAfterMessages: 50,
-  cooldownAfterMessagesMax: 50,
+  cooldownMinutes: 8,
+  cooldownMinutesMax: 13,
+  cooldownAfterMessages: 5,
+  cooldownAfterMessagesMax: 9,
   stopOnWarning: true,
-  sendingWindowStart: 480,  // 8:00 in minutes-from-midnight
-  sendingWindowEnd: 1260,   // 21:00 in minutes-from-midnight
+  sendingWindowStart: 540,  // 9:00 in minutes-from-midnight
+  sendingWindowEnd: 1020,   // 17:00 in minutes-from-midnight
   timezone: 'America/Sao_Paulo',
   nurserySchedule: NURSERY_SCHEDULE,
   prewarmSchedule: PREWARM_SCHEDULE,
@@ -251,23 +309,24 @@ function gaussianDelaySeconds(min: number, max: number): number {
  * IMPORTANT: All bounds come from AntiBanSettings (UI-configurable).
  * If no settings are passed, falls back to hardcoded constants for safety.
  */
-function calculateTypingDuration(text: string, settings?: { typingMinDelay?: number; typingMaxDelay?: number }): number {
+function calculateTypingDuration(text: string, settings?: AntiBanConfig): number {
   const charCount = text.length
-  // Gaussian typing speed: most people type ~10 chars/s on mobile
-  // with standard deviation of 2.5 chars/s
-  const typingSpeed = gaussianRandomFloat(10, 2.5, TYPING_SPEED_MIN, TYPING_SPEED_MAX)
+  const tc = getTypingConfig(settings ?? DEFAULT_SETTINGS)
+  // Gaussian typing speed: most people type at average speed
+  // with standard deviation based on config
+  const meanSpeed = (tc.speedMin + tc.speedMax) / 2
+  const stddev = (tc.speedMax - tc.speedMin) / 4
+  const typingSpeed = gaussianRandomFloat(meanSpeed, stddev, tc.speedMin, tc.speedMax)
   let durationMs = (charCount / typingSpeed) * 1000
 
   // Clamp to DYNAMIC bounds from UI settings (not hardcoded constants)
-  // This is the core fix: the user sets typingMinDelay/typingMaxDelay in the UI,
-  // and the engine MUST respect those values.
   const minMs = settings?.typingMinDelay ?? TYPING_MIN_MS
   const maxMs = settings?.typingMaxDelay ?? TYPING_MAX_MS
   durationMs = Math.max(minMs, Math.min(maxMs, durationMs))
 
-  // 30% chance of a "thinking pause" (1-4 seconds)
-  if (Math.random() < TYPING_PAUSE_CHANCE) {
-    durationMs += randomInt(1000, 4000)
+  // Thinking pause (chance and duration from UI config)
+  if (Math.random() < tc.pauseChance) {
+    durationMs += randomInt(tc.pauseMinMs, tc.pauseMaxMs)
   }
 
   return Math.round(durationMs)
@@ -662,10 +721,11 @@ async function performIdleReadingPresence(
     durationMinMs = cp.durationMinSec * 1000
     durationMaxMs = cp.durationMaxSec * 1000
   } else {
-    // Default behavior — use hardcoded constants
-    chance = isCooldown ? IDLE_READING_COOLDOWN_CHANCE : IDLE_READING_CHANCE
-    durationMinMs = IDLE_READING_DURATION_MIN_MS
-    durationMaxMs = IDLE_READING_DURATION_MAX_MS
+    // Use presence config from UI (or fallback constants)
+    const pc = getPresenceConfig(settings ?? DEFAULT_SETTINGS)
+    chance = isCooldown ? IDLE_READING_COOLDOWN_CHANCE : pc.idleReadingChance
+    durationMinMs = pc.idleReadingDurationMinMs
+    durationMaxMs = pc.idleReadingDurationMaxMs
   }
 
   // Only do idle reading with configured probability
@@ -709,15 +769,16 @@ async function performIdleReadingPresence(
  */
 async function delayedOfflineWithJitter(
   instanceName: string,
-  jid: string
+  jid: string,
+  settings?: AntiBanConfig
 ): Promise<number> {
-  // Gaussian delay before going offline
-  // Mean ~8s, most between 3-15s, rare outside that range
+  // Gaussian delay before going offline — reads from UI config
+  const pc = getPresenceConfig(settings ?? DEFAULT_SETTINGS)
   const delayMs = gaussianRandom(
-    (OFFLINE_DELAY_MIN_MS + OFFLINE_DELAY_MAX_MS) / 2,
-    (OFFLINE_DELAY_MAX_MS - OFFLINE_DELAY_MIN_MS) / 6,
-    OFFLINE_DELAY_MIN_MS,
-    OFFLINE_DELAY_MAX_MS
+    (pc.offlineDelayMinMs + pc.offlineDelayMaxMs) / 2,
+    (pc.offlineDelayMaxMs - pc.offlineDelayMinMs) / 6,
+    pc.offlineDelayMinMs,
+    pc.offlineDelayMaxMs
   )
 
   // During the delay, the chip stays "available" (online) — simulates reading/chatting
@@ -2241,13 +2302,19 @@ export async function processNextMessage(campaignId: string): Promise<{
       // Set presence to "available" so WhatsApp shows the chip as online
       // before we start composing. This mimics real user behavior:
       // user opens chat → appears online → starts typing
+      const pc = getPresenceConfig(settings)
       try {
-        await routerSetPresence(instanceName, `${formattedPhone}@s.whatsapp.net`, 'available', 1000)
+        await routerSetPresence(instanceName, `${formattedPhone}@s.whatsapp.net`, 'available', pc.preSendOnlineMs)
       } catch {
         // Non-fatal — presence is best-effort
       }
-      // Brief pause to let "online" status register before composing starts
-      await new Promise(resolve => setTimeout(resolve, gaussianRandom(1500, 500, 800, 3000)))
+      // Brief pause to let "online" status register before composing starts (from UI config)
+      await new Promise(resolve => setTimeout(resolve, gaussianRandom(
+        (pc.preComposePauseMinMs + pc.preComposePauseMaxMs) / 2,
+        (pc.preComposePauseMaxMs - pc.preComposePauseMinMs) / 4,
+        pc.preComposePauseMinMs,
+        pc.preComposePauseMaxMs
+      )))
 
       // Determine presence type based on message content
       const hasMedia = !!(message.mediaUrl && message.mediatype)
@@ -2257,9 +2324,10 @@ export async function processNextMessage(campaignId: string): Promise<{
 
       if (isMediaType) {
         // Media messages: use "recording" presence (shows 📷/🎙️ indicator)
+        // Duration from UI config for non-audio media
         const mediaDurationMs = isAudio
           ? calculateTypingDuration(message.content, settings)
-          : randomInt(2000, 4000)
+          : randomInt(pc.mediaRecordingMinMs, pc.mediaRecordingMaxMs)
 
         console.debug(`[SendingEngine] Recording presence for ${mediaDurationMs}ms (${message.mediatype}) to ${formattedPhone}`)
 
@@ -2279,14 +2347,15 @@ export async function processNextMessage(campaignId: string): Promise<{
         const jid = `${formattedPhone}@s.whatsapp.net`
 
         // Decide if this message will have mid-composition pauses
-        // 40% chance for longer messages (>100 chars), 20% for shorter
-        const shouldPauseMidType = message.content.length > 100
-          ? Math.random() < 0.4
-          : Math.random() < 0.2
+        // Config from UI: longMsgThreshold, longMsgPauseChance, segments, pause durations
+        const tc = getTypingConfig(settings)
+        const shouldPauseMidType = message.content.length > tc.longMsgThreshold
+          ? Math.random() < tc.longMsgPauseChance
+          : Math.random() < tc.pauseChance * 0.67 // shorter msgs: 2/3 of normal pause chance
 
-        if (shouldPauseMidType && totalTypingMs > 6000) {
-          // Split typing into 2-3 segments with pauses between
-          const segments = Math.random() < 0.3 ? 3 : 2
+        if (shouldPauseMidType && totalTypingMs > settings.typingMinDelay) {
+          // Split typing into segments with pauses between (config from UI)
+          const segments = randomInt(tc.segmentsMin, tc.segmentsMax)
           const perSegment = Math.floor(totalTypingMs / segments)
 
           for (let seg = 0; seg < segments; seg++) {
@@ -2301,7 +2370,12 @@ export async function processNextMessage(campaignId: string): Promise<{
             // If not the last segment, pause (stop typing briefly)
             if (seg < segments - 1) {
               // "Unavailable" presence briefly — the "digitando..." stops
-              const pauseMs = gaussianRandom(2000, 800, 800, 5000)
+              const pauseMs = gaussianRandom(
+                (tc.pauseMinMs + tc.pauseMaxMs) / 2,
+                (tc.pauseMaxMs - tc.pauseMinMs) / 4,
+                tc.pauseMinMs,
+                tc.pauseMaxMs
+              )
               try {
                 await routerSetPresence(instanceName, `${formattedPhone}@s.whatsapp.net`, 'unavailable', pauseMs)
               } catch {
@@ -2410,7 +2484,7 @@ export async function processNextMessage(campaignId: string): Promise<{
     let offlineDelayMs = 0
     if (antiBanEnabled) {
       const jid = `${formattedPhone}@s.whatsapp.net`
-      offlineDelayMs = await delayedOfflineWithJitter(instanceName, jid)
+      offlineDelayMs = await delayedOfflineWithJitter(instanceName, jid, settings)
       console.debug(`[SendingEngine] Delayed offline: stayed online ${offlineDelayMs}ms after send — human-like`)
     }
 
@@ -2428,7 +2502,8 @@ export async function processNextMessage(campaignId: string): Promise<{
       const intervalMin = campaignIntervalMin ?? settings.messageIntervalMin
       const intervalMax = campaignIntervalMax ?? settings.messageIntervalMax
       const avgInterval = (intervalMin + intervalMax) / 2
-      if (avgInterval >= IDLE_READING_INTERVAL_MIN_S) {
+      const pc = getPresenceConfig(settings)
+      if (avgInterval >= pc.idleReadingMinIntervalSec) {
         readingTimeMs = await performIdleReadingPresence(instanceName, `${formattedPhone}@s.whatsapp.net`, false, settings)
         if (readingTimeMs > 0) {
           console.debug(`[SendingEngine] Idle reading presence: ${readingTimeMs}ms — simulates checking WhatsApp between sends`)
@@ -2586,15 +2661,10 @@ export async function processNextMessage(campaignId: string): Promise<{
     // This prevents Meta from flagging the chip as spam when recipients
     // aren't engaging (which signals "unwanted messages").
     //
-    // Logic:
-    //   deliveryRate >= 60% → normal speed (1.0x)
-    //   deliveryRate 40-59% → slow down 1.5x
-    //   deliveryRate 20-39% → slow down 2.5x
-    //   deliveryRate < 20%  → slow down 4.0x (critical — may be about to be banned)
-    //
-    // Delivery rate is calculated from the last 50 sent messages on this chip.
+    // All thresholds and multipliers come from UI/DB via deliveryRate config.
     if (antiBanEnabled) {
       try {
+        const drc = getDeliveryRateConfig(settings)
         const recentMessages = await db.message.findMany({
           where: {
             chipId: currentChip.id,
@@ -2602,21 +2672,22 @@ export async function processNextMessage(campaignId: string): Promise<{
             sentAt: { not: null },
           },
           orderBy: { sentAt: 'desc' },
-          take: 50,
+          take: drc.minSample * 5, // Fetch more for statistical relevance, calculate on minSample
           select: { status: true },
         })
 
-        if (recentMessages.length >= 10) {
-          const delivered = recentMessages.filter(m => m.status === 'delivered' || m.status === 'read').length
-          const deliveryRate = (delivered / recentMessages.length) * 100
+        if (recentMessages.length >= drc.minSample) {
+          const sample = recentMessages.slice(0, drc.minSample)
+          const delivered = sample.filter(m => m.status === 'delivered' || m.status === 'read').length
+          const deliveryRate = (delivered / sample.length) * 100
 
           let deliveryMultiplier = 1.0
-          if (deliveryRate < 20) {
-            deliveryMultiplier = 4.0
-          } else if (deliveryRate < 40) {
-            deliveryMultiplier = 2.5
-          } else if (deliveryRate < 60) {
-            deliveryMultiplier = 1.5
+          if (deliveryRate < drc.lowThreshold) {
+            deliveryMultiplier = drc.criticalMultiplier
+          } else if (deliveryRate < drc.mediumThreshold) {
+            deliveryMultiplier = drc.lowMultiplier
+          } else if (deliveryRate < drc.normalThreshold) {
+            deliveryMultiplier = drc.mediumMultiplier
           }
 
           if (deliveryMultiplier > 1.0) {
@@ -2913,8 +2984,10 @@ export async function performBreakWindowReadingPresence(): Promise<number> {
   const activeBreak = getActiveBreakWindow(settings)
   if (!activeBreak) return 0
 
-  // Only do reading presence ~40% of the time (not every cron tick)
-  if (Math.random() > IDLE_READING_COOLDOWN_CHANCE) return 0
+  // Only do reading presence — chance from UI config
+  const breakSettings = await getAntiBanSettings()
+  const breakPc = getPresenceConfig(breakSettings)
+  if (Math.random() > (breakPc.idleReadingChance)) return 0
 
   // Find all connected chips
   const connectedChips = await db.chip.findMany({
@@ -2929,16 +3002,16 @@ export async function performBreakWindowReadingPresence(): Promise<number> {
   for (const chip of connectedChips) {
     if (!chip.evolutionInstance) continue
 
-    // 30% chance per chip — not all chips go online at the same time
+    // Per-chip chance (30% — not all chips go online at the same time)
     if (Math.random() > 0.3) continue
 
     try {
-      // Gaussian reading duration: 2-8s, mean ~5s
+      // Gaussian reading duration from UI config
       const readingMs = gaussianRandom(
-        (IDLE_READING_DURATION_MIN_MS + IDLE_READING_DURATION_MAX_MS) / 2,
-        (IDLE_READING_DURATION_MAX_MS - IDLE_READING_DURATION_MIN_MS) / 6,
-        IDLE_READING_DURATION_MIN_MS,
-        IDLE_READING_DURATION_MAX_MS
+        (breakPc.idleReadingDurationMinMs + breakPc.idleReadingDurationMaxMs) / 2,
+        (breakPc.idleReadingDurationMaxMs - breakPc.idleReadingDurationMinMs) / 6,
+        breakPc.idleReadingDurationMinMs,
+        breakPc.idleReadingDurationMaxMs
       )
 
       // Use a generic JID — presence to a recent contact makes it more realistic

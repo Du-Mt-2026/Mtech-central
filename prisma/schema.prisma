@@ -71,16 +71,16 @@ model Chip {
 
 model AntiBanSettings {
   id                    String   @id @default(cuid())
-  typingMinDelay        Int      @default(3000)    // Changed: 3s minimum (was 500ms)
-  typingMaxDelay        Int      @default(15000)    // Changed: 15s maximum (was 2000ms)
-  messageIntervalMin    Int      @default(30)
-  messageIntervalMax    Int      @default(90)
+  typingMinDelay        Int      @default(5100)    // 5.1s minimum typing delay
+  typingMaxDelay        Int      @default(24900)   // 24.9s maximum typing delay
+  messageIntervalMin    Int      @default(59)      // 59s minimum interval (matches production config)
+  messageIntervalMax    Int      @default(148)     // 148s maximum interval (matches production config)
   dailyLimitPerChip     Int      @default(200)
   warmingEnabled        Boolean  @default(true)
-  cooldownMinutes       Int      @default(30)
-  cooldownMinutesMax    Int      @default(30)      // Cooldown variável: máximo de minutos de pausa (range min-max)
-  cooldownAfterMessages Int      @default(50)
-  cooldownAfterMessagesMax Int   @default(50)      // Cooldown após N mensagens: máximo (range min-max), ex: 5-10 msgs
+  cooldownMinutes       Int      @default(8)       // Cooldown variável: mínimo de minutos de pausa
+  cooldownMinutesMax    Int      @default(13)      // Cooldown variável: máximo de minutos de pausa (range min-max)
+  cooldownAfterMessages Int      @default(5)       // Cooldown após N mensagens: mínimo
+  cooldownAfterMessagesMax Int   @default(9)       // Cooldown após N mensagens: máximo (range min-max)
 
   // Break windows — pausas dentro da janela de envio (JSON array)
   // Format: [{"start":720,"end":810,"label":"Almoço"}, {"start":930,"end":960,"label":"Reunião"}]
@@ -91,8 +91,8 @@ model AntiBanSettings {
   updatedAt             DateTime @updatedAt
 
   // New fields for sending window
-  sendingWindowStart    Int      @default(480)     // Minutes from midnight (default 480 = 8:00)
-  sendingWindowEnd      Int      @default(1260)    // Minutes from midnight (default 1260 = 21:00)
+  sendingWindowStart    Int      @default(540)     // Minutes from midnight (default 540 = 9:00)
+  sendingWindowEnd      Int      @default(1020)    // Minutes from midnight (default 1020 = 17:00)
   timezone              String   @default("America/Sao_Paulo")
 
   // Editable warming schedules (JSON strings)
@@ -105,7 +105,7 @@ model AntiBanSettings {
   // Human behavior simulation — makes bot patterns undetectable
   // JSON config with cluster sending, cooldown presence, day rhythm, nonlinear pauses
   humanBehaviorEnabled  Boolean  @default(true)    // Master toggle for human behavior features
-  humanBehaviorConfig   String   @default("{\"cluster\":{\"enabled\":true,\"minSize\":2,\"maxSize\":4,\"microPauseMinSec\":3,\"microPauseMaxSec\":8,\"afterClusterPauseMinSec\":30,\"afterClusterPauseMaxSec\":90},\"cooldownPresence\":{\"enabled\":true,\"chancePercent\":40,\"durationMinSec\":5,\"durationMaxSec\":25,\"intervalMinMin\":2,\"intervalMaxMin\":5},\"dayRhythm\":{\"enabled\":true,\"morningFactor\":130,\"middayFactor\":80,\"afternoonFactor\":100},\"nonlinearPauses\":{\"enabled\":true,\"short\":{\"weight\":40,\"minMin\":2,\"maxMin\":5},\"medium\":{\"weight\":40,\"minMin\":8,\"maxMin\":15},\"long\":{\"weight\":20,\"minMin\":20,\"maxMin\":35}}}")
+  humanBehaviorConfig   String   @default("{\"cluster\":{\"enabled\":true,\"minSize\":2,\"maxSize\":4,\"microPauseMinSec\":3,\"microPauseMaxSec\":8,\"afterClusterPauseMinSec\":30,\"afterClusterPauseMaxSec\":90},\"cooldownPresence\":{\"enabled\":true,\"chancePercent\":40,\"durationMinSec\":5,\"durationMaxSec\":25,\"intervalMinMin\":2,\"intervalMaxMin\":5},\"dayRhythm\":{\"enabled\":true,\"morningFactor\":130,\"middayFactor\":80,\"afternoonFactor\":100},\"nonlinearPauses\":{\"enabled\":true,\"short\":{\"weight\":40,\"minMin\":2,\"maxMin\":5},\"medium\":{\"weight\":40,\"minMin\":8,\"maxMin\":15},\"long\":{\"weight\":20,\"minMin\":20,\"maxMin\":35}},\"typingSimulation\":{\"speedMin\":6,\"speedMax\":14,\"pauseChance\":30,\"pauseMinMs\":1000,\"pauseMaxMs\":4000,\"longMsgThreshold\":100,\"longMsgPauseChance\":40,\"segmentsMin\":2,\"segmentsMax\":3},\"presence\":{\"offlineDelayMinMs\":3000,\"offlineDelayMaxMs\":15000,\"idleReadingChance\":25,\"idleReadingDurationMinMs\":2000,\"idleReadingDurationMaxMs\":8000,\"idleReadingMinIntervalSec\":60,\"preSendOnlineMs\":1000,\"preComposePauseMinMs\":800,\"preComposePauseMaxMs\":3000,\"mediaRecordingMinMs\":2000,\"mediaRecordingMaxMs\":4000},\"deliveryRate\":{\"normalThreshold\":60,\"mediumThreshold\":40,\"mediumMultiplier\":1.5,\"lowThreshold\":20,\"lowMultiplier\":2.5,\"criticalMultiplier\":4.0,\"minSample\":10}}")
 }
 
 model MessageTemplate {
