@@ -5655,19 +5655,19 @@ function InboxTab() {
   }
 
   return (
-    <div className="flex h-full gap-0 overflow-hidden rounded-xl border bg-card shadow-lg">
+    <div className="flex h-full gap-0 overflow-hidden bg-[#111b21]">
       <ResizablePanelGroup direction="horizontal" className="flex h-full">
         {/* Panel 1: Chip List */}
         <ResizablePanel defaultSize={18} minSize={12} maxSize={30}>
-          <div className="h-full flex flex-col bg-background">
-            <div className="p-3 border-b">
+          <div className="h-full flex flex-col bg-[#111b21]">
+            <div className="p-3 bg-[#202c33]">
               <div className="flex items-center justify-between mb-2">
-                <h3 className="font-semibold text-sm">Chips</h3>
+                <h3 className="font-semibold text-sm text-[#e9edef]">Chips</h3>
                 <div className="flex items-center gap-1">
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="h-7 px-2 text-[10px] text-orange-600 hover:text-orange-700 hover:bg-orange-50"
+                    className="h-7 px-2 text-[10px] text-[#8696a0] hover:text-[#00a884] hover:bg-[#2a3942]"
                     onClick={async () => {
                       try {
                         toast.loading('Limpando mensagens de aquecimento...')
@@ -5695,16 +5695,16 @@ function InboxTab() {
                     <Eraser className="size-3 mr-1" />
                     Limpar
                   </Button>
-                  <Button variant="ghost" size="icon" className="size-7" onClick={() => fetchChips()}>
+                  <Button variant="ghost" size="icon" className="size-7 text-[#8696a0] hover:text-[#e9edef] hover:bg-[#2a3942]" onClick={() => fetchChips()}>
                     <RefreshCw className="size-3.5" />
                   </Button>
                 </div>
               </div>
               <div className="relative">
-                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-[#8696a0]" />
                 <Input
                   placeholder="Buscar chip..."
-                  className="pl-8 h-8 text-xs"
+                  className="pl-8 h-8 text-xs bg-[#2a3942] text-[#e9edef] placeholder-[#8696a0] border-none rounded-lg"
                   value={searchChips}
                   onChange={e => setSearchChips(e.target.value)}
                 />
@@ -5712,11 +5712,11 @@ function InboxTab() {
             </div>
             <ScrollArea className="flex-1 min-h-0">
               {loadingChips ? (
-                <div className="flex items-center justify-center py-10"><RefreshCw className="size-5 animate-spin text-muted-foreground" /></div>
+                <div className="flex items-center justify-center py-10"><RefreshCw className="size-5 animate-spin text-[#8696a0]" /></div>
               ) : chips.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-10 px-4">
-                  <Smartphone className="size-8 text-muted-foreground mb-2" />
-                  <p className="text-xs text-muted-foreground text-center">Nenhum chip encontrado</p>
+                  <Smartphone className="size-8 text-[#8696a0] mb-2" />
+                  <p className="text-xs text-[#8696a0] text-center">Nenhum chip encontrado</p>
                 </div>
               ) : (
                 <div className="py-1">
@@ -5724,8 +5724,8 @@ function InboxTab() {
                     <button
                       key={chip.id}
                       onClick={() => { setSelectedChipId(chip.id); setSelectedConversation(null); setMessages([]) }}
-                      className={`w-full flex items-center gap-2.5 px-3 py-2.5 hover:bg-muted/50 transition-colors text-left ${
-                        selectedChipId === chip.id ? 'bg-muted/80 border-r-2 border-primary' : ''
+                      className={`w-full flex items-center gap-2.5 px-3 py-2.5 hover:bg-[#202c33] transition-colors text-left ${
+                        selectedChipId === chip.id ? 'bg-[#2a3942]' : ''
                       }`}
                     >
                       <div className="relative shrink-0">
@@ -5737,21 +5737,23 @@ function InboxTab() {
                             onError={e => { (e.target as HTMLImageElement).style.display = 'none'; (e.target as HTMLImageElement).nextElementSibling?.classList.remove('hidden') }}
                           />
                         ) : null}
-                        <div className={`size-9 rounded-full bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center text-primary font-bold text-sm ${chip.profilePicUrl ? 'hidden' : ''}`}>
+                        <div className={`size-9 rounded-full flex items-center justify-center font-bold text-sm ${chip.profilePicUrl ? 'hidden' : ''} ${
+                          ['bg-[#005c4b]', 'bg-[#6b21a8]', 'bg-[#b45309]', 'bg-[#1d4ed8]', 'bg-[#be123c]', 'bg-[#0e7490]', 'bg-[#4d7c0f]', 'bg-[#a16207]'][chip.name.charCodeAt(0) % 8]
+                        } text-white`}>
                           {chip.name.charAt(0).toUpperCase()}
                         </div>
-                        <div className={`absolute -bottom-0.5 -right-0.5 size-3 rounded-full border-2 border-background ${statusColor(chip.status)}`} />
+                        <div className={`absolute -bottom-0.5 -right-0.5 size-3 rounded-full border-2 border-[#111b21] ${statusColor(chip.status)}`} />
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between">
-                          <p className="text-sm font-medium truncate">{chip.name}</p>
+                          <p className="text-sm font-medium truncate text-[#e9edef]">{chip.name}</p>
                           {chip.unreadCount > 0 && (
-                            <Badge className="size-5 p-0 flex items-center justify-center text-[10px] bg-primary text-primary-foreground rounded-full ml-1">
+                            <Badge className="size-5 p-0 flex items-center justify-center text-[10px] bg-[#00a884] text-[#111b21] rounded-full ml-1">
                               {chip.unreadCount > 99 ? '99+' : chip.unreadCount}
                             </Badge>
                           )}
                         </div>
-                        <p className="text-xs text-muted-foreground truncate">{chip.phoneNumber}</p>
+                        <p className="text-xs text-[#8696a0] truncate">{chip.phoneNumber}</p>
                       </div>
                     </button>
                   ))}
@@ -5761,28 +5763,28 @@ function InboxTab() {
           </div>
         </ResizablePanel>
 
-        <ResizableHandle withHandle />
+        <ResizableHandle withHandle className="bg-[#2a3942]" />
 
         {/* Panel 2: Conversations List */}
         <ResizablePanel defaultSize={25} minSize={18} maxSize={40}>
-          <div className="h-full flex flex-col bg-background">
-            <div className="p-3 border-b">
+          <div className="h-full flex flex-col bg-[#111b21]">
+            <div className="p-3 bg-[#202c33]">
               <div className="flex items-center justify-between mb-2">
-                <h3 className="font-semibold text-sm">
+                <h3 className="font-semibold text-sm text-[#e9edef]">
                   {selectedChipId ? chips.find(c => c.id === selectedChipId)?.name || 'Conversas' : 'Selecione um Chip'}
                 </h3>
                 {selectedChipId && (
-                  <Badge variant="outline" className="text-[10px]">
+                  <Badge variant="outline" className="text-[10px] border-[#2a3942] text-[#8696a0]">
                     {conversations.length} conversa{conversations.length !== 1 ? 's' : ''}
                   </Badge>
                 )}
               </div>
               {selectedChipId && (
                 <div className="relative">
-                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-[#8696a0]" />
                   <Input
                     placeholder="Buscar contato..."
-                    className="pl-8 h-8 text-xs"
+                    className="pl-8 h-8 text-xs bg-[#2a3942] text-[#e9edef] placeholder-[#8696a0] border-none rounded-lg"
                     value={searchConversations}
                     onChange={e => setSearchConversations(e.target.value)}
                   />
@@ -5792,16 +5794,16 @@ function InboxTab() {
             <ScrollArea className="flex-1 min-h-0">
               {!selectedChipId ? (
                 <div className="flex flex-col items-center justify-center py-16 px-4">
-                  <MessageCircle className="size-10 text-muted-foreground mb-3" />
-                  <p className="text-sm text-muted-foreground text-center">Selecione um chip para ver as conversas</p>
+                  <MessageCircle className="size-10 text-[#8696a0] mb-3" />
+                  <p className="text-sm text-[#8696a0] text-center">Selecione um chip para ver as conversas</p>
                 </div>
               ) : loadingConversations ? (
-                <div className="flex items-center justify-center py-10"><RefreshCw className="size-5 animate-spin text-muted-foreground" /></div>
+                <div className="flex items-center justify-center py-10"><RefreshCw className="size-5 animate-spin text-[#8696a0]" /></div>
               ) : conversations.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-16 px-4">
-                  <Inbox className="size-10 text-muted-foreground mb-3" />
-                  <p className="text-sm text-muted-foreground text-center">Nenhuma conversa encontrada</p>
-                  <p className="text-xs text-muted-foreground text-center mt-1">As mensagens trocadas aparecerão aqui</p>
+                  <Inbox className="size-10 text-[#8696a0] mb-3" />
+                  <p className="text-sm text-[#8696a0] text-center">Nenhuma conversa encontrada</p>
+                  <p className="text-xs text-[#8696a0] text-center mt-1">As mensagens trocadas aparecerão aqui</p>
                 </div>
               ) : (
                 <div className="py-1">
@@ -5809,17 +5811,17 @@ function InboxTab() {
                     <button
                       key={`${conv.chipId}-${conv.remoteJid}`}
                       onClick={() => setSelectedConversation(conv)}
-                      className={`w-full flex items-start gap-2.5 px-3 py-3 hover:bg-muted/50 transition-colors text-left ${
+                      className={`w-full flex items-start gap-2.5 px-3 py-3 hover:bg-[#202c33] transition-colors text-left ${
                         selectedConversation?.remoteJid === conv.remoteJid && selectedConversation?.chipId === conv.chipId
-                          ? 'bg-muted/80 border-r-2 border-primary'
+                          ? 'bg-[#2a3942]'
                           : ''
-                      } ${conv.unreadCount > 0 ? 'bg-primary/5' : ''}`}
+                      } ${conv.unreadCount > 0 ? 'bg-[#111b21]' : ''}`}
                     >
                       {(() => {
                         const picKey = `${conv.chipId}-${conv.remotePhone}`
                         const picUrl = profilePics[picKey] || conv.profilePicUrl
                         return conv.isGroup ? (
-                          <div className="size-10 rounded-full flex items-center justify-center bg-gradient-to-br from-emerald-100 to-emerald-50 dark:from-emerald-900/30 dark:to-emerald-800/20 text-emerald-600 dark:text-emerald-400 font-bold text-sm shrink-0">
+                          <div className="size-10 rounded-full flex items-center justify-center bg-[#005c4b] text-[#25d366] font-bold text-sm shrink-0">
                             <Users className="size-4" />
                           </div>
                         ) : picUrl ? (
@@ -5836,7 +5838,9 @@ function InboxTab() {
                         const picUrl = profilePics[picKey] || conv.profilePicUrl
                         if (conv.isGroup) return null
                         return (
-                          <div className={`size-10 rounded-full flex items-center justify-center font-bold text-sm shrink-0 bg-gradient-to-br from-blue-100 to-blue-50 dark:from-blue-900/30 dark:to-blue-800/20 text-blue-600 dark:text-blue-400 ${picUrl ? 'hidden' : ''}`}>
+                          <div className={`size-10 rounded-full flex items-center justify-center font-bold text-sm shrink-0 ${
+                            ['bg-[#005c4b]', 'bg-[#6b21a8]', 'bg-[#b45309]', 'bg-[#1d4ed8]', 'bg-[#be123c]', 'bg-[#0e7490]', 'bg-[#4d7c0f]', 'bg-[#a16207]'][conv.contactName.charCodeAt(0) % 8]
+                          } text-white ${picUrl ? 'hidden' : ''}`}>
                             {conv.contactName.charAt(0).toUpperCase()}
                           </div>
                         )
@@ -5844,48 +5848,48 @@ function InboxTab() {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between gap-2">
                           <div className="flex items-center gap-1.5 min-w-0">
-                            <p className={`text-sm truncate ${conv.unreadCount > 0 ? 'font-bold' : 'font-medium'}`}>
+                            <p className={`text-sm truncate text-[#e9edef] ${conv.unreadCount > 0 ? 'font-bold' : 'font-medium'}`}>
                               {conv.contactName}
                             </p>
                             {conv.isGroup && (
-                              <Badge variant="secondary" className="text-[9px] px-1 py-0 shrink-0">
+                              <Badge variant="secondary" className="text-[9px] px-1 py-0 shrink-0 bg-[#2a3942] text-[#8696a0]">
                                 <Users className="size-2.5 mr-0.5" />
                                 {conv.participantCount || conv.totalMessages}
                               </Badge>
                             )}
                           </div>
-                          <span className="text-[10px] text-muted-foreground shrink-0">
+                          <span className="text-[10px] text-[#8696a0] shrink-0">
                             {formatTime(conv.lastMessageAt)}
                           </span>
                         </div>
                         <div className="flex items-center gap-1 mt-0.5">
                           {conv.lastMessage.isCampaign && (
-                            <Megaphone className="size-3 text-emerald-500 shrink-0" />
+                            <Megaphone className="size-3 text-[#00a884] shrink-0" />
                           )}
                           {conv.lastMessage.fromMe && !conv.lastMessage.isCampaign && (() => {
                             const ack = conv.lastMessage.ack ?? 0
                             const status = conv.lastMessage.status
                             if (status === 'read' || ack >= 4) return (
                               <span className="relative inline-block shrink-0">
-                                <Check className="size-3 text-blue-500 absolute left-[2px]" />
-                                <Check className="size-3 text-blue-500" />
+                                <Check className="size-3 text-[#53bdeb] absolute left-[2px]" />
+                                <Check className="size-3 text-[#53bdeb]" />
                               </span>
                             )
                             if (status === 'delivered' || ack === 3) return (
                               <span className="relative inline-block shrink-0">
-                                <Check className="size-3 text-muted-foreground/70 absolute left-[2px]" />
-                                <Check className="size-3 text-muted-foreground/70" />
+                                <Check className="size-3 text-[#8696a0] absolute left-[2px]" />
+                                <Check className="size-3 text-[#8696a0]" />
                               </span>
                             )
                             if (status === 'sent' || ack === 1 || ack === 2) return (
-                              <Check className="size-3 text-muted-foreground/70 shrink-0" />
+                              <Check className="size-3 text-[#8696a0] shrink-0" />
                             )
-                            return <Clock className="size-3 text-muted-foreground/50 shrink-0" />
+                            return <Clock className="size-3 text-[#8696a0] shrink-0" />
                           })()}
                           {conv.lastMessage.type !== 'text' && (
                             <MsgTypeIcon type={conv.lastMessage.type} />
                           )}
-                          <p className={`text-xs truncate ${conv.unreadCount > 0 ? 'text-foreground font-medium' : 'text-muted-foreground'}`}>
+                          <p className={`text-xs truncate ${conv.unreadCount > 0 ? 'text-[#e9edef] font-medium' : 'text-[#8696a0]'}`}>
                             {(() => {
                               // For groups: show sender name prefix
                               if (conv.isGroup && conv.lastMessage.senderName && conv.lastMessage.senderName !== 'unknown') {
@@ -5901,7 +5905,7 @@ function InboxTab() {
                           </p>
                         </div>
                         {conv.unreadCount > 0 && (
-                          <Badge className="mt-1 size-5 p-0 flex items-center justify-center text-[10px] bg-primary text-primary-foreground rounded-full">
+                          <Badge className="mt-1 size-5 p-0 flex items-center justify-center text-[10px] bg-[#00a884] text-[#111b21] rounded-full">
                             {conv.unreadCount}
                           </Badge>
                         )}
@@ -5914,26 +5918,26 @@ function InboxTab() {
           </div>
         </ResizablePanel>
 
-        <ResizableHandle withHandle />
+        <ResizableHandle withHandle className="bg-[#2a3942]" />
 
         {/* Panel 3: Chat View */}
         <ResizablePanel defaultSize={57} minSize={30}>
-          <div className="h-full flex flex-col bg-muted/20">
+          <div className="h-full flex flex-col bg-[#0b141a]">
             {!selectedConversation ? (
-              <div className="flex-1 flex flex-col items-center justify-center">
-                <MessageCircle className="size-16 text-muted-foreground/30 mb-4" />
-                <p className="text-lg font-medium text-muted-foreground">Selecione uma conversa</p>
-                <p className="text-sm text-muted-foreground mt-1">Escolha um chip e depois uma conversa para ver as mensagens</p>
+              <div className="flex-1 flex flex-col items-center justify-center border-b-4 border-[#00a884]">
+                <MessageCircle className="size-16 text-[#2a3942] mb-4" />
+                <p className="text-lg font-light text-[#8696a0]">Selecione uma conversa</p>
+                <p className="text-sm text-[#8696a0]/60 mt-1">Escolha um chip e depois uma conversa para ver as mensagens</p>
               </div>
             ) : (
               <>
                 {/* Chat Header */}
-                <div className="px-4 py-3 border-b bg-background flex items-center gap-3">
+                <div className="px-4 py-3 bg-[#202c33] flex items-center gap-3">
                   {(() => {
                     const picKey = `${selectedConversation.chipId}-${selectedConversation.remotePhone}`
                     const picUrl = profilePics[picKey] || selectedConversation.profilePicUrl
                     return selectedConversation.isGroup ? (
-                      <div className="size-10 rounded-full flex items-center justify-center bg-gradient-to-br from-emerald-100 to-emerald-50 dark:from-emerald-900/30 dark:to-emerald-800/20 text-emerald-600 dark:text-emerald-400 font-bold text-sm">
+                      <div className="size-10 rounded-full flex items-center justify-center bg-[#005c4b] text-[#25d366] font-bold text-sm">
                         <Users className="size-5" />
                       </div>
                     ) : picUrl ? (
@@ -5950,22 +5954,24 @@ function InboxTab() {
                     const picUrl = profilePics[picKey] || selectedConversation.profilePicUrl
                     if (selectedConversation.isGroup) return null
                     return (
-                      <div className={`size-10 rounded-full flex items-center justify-center font-bold text-sm bg-gradient-to-br from-blue-100 to-blue-50 dark:from-blue-900/30 dark:to-blue-800/20 text-blue-600 dark:text-blue-400 ${picUrl ? 'hidden' : ''}`}>
+                      <div className={`size-10 rounded-full flex items-center justify-center font-bold text-sm ${
+                        ['bg-[#005c4b]', 'bg-[#6b21a8]', 'bg-[#b45309]', 'bg-[#1d4ed8]', 'bg-[#be123c]', 'bg-[#0e7490]', 'bg-[#4d7c0f]', 'bg-[#a16207]'][selectedConversation.contactName.charCodeAt(0) % 8]
+                      } text-white ${picUrl ? 'hidden' : ''}`}>
                         {selectedConversation.contactName.charAt(0).toUpperCase()}
                       </div>
                     )
                   })()}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5">
-                      <p className="font-semibold text-sm truncate">{selectedConversation.contactName}</p>
+                      <p className="font-semibold text-sm truncate text-[#e9edef]">{selectedConversation.contactName}</p>
                       {selectedConversation.isGroup && (
-                        <Badge variant="secondary" className="text-[9px] px-1.5 py-0 shrink-0">
+                        <Badge variant="secondary" className="text-[9px] px-1.5 py-0 shrink-0 bg-[#2a3942] text-[#8696a0]">
                           <Users className="size-2.5 mr-0.5" />Grupo
                         </Badge>
                       )}
                       {/* Conversation status selector */}
                       <Select value={convStatus} onValueChange={updateConvStatus}>
-                        <SelectTrigger className="h-6 w-auto border-0 p-0 gap-0.5 text-[10px] focus:ring-0 focus:ring-offset-0">
+                        <SelectTrigger className="h-6 w-auto border-0 p-0 gap-0.5 text-[10px] focus:ring-0 focus:ring-offset-0 text-[#8696a0]">
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
@@ -5984,7 +5990,7 @@ function InboxTab() {
                         </SelectContent>
                       </Select>
                     </div>
-                    <p className="text-xs text-muted-foreground">
+                    <p className="text-xs text-[#8696a0]">
                       {selectedConversation.isGroup
                         ? `${selectedConversation.participantCount || '?'} participantes`
                         : selectedConversation.remotePhone
@@ -5993,13 +5999,13 @@ function InboxTab() {
                     </p>
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <Badge variant="outline" className="text-[10px]">
+                    <Badge variant="outline" className="text-[10px] border-[#2a3942] text-[#8696a0]">
                       {selectedConversation.totalMessages} msg
                     </Badge>
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="size-8"
+                      className="size-8 text-[#8696a0] hover:text-[#e9edef] hover:bg-[#2a3942]"
                       onClick={() => fetchMessages(selectedConversation)}
                     >
                       <RefreshCw className="size-3.5" />
@@ -6011,11 +6017,11 @@ function InboxTab() {
                 <div ref={chatScrollRef} className="flex-1 min-h-0 overflow-hidden">
                 <ScrollArea className="h-full px-4 py-3">
                   {loadingMessages ? (
-                    <div className="flex items-center justify-center py-10"><RefreshCw className="size-5 animate-spin text-muted-foreground" /></div>
+                    <div className="flex items-center justify-center py-10"><RefreshCw className="size-5 animate-spin text-[#8696a0]" /></div>
                   ) : messages.length === 0 ? (
                     <div className="flex flex-col items-center justify-center py-16">
-                      <MessageSquare className="size-10 text-muted-foreground mb-3" />
-                      <p className="text-sm text-muted-foreground">Nenhuma mensagem nesta conversa</p>
+                      <MessageSquare className="size-10 text-[#8696a0] mb-3" />
+                      <p className="text-sm text-[#8696a0]">Nenhuma mensagem nesta conversa</p>
                     </div>
                   ) : (
                     <div className="space-y-2 max-w-2xl mx-auto">
@@ -6025,7 +6031,7 @@ function InboxTab() {
                           <Button
                             variant="ghost"
                             size="sm"
-                            className="text-xs text-muted-foreground"
+                            className="text-xs text-[#8696a0]"
                             onClick={loadMoreMessages}
                             disabled={loadingMore}
                           >
@@ -6079,7 +6085,7 @@ function InboxTab() {
                           <React.Fragment key={msg.id}>
                             {showDate && (
                               <div className="flex items-center justify-center py-2">
-                                <Badge variant="secondary" className="text-[10px] font-normal">
+                                <Badge variant="secondary" className="text-[10px] font-normal bg-[#182229] text-[#8696a0] rounded-lg px-3 py-1">
                                   {new Date(msg.createdAt).toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' })}
                                 </Badge>
                               </div>
@@ -6087,21 +6093,21 @@ function InboxTab() {
                             {/* Group sender name */}
                             {isGroupMsg && senderDisplayName && senderDisplayName !== 'unknown' && (
                               <p className={`text-[10px] font-medium ${
-                                senderDisplayName.length > 15 ? 'text-gray-500' :
-                                ['a','e','i','o','u'].some(v => senderDisplayName[0]?.toLowerCase() === v) ? 'text-purple-600' :
-                                'text-blue-600'
+                                senderDisplayName.length > 15 ? 'text-[#8696a0]' :
+                                ['a','e','i','o','u'].some(v => senderDisplayName[0]?.toLowerCase() === v) ? 'text-[#ce93d8]' :
+                                'text-[#53bdeb]'
                               } ml-2 mb-0.5`}>
                                 {senderDisplayName}
                               </p>
                             )}
                             <div className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
                               <div
-                                className={`max-w-[75%] rounded-2xl px-3.5 py-2 ${
+                                className={`max-w-[75%] rounded-lg px-3 py-2 shadow-sm ${
                                   isMe
                                     ? msg.isCampaign
-                                      ? 'bg-emerald-700/80 text-white rounded-br-md border border-emerald-600/50'
-                                      : 'bg-primary text-primary-foreground rounded-br-md'
-                                    : 'bg-background border rounded-bl-md'
+                                      ? 'bg-[#004d40] text-[#e9edef] rounded-br-sm border-l-4 border-[#00a884]'
+                                      : 'bg-[#005c4b] text-[#e9edef] rounded-br-sm'
+                                    : 'bg-[#202c33] text-[#e9edef] rounded-bl-sm'
                                 }`}
                                 onDoubleClick={() => setReplyingTo(msg)}
                                 title="Clique duplo para responder"
@@ -6115,11 +6121,11 @@ function InboxTab() {
                                 )}
                                 {/* Quoted reply preview */}
                                 {msg.quotedMsgId && (
-                                  <div className="bg-black/5 rounded-lg p-2 mb-1.5 border-l-2 border-primary/50 text-xs">
+                                  <div className="bg-black/10 rounded-lg p-2 mb-1.5 border-l-4 border-[#00a884] text-xs">
                                     {msg.quotedPushName && (
-                                      <p className="font-medium text-primary/80 truncate">{msg.quotedPushName}</p>
+                                      <p className="font-medium text-[#00a884] truncate">{msg.quotedPushName}</p>
                                     )}
-                                    <p className="text-muted-foreground truncate">
+                                    <p className="text-[#8696a0] truncate">
                                       {msg.quotedType === 'image' ? (
                                         <span className="inline-flex items-center gap-1"><ImageIcon className="size-3" />Foto</span>
                                       ) : msg.quotedContent ? (
@@ -6173,7 +6179,7 @@ function InboxTab() {
                                       Seu navegador não suporta áudio.
                                     </audio>
                                     {msg.mediaDuration != null && msg.mediaDuration > 0 && (
-                                      <span className="text-[10px] text-muted-foreground ml-1">
+                                      <span className="text-[10px] text-[#8696a0] ml-1">
                                         {Math.floor(msg.mediaDuration / 60)}:{String(msg.mediaDuration % 60).padStart(2, '0')}
                                       </span>
                                     )}
@@ -6185,7 +6191,7 @@ function InboxTab() {
                                     <FileIcon className="size-4" />
                                     <div className="min-w-0 flex-1">
                                       <span className="text-xs block truncate">{msg.fileName || 'Documento'}</span>
-                                      {msg.mimeType && <span className="text-[9px] text-muted-foreground">{msg.mimeType}</span>}
+                                      {msg.mimeType && <span className="text-[9px] text-[#8696a0]">{msg.mimeType}</span>}
                                     </div>
                                   </div>
                                 )}
@@ -6200,7 +6206,7 @@ function InboxTab() {
                                 {msg.messageType === 'reaction' && (
                                   <div className="flex items-center gap-1.5">
                                     <span className="text-base">{msg.messageContent?.replace('Reação: ', '').replace('Reação removida', '') || '👍'}</span>
-                                    <span className="text-[10px] text-muted-foreground">reagiu</span>
+                                    <span className="text-[10px] text-[#8696a0]">reagiu</span>
                                   </div>
                                 )}
                                 {/* Contact */}
@@ -6233,7 +6239,7 @@ function InboxTab() {
                                 )}
                                 {/* Deleted message */}
                                 {msg.messageType === 'deleted' && (
-                                  <p className="text-sm italic text-muted-foreground">Mensagem apagada</p>
+                                  <p className="text-sm italic text-[#8696a0]">Mensagem apagada</p>
                                 )}
                                 {/* Text content — show for all types that have it (except deleted/reaction) */}
                                 {msg.messageContent && msg.messageType !== 'deleted' && msg.messageType !== 'reaction' && (() => {
@@ -6243,39 +6249,39 @@ function InboxTab() {
                                     // Try to detect reaction JSON and show emoji
                                     const reactionMatch = c.match(/"text"\s*:\s*"([^"]+)"/)
                                     if (reactionMatch && msg.messageType === 'unknown') {
-                                      return <p className="text-sm italic text-muted-foreground">Reação: {reactionMatch[1]}</p>
+                                      return <p className="text-sm italic text-[#8696a0]">Reação: {reactionMatch[1]}</p>
                                     }
-                                    return <p className="text-sm italic text-muted-foreground">Mensagem não suportada</p>
+                                    return <p className="text-sm italic text-[#8696a0]">Mensagem não suportada</p>
                                   }
                                   return <p className={`text-sm whitespace-pre-wrap break-words ${
-                                    msg.messageType === 'template' ? 'italic text-muted-foreground' : ''
+                                    msg.messageType === 'template' ? 'italic text-[#8696a0]' : ''
                                   }`}>{c}</p>
                                 })()}
                                 {/* Time + delivery receipt check marks */}
                                 <div className={`flex items-center gap-1 mt-1 ${isMe ? 'justify-end' : 'justify-start'}`}>
-                                  <span className={`text-[10px] ${isMe ? 'text-primary-foreground/70' : 'text-muted-foreground'}`}>
+                                  <span className={`text-[10px] ${isMe ? 'text-[#8696a0]' : 'text-[#8696a0]'}`}>
                                     {new Date(msg.createdAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
                                   </span>
                                   {msg.messageType !== 'text' && msg.messageType !== 'image' && msg.messageType !== 'video' && msg.messageType !== 'audio' && msg.messageType !== 'document' && msg.messageType !== 'sticker' && msg.messageType !== 'deleted' && msg.messageType !== 'reaction' && msg.messageType !== 'unknown' && msg.messageType !== 'system' && msg.messageType !== 'contact' && msg.messageType !== 'location' && (
-                                    <span className={`text-[9px] ${isMe ? 'text-primary-foreground/50' : 'text-muted-foreground/60'}`}>
+                                    <span className={`text-[9px] text-[#8696a0]`}>
                                       {msg.messageType === 'template' ? 'template' : msg.messageType === 'button_response' ? 'botão' : msg.messageType === 'list_response' ? 'lista' : msg.messageType === 'poll' ? 'enquete' : msg.messageType === 'group_invite' ? 'convite' : msg.messageType === 'product' ? 'produto' : msg.messageType === 'order' ? 'pedido' : msg.messageType === 'interactive' ? 'interativo' : msg.messageType}
                                     </span>
                                   )}
                                   {/* WhatsApp-style delivery receipt */}
                                   {isMe && ackStatus && (
                                     <span className="ml-0.5">
-                                      {ackStatus === 'pending' && <Clock className="size-3 text-muted-foreground/70" />}
-                                      {ackStatus === 'sent' && <Check className="size-3 text-muted-foreground/70" />}
+                                      {ackStatus === 'pending' && <Clock className="size-3 text-[#8696a0]" />}
+                                      {ackStatus === 'sent' && <Check className="size-3 text-[#8696a0]" />}
                                       {ackStatus === 'delivered' && (
                                         <span className="relative inline-block">
-                                          <Check className="size-3 text-muted-foreground/70 absolute left-[3px]" />
-                                          <Check className="size-3 text-muted-foreground/70" />
+                                          <Check className="size-3 text-[#8696a0] absolute left-[3px]" />
+                                          <Check className="size-3 text-[#8696a0]" />
                                         </span>
                                       )}
                                       {ackStatus === 'read' && (
                                         <span className="relative inline-block">
-                                          <Check className="size-3 text-blue-500 absolute left-[3px]" />
-                                          <Check className="size-3 text-blue-500" />
+                                          <Check className="size-3 text-[#53bdeb] absolute left-[3px]" />
+                                          <Check className="size-3 text-[#53bdeb]" />
                                         </span>
                                       )}
                                     </span>
@@ -6288,7 +6294,7 @@ function InboxTab() {
                               <div className={`flex ${isMe ? 'justify-end' : 'justify-start'} -mt-1 ml-2`}>
                                 <div className="flex flex-wrap gap-0.5">
                                   {reactions.map((r, ri) => (
-                                    <span key={ri} className="inline-flex items-center gap-0.5 bg-muted/80 rounded-full px-1.5 py-0.5 text-xs border">
+                                    <span key={ri} className="inline-flex items-center gap-0.5 bg-[#182229] border border-[#2a3942] rounded-full px-1.5 py-0.5 text-xs">
                                       {r.emoji}
                                     </span>
                                   ))}
@@ -6306,16 +6312,16 @@ function InboxTab() {
 
                 {/* Reply Input */}
                 {selectedConversation.chip?.status === 'connected' ? (
-                  <div className="px-4 py-3 border-t bg-background">
+                  <div className="px-4 py-3 bg-[#202c33]">
                     <div className="max-w-2xl mx-auto">
                       {/* Replying-to preview bar */}
                       {replyingTo && (
-                        <div className="flex items-center gap-2 mb-2 p-2 bg-muted/50 rounded-lg border-l-2 border-primary">
+                        <div className="flex items-center gap-2 mb-2 p-2 bg-[#0b141a] rounded-lg border-l-4 border-[#00a884]">
                           <div className="flex-1 min-w-0">
-                            <p className="text-[10px] font-medium text-primary">
+                            <p className="text-[10px] font-medium text-[#00a884]">
                               {replyingTo.pushName || replyingTo.contactName || 'Você'}
                             </p>
-                            <p className="text-xs text-muted-foreground truncate">
+                            <p className="text-xs text-[#8696a0] truncate">
                               {replyingTo.messageContent
                                 ? (replyingTo.messageContent.length > 80 ? replyingTo.messageContent.substring(0, 80) + '...' : replyingTo.messageContent)
                                 : `Mensagem de ${replyingTo.messageType}`}
@@ -6328,11 +6334,11 @@ function InboxTab() {
                       )}
                       {/* Attached file preview */}
                       {attachedFile && (
-                        <div className="flex items-center gap-2 mb-2 p-2 bg-muted/50 rounded-lg">
+                        <div className="flex items-center gap-2 mb-2 p-2 bg-[#0b141a] rounded-lg">
                           {attachedFile.type === 'image' && attachedFile.preview ? (
                             <img src={attachedFile.preview} alt="Preview" className="size-10 rounded object-cover" />
                           ) : (
-                            <div className="size-10 rounded bg-muted flex items-center justify-center">
+                            <div className="size-10 rounded bg-[#2a3942] flex items-center justify-center">
                               {attachedFile.type === 'video' ? <Video className="size-4" /> :
                                attachedFile.type === 'audio' ? <Mic className="size-4" /> :
                                <FileIcon className="size-4" />}
@@ -6340,7 +6346,7 @@ function InboxTab() {
                           )}
                           <div className="flex-1 min-w-0">
                             <p className="text-xs font-medium truncate">{attachedFile.file.name}</p>
-                            <p className="text-[10px] text-muted-foreground">{(attachedFile.file.size / 1024).toFixed(1)} KB</p>
+                            <p className="text-[10px] text-[#8696a0]">{(attachedFile.file.size / 1024).toFixed(1)} KB</p>
                           </div>
                           <Button variant="ghost" size="icon" className="size-6 shrink-0" onClick={() => setAttachedFile(null)}>
                             <X className="size-3" />
@@ -6358,7 +6364,7 @@ function InboxTab() {
                         <Button
                           variant="ghost"
                           size="icon"
-                          className="size-10 shrink-0"
+                          className="size-10 shrink-0 text-[#8696a0] hover:text-[#e9edef] hover:bg-[#2a3942]"
                           onClick={() => fileInputRef.current?.click()}
                           disabled={sending}
                           title="Anexar arquivo"
@@ -6368,7 +6374,7 @@ function InboxTab() {
                         <div className="flex-1">
                           <Textarea
                             placeholder={replyingTo ? `Respondendo ${replyingTo.pushName || replyingTo.contactName || 'mensagem'}...` : "Digite uma mensagem..."}
-                            className="min-h-[42px] max-h-32 resize-none text-sm"
+                            className="min-h-[42px] max-h-32 resize-none text-sm bg-[#2a3942] text-[#e9edef] placeholder-[#8696a0] border-none rounded-lg"
                             value={replyText}
                             onChange={e => setReplyText(e.target.value)}
                             onKeyDown={e => {
@@ -6382,7 +6388,7 @@ function InboxTab() {
                         </div>
                         <Button
                           size="icon"
-                          className="size-10 shrink-0"
+                          className="size-10 shrink-0 bg-[#00a884] hover:bg-[#008f72] text-white"
                           onClick={handleReply}
                           disabled={(!replyText.trim() && !attachedFile) || sending}
                         >
@@ -6392,8 +6398,8 @@ function InboxTab() {
                     </div>
                   </div>
                 ) : (
-                  <div className="px-4 py-3 border-t bg-muted/50">
-                    <p className="text-xs text-muted-foreground text-center">
+                  <div className="px-4 py-3 bg-[#202c33]">
+                    <p className="text-xs text-[#8696a0] text-center">
                       Este chip está {statusLabel(selectedConversation.chip?.status || 'disconnected')}. Conecte o chip para responder.
                     </p>
                   </div>
