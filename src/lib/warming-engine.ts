@@ -30,7 +30,7 @@
 import { sendTextMessage, sendMediaMessage, setPresence, formatPhoneNumber, getConnectionState } from './evolution-api'
 import { db } from './db'
 import { toMins, getCurrentMinutes } from './time-utils'
-import { NURSERY_SCHEDULE, PREWARM_SCHEDULE, type ScheduleEntry, type AntiBanSettings } from './constants'
+import { NURSERY_SCHEDULE, PREWARM_SCHEDULE, DEFAULT_HUMAN_BEHAVIOR, type ScheduleEntry, type AntiBanSettings, type HumanBehaviorConfig, type TypingSimulationConfig, type PresenceConfig } from './constants'
 
 // ============================================================
 // TYPES
@@ -73,18 +73,19 @@ interface WarmingBreakWindow {
 // CONSTANTS
 // ============================================================
 
-// Intervalos mais conservadores que campanhas normais
+// FALLBACK intervals — only used when AntiBanSettings is not available.
+// The UI/DB is the source of truth. These exist as safety defaults.
 // Chips em aquecimento são chips NOVOS — precisam ser tratados com mais cuidado
-const WARMING_INTERVAL_MIN = 45   // segundos (campanhas normais: 30)
-const WARMING_INTERVAL_MAX = 120  // segundos (campanhas normais: 90)
+const WARMING_INTERVAL_MIN = 45   // segundos (fallback)
+const WARMING_INTERVAL_MAX = 120  // segundos (fallback)
 
-// Typing speed — same as sending engine
+// FALLBACK typing/presence constants — only used when humanBehaviorConfig is unavailable.
+// The UI/DB is the source of truth. These exist as safety defaults.
 const TYPING_SPEED_MIN = 6
 const TYPING_SPEED_MAX = 14
 const TYPING_MIN_MS = 3000
 const TYPING_MAX_MS = 25000
 
-// Presence constants — same as sending engine
 const OFFLINE_DELAY_MIN_MS = 3000
 const OFFLINE_DELAY_MAX_MS = 15000
 
@@ -208,15 +209,63 @@ function randomInt(min: number, max: number): number {
 // ============================================================
 
 /**
- * Calculate realistic typing duration based on message length
+ * Get typing config from AntiBanSettings (UI) with fallback to constants.
+ * Mirrors sending-engine's getTypingConfig() — ensures UI is the source of truth.
  */
-function calculateTypingDuration(text: string): number {
+function getWarmingTypingConfig(antiBanSettings: AntiBanSettings | null) {
+  const ts = parseHumanBehaviorConfig(antiBanSettings).typingSimulation
+  return {
+    speedMin: ts?.speedMin ?? TYPING_SPEED_MIN,
+    speedMax: ts?.speedMax ?? TYPING_SPEED_MAX,
+    pauseChance: (ts?.pauseChance ?? 30) / 100,
+    pauseMinMs: ts?.pauseMinMs ?? 1000,
+    pauseMaxMs: ts?.pauseMaxMs ?? 4000,
+    longMsgPauseChance: (ts?.longMsgPauseChance ?? 40) / 100,
+    longMsgThreshold: ts?.longMsgThreshold ?? 100,
+  }
+}
+
+/**
+ * Get presence config from AntiBanSettings (UI) with fallback to constants.
+ * Mirrors sending-engine's getPresenceConfig() — ensures UI is the source of truth.
+ */
+function getWarmingPresenceConfig(antiBanSettings: AntiBanSettings | null) {
+  const p = parseHumanBehaviorConfig(antiBanSettings).presence
+  return {
+    offlineDelayMinMs: p?.offlineDelayMinMs ?? OFFLINE_DELAY_MIN_MS,
+    offlineDelayMaxMs: p?.offlineDelayMaxMs ?? OFFLINE_DELAY_MAX_MS,
+    preComposePauseMinMs: p?.preComposePauseMinMs ?? 800,
+    preComposePauseMaxMs: p?.preComposePauseMaxMs ?? 3000,
+    mediaRecordingMinMs: p?.mediaRecordingMinMs ?? 2000,
+    mediaRecordingMaxMs: p?.mediaRecordingMaxMs ?? 4000,
+  }
+}
+
+/**
+ * Parse human behavior config from AntiBanSettings JSON string.
+ * Falls back to DEFAULT_HUMAN_BEHAVIOR on any error.
+ */
+function parseHumanBehaviorConfig(antiBanSettings: AntiBanSettings | null): HumanBehaviorConfig {
+  if (!antiBanSettings?.humanBehaviorConfig) return DEFAULT_HUMAN_BEHAVIOR
+  try {
+    const parsed = JSON.parse(antiBanSettings.humanBehaviorConfig)
+    if (parsed && typeof parsed === 'object') return parsed as HumanBehaviorConfig
+  } catch { /* ignore */ }
+  return DEFAULT_HUMAN_BEHAVIOR
+}
+
+/**
+ * Calculate realistic typing duration based on message length.
+ * NOW reads from AntiBanSettings (UI) instead of hardcoded constants.
+ */
+function calculateTypingDuration(text: string, antiBanSettings: AntiBanSettings | null = null): number {
+  const tc = getWarmingTypingConfig(antiBanSettings)
   const charCount = text.length
-  const typingSpeed = gaussianRandomFloat(10, 2.5, TYPING_SPEED_MIN, TYPING_SPEED_MAX)
+  const typingSpeed = gaussianRandomFloat(10, 2.5, tc.speedMin, tc.speedMax)
   let durationMs = (charCount / typingSpeed) * 1000
   durationMs = Math.max(TYPING_MIN_MS, Math.min(TYPING_MAX_MS, durationMs))
-  if (Math.random() < 0.3) {
-    durationMs += randomInt(1000, 4000)
+  if (Math.random() < tc.pauseChance) {
+    durationMs += randomInt(tc.pauseMinMs, tc.pauseMaxMs)
   }
   return Math.round(durationMs)
 }
@@ -391,14 +440,16 @@ function selectPair(
 // ============================================================
 
 /**
- * Delayed offline with jitter — human doesn't go offline instantly after sending
+ * Delayed offline with jitter — human doesn't go offline instantly after sending.
+ * NOW reads from AntiBanSettings (UI) for offline delay config.
  */
-async function delayedOfflineWithJitter(instanceName: string, jid: string): Promise<number> {
+async function delayedOfflineWithJitter(instanceName: string, jid: string, antiBanSettings: AntiBanSettings | null = null): Promise<number> {
+  const pc = getWarmingPresenceConfig(antiBanSettings)
   const delayMs = gaussianRandom(
-    (OFFLINE_DELAY_MIN_MS + OFFLINE_DELAY_MAX_MS) / 2,
-    (OFFLINE_DELAY_MAX_MS - OFFLINE_DELAY_MIN_MS) / 6,
-    OFFLINE_DELAY_MIN_MS,
-    OFFLINE_DELAY_MAX_MS
+    (pc.offlineDelayMinMs + pc.offlineDelayMaxMs) / 2,
+    (pc.offlineDelayMaxMs - pc.offlineDelayMinMs) / 6,
+    pc.offlineDelayMinMs,
+    pc.offlineDelayMaxMs
   )
 
   await new Promise(resolve => setTimeout(resolve, delayMs))
@@ -416,45 +467,60 @@ async function delayedOfflineWithJitter(instanceName: string, jid: string): Prom
  * Full anti-ban presence simulation for a warming message.
  * This mirrors the sending-engine's presence flow:
  *   available → (delay) → composing/recording → (typing time) → send → (delayed offline)
+ *
+ * NOW reads from AntiBanSettings (UI) instead of hardcoded constants.
  */
 async function performWarmingPresence(
   instanceName: string,
   jid: string,
   messageType: 'text' | 'image' | 'audio',
-  content: string
+  content: string,
+  antiBanSettings: AntiBanSettings | null = null
 ): Promise<number> {
   let totalPresenceMs = 0
+  const pc = getWarmingPresenceConfig(antiBanSettings)
+  const tc = getWarmingTypingConfig(antiBanSettings)
 
   // 1. Signal "available" before composing
   try {
     await setPresence(instanceName, jid, 'available', 1000)
   } catch { /* non-fatal */ }
-  const availableDelay = gaussianRandom(1500, 500, 800, 3000)
+  const availableDelay = gaussianRandom(
+    (pc.preComposePauseMinMs + pc.preComposePauseMaxMs) / 2,
+    (pc.preComposePauseMaxMs - pc.preComposePauseMinMs) / 6,
+    pc.preComposePauseMinMs,
+    pc.preComposePauseMaxMs
+  )
   await new Promise(resolve => setTimeout(resolve, availableDelay))
   totalPresenceMs += availableDelay
 
   // 2. Composing/Recording presence
   if (messageType === 'audio') {
-    // Audio: "recording" presence
-    const recordingMs = gaussianRandom(4000, 1500, 2000, 10000)
+    // Audio: "recording" presence — reads from UI config
+    const recordingMs = gaussianRandom(
+      (pc.mediaRecordingMinMs + pc.mediaRecordingMaxMs) / 2,
+      (pc.mediaRecordingMaxMs - pc.mediaRecordingMinMs) / 6,
+      pc.mediaRecordingMinMs,
+      pc.mediaRecordingMaxMs
+    )
     try {
       await setPresence(instanceName, jid, 'recording', recordingMs)
     } catch { /* non-fatal */ }
     await new Promise(resolve => setTimeout(resolve, recordingMs))
     totalPresenceMs += recordingMs
   } else if (messageType === 'image') {
-    // Image: brief "recording" (camera icon)
-    const captureMs = randomInt(2000, 4000)
+    // Image: brief "recording" (camera icon) — reads from UI config
+    const captureMs = randomInt(pc.mediaRecordingMinMs, pc.mediaRecordingMaxMs)
     try {
       await setPresence(instanceName, jid, 'recording', captureMs)
     } catch { /* non-fatal */ }
     await new Promise(resolve => setTimeout(resolve, captureMs))
     totalPresenceMs += captureMs
   } else {
-    // Text: "composing" with optional mid-composition pauses
-    const totalTypingMs = calculateTypingDuration(content)
+    // Text: "composing" with optional mid-composition pauses — reads from UI config
+    const totalTypingMs = calculateTypingDuration(content, antiBanSettings)
 
-    const shouldPause = content.length > 80 && Math.random() < 0.35
+    const shouldPause = content.length > tc.longMsgThreshold && Math.random() < tc.longMsgPauseChance
 
     if (shouldPause && totalTypingMs > 6000) {
       const segments = Math.random() < 0.3 ? 3 : 2
@@ -468,7 +534,12 @@ async function performWarmingPresence(
         totalPresenceMs += perSegment
 
         if (seg < segments - 1) {
-          const pauseMs = gaussianRandom(2000, 800, 800, 5000)
+          const pauseMs = gaussianRandom(
+            (tc.pauseMinMs + tc.pauseMaxMs) / 2,
+            (tc.pauseMaxMs - tc.pauseMinMs) / 6,
+            tc.pauseMinMs,
+            tc.pauseMaxMs
+          )
           try {
             await setPresence(instanceName, jid, 'unavailable', pauseMs)
           } catch { /* non-fatal */ }
@@ -904,8 +975,8 @@ export async function processNextWarmingMessage(
   const jid = `${formattedPhone}@s.whatsapp.net`
 
   try {
-    // Perform presence simulation
-    await performWarmingPresence(instanceName, jid, messageType, messageContent.content)
+    // Perform presence simulation — reads from AntiBanSettings (UI)
+    await performWarmingPresence(instanceName, jid, messageType, messageContent.content, antiBanSettings)
 
     // Send the message
     if (messageType === 'image' && messageContent.mediaUrl) {
@@ -925,8 +996,8 @@ export async function processNextWarmingMessage(
       })
     }
 
-    // Delayed offline with jitter
-    const offlineDelayMs = await delayedOfflineWithJitter(instanceName, jid)
+    // Delayed offline with jitter — reads from AntiBanSettings (UI)
+    const offlineDelayMs = await delayedOfflineWithJitter(instanceName, jid, antiBanSettings)
 
     // Update progress
     senderProgress.sent++

@@ -540,6 +540,43 @@ export async function POST(req: NextRequest) {
       results.push(`Erro na migração Campaign: ${campError.message}`)
     }
 
+    // Step 8.9: Sync AntiBanSettings — add reconnection, verifier, evolution API columns
+    try {
+      const absNewColumns = await db.$queryRaw<Array<{ column_name: string }>>`
+        SELECT column_name FROM information_schema.columns
+        WHERE table_name = 'AntiBanSettings'
+        ORDER BY ordinal_position
+      `
+      const absNewColNames = absNewColumns.map(c => c.column_name)
+
+      const newColumns = [
+        { name: 'reconnectMaxConcurrent', type: 'INTEGER NOT NULL DEFAULT 2' },
+        { name: 'reconnectMaxAttempts', type: 'INTEGER NOT NULL DEFAULT 10' },
+        { name: 'reconnectRespectWindow', type: 'BOOLEAN NOT NULL DEFAULT false' },
+        { name: 'reconnectRateLimit', type: 'INTEGER NOT NULL DEFAULT 5' },
+        { name: 'reconnectRateWindowMin', type: 'INTEGER NOT NULL DEFAULT 10' },
+        { name: 'reconnectBackoffMs', type: `TEXT NOT NULL DEFAULT '[5000,15000,45000,120000,300000,600000]'` },
+        { name: 'reconnectInterDelayMs', type: 'INTEGER NOT NULL DEFAULT 15000' },
+        { name: 'reconnectConnectTimeoutMs', type: 'INTEGER NOT NULL DEFAULT 60000' },
+        { name: 'circuitBreakerThreshold', type: 'INTEGER NOT NULL DEFAULT 3' },
+        { name: 'verifyDailyLimit', type: 'INTEGER NOT NULL DEFAULT 300' },
+        { name: 'evolutionApiTimeoutMs', type: 'INTEGER NOT NULL DEFAULT 15000' },
+        { name: 'autoRejectCalls', type: 'BOOLEAN NOT NULL DEFAULT true' },
+        { name: 'autoRejectCallMessage', type: `TEXT NOT NULL DEFAULT 'Desculpa, nao posso atender agora.'` },
+      ]
+
+      for (const col of newColumns) {
+        if (!absNewColNames.includes(col.name)) {
+          await db.$executeRawUnsafe(`ALTER TABLE "AntiBanSettings" ADD COLUMN IF NOT EXISTS "${col.name}" ${col.type}`)
+          results.push(`AntiBanSettings: adicionada coluna ${col.name}`)
+        } else {
+          results.push(`AntiBanSettings: ${col.name} já existe`)
+        }
+      }
+    } catch (absNewErr: any) {
+      results.push(`Erro na migração AntiBanSettings (new cols): ${absNewErr.message}`)
+    }
+
     // Step 8: Create BlockedContact table for blocked contact detection
     try {
       const blockedExists = await db.$queryRaw<Array<{ exists: boolean }>>`

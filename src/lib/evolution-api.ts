@@ -4,6 +4,7 @@
 
 import { db } from './db'
 import { normalizePhone } from './phone-utils'
+import { FIELD_DEFAULTS, type AntiBanSettings } from './constants'
 
 // Prefix for all OctupusZap instances — only instances with this prefix are managed by the site
 export const INSTANCE_PREFIX = 'OctupusZap_';
@@ -19,6 +20,65 @@ interface EvolutionCredentials {
 let cachedCredentials: EvolutionCredentials | null = null
 let cacheTimestamp = 0
 const CACHE_TTL_MS = 60_000 // 60 seconds
+
+// ============ Anti-Ban Settings Cache (for timeout, call reject, etc.) ============
+// The UI stores these in AntiBanSettings, but evolutionFetch() is called
+// on EVERY API request — we can't hit the DB each time.
+// Solution: cache with TTL (same pattern as credentials cache).
+
+interface CachedAntiBanApiSettings {
+  evolutionApiTimeoutMs: number
+  autoRejectCalls: boolean
+  autoRejectCallMessage: string
+}
+
+let cachedAntiBanApi: CachedAntiBanApiSettings | null = null
+let antiBanApiCacheTimestamp = 0
+const ANTI_BAN_API_CACHE_TTL_MS = 30_000 // 30 seconds — faster refresh for timeout changes
+
+/**
+ * Get anti-ban API settings from DB (evolutionApiTimeoutMs, autoRejectCalls, autoRejectCallMessage).
+ * These are UI-configurable but were previously hardcoded — this function fixes the ghost settings bug.
+ * Uses in-memory cache with 30s TTL to avoid excessive DB queries.
+ */
+async function getAntiBanApiSettings(): Promise<CachedAntiBanApiSettings> {
+  const now = Date.now()
+  if (cachedAntiBanApi && (now - antiBanApiCacheTimestamp) < ANTI_BAN_API_CACHE_TTL_MS) {
+    return cachedAntiBanApi
+  }
+
+  try {
+    const settings = await db.antiBanSettings.findFirst() as unknown as AntiBanSettings | null
+    if (settings) {
+      cachedAntiBanApi = {
+        evolutionApiTimeoutMs: settings.evolutionApiTimeoutMs || (FIELD_DEFAULTS.evolutionApiTimeoutMs as number),
+        autoRejectCalls: settings.autoRejectCalls ?? (FIELD_DEFAULTS.autoRejectCalls as boolean),
+        autoRejectCallMessage: settings.autoRejectCallMessage || (FIELD_DEFAULTS.autoRejectCallMessage as string),
+      }
+      antiBanApiCacheTimestamp = now
+      return cachedAntiBanApi
+    }
+  } catch {
+    // DB not available yet, fall through to defaults
+  }
+
+  // Fallback to FIELD_DEFAULTS from constants.ts (single source of truth)
+  cachedAntiBanApi = {
+    evolutionApiTimeoutMs: FIELD_DEFAULTS.evolutionApiTimeoutMs as number,
+    autoRejectCalls: FIELD_DEFAULTS.autoRejectCalls as boolean,
+    autoRejectCallMessage: FIELD_DEFAULTS.autoRejectCallMessage as string,
+  }
+  antiBanApiCacheTimestamp = now
+  return cachedAntiBanApi
+}
+
+/**
+ * Clear the anti-ban API settings cache — call after saving anti-ban settings
+ */
+export function clearAntiBanApiCache(): void {
+  cachedAntiBanApi = null
+  antiBanApiCacheTimestamp = 0
+}
 
 /**
  * Get Evolution Go API credentials from DB Settings table.
@@ -228,9 +288,12 @@ export async function evolutionFetch(
     headers['instanceId'] = instanceId;
   }
 
-  // Use AbortController with a 15s timeout to avoid hanging when the API server is down
+  // Use AbortController with timeout from UI settings (evolutionApiTimeoutMs).
+  // Previously hardcoded to 15s — now reads from AntiBanSettings so the UI actually works.
+  const apiSettings = await getAntiBanApiSettings()
+  const timeoutMs = apiSettings.evolutionApiTimeoutMs
   const controller = new AbortController()
-  const timeoutId = setTimeout(() => controller.abort(), 15_000)
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
 
   try {
     const response = await fetch(url, {
@@ -287,7 +350,7 @@ export async function evolutionFetch(
 
           const retryResponse = await fetch(url, {
             ...options,
-            signal: AbortSignal.timeout(15_000),
+            signal: AbortSignal.timeout(apiSettings.evolutionApiTimeoutMs),
             headers: {
               ...retryHeaders,
               ...(options.headers as Record<string, string> || {}),
@@ -318,7 +381,7 @@ export async function evolutionFetch(
     return response;
   } catch (err: any) {
     if (err.name === 'AbortError') {
-      throw new Error(`Evolution Go API não respondeu (timeout de 15s). O servidor pode estar offline.`)
+      throw new Error(`Evolution Go API não respondeu (timeout de ${Math.round(timeoutMs / 1000)}s). O servidor pode estar offline.`)
     }
     throw err
   } finally {
@@ -342,6 +405,10 @@ export async function createInstance(
     protocol?: string;
   }
 ): Promise<EvolutionInstance> {
+  // Read call rejection settings from UI (AntiBanSettings)
+  // Previously hardcoded — now respects the UI configuration.
+  const apiSettings = await getAntiBanApiSettings()
+
   // Generate a unique token — Evolution Go requires a non-empty token
   const token = `oz_${instanceName}_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
   const body: any = {
@@ -352,9 +419,9 @@ export async function createInstance(
     // via setPresence('available'/'unavailable') calls.
     // A chip that is always online is a known bot signature.
     alwaysOnline: false,
-    // Reject incoming calls — telemarketing chips don't need calls
-    rejectCall: true,
-    msgRejectCall: 'Desculpa, não posso atender agora.',
+    // Reject incoming calls — reads from AntiBanSettings (UI-configurable)
+    rejectCall: apiSettings.autoRejectCalls,
+    msgRejectCall: apiSettings.autoRejectCallMessage,
     // BUG FIX: Events must be specified at instance creation time.
     // Without this field, Evolution Go creates the instance with events=""
     // which prevents QR code generation and webhook event delivery.

@@ -3,6 +3,7 @@ import { db } from '@/lib/db'
 import { toMins } from '@/lib/time-utils'
 import { FIELD_DEFAULTS, SECTION_FIELDS, antiBanUpdateSchema, scheduleEntrySchema, breakWindowSchema, humanBehaviorConfigSchema } from '@/lib/constants'
 import { ZodError } from 'zod'
+import { clearAntiBanApiCache } from '@/lib/evolution-api'
 
 // GET /api/antiban — Get current anti-ban settings
 export async function GET() {
@@ -47,6 +48,7 @@ export async function PATCH(request: NextRequest) {
         where: { id: settings.id },
         data: FIELD_DEFAULTS,
       })
+      clearAntiBanApiCache() // Invalidate cached API settings (timeout, call reject, etc.)
       return NextResponse.json(updated)
     }
 
@@ -64,6 +66,7 @@ export async function PATCH(request: NextRequest) {
         where: { id: settings.id },
         data: resetData,
       })
+      clearAntiBanApiCache() // Invalidate cached API settings
       return NextResponse.json(updated)
     }
 
@@ -77,6 +80,7 @@ export async function PATCH(request: NextRequest) {
         where: { id: settings.id },
         data: { [field]: FIELD_DEFAULTS[field] },
       })
+      clearAntiBanApiCache() // Invalidate cached API settings
       return NextResponse.json(updated)
     }
 
@@ -248,6 +252,7 @@ export async function PATCH(request: NextRequest) {
       data: updateData,
     })
 
+    clearAntiBanApiCache() // Invalidate cached API settings (timeout, call reject, etc.)
     return NextResponse.json(updated)
   } catch (error) {
     if (error instanceof ZodError) {

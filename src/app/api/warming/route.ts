@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { DEFAULT_WARMING_TEMPLATES } from '@/lib/warming-engine'
+import { FIELD_DEFAULTS } from '@/lib/constants'
 
 // GET — List all warming sessions
 export async function GET() {
@@ -34,15 +35,33 @@ export async function POST(request: NextRequest) {
       chipIds = [],
       messageTemplates,
       messagesPerChip = 150,
-      intervalMin = 45,
-      intervalMax = 120,
-      activeHoursStart = 480,
-      activeHoursEnd = 1260,
+      intervalMin,
+      intervalMax,
+      activeHoursStart,
+      activeHoursEnd,
       breakWindows = [],
-      timezone = 'America/Sao_Paulo',
+      timezone,
       messageTypeDistribution = { text: 47, image: 27, audio: 26 },
       scheduledAt,
     } = body
+
+    // Inherit defaults from AntiBanSettings (UI) when not explicitly provided.
+    // "o sistema deve seguir a UI, sempre" — warming sessions should respect
+    // the same anti-ban config the user already set in the UI.
+    let antiBanDefaults: Record<string, unknown> = {}
+    try {
+      const saved = await db.antiBanSettings.findFirst()
+      if (saved) {
+        antiBanDefaults = saved as unknown as Record<string, unknown>
+      }
+    } catch { /* DB not available */ }
+
+    // Priority: explicit body param > AntiBanSettings from DB > hardcoded defaults
+    const effectiveIntervalMin = intervalMin ?? (antiBanDefaults.messageIntervalMin as number) ?? (FIELD_DEFAULTS.messageIntervalMin as number)
+    const effectiveIntervalMax = intervalMax ?? (antiBanDefaults.messageIntervalMax as number) ?? (FIELD_DEFAULTS.messageIntervalMax as number)
+    const effectiveActiveHoursStart = activeHoursStart ?? (antiBanDefaults.sendingWindowStart as number) ?? (FIELD_DEFAULTS.sendingWindowStart as number)
+    const effectiveActiveHoursEnd = activeHoursEnd ?? (antiBanDefaults.sendingWindowEnd as number) ?? (FIELD_DEFAULTS.sendingWindowEnd as number)
+    const effectiveTimezone = timezone ?? (antiBanDefaults.timezone as string) ?? (FIELD_DEFAULTS.timezone as string)
 
     if (!name?.trim()) {
       return NextResponse.json({ error: 'Nome é obrigatório' }, { status: 400 })
@@ -82,12 +101,12 @@ export async function POST(request: NextRequest) {
         chipIds: JSON.stringify(chipIds),
         messageTemplates: JSON.stringify(templates),
         messagesPerChip,
-        intervalMin,
-        intervalMax,
-        activeHoursStart,
-        activeHoursEnd,
+        intervalMin: effectiveIntervalMin,
+        intervalMax: effectiveIntervalMax,
+        activeHoursStart: effectiveActiveHoursStart,
+        activeHoursEnd: effectiveActiveHoursEnd,
         breakWindows: JSON.stringify(breakWindows),
-        timezone,
+        timezone: effectiveTimezone,
         messageTypeDistribution: JSON.stringify(messageTypeDistribution),
         scheduledAt: scheduledAt ? new Date(scheduledAt) : null,
         status: 'draft',
