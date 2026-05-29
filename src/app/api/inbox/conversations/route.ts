@@ -261,13 +261,17 @@ export async function GET(request: NextRequest) {
 
     // Fallback group names from messages
     for (const jid of groupJids) {
-      if (groupNameMap.has(jid) && !groupNameMap.get(jid)?.startsWith('Grupo ')) continue
+      const currentName = groupNameMap.get(jid)
+      // Skip if we already have a good name (not JID-like, not "Grupo XXXX")
+      if (currentName && !/^\d{10,}$/.test(currentName) && !/^Grupo\s+\d{3,}$/i.test(currentName) && currentName !== 'unknown') continue
       const groupMsgs = mergedMessages.filter(m => m.remoteJid === jid)
-      const namedMsg = groupMsgs.find(m => m.contactName && m.contactName !== 'unknown' && !m.contactName.startsWith('Grupo '))
+      const namedMsg = groupMsgs.find(m => m.contactName && m.contactName !== 'unknown' && !m.contactName.startsWith('Grupo ') && !/^\d{10,}$/.test(m.contactName))
       if (namedMsg?.contactName) {
         groupNameMap.set(jid, namedMsg.contactName)
       } else {
-        groupNameMap.set(jid, `Grupo ${jid.split('@')[0].slice(-4)}`)
+        // Don't use "Grupo XXXX" — just use the JID short form as last resort
+        const jidNum = jid.split('@')[0]
+        groupNameMap.set(jid, `Grupo`)
       }
     }
 

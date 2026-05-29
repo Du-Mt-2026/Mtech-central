@@ -99,20 +99,31 @@ function avatarColor(name: string) {
   return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length]
 }
 
+// ===== Helper: Is a string a JID-like numeric ID? =====
+function isJidLike(name: string): boolean {
+  // Matches pure numeric strings of 10+ digits (WhatsApp group/user JIDs)
+  return /^\d{10,}$/.test(name.trim())
+}
+
+// ===== Helper: Is a name the "Grupo XXXX" fallback pattern? =====
+function isGrupoFallback(name: string): boolean {
+  return /^Grupo\s+\d{3,}$/i.test(name.trim())
+}
+
 // ===== Helper: Group name display =====
 function displayName(conv: InboxConversation): string {
   if (conv.isGroup) {
-    // Use groupName if it's not the "Grupo XXXX" pattern
-    if (conv.groupName && !/^Grupo\s+\d{4}$/i.test(conv.groupName)) {
-      return conv.groupName
+    // Try groupName first, then contactName — skip JID-like and "Grupo XXXX" patterns
+    const candidates = [conv.groupName, conv.contactName]
+    for (const name of candidates) {
+      if (!name) continue
+      if (isJidLike(name)) continue
+      if (isGrupoFallback(name)) continue
+      if (name === 'unknown') continue
+      return name
     }
-    // Fallback: try contactName but clean up "Grupo XXXX"
-    if (conv.contactName && !/^Grupo\s+\d{4}$/i.test(conv.contactName)) {
-      return conv.contactName
-    }
-    // Last resort: show phone or JID-derived name
-    if (conv.remotePhone) return conv.remotePhone
-    return 'Grupo'
+    // Last resort: show a generic label with participant count
+    return `Grupo ${conv.participantCount ? `(${conv.participantCount} pes.)` : ''}`
   }
   return conv.contactName || conv.pushName || conv.remotePhone || 'Desconhecido'
 }
