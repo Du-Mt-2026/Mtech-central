@@ -230,18 +230,33 @@ export async function GET(request: NextRequest) {
     const groupJids = [...new Set(mergedMessages.filter(m => m.isGroup).map(m => m.remoteJid))]
     const groupNameMap = new Map<string, string>()
 
-    if (groupJids.length > 0 && chip?.evolutionInstance) {
+    if (groupJids.length > 0) {
+      // First, try to load from DB cache (GroupMetadata table)
       try {
-        const { fetchGroupMetadata } = await import('@/lib/evolution-api')
-        for (const jid of groupJids) {
-          try {
-            const meta = await fetchGroupMetadata(chip.evolutionInstance, jid)
-            if (meta?.subject) {
-              groupNameMap.set(jid, meta.subject)
-            }
-          } catch { /* skip */ }
+        const cachedGroups = await db.groupMetadata.findMany({
+          where: { groupJid: { in: groupJids } },
+          select: { groupJid: true, subject: true },
+        })
+        for (const cg of cachedGroups) {
+          if (cg.subject) groupNameMap.set(cg.groupJid, cg.subject)
         }
-      } catch { /* skip */ }
+      } catch { /* non-critical */ }
+
+      // Then, for groups NOT in cache, fetch from Evolution API
+      const uncachedGroupJids = groupJids.filter(jid => !groupNameMap.has(jid))
+      if (uncachedGroupJids.length > 0 && chip?.evolutionInstance) {
+        try {
+          const { fetchGroupMetadata } = await import('@/lib/evolution-api')
+          for (const jid of uncachedGroupJids) {
+            try {
+              const meta = await fetchGroupMetadata(chip.evolutionInstance, jid)
+              if (meta?.subject) {
+                groupNameMap.set(jid, meta.subject)
+              }
+            } catch { /* skip */ }
+          }
+        } catch { /* skip */ }
+      }
     }
 
     // Fallback group names from messages
