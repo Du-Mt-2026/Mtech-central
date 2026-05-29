@@ -18,6 +18,7 @@ import {
   AlertDialogFooter, AlertDialogTitle, AlertDialogDescription, AlertDialogAction, AlertDialogCancel,
 } from '@/components/ui/alert-dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Textarea } from '@/components/ui/textarea'
 import { toast } from 'sonner'
 
 import {
@@ -47,6 +48,9 @@ export function AntiBanTab() {
   const [resetting, setResetting] = useState(false)
   const [humanBehaviorExpanded, setHumanBehaviorExpanded] = useState(false)
   const [humanBehavior, setHumanBehavior] = useState<HumanBehaviorConfig>(DEFAULT_HUMAN_BEHAVIOR)
+  const [banCodesText, setBanCodesText] = useState('')
+  const [restrictionKeywordsText, setRestrictionKeywordsText] = useState('')
+  const [warningKeywordsText, setWarningKeywordsText] = useState('')
 
   // Convert minutes-from-midnight to HH:MM string
   const minsToTime = (mins: number) => {
@@ -91,6 +95,21 @@ export function AntiBanTab() {
         const hbParsed = typeof data.humanBehaviorConfig === 'string' ? JSON.parse(data.humanBehaviorConfig) : (data.humanBehaviorConfig || DEFAULT_HUMAN_BEHAVIOR)
         setHumanBehavior(hbParsed)
       } catch { setHumanBehavior(DEFAULT_HUMAN_BEHAVIOR) }
+      // Parse banCodes from JSON string
+      try {
+        const parsed = typeof data.banCodes === 'string' ? JSON.parse(data.banCodes) : (data.banCodes || [])
+        setBanCodesText(Array.isArray(parsed) ? parsed.join(', ') : '')
+      } catch { setBanCodesText('') }
+      // Parse restrictionKeywords from JSON string
+      try {
+        const parsed = typeof data.restrictionKeywords === 'string' ? JSON.parse(data.restrictionKeywords) : (data.restrictionKeywords || [])
+        setRestrictionKeywordsText(Array.isArray(parsed) ? parsed.join('\n') : '')
+      } catch { setRestrictionKeywordsText('') }
+      // Parse warningKeywords from JSON string
+      try {
+        const parsed = typeof data.warningKeywords === 'string' ? JSON.parse(data.warningKeywords) : (data.warningKeywords || [])
+        setWarningKeywordsText(Array.isArray(parsed) ? parsed.join('\n') : '')
+      } catch { setWarningKeywordsText('') }
     } catch { toast.error('Erro ao carregar configurações') }
     finally { setLoading(false) }
   }, [])
@@ -117,6 +136,27 @@ export function AntiBanTab() {
           const hbParsed = typeof updated.humanBehaviorConfig === 'string' ? JSON.parse(updated.humanBehaviorConfig) : (updated.humanBehaviorConfig || DEFAULT_HUMAN_BEHAVIOR)
           setHumanBehavior(hbParsed)
         } catch { setHumanBehavior(DEFAULT_HUMAN_BEHAVIOR) }
+      }
+      // Re-parse banCodes if it was updated
+      if (key === 'banCodes') {
+        try {
+          const parsed = typeof updated.banCodes === 'string' ? JSON.parse(updated.banCodes) : (updated.banCodes || [])
+          setBanCodesText(Array.isArray(parsed) ? parsed.join(', ') : '')
+        } catch { setBanCodesText('') }
+      }
+      // Re-parse restrictionKeywords if it was updated
+      if (key === 'restrictionKeywords') {
+        try {
+          const parsed = typeof updated.restrictionKeywords === 'string' ? JSON.parse(updated.restrictionKeywords) : (updated.restrictionKeywords || [])
+          setRestrictionKeywordsText(Array.isArray(parsed) ? parsed.join('\n') : '')
+        } catch { setRestrictionKeywordsText('') }
+      }
+      // Re-parse warningKeywords if it was updated
+      if (key === 'warningKeywords') {
+        try {
+          const parsed = typeof updated.warningKeywords === 'string' ? JSON.parse(updated.warningKeywords) : (updated.warningKeywords || [])
+          setWarningKeywordsText(Array.isArray(parsed) ? parsed.join('\n') : '')
+        } catch { setWarningKeywordsText('') }
       }
       toast.success('Configuração atualizada!')
     } catch { toast.error('Erro ao atualizar') }
@@ -1258,6 +1298,121 @@ export function AntiBanTab() {
                 Cada chip pode verificar ate <strong>{settings.verifyDailyLimit ?? 300}</strong> numeros por dia. Verificacoes demais podem acionar limites do WhatsApp.
               </p>
             </div>
+
+            {/* Verifier Delay Settings */}
+            <div className="border-t pt-3">
+              <Label className="text-xs font-semibold">Delay entre verificacoes</Label>
+              <div className="grid grid-cols-2 gap-3 mt-1.5">
+                <div className="space-y-1">
+                  <div className="flex justify-between items-center">
+                    <Label className="text-[10px] text-muted-foreground">Delay minimo</Label>
+                    <Button variant="ghost" size="icon" className="size-4 text-muted-foreground hover:text-cyan-600" onClick={() => resetField('verifierDelayMin')} title={`Padrao: ${DEFAULTS.verifierDelayMin}s`}>
+                      <RotateCcw className="size-2" />
+                    </Button>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <Input type="number" min={1} max={60} step={1} value={settings.verifierDelayMin ?? 8} onChange={e => updateSetting('verifierDelayMin', Math.max(1, parseInt(e.target.value) || 8))} className="w-16 h-7 text-xs" disabled={saving} />
+                    <span className="text-[9px] text-muted-foreground">seg</span>
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <div className="flex justify-between items-center">
+                    <Label className="text-[10px] text-muted-foreground">Delay maximo</Label>
+                    <Button variant="ghost" size="icon" className="size-4 text-muted-foreground hover:text-cyan-600" onClick={() => resetField('verifierDelayMax')} title={`Padrao: ${DEFAULTS.verifierDelayMax}s`}>
+                      <RotateCcw className="size-2" />
+                    </Button>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <Input type="number" min={1} max={120} step={1} value={settings.verifierDelayMax ?? 15} onChange={e => updateSetting('verifierDelayMax', Math.max(1, parseInt(e.target.value) || 15))} className="w-16 h-7 text-xs" disabled={saving} />
+                    <span className="text-[9px] text-muted-foreground">seg</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Verifier Batch & Cooldown */}
+            <div className="border-t pt-3 space-y-1.5">
+              <div className="flex justify-between items-center">
+                <Label className="text-xs">Batch por chip</Label>
+                <Button variant="ghost" size="icon" className="size-5 text-muted-foreground hover:text-cyan-600" onClick={() => resetField('verifierBatchSize')} title={`Padrao: ${DEFAULTS.verifierBatchSize}`}>
+                  <RotateCcw className="size-2.5" />
+                </Button>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <Input type="number" min={1} max={50} step={1} value={settings.verifierBatchSize ?? 5} onChange={e => updateSetting('verifierBatchSize', Math.max(1, parseInt(e.target.value) || 5))} className="w-24 h-8 text-sm" disabled={saving} />
+                <span className="text-[11px] text-muted-foreground">verific/batch</span>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="flex justify-between items-center">
+                <Label className="text-xs">Cooldown apos N verificacoes</Label>
+                <Button variant="ghost" size="icon" className="size-5 text-muted-foreground hover:text-cyan-600" onClick={() => resetField('verifierCooldownAfter')} title={`Padrao: ${DEFAULTS.verifierCooldownAfter}`}>
+                  <RotateCcw className="size-2.5" />
+                </Button>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <Input type="number" min={5} max={200} step={1} value={settings.verifierCooldownAfter ?? 50} onChange={e => updateSetting('verifierCooldownAfter', Math.max(5, parseInt(e.target.value) || 50))} className="w-24 h-8 text-sm" disabled={saving} />
+                <span className="text-[11px] text-muted-foreground">verific</span>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="flex justify-between items-center">
+                <Label className="text-xs">Duracao cooldown (min)</Label>
+                <Button variant="ghost" size="icon" className="size-5 text-muted-foreground hover:text-cyan-600" onClick={() => resetField('verifierCooldownMinutes')} title={`Padrao: ${DEFAULTS.verifierCooldownMinutes}min`}>
+                  <RotateCcw className="size-2.5" />
+                </Button>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <Input type="number" min={1} max={60} step={1} value={settings.verifierCooldownMinutes ?? 5} onChange={e => updateSetting('verifierCooldownMinutes', Math.max(1, parseInt(e.target.value) || 5))} className="w-24 h-8 text-sm" disabled={saving} />
+                <span className="text-[11px] text-muted-foreground">min</span>
+              </div>
+            </div>
+
+            {/* Verifier Quota & Rate Limit Cooldowns */}
+            <div className="border-t pt-3">
+              <Label className="text-xs font-semibold">Cooldowns de quota e rate limit</Label>
+              <div className="grid grid-cols-2 gap-3 mt-1.5">
+                <div className="space-y-1">
+                  <div className="flex justify-between items-center">
+                    <Label className="text-[10px] text-muted-foreground">Cooldown cota esgotada</Label>
+                    <Button variant="ghost" size="icon" className="size-4 text-muted-foreground hover:text-cyan-600" onClick={() => resetField('verifierQuotaCooldownMs')} title={`Padrao: ${(Number(DEFAULTS.verifierQuotaCooldownMs) / 3600000).toFixed(0)}h`}>
+                      <RotateCcw className="size-2" />
+                    </Button>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <Input type="number" min={1} max={168} step={1} value={Math.round((settings.verifierQuotaCooldownMs ?? 86400000) / 3600000)} onChange={e => updateSetting('verifierQuotaCooldownMs', Math.max(60000, (parseInt(e.target.value) || 24) * 3600000))} className="w-16 h-7 text-xs" disabled={saving} />
+                    <span className="text-[9px] text-muted-foreground">horas</span>
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <div className="flex justify-between items-center">
+                    <Label className="text-[10px] text-muted-foreground">Cooldown 429</Label>
+                    <Button variant="ghost" size="icon" className="size-4 text-muted-foreground hover:text-cyan-600" onClick={() => resetField('verifierRateLimitCooldownMs')} title={`Padrao: ${(Number(DEFAULTS.verifierRateLimitCooldownMs) / 3600000).toFixed(0)}h`}>
+                      <RotateCcw className="size-2" />
+                    </Button>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <Input type="number" min={1} max={168} step={1} value={Math.round((settings.verifierRateLimitCooldownMs ?? 86400000) / 3600000)} onChange={e => updateSetting('verifierRateLimitCooldownMs', Math.max(60000, (parseInt(e.target.value) || 24) * 3600000))} className="w-16 h-7 text-xs" disabled={saving} />
+                    <span className="text-[9px] text-muted-foreground">horas</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="flex justify-between items-center">
+                <Label className="text-xs">Retry apos 429</Label>
+                <Button variant="ghost" size="icon" className="size-5 text-muted-foreground hover:text-cyan-600" onClick={() => resetField('verifierRateLimitRetryMs')} title={`Padrao: ${DEFAULTS.verifierRateLimitRetryMs}ms`}>
+                  <RotateCcw className="size-2.5" />
+                </Button>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <Input type="number" min={500} max={10000} step={100} value={settings.verifierRateLimitRetryMs ?? 2000} onChange={e => updateSetting('verifierRateLimitRetryMs', Math.max(500, parseInt(e.target.value) || 2000))} className="w-24 h-8 text-sm" disabled={saving} />
+                <span className="text-[11px] text-muted-foreground">ms</span>
+              </div>
+            </div>
           </CardContent>
         </Card>
 
@@ -1304,6 +1459,442 @@ export function AntiBanTab() {
             <div className="space-y-1.5">
               <Label className="text-xs">Mensagem de rejeicao</Label>
               <Input type="text" maxLength={200} value={settings.autoRejectCallMessage ?? 'Desculpa, nao posso atender agora.'} onChange={e => updateSetting('autoRejectCallMessage', e.target.value)} className="h-8 text-sm" disabled={saving} />
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Row: Ban Detection + Sending Engine */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* Ban Detection */}
+        <Card className="shadow-lg border-0 hover:shadow-xl transition-all duration-200">
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="flex size-7 items-center justify-center rounded-lg bg-purple-100 dark:bg-purple-900/30">
+                  <ShieldAlert className="size-3.5 text-purple-600" />
+                </div>
+                <CardTitle className="text-base">Detecção de Ban</CardTitle>
+              </div>
+              <Button variant="ghost" size="sm" className="text-xs text-muted-foreground hover:text-purple-600 gap-1 h-7" onClick={() => resetSection('banDetection', 'Detecção de Ban')} disabled={saving}>
+                <RotateCcw className="size-3" />
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-1.5">
+              <div className="flex justify-between items-center">
+                <Label className="text-xs">Códigos de ban</Label>
+                <Button variant="ghost" size="icon" className="size-5 text-muted-foreground hover:text-purple-600" onClick={() => resetField('banCodes')} title="Restaurar padrão">
+                  <RotateCcw className="size-2.5" />
+                </Button>
+              </div>
+              <Input
+                type="text"
+                value={banCodesText}
+                onChange={e => {
+                  setBanCodesText(e.target.value)
+                  const arr = e.target.value.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n))
+                  updateSetting('banCodes', JSON.stringify(arr))
+                }}
+                placeholder="401, 403, 428, 440"
+                className="h-8 text-sm"
+                disabled={saving}
+              />
+              <p className="text-[10px] text-muted-foreground">Separados por vírgula. Códigos HTTP que indicam ban.</p>
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="flex justify-between items-center">
+                <Label className="text-xs">Keywords de restrição</Label>
+                <Button variant="ghost" size="icon" className="size-5 text-muted-foreground hover:text-purple-600" onClick={() => resetField('restrictionKeywords')} title="Restaurar padrão">
+                  <RotateCcw className="size-2.5" />
+                </Button>
+              </div>
+              <Textarea
+                value={restrictionKeywordsText}
+                onChange={e => {
+                  setRestrictionKeywordsText(e.target.value)
+                  const arr = e.target.value.split('\n').map(s => s.trim()).filter(s => s.length > 0)
+                  updateSetting('restrictionKeywords', JSON.stringify(arr))
+                }}
+                placeholder="sua conta foi banida&#10;sua conta foi suspensa&#10;..."
+                className="min-h-[80px] text-xs"
+                disabled={saving}
+              />
+              <p className="text-[10px] text-muted-foreground">Uma keyword por linha. Palavras que indicam restrição de conta.</p>
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="flex justify-between items-center">
+                <Label className="text-xs">Keywords de aviso</Label>
+                <Button variant="ghost" size="icon" className="size-5 text-muted-foreground hover:text-purple-600" onClick={() => resetField('warningKeywords')} title="Restaurar padrão">
+                  <RotateCcw className="size-2.5" />
+                </Button>
+              </div>
+              <Textarea
+                value={warningKeywordsText}
+                onChange={e => {
+                  setWarningKeywordsText(e.target.value)
+                  const arr = e.target.value.split('\n').map(s => s.trim()).filter(s => s.length > 0)
+                  updateSetting('warningKeywords', JSON.stringify(arr))
+                }}
+                placeholder="aviso&#10;advertência&#10;spam&#10;..."
+                className="min-h-[80px] text-xs"
+                disabled={saving}
+              />
+              <p className="text-[10px] text-muted-foreground">Uma keyword por linha. Palavras que indicam aviso ou alerta.</p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <div className="flex justify-between items-center">
+                  <Label className="text-xs">Lookback (horas)</Label>
+                  <Button variant="ghost" size="icon" className="size-5 text-muted-foreground hover:text-purple-600" onClick={() => resetField('banLookbackHours')} title={`Padrão: ${DEFAULTS.banLookbackHours}h`}>
+                    <RotateCcw className="size-2.5" />
+                  </Button>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <Input type="number" min={1} max={168} step={1} value={settings.banLookbackHours ?? 24} onChange={e => updateSetting('banLookbackHours', Math.max(1, parseInt(e.target.value) || 24))} className="w-24 h-8 text-sm" disabled={saving} />
+                  <span className="text-[11px] text-muted-foreground">h</span>
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <div className="flex justify-between items-center">
+                  <Label className="text-xs">Threshold keywords</Label>
+                  <Button variant="ghost" size="icon" className="size-5 text-muted-foreground hover:text-purple-600" onClick={() => resetField('banKeywordThreshold')} title={`Padrão: ${DEFAULTS.banKeywordThreshold}`}>
+                    <RotateCcw className="size-2.5" />
+                  </Button>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <Input type="number" min={1} max={10} step={1} value={settings.banKeywordThreshold ?? 2} onChange={e => updateSetting('banKeywordThreshold', Math.max(1, parseInt(e.target.value) || 2))} className="w-24 h-8 text-sm" disabled={saving} />
+                  <span className="text-[11px] text-muted-foreground">matches</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <div className="flex justify-between items-center">
+                  <Label className="text-xs">Máx. mensagens (ban)</Label>
+                  <Button variant="ghost" size="icon" className="size-5 text-muted-foreground hover:text-purple-600" onClick={() => resetField('banMaxMessagesCheck')} title={`Padrão: ${DEFAULTS.banMaxMessagesCheck}`}>
+                    <RotateCcw className="size-2.5" />
+                  </Button>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <Input type="number" min={5} max={200} step={1} value={settings.banMaxMessagesCheck ?? 50} onChange={e => updateSetting('banMaxMessagesCheck', Math.max(5, parseInt(e.target.value) || 50))} className="w-24 h-8 text-sm" disabled={saving} />
+                  <span className="text-[11px] text-muted-foreground">msgs</span>
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <div className="flex justify-between items-center">
+                  <Label className="text-xs">Máx. mensagens (aviso)</Label>
+                  <Button variant="ghost" size="icon" className="size-5 text-muted-foreground hover:text-purple-600" onClick={() => resetField('warningMaxMessagesCheck')} title={`Padrão: ${DEFAULTS.warningMaxMessagesCheck}`}>
+                    <RotateCcw className="size-2.5" />
+                  </Button>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <Input type="number" min={5} max={100} step={1} value={settings.warningMaxMessagesCheck ?? 20} onChange={e => updateSetting('warningMaxMessagesCheck', Math.max(5, parseInt(e.target.value) || 20))} className="w-24 h-8 text-sm" disabled={saving} />
+                  <span className="text-[11px] text-muted-foreground">msgs</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-3 bg-muted/50 rounded-lg">
+              <p className="text-[10px] text-muted-foreground">
+                Monitora as últimas <strong>{settings.banLookbackHours ?? 24}h</strong> de mensagens, verificando até <strong>{settings.banMaxMessagesCheck ?? 50}</strong> msgs para ban e <strong>{settings.warningMaxMessagesCheck ?? 20}</strong> para aviso. Aciona se ≥<strong>{settings.banKeywordThreshold ?? 2}</strong> keywords forem encontradas.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Sending Engine */}
+        <Card className="shadow-lg border-0 hover:shadow-xl transition-all duration-200">
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="flex size-7 items-center justify-center rounded-lg bg-cyan-100 dark:bg-cyan-900/30">
+                  <Zap className="size-3.5 text-cyan-600" />
+                </div>
+                <CardTitle className="text-base">Motor de Envio</CardTitle>
+              </div>
+              <Button variant="ghost" size="sm" className="text-xs text-muted-foreground hover:text-cyan-600 gap-1 h-7" onClick={() => resetSection('sendingEngine', 'Motor de Envio')} disabled={saving}>
+                <RotateCcw className="size-3" />
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <div className="flex justify-between items-center">
+                  <Label className="text-xs">Intervalo berçário</Label>
+                  <Button variant="ghost" size="icon" className="size-5 text-muted-foreground hover:text-cyan-600" onClick={() => resetField('nurseryMinIntervalSec')} title={`Padrão: ${DEFAULTS.nurseryMinIntervalSec}s`}>
+                    <RotateCcw className="size-2.5" />
+                  </Button>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <Input type="number" min={30} max={600} step={5} value={settings.nurseryMinIntervalSec ?? 120} onChange={e => updateSetting('nurseryMinIntervalSec', Math.max(30, parseInt(e.target.value) || 120))} className="w-24 h-8 text-sm" disabled={saving} />
+                  <span className="text-[11px] text-muted-foreground">seg</span>
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <div className="flex justify-between items-center">
+                  <Label className="text-xs">Intervalo pré-aquecido</Label>
+                  <Button variant="ghost" size="icon" className="size-5 text-muted-foreground hover:text-cyan-600" onClick={() => resetField('prewarmMinIntervalSec')} title={`Padrão: ${DEFAULTS.prewarmMinIntervalSec}s`}>
+                    <RotateCcw className="size-2.5" />
+                  </Button>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <Input type="number" min={15} max={300} step={5} value={settings.prewarmMinIntervalSec ?? 60} onChange={e => updateSetting('prewarmMinIntervalSec', Math.max(15, parseInt(e.target.value) || 60))} className="w-24 h-8 text-sm" disabled={saving} />
+                  <span className="text-[11px] text-muted-foreground">seg</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <div className="flex justify-between items-center">
+                  <Label className="text-xs">Timeout função</Label>
+                  <Button variant="ghost" size="icon" className="size-5 text-muted-foreground hover:text-cyan-600" onClick={() => resetField('functionTimeoutMs')} title={`Padrão: ${DEFAULTS.functionTimeoutMs}ms`}>
+                    <RotateCcw className="size-2.5" />
+                  </Button>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <Input type="number" min={10000} max={120000} step={1000} value={settings.functionTimeoutMs ?? 50000} onChange={e => updateSetting('functionTimeoutMs', Math.max(10000, parseInt(e.target.value) || 50000))} className="w-24 h-8 text-sm" disabled={saving} />
+                  <span className="text-[11px] text-muted-foreground">ms</span>
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <div className="flex justify-between items-center">
+                  <Label className="text-xs">Máx. msgs/invocação</Label>
+                  <Button variant="ghost" size="icon" className="size-5 text-muted-foreground hover:text-cyan-600" onClick={() => resetField('maxMessagesPerInvocation')} title={`Padrão: ${DEFAULTS.maxMessagesPerInvocation}`}>
+                    <RotateCcw className="size-2.5" />
+                  </Button>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <Input type="number" min={1} max={50} step={1} value={settings.maxMessagesPerInvocation ?? 10} onChange={e => updateSetting('maxMessagesPerInvocation', Math.max(1, parseInt(e.target.value) || 10))} className="w-24 h-8 text-sm" disabled={saving} />
+                  <span className="text-[11px] text-muted-foreground">msgs</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="flex justify-between items-center">
+                <Label className="text-xs">Tempo mínimo restante</Label>
+                <Button variant="ghost" size="icon" className="size-5 text-muted-foreground hover:text-cyan-600" onClick={() => resetField('minRemainingTimeMs')} title={`Padrão: ${DEFAULTS.minRemainingTimeMs}ms`}>
+                  <RotateCcw className="size-2.5" />
+                </Button>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <Input type="number" min={1000} max={10000} step={500} value={settings.minRemainingTimeMs ?? 3000} onChange={e => updateSetting('minRemainingTimeMs', Math.max(1000, parseInt(e.target.value) || 3000))} className="w-24 h-8 text-sm" disabled={saving} />
+                <span className="text-[11px] text-muted-foreground">ms</span>
+              </div>
+            </div>
+
+            <div className="border-t pt-3">
+              <Label className="text-xs font-semibold">Stagger de presença</Label>
+              <p className="text-[10px] text-muted-foreground mb-2">Delay aleatório antes de enviar "digitando..."</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <div className="flex justify-between items-center">
+                    <Label className="text-[10px] text-muted-foreground">Mínimo</Label>
+                    <Button variant="ghost" size="icon" className="size-4 text-muted-foreground hover:text-cyan-600" onClick={() => resetField('presenceStaggerMinMs')} title={`Padrão: ${DEFAULTS.presenceStaggerMinMs}ms`}>
+                      <RotateCcw className="size-2" />
+                    </Button>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <Input type="number" min={100} max={5000} step={100} value={settings.presenceStaggerMinMs ?? 500} onChange={e => updateSetting('presenceStaggerMinMs', Math.max(100, parseInt(e.target.value) || 500))} className="w-20 h-7 text-xs" disabled={saving} />
+                    <span className="text-[9px] text-muted-foreground">ms</span>
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <div className="flex justify-between items-center">
+                    <Label className="text-[10px] text-muted-foreground">Máximo</Label>
+                    <Button variant="ghost" size="icon" className="size-4 text-muted-foreground hover:text-cyan-600" onClick={() => resetField('presenceStaggerMaxMs')} title={`Padrão: ${DEFAULTS.presenceStaggerMaxMs}ms`}>
+                      <RotateCcw className="size-2" />
+                    </Button>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <Input type="number" min={100} max={10000} step={100} value={settings.presenceStaggerMaxMs ?? 2000} onChange={e => updateSetting('presenceStaggerMaxMs', Math.max(100, parseInt(e.target.value) || 2000))} className="w-20 h-7 text-xs" disabled={saving} />
+                    <span className="text-[9px] text-muted-foreground">ms</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="flex justify-between items-center">
+                <Label className="text-xs">Timeout verificação mídia</Label>
+                <Button variant="ghost" size="icon" className="size-5 text-muted-foreground hover:text-cyan-600" onClick={() => resetField('mediaCheckTimeoutMs')} title={`Padrão: ${DEFAULTS.mediaCheckTimeoutMs}ms`}>
+                  <RotateCcw className="size-2.5" />
+                </Button>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <Input type="number" min={1000} max={30000} step={500} value={settings.mediaCheckTimeoutMs ?? 5000} onChange={e => updateSetting('mediaCheckTimeoutMs', Math.max(1000, parseInt(e.target.value) || 5000))} className="w-24 h-8 text-sm" disabled={saving} />
+                <span className="text-[11px] text-muted-foreground">ms</span>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Row: Campaign Defaults + Warming Engine */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* Campaign Defaults */}
+        <Card className="shadow-lg border-0 hover:shadow-xl transition-all duration-200">
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="flex size-7 items-center justify-center rounded-lg bg-indigo-100 dark:bg-indigo-900/30">
+                  <Star className="size-3.5 text-indigo-600" />
+                </div>
+                <CardTitle className="text-base">Padrões de Campanha</CardTitle>
+              </div>
+              <Button variant="ghost" size="sm" className="text-xs text-muted-foreground hover:text-indigo-600 gap-1 h-7" onClick={() => resetSection('campaignDefaults', 'Padrões de Campanha')} disabled={saving}>
+                <RotateCcw className="size-3" />
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <div className="flex justify-between items-center">
+                  <Label className="text-xs">Intervalo mínimo padrão</Label>
+                  <Button variant="ghost" size="icon" className="size-5 text-muted-foreground hover:text-indigo-600" onClick={() => resetField('defaultSendIntervalMin')} title={`Padrão: ${DEFAULTS.defaultSendIntervalMin}s`}>
+                    <RotateCcw className="size-2.5" />
+                  </Button>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <Input type="number" min={5} max={300} step={1} value={settings.defaultSendIntervalMin ?? 30} onChange={e => updateSetting('defaultSendIntervalMin', Math.max(5, parseInt(e.target.value) || 30))} className="w-24 h-8 text-sm" disabled={saving} />
+                  <span className="text-[11px] text-muted-foreground">seg</span>
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <div className="flex justify-between items-center">
+                  <Label className="text-xs">Intervalo máximo padrão</Label>
+                  <Button variant="ghost" size="icon" className="size-5 text-muted-foreground hover:text-indigo-600" onClick={() => resetField('defaultSendIntervalMax')} title={`Padrão: ${DEFAULTS.defaultSendIntervalMax}s`}>
+                    <RotateCcw className="size-2.5" />
+                  </Button>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <Input type="number" min={5} max={600} step={1} value={settings.defaultSendIntervalMax ?? 90} onChange={e => updateSetting('defaultSendIntervalMax', Math.max(5, parseInt(e.target.value) || 90))} className="w-24 h-8 text-sm" disabled={saving} />
+                  <span className="text-[11px] text-muted-foreground">seg</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">
+              <div>
+                <p className="text-xs font-medium">Anti-ban ativo por padrão</p>
+                <p className="text-[10px] text-muted-foreground">Novas campanhas iniciam com anti-ban ligado</p>
+              </div>
+              <div className="flex items-center gap-1">
+                <Switch checked={settings.defaultAntiBanEnabled ?? true} onCheckedChange={v => updateSetting('defaultAntiBanEnabled', v)} />
+                <Button variant="ghost" size="icon" className="size-5 text-muted-foreground hover:text-indigo-600" onClick={() => resetField('defaultAntiBanEnabled')} title="Restaurar padrão">
+                  <RotateCcw className="size-2.5" />
+                </Button>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="flex justify-between items-center">
+                <Label className="text-xs">Modo de aquecimento padrão</Label>
+                <Button variant="ghost" size="icon" className="size-5 text-muted-foreground hover:text-indigo-600" onClick={() => resetField('defaultWarmingMode')} title={`Padrão: ${DEFAULTS.defaultWarmingMode}`}>
+                  <RotateCcw className="size-2.5" />
+                </Button>
+              </div>
+              <Select value={settings.defaultWarmingMode ?? 'normal'} onValueChange={v => updateSetting('defaultWarmingMode', v)}>
+                <SelectTrigger className="h-8 text-sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="normal">Normal</SelectItem>
+                  <SelectItem value="agressive">Agressivo</SelectItem>
+                  <SelectItem value="stealth">Furtivo</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-[10px] text-muted-foreground">Modo de aquecimento aplicado a novas campanhas.</p>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Warming Engine */}
+        <Card className="shadow-lg border-0 hover:shadow-xl transition-all duration-200">
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="flex size-7 items-center justify-center rounded-lg bg-orange-100 dark:bg-orange-900/30">
+                  <Flame className="size-3.5 text-orange-600" />
+                </div>
+                <CardTitle className="text-base">Motor de Aquecimento</CardTitle>
+              </div>
+              <Button variant="ghost" size="sm" className="text-xs text-muted-foreground hover:text-orange-600 gap-1 h-7" onClick={() => resetSection('warmingEngine', 'Motor de Aquecimento')} disabled={saving}>
+                <RotateCcw className="size-3" />
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-1.5">
+              <div className="flex justify-between items-center">
+                <Label className="text-xs">Mín. chips para aquecer</Label>
+                <Button variant="ghost" size="icon" className="size-5 text-muted-foreground hover:text-orange-600" onClick={() => resetField('minChipsForWarming')} title={`Padrão: ${DEFAULTS.minChipsForWarming}`}>
+                  <RotateCcw className="size-2.5" />
+                </Button>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <Input type="number" min={2} max={10} step={1} value={settings.minChipsForWarming ?? 3} onChange={e => updateSetting('minChipsForWarming', Math.max(2, parseInt(e.target.value) || 3))} className="w-24 h-8 text-sm" disabled={saving} />
+                <span className="text-[11px] text-muted-foreground">chips</span>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <div className="flex justify-between items-center">
+                <Label className="text-xs">Auto-pausa após erros</Label>
+                <Button variant="ghost" size="icon" className="size-5 text-muted-foreground hover:text-orange-600" onClick={() => resetField('warmingAutoPauseErrors')} title={`Padrão: ${DEFAULTS.warmingAutoPauseErrors}`}>
+                  <RotateCcw className="size-2.5" />
+                </Button>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <Input type="number" min={3} max={50} step={1} value={settings.warmingAutoPauseErrors ?? 10} onChange={e => updateSetting('warmingAutoPauseErrors', Math.max(3, parseInt(e.target.value) || 10))} className="w-24 h-8 text-sm" disabled={saving} />
+                <span className="text-[11px] text-muted-foreground">erros</span>
+              </div>
+            </div>
+
+            <div className="border-t pt-3">
+              <Label className="text-xs font-semibold">Retry após erro</Label>
+              <p className="text-[10px] text-muted-foreground mb-2">Intervalo aleatório entre mín e máx antes de tentar novamente</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <div className="flex justify-between items-center">
+                    <Label className="text-[10px] text-muted-foreground">Mínimo</Label>
+                    <Button variant="ghost" size="icon" className="size-4 text-muted-foreground hover:text-orange-600" onClick={() => resetField('warmingErrorRetryMinSec')} title={`Padrão: ${DEFAULTS.warmingErrorRetryMinSec}s`}>
+                      <RotateCcw className="size-2" />
+                    </Button>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <Input type="number" min={5} max={120} step={1} value={settings.warmingErrorRetryMinSec ?? 15} onChange={e => updateSetting('warmingErrorRetryMinSec', Math.max(5, parseInt(e.target.value) || 15))} className="w-20 h-7 text-xs" disabled={saving} />
+                    <span className="text-[9px] text-muted-foreground">seg</span>
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <div className="flex justify-between items-center">
+                    <Label className="text-[10px] text-muted-foreground">Máximo</Label>
+                    <Button variant="ghost" size="icon" className="size-4 text-muted-foreground hover:text-orange-600" onClick={() => resetField('warmingErrorRetryMaxSec')} title={`Padrão: ${DEFAULTS.warmingErrorRetryMaxSec}s`}>
+                      <RotateCcw className="size-2" />
+                    </Button>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <Input type="number" min={10} max={300} step={1} value={settings.warmingErrorRetryMaxSec ?? 60} onChange={e => updateSetting('warmingErrorRetryMaxSec', Math.max(10, parseInt(e.target.value) || 60))} className="w-20 h-7 text-xs" disabled={saving} />
+                    <span className="text-[9px] text-muted-foreground">seg</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-3 bg-muted/50 rounded-lg">
+              <p className="text-[10px] text-muted-foreground">
+                O motor de aquecimento precisa de pelo menos <strong>{settings.minChipsForWarming ?? 3}</strong> chips disponíveis. Após <strong>{settings.warmingAutoPauseErrors ?? 10}</strong> erros consecutivos, o aquecimento é pausado automaticamente. Retry aguarda <strong>{settings.warmingErrorRetryMinSec ?? 15}–{settings.warmingErrorRetryMaxSec ?? 60}s</strong>.
+              </p>
             </div>
           </CardContent>
         </Card>

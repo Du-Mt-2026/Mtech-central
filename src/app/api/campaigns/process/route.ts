@@ -12,7 +12,11 @@ import { processNextMessage, startCampaign } from '@/lib/sending-engine'
  * This is the PRIMARY sending mechanism. The Vercel Cron is a backup.
  */
 export async function POST(request: Request) {
-  const FUNCTION_TIMEOUT_MS = 50_000 // Vercel timeout is 60s, leave 10s margin
+  // Load settings for configurable timeouts and message limits
+  const settings = await db.antiBanSettings.findFirst()
+  const FUNCTION_TIMEOUT_MS = settings?.functionTimeoutMs ?? 50_000
+  const maxMessagesPerInvocation = settings?.maxMessagesPerInvocation ?? 10
+  const minRemainingTimeMs = settings?.minRemainingTimeMs ?? 3000
   const startTime = Date.now()
 
   try {
@@ -77,8 +81,8 @@ export async function POST(request: Request) {
     const allEvents: Array<{ type: string; chipName?: string; campaignName?: string; reason?: string }> = []
 
     for (const campaignId of campaignIds) {
-      // Process up to 10 messages per campaign per invocation
-      for (let attempt = 0; attempt < 10; attempt++) {
+      // Process up to maxMessagesPerInvocation messages per campaign per invocation
+      for (let attempt = 0; attempt < maxMessagesPerInvocation; attempt++) {
         // Check if we're about to timeout
         if (Date.now() - startTime > FUNCTION_TIMEOUT_MS) {
           console.log(`[Process] Approaching function timeout after ${totalProcessed} messages`)
@@ -123,8 +127,8 @@ export async function POST(request: Request) {
         // cron tick will continue if needed.
         if (result.delayMs > 0) {
           const remainingTime = FUNCTION_TIMEOUT_MS - (Date.now() - startTime)
-          if (remainingTime < 3000) break // Not enough time to wait + process next message
-          const waitTime = Math.min(result.delayMs, remainingTime - 3000)
+          if (remainingTime < minRemainingTimeMs) break // Not enough time to wait + process next message
+          const waitTime = Math.min(result.delayMs, remainingTime - minRemainingTimeMs)
           if (waitTime > 0) {
             console.log(`[Process] Waiting ${Math.round(waitTime/1000)}s (delay: ${Math.round(result.delayMs/1000)}s, reason: ${result.reason || 'interval'})`)
             await new Promise(resolve => setTimeout(resolve, waitTime))

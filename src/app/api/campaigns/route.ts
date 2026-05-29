@@ -116,17 +116,24 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Name is required' }, { status: 400 })
     }
 
+    // Load campaign defaults from AntiBanSettings
+    const settings = await db.antiBanSettings.findFirst()
+    const defaultSendIntervalMin = settings?.defaultSendIntervalMin ?? 30
+    const defaultSendIntervalMax = settings?.defaultSendIntervalMax ?? 90
+    const defaultAntiBanEnabled = settings?.defaultAntiBanEnabled ?? true
+    const defaultWarmingMode = settings?.defaultWarmingMode ?? 'normal'
+
     const campaign = await db.campaign.create({
       data: {
         name,
-        sendIntervalMin: sendIntervalMin || 30,
-        sendIntervalMax: sendIntervalMax || 90,
+        sendIntervalMin: sendIntervalMin || defaultSendIntervalMin,
+        sendIntervalMax: sendIntervalMax || defaultSendIntervalMax,
         contactListId: contactListId || null,
         scheduledAt: scheduledAt ? new Date(scheduledAt) : null,
         vendedorId: vendedorId || null,
         status: 'draft',
-        antiBanEnabled: antiBanEnabled !== undefined ? antiBanEnabled : true,
-        warmingMode: warmingMode || 'normal',
+        antiBanEnabled: antiBanEnabled !== undefined ? antiBanEnabled : defaultAntiBanEnabled,
+        warmingMode: warmingMode || defaultWarmingMode,
         chips: {
           create: (chipIds || []).map((chipId: string) => ({
             chipId,

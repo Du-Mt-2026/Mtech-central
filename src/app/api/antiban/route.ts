@@ -247,6 +247,93 @@ export async function PATCH(request: NextRequest) {
       }
     }
 
+    // Convert banCodes array to JSON string for DB storage
+    if (updateData.banCodes !== undefined) {
+      if (typeof updateData.banCodes !== 'string') {
+        const arr = updateData.banCodes as number[]
+        if (!Array.isArray(arr) || arr.length === 0 || !arr.every(n => typeof n === 'number' && n > 0)) {
+          return NextResponse.json(
+            { error: 'banCodes deve ser um array de números positivos', field: 'banCodes' },
+            { status: 400 }
+          )
+        }
+        updateData.banCodes = JSON.stringify(arr)
+      } else {
+        try {
+          const arr = JSON.parse(updateData.banCodes as string)
+          if (!Array.isArray(arr) || !arr.every((n: number) => typeof n === 'number' && n > 0)) {
+            return NextResponse.json(
+              { error: 'banCodes deve ser um array de números positivos', field: 'banCodes' },
+              { status: 400 }
+            )
+          }
+        } catch {
+          return NextResponse.json(
+            { error: 'banCodes JSON inválido', field: 'banCodes' },
+            { status: 400 }
+          )
+        }
+      }
+    }
+
+    // Convert restrictionKeywords array to JSON string for DB storage
+    if (updateData.restrictionKeywords !== undefined) {
+      if (typeof updateData.restrictionKeywords !== 'string') {
+        const arr = updateData.restrictionKeywords as string[]
+        if (!Array.isArray(arr) || arr.length === 0 || !arr.every(s => typeof s === 'string' && s.length > 0)) {
+          return NextResponse.json(
+            { error: 'restrictionKeywords deve ser um array de strings não vazias', field: 'restrictionKeywords' },
+            { status: 400 }
+          )
+        }
+        updateData.restrictionKeywords = JSON.stringify(arr)
+      } else {
+        try {
+          const arr = JSON.parse(updateData.restrictionKeywords as string)
+          if (!Array.isArray(arr) || !arr.every((s: string) => typeof s === 'string' && s.length > 0)) {
+            return NextResponse.json(
+              { error: 'restrictionKeywords deve ser um array de strings não vazias', field: 'restrictionKeywords' },
+              { status: 400 }
+            )
+          }
+        } catch {
+          return NextResponse.json(
+            { error: 'restrictionKeywords JSON inválido', field: 'restrictionKeywords' },
+            { status: 400 }
+          )
+        }
+      }
+    }
+
+    // Convert warningKeywords array to JSON string for DB storage
+    if (updateData.warningKeywords !== undefined) {
+      if (typeof updateData.warningKeywords !== 'string') {
+        const arr = updateData.warningKeywords as string[]
+        if (!Array.isArray(arr) || arr.length === 0 || !arr.every(s => typeof s === 'string' && s.length > 0)) {
+          return NextResponse.json(
+            { error: 'warningKeywords deve ser um array de strings não vazias', field: 'warningKeywords' },
+            { status: 400 }
+          )
+        }
+        updateData.warningKeywords = JSON.stringify(arr)
+      } else {
+        try {
+          const arr = JSON.parse(updateData.warningKeywords as string)
+          if (!Array.isArray(arr) || !arr.every((s: string) => typeof s === 'string' && s.length > 0)) {
+            return NextResponse.json(
+              { error: 'warningKeywords deve ser um array de strings não vazias', field: 'warningKeywords' },
+              { status: 400 }
+            )
+          }
+        } catch {
+          return NextResponse.json(
+            { error: 'warningKeywords JSON inválido', field: 'warningKeywords' },
+            { status: 400 }
+          )
+        }
+      }
+    }
+
     const updated = await db.antiBanSettings.update({
       where: { id: settings.id },
       data: updateData,

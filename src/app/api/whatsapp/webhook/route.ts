@@ -13,6 +13,14 @@ import { broadcastToChip } from '@/app/api/inbox/events/route'
  */
 export async function POST(request: Request) {
   try {
+    // Load anti-ban settings for ban detection configuration
+    const settings = await db.antiBanSettings.findFirst()
+    const banCodes = (() => { try { return settings?.banCodes ? JSON.parse(settings.banCodes) : [401,403,428,440] } catch { return [401,403,428,440] } })()
+    const restrictionKeywords = (() => { try { return settings?.restrictionKeywords ? JSON.parse(settings.restrictionKeywords) : ['conta está restringida','conta esta restringida','envio de spam','mensagens automáticas','mensagens automaticas','mensagens em massa','atividade recente','account is restricted','sending spam','automated messages','bulk messages','não será possível','nao sera possivel','iniciar novas conversas'] } catch { return ['conta está restringida','conta esta restringida','envio de spam','mensagens automáticas','mensagens automaticas','mensagens em massa','atividade recente','account is restricted','sending spam','automated messages','bulk messages','não será possível','nao sera possivel','iniciar novas conversas'] } })()
+    const banLookbackMs = (settings?.banLookbackHours ?? 24) * 3600000
+    const banMaxMessagesCheck = settings?.banMaxMessagesCheck ?? 30
+    const banKeywordThreshold = settings?.banKeywordThreshold ?? 2
+
     const body = await request.json()
 
     const event = body.event
@@ -116,8 +124,7 @@ export async function POST(request: Request) {
             updateData.disconnectionReasonCode = disconnectionCode
           }
 
-          const BAN_CODES = [401, 403, 428, 440]
-          const isBanned = disconnectionCode && BAN_CODES.includes(Number(disconnectionCode))
+          const isBanned = disconnectionCode && banCodes.includes(Number(disconnectionCode))
           if (isBanned) {
             updateData.status = 'banned'
             console.log(`[Webhook] Chip ${chip.name} marked as BANNED — disconnection code: ${disconnectionCode}`)
@@ -129,28 +136,19 @@ export async function POST(request: Request) {
           let isTempBanned = false
           if (!isBanned) {
             try {
-              const RESTRICTION_KEYWORDS = [
-                'conta está restringida', 'conta esta restringida',
-                'envio de spam', 'mensagens automáticas', 'mensagens automaticas',
-                'mensagens em massa', 'atividade recente',
-                'account is restricted', 'sending spam',
-                'automated messages', 'bulk messages',
-                'não será possível', 'nao sera possivel',
-                'iniciar novas conversas',
-              ]
               const recentWarnings = await db.inboxMessage.findMany({
                 where: {
                   instanceName: chip.evolutionInstance || '',
                   fromMe: false,
-                  createdAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
+                  createdAt: { gte: new Date(Date.now() - banLookbackMs) },
                 },
-                take: 30,
+                take: banMaxMessagesCheck,
                 orderBy: { createdAt: 'desc' },
               })
               for (const msg of recentWarnings) {
                 const content = (msg.messageContent || '').toLowerCase()
-                const matchCount = RESTRICTION_KEYWORDS.filter(kw => content.includes(kw)).length
-                if (matchCount >= 2) {
+                const matchCount = restrictionKeywords.filter((kw: string) => content.includes(kw)).length
+                if (matchCount >= banKeywordThreshold) {
                   isTempBanned = true
                   updateData.status = 'banned'
                   console.warn(`[Webhook] Chip ${chip.name} detected as TEMP BANNED via inbox message — NOT queueing for reconnection`)

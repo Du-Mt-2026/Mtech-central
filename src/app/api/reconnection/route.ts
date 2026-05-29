@@ -17,6 +17,14 @@ import { db } from '@/lib/db'
  */
 export async function GET(request: NextRequest) {
   try {
+    // Load settings for reconnection config display
+    const settings = await db.antiBanSettings.findFirst()
+    const maxConcurrent = settings?.reconnectMaxConcurrent ?? 2
+    const maxAttempts = settings?.reconnectMaxAttempts ?? 10
+    const backoffSchedule = (() => { try { return settings?.reconnectBackoffMs ? JSON.parse(settings.reconnectBackoffMs) : [5000,15000,45000,120000,300000,600000] } catch { return [5000,15000,45000,120000,300000,600000] } })()
+    const reconnectRateLimit = settings?.reconnectRateLimit ?? 5
+    const reconnectRateWindowMin = settings?.reconnectRateWindowMin ?? 10
+
     const stats = getReconnectionStats()
     const entries = getQueueEntries()
 
@@ -24,10 +32,13 @@ export async function GET(request: NextRequest) {
       stats,
       entries,
       config: {
-        maxConcurrent: 2,
-        maxAttempts: 10,
-        backoffSchedule: ['5s', '15s', '45s', '2min', '5min', '10min'],
-        rateLimit: '5 reconnections per 10 minutes',
+        maxConcurrent,
+        maxAttempts,
+        backoffSchedule: backoffSchedule.map((ms: number) => {
+          if (ms < 60000) return `${Math.round(ms/1000)}s`
+          return `${Math.round(ms/60000)}min`
+        }),
+        rateLimit: `${reconnectRateLimit} reconnections per ${reconnectRateWindowMin} minutes`,
       },
     })
   } catch (error: any) {
@@ -66,10 +77,12 @@ export async function POST(request: NextRequest) {
 
       // Queue all disconnected chips for reconnection
       case 'queue_all_disconnected': {
+        // Load ban codes from settings for filtering
+        const banCodesParsed = await (async () => { try { const s = await db.antiBanSettings.findFirst(); return s?.banCodes ? JSON.parse(s.banCodes) : [401,403,428,440] } catch { return [401,403,428,440] } })()
         const disconnectedChips = await db.chip.findMany({
           where: {
             status: { in: ['disconnected', 'connecting'] },
-            disconnectionReasonCode: { notIn: [401, 403, 428, 440] },
+            disconnectionReasonCode: { notIn: banCodesParsed },
             evolutionInstance: { not: null },
           },
         })

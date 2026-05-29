@@ -280,6 +280,47 @@ export const antiBanUpdateSchema = z.object({
   evolutionApiTimeoutMs: z.number().int().min(5000).max(120000).optional(),
   autoRejectCalls: z.boolean().optional(),
   autoRejectCallMessage: z.string().min(1).max(200).optional(),
+
+  // Ban Detection settings
+  banCodes: z.union([z.string(), z.array(z.number().int())]).optional(),
+  restrictionKeywords: z.union([z.string(), z.array(z.string())]).optional(),
+  warningKeywords: z.union([z.string(), z.array(z.string())]).optional(),
+  banLookbackHours: z.number().int().min(1).max(168).optional(),
+  banKeywordThreshold: z.number().int().min(1).max(10).optional(),
+  banMaxMessagesCheck: z.number().int().min(5).max(200).optional(),
+  warningMaxMessagesCheck: z.number().int().min(5).max(100).optional(),
+
+  // Sending Engine settings
+  nurseryMinIntervalSec: z.number().int().min(30).max(600).optional(),
+  prewarmMinIntervalSec: z.number().int().min(15).max(300).optional(),
+  functionTimeoutMs: z.number().int().min(10000).max(120000).optional(),
+  maxMessagesPerInvocation: z.number().int().min(1).max(50).optional(),
+  minRemainingTimeMs: z.number().int().min(1000).max(10000).optional(),
+  presenceStaggerMinMs: z.number().int().min(100).max(5000).optional(),
+  presenceStaggerMaxMs: z.number().int().min(100).max(10000).optional(),
+  mediaCheckTimeoutMs: z.number().int().min(1000).max(30000).optional(),
+
+  // Verifier Extended settings
+  verifierDelayMin: z.number().int().min(1).max(60).optional(),
+  verifierDelayMax: z.number().int().min(1).max(120).optional(),
+  verifierBatchSize: z.number().int().min(1).max(50).optional(),
+  verifierCooldownAfter: z.number().int().min(5).max(200).optional(),
+  verifierCooldownMinutes: z.number().int().min(1).max(60).optional(),
+  verifierQuotaCooldownMs: z.number().int().min(60000).max(604800000).optional(),
+  verifierRateLimitCooldownMs: z.number().int().min(60000).max(604800000).optional(),
+  verifierRateLimitRetryMs: z.number().int().min(500).max(10000).optional(),
+
+  // Campaign Defaults settings
+  defaultSendIntervalMin: z.number().int().min(5).max(300).optional(),
+  defaultSendIntervalMax: z.number().int().min(5).max(600).optional(),
+  defaultAntiBanEnabled: z.boolean().optional(),
+  defaultWarmingMode: z.enum(['normal', 'agressive', 'stealth']).optional(),
+
+  // Warming Engine settings
+  minChipsForWarming: z.number().int().min(2).max(10).optional(),
+  warmingAutoPauseErrors: z.number().int().min(3).max(50).optional(),
+  warmingErrorRetryMinSec: z.number().int().min(5).max(120).optional(),
+  warmingErrorRetryMaxSec: z.number().int().min(10).max(300).optional(),
 }).refine(
   d => {
     if (d.typingMinDelay !== undefined && d.typingMaxDelay !== undefined) {
@@ -342,6 +383,47 @@ export interface AntiBanSettings {
   evolutionApiTimeoutMs: number
   autoRejectCalls: boolean
   autoRejectCallMessage: string
+
+  // Ban Detection settings
+  banCodes: string               // JSON string of number[]
+  restrictionKeywords: string    // JSON string of string[]
+  warningKeywords: string        // JSON string of string[]
+  banLookbackHours: number
+  banKeywordThreshold: number
+  banMaxMessagesCheck: number
+  warningMaxMessagesCheck: number
+
+  // Sending Engine settings
+  nurseryMinIntervalSec: number
+  prewarmMinIntervalSec: number
+  functionTimeoutMs: number
+  maxMessagesPerInvocation: number
+  minRemainingTimeMs: number
+  presenceStaggerMinMs: number
+  presenceStaggerMaxMs: number
+  mediaCheckTimeoutMs: number
+
+  // Verifier Extended settings
+  verifierDelayMin: number
+  verifierDelayMax: number
+  verifierBatchSize: number
+  verifierCooldownAfter: number
+  verifierCooldownMinutes: number
+  verifierQuotaCooldownMs: number
+  verifierRateLimitCooldownMs: number
+  verifierRateLimitRetryMs: number
+
+  // Campaign Defaults settings
+  defaultSendIntervalMin: number
+  defaultSendIntervalMax: number
+  defaultAntiBanEnabled: boolean
+  defaultWarmingMode: string
+
+  // Warming Engine settings
+  minChipsForWarming: number
+  warmingAutoPauseErrors: number
+  warmingErrorRetryMinSec: number
+  warmingErrorRetryMaxSec: number
 }
 
 // ============================================================
@@ -433,6 +515,47 @@ export const FIELD_DEFAULTS: Record<string, unknown> = {
   evolutionApiTimeoutMs: 15000,
   autoRejectCalls: true,
   autoRejectCallMessage: 'Desculpa, não posso atender agora.',
+
+  // Ban Detection settings
+  banCodes: JSON.stringify([401, 403, 428, 440]),
+  restrictionKeywords: JSON.stringify(['sua conta foi banida', 'sua conta foi suspensa', 'não está autorizada', 'violação dos termos', 'atividade incomum', 'conta restrita', 'conta temporariamente suspensa', 'uso não autorizado', 'comportamento viola', 'não está disponível', 'registro foi removido', 'encerramos sua conta', 'sua conta foi desativada', 'não pode usar este serviço', 'restrição de segurança', 'violou nossos termos']),
+  warningKeywords: JSON.stringify(['aviso', 'advertência', 'warn', 'spam', 'suspeita', 'irregular', 'verificação', 'confirme', 'restrição', 'bloqueio', 'suspensão', 'desative']),
+  banLookbackHours: 24,
+  banKeywordThreshold: 2,
+  banMaxMessagesCheck: 50,
+  warningMaxMessagesCheck: 20,
+
+  // Sending Engine settings
+  nurseryMinIntervalSec: 120,
+  prewarmMinIntervalSec: 60,
+  functionTimeoutMs: 50000,
+  maxMessagesPerInvocation: 10,
+  minRemainingTimeMs: 3000,
+  presenceStaggerMinMs: 500,
+  presenceStaggerMaxMs: 2000,
+  mediaCheckTimeoutMs: 5000,
+
+  // Verifier Extended settings
+  verifierDelayMin: 8,
+  verifierDelayMax: 15,
+  verifierBatchSize: 5,
+  verifierCooldownAfter: 50,
+  verifierCooldownMinutes: 5,
+  verifierQuotaCooldownMs: 86400000,
+  verifierRateLimitCooldownMs: 86400000,
+  verifierRateLimitRetryMs: 2000,
+
+  // Campaign Defaults settings
+  defaultSendIntervalMin: 30,
+  defaultSendIntervalMax: 90,
+  defaultAntiBanEnabled: true,
+  defaultWarmingMode: 'normal',
+
+  // Warming Engine settings
+  minChipsForWarming: 3,
+  warmingAutoPauseErrors: 10,
+  warmingErrorRetryMinSec: 15,
+  warmingErrorRetryMaxSec: 60,
 }
 
 // Section-to-fields mapping for _resetSection
@@ -444,8 +567,12 @@ export const SECTION_FIELDS: Record<string, string[]> = {
   sendingWindow: ['sendingWindowStart', 'sendingWindowEnd', 'timezone', 'breakWindows'],
   humanBehavior: ['humanBehaviorEnabled', 'humanBehaviorConfig'],
   reconnection: ['reconnectMaxConcurrent', 'reconnectMaxAttempts', 'reconnectRespectWindow', 'reconnectRateLimit', 'reconnectRateWindowMin', 'reconnectBackoffMs', 'reconnectInterDelayMs', 'reconnectConnectTimeoutMs', 'circuitBreakerThreshold'],
-  verifier: ['verifyDailyLimit'],
+  verifier: ['verifyDailyLimit', 'verifierDelayMin', 'verifierDelayMax', 'verifierBatchSize', 'verifierCooldownAfter', 'verifierCooldownMinutes', 'verifierQuotaCooldownMs', 'verifierRateLimitCooldownMs', 'verifierRateLimitRetryMs'],
   evolutionApi: ['evolutionApiTimeoutMs', 'autoRejectCalls', 'autoRejectCallMessage'],
+  banDetection: ['banCodes', 'restrictionKeywords', 'warningKeywords', 'banLookbackHours', 'banKeywordThreshold', 'banMaxMessagesCheck', 'warningMaxMessagesCheck'],
+  sendingEngine: ['nurseryMinIntervalSec', 'prewarmMinIntervalSec', 'functionTimeoutMs', 'maxMessagesPerInvocation', 'minRemainingTimeMs', 'presenceStaggerMinMs', 'presenceStaggerMaxMs', 'mediaCheckTimeoutMs'],
+  campaignDefaults: ['defaultSendIntervalMin', 'defaultSendIntervalMax', 'defaultAntiBanEnabled', 'defaultWarmingMode'],
+  warmingEngine: ['minChipsForWarming', 'warmingAutoPauseErrors', 'warmingErrorRetryMinSec', 'warmingErrorRetryMaxSec'],
 }
 
 // Allowed fields whitelist for PATCH
@@ -491,6 +618,47 @@ export const ALLOWED_FIELDS = [
   'evolutionApiTimeoutMs',
   'autoRejectCalls',
   'autoRejectCallMessage',
+
+  // Ban Detection settings
+  'banCodes',
+  'restrictionKeywords',
+  'warningKeywords',
+  'banLookbackHours',
+  'banKeywordThreshold',
+  'banMaxMessagesCheck',
+  'warningMaxMessagesCheck',
+
+  // Sending Engine settings
+  'nurseryMinIntervalSec',
+  'prewarmMinIntervalSec',
+  'functionTimeoutMs',
+  'maxMessagesPerInvocation',
+  'minRemainingTimeMs',
+  'presenceStaggerMinMs',
+  'presenceStaggerMaxMs',
+  'mediaCheckTimeoutMs',
+
+  // Verifier Extended settings
+  'verifierDelayMin',
+  'verifierDelayMax',
+  'verifierBatchSize',
+  'verifierCooldownAfter',
+  'verifierCooldownMinutes',
+  'verifierQuotaCooldownMs',
+  'verifierRateLimitCooldownMs',
+  'verifierRateLimitRetryMs',
+
+  // Campaign Defaults settings
+  'defaultSendIntervalMin',
+  'defaultSendIntervalMax',
+  'defaultAntiBanEnabled',
+  'defaultWarmingMode',
+
+  // Warming Engine settings
+  'minChipsForWarming',
+  'warmingAutoPauseErrors',
+  'warmingErrorRetryMinSec',
+  'warmingErrorRetryMaxSec',
 ]
 
 // Warming mode multipliers

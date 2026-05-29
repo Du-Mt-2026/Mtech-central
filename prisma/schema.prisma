@@ -131,6 +131,57 @@ model AntiBanSettings {
   evolutionApiTimeoutMs       Int      @default(15000)   // Evolution API request timeout (ms)
   autoRejectCalls             Boolean  @default(true)    // Auto-reject incoming calls
   autoRejectCallMessage       String   @default("Desculpa, não posso atender agora.") // Auto-reject message text
+
+  // ============================================================
+  // BAN DETECTION — UI-configurable (was hardcoded in sending-engine.ts + webhook)
+  // ============================================================
+  banCodes                    String   @default("[401,403,428,440]")       // JSON: disconnection codes indicating ban
+  restrictionKeywords         String   @default("[\"sua conta foi banida\",\"sua conta foi suspensa\",\"não está autorizada\",\"violação dos termos\",\"atividade incomum\",\"conta restrita\",\"conta temporariamente suspensa\",\"uso não autorizado\",\"comportamento viola\",\"não está disponível\",\"registro foi removido\",\"encerramos sua conta\",\"sua conta foi desativada\",\"não pode usar este serviço\",\"restrição de segurança\",\"violou nossos termos\"]") // JSON: keywords for temp-ban detection
+  warningKeywords            String   @default("[\"aviso\",\"advertência\",\"warn\",\"spam\",\"suspeita\",\"irregular\",\"verificação\",\"confirme\",\"restrição\",\"bloqueio\",\"suspensão\",\"desative\"]") // JSON: keywords for warning detection
+  banLookbackHours           Int      @default(24)       // Hours to look back for ban detection
+  banKeywordThreshold        Int      @default(2)        // Min keyword matches to trigger ban detection
+  banMaxMessagesCheck        Int      @default(50)       // Max recent messages to scan for ban keywords
+  warningMaxMessagesCheck    Int      @default(20)       // Max recent messages to scan for warning keywords
+
+  // ============================================================
+  // SENDING ENGINE — UI-configurable (was hardcoded in sending-engine.ts)
+  // ============================================================
+  nurseryMinIntervalSec      Int      @default(120)      // Min interval between sends for nursery chips (sec)
+  prewarmMinIntervalSec      Int      @default(60)       // Min interval between sends for prewarm chips (sec)
+  functionTimeoutMs          Int      @default(50000)    // Serverless function timeout (ms)
+  maxMessagesPerInvocation   Int      @default(10)       // Max messages per execute/process invocation
+  minRemainingTimeMs         Int      @default(3000)     // Min remaining time before breaking loop (ms)
+  presenceStaggerMinMs       Int      @default(500)      // Min random delay before setting presence (ms)
+  presenceStaggerMaxMs       Int      @default(2000)     // Max random delay before setting presence (ms)
+  mediaCheckTimeoutMs        Int      @default(5000)     // Timeout for media URL HEAD check (ms)
+
+  // ============================================================
+  // VERIFIER EXTENDED — UI-configurable (was hardcoded in verificar-section.tsx)
+  // ============================================================
+  verifierDelayMin           Int      @default(8)        // Min delay between verification batches (sec)
+  verifierDelayMax           Int      @default(15)       // Max delay between verification batches (sec)
+  verifierBatchSize          Int      @default(5)        // Numbers per chip per verification round
+  verifierCooldownAfter      Int      @default(50)       // Verifications before cooldown
+  verifierCooldownMinutes    Int      @default(5)        // Cooldown duration (min)
+  verifierQuotaCooldownMs    Int      @default(86400000) // Cooldown when chip quota exhausted (ms)
+  verifierRateLimitCooldownMs Int     @default(86400000) // Cooldown after 429 response (ms)
+  verifierRateLimitRetryMs   Int      @default(2000)     // Delay after 429 error (ms)
+
+  // ============================================================
+  // CAMPAIGN DEFAULTS — UI-configurable (was hardcoded in campaigns/route.ts + page.tsx)
+  // ============================================================
+  defaultSendIntervalMin     Int      @default(30)       // Default campaign send interval min (sec)
+  defaultSendIntervalMax     Int      @default(90)       // Default campaign send interval max (sec)
+  defaultAntiBanEnabled      Boolean  @default(true)     // Default anti-ban enabled for new campaigns
+  defaultWarmingMode         String   @default("normal") // Default warming mode for new campaigns
+
+  // ============================================================
+  // WARMING ENGINE — UI-configurable (was hardcoded in warming-engine.ts)
+  // ============================================================
+  minChipsForWarming         Int      @default(3)        // Min chips to start a warming session
+  warmingAutoPauseErrors     Int      @default(10)       // Error count to auto-pause warming
+  warmingErrorRetryMinSec    Int      @default(15)       // Min retry delay after error (sec)
+  warmingErrorRetryMaxSec    Int      @default(60)       // Max retry delay after error (sec)
 }
 
 model MessageTemplate {

@@ -59,6 +59,20 @@ interface AntiBanConfig {
   // Human behavior simulation — makes bot patterns undetectable
   humanBehaviorEnabled: boolean
   humanBehaviorConfig: HumanBehaviorConfig
+  // Ban detection — UI-configurable (was hardcoded)
+  banCodes: number[]
+  restrictionKeywords: string[]
+  warningKeywords: string[]
+  banLookbackHours: number
+  banKeywordThreshold: number
+  banMaxMessagesCheck: number
+  warningMaxMessagesCheck: number
+  // Sending engine — UI-configurable (was hardcoded)
+  nurseryMinIntervalSec: number
+  prewarmMinIntervalSec: number
+  presenceStaggerMinMs: number
+  presenceStaggerMaxMs: number
+  mediaCheckTimeoutMs: number
 }
 
 // ============================================================
@@ -177,6 +191,20 @@ const DEFAULT_SETTINGS: AntiBanConfig = {
   linkPreviewEnabled: false,  // Default OFF — link previews in bulk are a bot signature. User can enable via UI.
   humanBehaviorEnabled: true,
   humanBehaviorConfig: DEFAULT_HUMAN_BEHAVIOR,
+  // Ban detection defaults
+  banCodes: [401, 403, 428, 440],
+  restrictionKeywords: ['conta está restringida', 'conta esta restringida', 'envio de spam', 'mensagens automáticas', 'mensagens automaticas', 'mensagens em massa', 'atividade recente', 'account is restricted', 'sending spam', 'automated messages', 'bulk messages', 'recent activity', 'temporarily restricted', 'não será possível', 'nao sera possivel', 'iniciar novas conversas', 'start new conversations'],
+  warningKeywords: ['segurança', 'suspeita', 'violação', 'banimento', 'restrição', 'security', 'violation', 'restricted', 'banned', 'warning', 'alerta', 'aviso'],
+  banLookbackHours: 24,
+  banKeywordThreshold: 2,
+  banMaxMessagesCheck: 50,
+  warningMaxMessagesCheck: 20,
+  // Sending engine defaults
+  nurseryMinIntervalSec: 120,
+  prewarmMinIntervalSec: 60,
+  presenceStaggerMinMs: 500,
+  presenceStaggerMaxMs: 2000,
+  mediaCheckTimeoutMs: 5000,
 }
 
 /**
@@ -210,6 +238,36 @@ function parseHumanBehaviorConfig(jsonStr: string | undefined | null): HumanBeha
     console.debug('[SendingEngine] humanBehaviorConfig validation failed, using defaults:', result.error.issues[0]?.message)
   } catch { /* ignore */ }
   return DEFAULT_HUMAN_BEHAVIOR
+}
+
+/**
+ * Parse a JSON array of numbers from the DB, falling back to default.
+ * Used for banCodes.
+ */
+function parseJsonNumberArray(jsonStr: string | undefined | null, fallback: number[]): number[] {
+  if (!jsonStr) return fallback
+  try {
+    const parsed = JSON.parse(jsonStr)
+    if (Array.isArray(parsed) && parsed.length > 0 && typeof parsed[0] === 'number') {
+      return parsed.map(Number)
+    }
+  } catch { /* ignore */ }
+  return fallback
+}
+
+/**
+ * Parse a JSON array of strings from the DB, falling back to default.
+ * Used for restrictionKeywords, warningKeywords.
+ */
+function parseJsonStringArray(jsonStr: string | undefined | null, fallback: string[]): string[] {
+  if (!jsonStr) return fallback
+  try {
+    const parsed = JSON.parse(jsonStr)
+    if (Array.isArray(parsed) && parsed.length > 0 && typeof parsed[0] === 'string') {
+      return parsed.map(String)
+    }
+  } catch { /* ignore */ }
+  return fallback
 }
 
 /**
@@ -425,11 +483,11 @@ function getMinimumIntervalForChip(
   const userInterval = settings.messageIntervalMin
 
   if (phase === 'nursery') {
-    // Nursery: minimum 2 minutes (120 seconds) — but respect user interval if higher
-    return Math.max(120, userInterval)
+    // Nursery: minimum interval from settings (default: 120 seconds) — but respect user interval if higher
+    return Math.max(settings.nurseryMinIntervalSec, userInterval)
   } else {
-    // Prewarm: minimum 60 seconds — but respect user interval if higher
-    return Math.max(60, userInterval)
+    // Prewarm: minimum interval from settings (default: 60 seconds) — but respect user interval if higher
+    return Math.max(settings.prewarmMinIntervalSec, userInterval)
   }
 }
 
@@ -526,6 +584,20 @@ async function getAntiBanSettings(): Promise<AntiBanConfig> {
         // Human behavior simulation — read dynamically from DB
         humanBehaviorEnabled: saved.humanBehaviorEnabled ?? true,
         humanBehaviorConfig: parseHumanBehaviorConfig(saved.humanBehaviorConfig),
+        // Ban detection — read dynamically from DB
+        banCodes: parseJsonNumberArray(saved.banCodes, DEFAULT_SETTINGS.banCodes),
+        restrictionKeywords: parseJsonStringArray(saved.restrictionKeywords, DEFAULT_SETTINGS.restrictionKeywords),
+        warningKeywords: parseJsonStringArray(saved.warningKeywords, DEFAULT_SETTINGS.warningKeywords),
+        banLookbackHours: saved.banLookbackHours ?? 24,
+        banKeywordThreshold: saved.banKeywordThreshold ?? 2,
+        banMaxMessagesCheck: saved.banMaxMessagesCheck ?? 50,
+        warningMaxMessagesCheck: saved.warningMaxMessagesCheck ?? 20,
+        // Sending engine — read dynamically from DB
+        nurseryMinIntervalSec: saved.nurseryMinIntervalSec ?? 120,
+        prewarmMinIntervalSec: saved.prewarmMinIntervalSec ?? 60,
+        presenceStaggerMinMs: saved.presenceStaggerMinMs ?? 500,
+        presenceStaggerMaxMs: saved.presenceStaggerMaxMs ?? 2000,
+        mediaCheckTimeoutMs: saved.mediaCheckTimeoutMs ?? 5000,
       }
     }
   } catch {
@@ -946,7 +1018,10 @@ async function isInCooldown(chipId: string, settings: AntiBanConfig): Promise<{ 
  */
 type ChipBanInfo = Pick<Chip, 'id' | 'evolutionInstance' | 'status' | 'disconnectionReasonCode'>
 
-async function detectChipBan(chip: ChipBanInfo): Promise<{ banned: boolean; reason: string; disconnected: boolean; tempBan?: boolean }> {
+async function detectChipBan(chip: ChipBanInfo, settings: AntiBanConfig = DEFAULT_SETTINGS): Promise<{ banned: boolean; reason: string; disconnected: boolean; tempBan?: boolean }> {
+  // Ban codes from settings (UI-configurable)
+  const BAN_CODES = settings.banCodes
+
   // Check chip status first (fast)
   // IMPORTANT: "disconnected" is NOT the same as "banned"!
   // A chip that's disconnected might just need reconnection — don't block the campaign entirely.
@@ -957,7 +1032,7 @@ async function detectChipBan(chip: ChipBanInfo): Promise<{ banned: boolean; reas
   if (chip.status === 'disconnected') {
     // Chip is disconnected — check if it's actually a temp ban (Meta doesn't always send ban codes)
     // Check inbox for WhatsApp restriction messages before assuming simple disconnection
-    const tempBanDetected = await detectTempBanFromInbox(chip.id, chip.evolutionInstance)
+    const tempBanDetected = await detectTempBanFromInbox(chip.id, chip.evolutionInstance, settings)
     if (tempBanDetected) {
       console.warn(`[SendingEngine] Chip ${chip.evolutionInstance} is disconnected but has WhatsApp restriction message — treating as temp ban`)
       // Update chip status to banned in DB so we don't try to reconnect
@@ -972,8 +1047,7 @@ async function detectChipBan(chip: ChipBanInfo): Promise<{ banned: boolean; reas
   }
 
   // Check disconnection reason code
-  // WhatsApp ban codes: 401 (logged out), 403 (banned), 428 (replaced), 440 (device removed)
-  const BAN_CODES = [401, 403, 428, 440]
+  // Ban codes loaded from DB settings (default: 401, 403, 428, 440)
   if (chip.disconnectionReasonCode && BAN_CODES.includes(chip.disconnectionReasonCode)) {
     return { banned: true, reason: `Disconnection code: ${chip.disconnectionReasonCode}`, disconnected: false }
   }
@@ -985,14 +1059,13 @@ async function detectChipBan(chip: ChipBanInfo): Promise<{ banned: boolean; reas
       const instanceState = state?.state
       if (instanceState === 'close') {
         // 'close' can mean temporary disconnection OR temp ban OR permanent ban
-        // Check for ban code first
-        const BAN_CODES = [401, 403, 428, 440]
+        // Check for ban code first (using settings from DB)
         if (chip.disconnectionReasonCode && BAN_CODES.includes(chip.disconnectionReasonCode)) {
           return { banned: true, reason: `Evolution API state: close (ban code: ${chip.disconnectionReasonCode})`, disconnected: false }
         }
         // No ban code — but Meta's temp bans often don't come with codes!
         // Check inbox for WhatsApp restriction messages ("conta está restringida", "spam", etc.)
-        const tempBanDetected = await detectTempBanFromInbox(chip.id, chip.evolutionInstance)
+        const tempBanDetected = await detectTempBanFromInbox(chip.id, chip.evolutionInstance, settings)
         if (tempBanDetected) {
           console.warn(`[SendingEngine] Chip ${chip.evolutionInstance} has state:close + WhatsApp restriction message — treating as temp ban`)
           // Update chip status to banned so we don't try to reconnect (which could make it worse)
@@ -1025,28 +1098,20 @@ async function detectChipBan(chip: ChipBanInfo): Promise<{ banned: boolean; reas
  * - If we try to auto-reconnect a temp-banned chip, Meta may escalate to permanent ban
  * - The only reliable signal is the restriction message in the inbox
  */
-async function detectTempBanFromInbox(chipId: string, instanceName: string | null): Promise<boolean> {
+async function detectTempBanFromInbox(chipId: string, instanceName: string | null, settings: AntiBanConfig = DEFAULT_SETTINGS): Promise<boolean> {
   if (!instanceName) return false
   try {
-    // Look for WhatsApp restriction messages in the last 24 hours
+    // Look for WhatsApp restriction messages in the last N hours (UI-configurable)
     // These come from WhatsApp's official JIDs
     const WHATSAPP_OFFICIAL_JIDS = [
       'status@broadcast',
       'server@whatsapp.com',
       'system@broadcast',
     ]
-    // Also check messages from any JID containing these restriction keywords
-    // (WhatsApp sometimes sends from different JIDs)
-    const RESTRICTION_KEYWORDS = [
-      'conta está restringida', 'conta esta restringida',
-      'envio de spam', 'mensagens automáticas', 'mensagens automaticas',
-      'mensagens em massa', 'atividade recente',
-      'account is restricted', 'sending spam',
-      'automated messages', 'bulk messages',
-      'recent activity', 'temporarily restricted',
-      'não será possível', 'nao sera possivel',
-      'iniciar novas conversas', 'start new conversations',
-    ]
+    // Restriction keywords loaded from DB settings (UI-configurable)
+    const RESTRICTION_KEYWORDS = settings.restrictionKeywords
+    // Ban lookback window and check limits from settings
+    const lookbackMs = settings.banLookbackHours * 3600000
 
     // Check messages from WhatsApp official JIDs
     const officialWarnings = await db.inboxMessage.findMany({
@@ -1054,9 +1119,9 @@ async function detectTempBanFromInbox(chipId: string, instanceName: string | nul
         instanceName,
         fromMe: false,
         remoteJid: { in: WHATSAPP_OFFICIAL_JIDS },
-        createdAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
+        createdAt: { gte: new Date(Date.now() - lookbackMs) },
       },
-      take: 20,
+      take: settings.warningMaxMessagesCheck,
       orderBy: { createdAt: 'desc' },
     })
 
@@ -1075,17 +1140,18 @@ async function detectTempBanFromInbox(chipId: string, instanceName: string | nul
         instanceName,
         fromMe: false,
         isCampaign: false, // Exclude our own campaign messages
-        createdAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
+        createdAt: { gte: new Date(Date.now() - lookbackMs) },
       },
-      take: 50,
+      take: settings.banMaxMessagesCheck,
       orderBy: { createdAt: 'desc' },
     })
 
     for (const msg of recentMessages) {
       const content = (msg.messageContent || '').toLowerCase()
       // Only match if multiple keywords appear together (reduce false positives)
+      // Threshold is UI-configurable (default: 2)
       const matchCount = RESTRICTION_KEYWORDS.filter(kw => content.includes(kw)).length
-      if (matchCount >= 2) {
+      if (matchCount >= settings.banKeywordThreshold) {
         console.warn(`[SendingEngine] Temp ban detected via inbox message (${matchCount} keyword matches): "${msg.messageContent?.substring(0, 80)}..."`)
         return true
       }
@@ -1102,7 +1168,7 @@ async function detectTempBanFromInbox(chipId: string, instanceName: string | nul
  * Check for WhatsApp warning messages in the inbox.
  * WhatsApp sends warning messages from specific JIDs when an account is at risk.
  */
-async function checkForWarnings(chipId: string): Promise<boolean> {
+async function checkForWarnings(chipId: string, settings: AntiBanConfig = DEFAULT_SETTINGS): Promise<boolean> {
   try {
     const chip = await db.chip.findUnique({ where: { id: chipId } })
     if (!chip?.evolutionInstance) return false
@@ -1110,16 +1176,19 @@ async function checkForWarnings(chipId: string): Promise<boolean> {
     // Check for recent warning messages from WhatsApp
     // WhatsApp official JIDs: status@broadcast, server@whatsapp.com
     const WARNING_SENDERS = ['status@broadcast', 'server@whatsapp.com']
-    const WARNING_KEYWORDS = ['segurança', 'suspeita', 'violação', 'banimento', 'restrição', 'security', 'violation', 'restricted', 'banned', 'warning', 'alerta', 'aviso']
+    // Warning keywords loaded from DB settings (UI-configurable)
+    const WARNING_KEYWORDS = settings.warningKeywords
+    // Ban lookback window from settings
+    const lookbackMs = settings.banLookbackHours * 3600000
 
     const recentWarnings = await db.inboxMessage.findMany({
       where: {
         instanceName: chip.evolutionInstance,
         fromMe: false,
         remoteJid: { in: WARNING_SENDERS },
-        createdAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) }, // last 24h
+        createdAt: { gte: new Date(Date.now() - lookbackMs) },
       },
-      take: 10,
+      take: settings.warningMaxMessagesCheck,
     })
 
     for (const msg of recentWarnings) {
@@ -1886,7 +1955,7 @@ export async function processNextMessage(campaignId: string): Promise<{
 
   // CHECK FOR CHIP BAN — detect banned chips (disconnected chips are NOT banned!)
   if (antiBanEnabled) {
-    const banCheck = await detectChipBan(message.chip)
+    const banCheck = await detectChipBan(message.chip, settings)
 
     if (banCheck.disconnected) {
       // Chip is disconnected but NOT banned — try to reassign messages to OTHER chips in this campaign
@@ -2049,7 +2118,7 @@ export async function processNextMessage(campaignId: string): Promise<{
 
   // CHECK FOR WHATSAPP WARNINGS — stopOnWarning
   if (antiBanEnabled && settings.stopOnWarning) {
-    const hasWarning = await checkForWarnings(message.chip.id)
+    const hasWarning = await checkForWarnings(message.chip.id, settings)
     if (hasWarning) {
       // Pause the campaign — a warning was detected
       await db.campaign.update({
@@ -2418,7 +2487,7 @@ export async function processNextMessage(campaignId: string): Promise<{
       if (validMediaTypes.includes(mt)) {
         // Validate media URL before sending — check if the URL is accessible
         try {
-          const urlCheck = await fetch(message.mediaUrl, { method: 'HEAD', signal: AbortSignal.timeout(5000) })
+          const urlCheck = await fetch(message.mediaUrl, { method: 'HEAD', signal: AbortSignal.timeout(settings.mediaCheckTimeoutMs) })
           if (!urlCheck.ok) {
             console.debug(`[SendingEngine] Media URL check failed: ${urlCheck.status} for ${message.mediaUrl}`)
             await db.message.update({
@@ -2776,7 +2845,7 @@ export async function processNextMessage(campaignId: string): Promise<{
     // If the auto-retry in evolutionFetch already handled the stale token case,
     // we should NOT get here for auth issues — only for real WhatsApp bans.
     // But we still check carefully to avoid false positives.
-    const BAN_CODES = [401, 403, 428, 440]
+    const BAN_CODES = settings.banCodes
     const errorMsg = error.message || ''
     const isEvolutionAPIError = errorMsg.startsWith('Evolution Go API error')
     const matchedCode = BAN_CODES.find(code => errorMsg.includes(`(${code})`))
@@ -3037,7 +3106,7 @@ export async function performBreakWindowReadingPresence(): Promise<number> {
       console.debug(`[SendingEngine] Break window reading: chip ${chip.name} online for ${readingMs}ms during "${activeBreak.label}"`)
 
       // Stagger — don't make all chips online at the exact same time
-      await new Promise(resolve => setTimeout(resolve, randomInt(500, 2000)))
+      await new Promise(resolve => setTimeout(resolve, randomInt(settings.presenceStaggerMinMs, settings.presenceStaggerMaxMs)))
     } catch {
       // Non-fatal
     }
