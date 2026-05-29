@@ -177,6 +177,9 @@ export async function GET(request: NextRequest) {
         isGroup: true,
         isCampaign: true,
         createdAt: true,
+        // Delivery receipt fields for WhatsApp-style check marks
+        ack: true,
+        status: true,
       },
       take: 1000,
     })
@@ -205,6 +208,9 @@ export async function GET(request: NextRequest) {
         isGroup: true,
         isCampaign: true,
         createdAt: true,
+        // Delivery receipt fields for WhatsApp-style check marks
+        ack: true,
+        status: true,
       },
       take: 500,
     }) : []
@@ -285,7 +291,7 @@ export async function GET(request: NextRequest) {
       contactName: string | null
       pushName: string | null
       groupName: string | null
-      lastMessage: { content: string; type: string; fromMe: boolean; senderName: string | null; isCampaign: boolean }
+      lastMessage: { content: string; type: string; fromMe: boolean; senderName: string | null; isCampaign: boolean; status: string; ack: number }
       lastMessageAt: Date
       unreadCount: number
       totalMessages: number
@@ -326,6 +332,8 @@ export async function GET(request: NextRequest) {
             fromMe: msg.fromMe,
             senderName: msg.isGroup ? (msg.pushName || null) : null,
             isCampaign: msg.isCampaign,
+            status: (msg as any).status || 'pending',
+            ack: (msg as any).ack ?? 0,
           },
           lastMessageAt: msg.createdAt,
           unreadCount: (!msg.isRead && !msg.fromMe && !msg.isCampaign) ? 1 : 0,

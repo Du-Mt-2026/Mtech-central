@@ -5266,7 +5266,7 @@ interface InboxConversation {
   contactName: string
   pushName: string | null
   groupName: string | null
-  lastMessage: { content: string; type: string; fromMe: boolean; senderName: string | null; isCampaign?: boolean }
+  lastMessage: { content: string; type: string; fromMe: boolean; senderName: string | null; isCampaign?: boolean; status?: string; ack?: number }
   lastMessageAt: string
   unreadCount: number
   totalMessages: number
@@ -5409,6 +5409,13 @@ function InboxTab() {
   useEffect(() => { fetchChips() }, [fetchChips])
   useEffect(() => { fetchConversations() }, [fetchConversations])
 
+  // Poll conversations every 10s to update check mark status in conversation list
+  useEffect(() => {
+    if (!selectedChipId) return
+    const interval = setInterval(() => fetchConversations(true), 10000)
+    return () => clearInterval(interval)
+  }, [selectedChipId, fetchConversations])
+
   // Fetch messages when conversation changes (direct dependency)
   useEffect(() => {
     fetchMessages(selectedConversation)
@@ -5432,7 +5439,8 @@ function InboxTab() {
     return () => clearInterval(interval)
   }, [autoSync])
 
-  // Quick polling for new messages every 3s when a conversation is selected (checks DB only, no Evolution API)
+  // Quick polling for new messages every 5s when a conversation is selected (checks DB only, no Evolution API)
+  // Also detects ack/status changes on existing messages (e.g. sent → delivered → read)
   useEffect(() => {
     if (!selectedConversation) return
     const interval = setInterval(async () => {
@@ -5444,13 +5452,27 @@ function InboxTab() {
         })
         const res = await fetch(`/api/inbox/messages?${params}`)
         const data = await res.json()
-        if (data.messages?.length !== messages.length) {
-          setMessages(data.messages || [])
+        const newMsgs = data.messages || []
+        // Update if: different count OR any fromMe message changed ack/status
+        if (newMsgs.length !== messages.length) {
+          setMessages(newMsgs)
+        } else {
+          // Check for status changes on fromMe messages (delivery receipts)
+          let statusChanged = false
+          for (const nm of newMsgs) {
+            if (!nm.fromMe) continue
+            const existing = messages.find(m => m.id === nm.id)
+            if (existing && (existing.ack !== nm.ack || existing.status !== nm.status)) {
+              statusChanged = true
+              break
+            }
+          }
+          if (statusChanged) setMessages(newMsgs)
         }
       } catch { /* silent */ }
-    }, 3000)
+    }, 5000)
     return () => clearInterval(interval)
-  }, [selectedConversation, messages.length])
+  }, [selectedConversation, messages])
 
   // Send reply
   const handleReply = async () => {
@@ -5840,9 +5862,26 @@ function InboxTab() {
                           {conv.lastMessage.isCampaign && (
                             <Megaphone className="size-3 text-emerald-500 shrink-0" />
                           )}
-                          {conv.lastMessage.fromMe && !conv.lastMessage.isCampaign && (
-                            <Check className="size-3 text-muted-foreground shrink-0" />
-                          )}
+                          {conv.lastMessage.fromMe && !conv.lastMessage.isCampaign && (() => {
+                            const ack = conv.lastMessage.ack ?? 0
+                            const status = conv.lastMessage.status
+                            if (status === 'read' || ack >= 4) return (
+                              <span className="relative inline-block shrink-0">
+                                <Check className="size-3 text-blue-500 absolute left-[2px]" />
+                                <Check className="size-3 text-blue-500" />
+                              </span>
+                            )
+                            if (status === 'delivered' || ack === 3) return (
+                              <span className="relative inline-block shrink-0">
+                                <Check className="size-3 text-muted-foreground/70 absolute left-[2px]" />
+                                <Check className="size-3 text-muted-foreground/70" />
+                              </span>
+                            )
+                            if (status === 'sent' || ack === 1 || ack === 2) return (
+                              <Check className="size-3 text-muted-foreground/70 shrink-0" />
+                            )
+                            return <Clock className="size-3 text-muted-foreground/50 shrink-0" />
+                          })()}
                           {conv.lastMessage.type !== 'text' && (
                             <MsgTypeIcon type={conv.lastMessage.type} />
                           )}

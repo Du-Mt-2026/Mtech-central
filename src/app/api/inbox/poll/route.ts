@@ -3,8 +3,8 @@ import { db } from '@/lib/db'
 
 /**
  * GET /api/inbox/poll
- * Lightweight polling endpoint that checks for new messages since last known message.
- * Returns updated conversations and counts for the inbox sidebar.
+ * Lightweight polling endpoint that checks for new messages and status changes.
+ * Returns updated conversations, counts, and ack/status changes for the inbox.
  *
  * Query params:
  * - chipId: filter by chip
@@ -66,6 +66,28 @@ export async function GET(request: NextRequest) {
       if (row.chipId) unreadMap.set(row.chipId, row._count.id)
     }
 
+    // Get ack/status changes for fromMe messages since last poll
+    // This lets the frontend update check marks (✓ → ✓✓ → ✓✓ blue) in real-time
+    const ackChanges = since ? await db.inboxMessage.findMany({
+      where: {
+        fromMe: true,
+        ...(chipId ? { chipId } : {}),
+        status: { in: ['delivered', 'read'] },
+        readAt: { gte: since },
+      },
+      select: {
+        id: true,
+        evolutionMsgId: true,
+        chipId: true,
+        remoteJid: true,
+        status: true,
+        ack: true,
+        deliveredAt: true,
+        readAt: true,
+      },
+      take: 50,
+    }) : []
+
     // Get the global latest message timestamp (for next poll's "since" param)
     const latestMsg = await db.inboxMessage.findFirst({
       orderBy: { createdAt: 'desc' },
@@ -74,9 +96,10 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       newMessages,
+      ackChanges,
       unreadCounts: Object.fromEntries(unreadMap),
       latestTimestamp: latestMsg?.createdAt?.toISOString() || null,
-      hasNew: newMessages.length > 0,
+      hasNew: newMessages.length > 0 || ackChanges.length > 0,
     })
   } catch (error) {
     console.error('Inbox poll error:', error)
