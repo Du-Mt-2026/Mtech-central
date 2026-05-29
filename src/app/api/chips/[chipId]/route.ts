@@ -59,7 +59,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ ch
       'socksPort', 'lastSeen', 'dailyLimit', 'sentToday', 'lastResetAt',
       'warmingEnabled', 'warmingStage', 'warmingPhase', 'warmingStartedAt', 'prewarmStartedAt', 'isQrPaired', 'qrPairingCode',
       'proxyMode', 'socks5Host', 'socks5Port', 'socks5User', 'socks5Pass',
-      'cooldownUntil',
+      'cooldownUntil', 'evolutionInstance',
     ]
     const data: Record<string, unknown> = {}
     for (const key of allowedFields) {
