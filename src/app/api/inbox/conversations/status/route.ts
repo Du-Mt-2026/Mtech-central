@@ -11,9 +11,17 @@ export async function PATCH(request: NextRequest) {
     if (!validStatuses.includes(status)) {
       return NextResponse.json({ error: 'Status inválido' }, { status: 400 })
     }
-    const conversation = await db.conversation.update({
+    // Use upsert so it works even if the Conversation hasn't been synced yet
+    const conversation = await db.conversation.upsert({
       where: { chipId_remoteJid: { chipId, remoteJid } },
-      data: { status },
+      update: { status },
+      create: {
+        chipId,
+        remoteJid,
+        status,
+        remotePhone: remoteJid.split('@')[0],
+        lastMessagePreview: '',
+      },
     })
     return NextResponse.json({ success: true, conversation })
   } catch (error) {
