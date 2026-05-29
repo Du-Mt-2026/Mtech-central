@@ -5273,6 +5273,7 @@ interface InboxConversation {
   isGroup: boolean
   hasCampaignMessages: boolean
   participantCount: number | null
+  profilePicUrl: string | null
   chip: { id: string; name: string; phoneNumber: string; profilePicUrl: string | null; status: string } | null
 }
 
@@ -5293,6 +5294,19 @@ interface InboxMsg {
   isGroup: boolean
   isCampaign: boolean
   createdAt: string
+  ack: number
+  status: string
+  deliveredAt: string | null
+  readAt: string | null
+  quotedMsgId: string | null
+  quotedContent: string | null
+  quotedType: string | null
+  quotedPushName: string | null
+  reactionEmoji: string | null
+  fileName: string | null
+  mimeType: string | null
+  mediaCaption: string | null
+  mediaDuration: number | null
 }
 
 function InboxTab() {
@@ -5313,6 +5327,18 @@ function InboxTab() {
   const chatScrollRef = useRef<HTMLDivElement>(null)
   const lastSyncRef = useRef<string>(new Date().toISOString())
   const syncingRef = useRef(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  // Profile pictures cache
+  const [profilePics, setProfilePics] = useState<Record<string, string>>({})
+  // Media attachment state
+  const [attachedFile, setAttachedFile] = useState<{ file: File; preview: string; dataUrl: string; type: string } | null>(null)
+  // Reply-to specific message
+  const [replyingTo, setReplyingTo] = useState<InboxMsg | null>(null)
+  // Load more messages (pagination)
+  const [hasMore, setHasMore] = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
+  // Conversation status
+  const [convStatus, setConvStatus] = useState<string>('open')
 
   // Fetch chips
   const fetchChips = useCallback(async () => {
@@ -5353,6 +5379,7 @@ function InboxTab() {
       const res = await fetch(`/api/inbox/messages?${params}`)
       const data = await res.json()
       setMessages(data.messages || [])
+      setHasMore(data.hasMore || false)
     } catch { if (!silent) toast.error('Erro ao carregar mensagens') }
     finally { setLoadingMessages(false) }
   }, [])
@@ -5427,7 +5454,7 @@ function InboxTab() {
 
   // Send reply
   const handleReply = async () => {
-    if (!replyText.trim() || !selectedConversation) return
+    if ((!replyText.trim() && !attachedFile) || !selectedConversation) return
     setSending(true)
     try {
       const res = await fetch('/api/inbox/reply', {
@@ -5437,11 +5464,16 @@ function InboxTab() {
           chipId: selectedConversation.chipId,
           remoteJid: selectedConversation.remoteJid,
           content: replyText.trim(),
+          mediaUrl: attachedFile?.dataUrl || undefined,
+          mediatype: attachedFile?.type || undefined,
+          quotedMsgId: replyingTo?.evolutionMsgId || undefined,
         }),
       })
       const data = await res.json()
       if (data.success) {
         setReplyText('')
+        setAttachedFile(null)
+        setReplyingTo(null)
         // Add the sent message to the list immediately
         if (data.message) {
           setMessages(prev => [...prev, data.message])
@@ -5453,6 +5485,101 @@ function InboxTab() {
     } catch { toast.error('Erro ao enviar mensagem') }
     finally { setSending(false) }
   }
+
+  // Load more messages (pagination)
+  const loadMoreMessages = useCallback(async () => {
+    if (!selectedConversation || loadingMore || messages.length === 0) return
+    setLoadingMore(true)
+    try {
+      const viewport = chatScrollRef.current?.querySelector('[data-radix-scroll-area-viewport]') as HTMLElement
+      const prevScrollTop = viewport?.scrollTop || 0
+      const prevScrollHeight = viewport?.scrollHeight || 0
+
+      const params = new URLSearchParams({
+        chipId: selectedConversation.chipId || '',
+        remoteJid: selectedConversation.remoteJid,
+        before: messages[0].createdAt,
+        limit: '50',
+      })
+      const res = await fetch(`/api/inbox/messages?${params}`)
+      const data = await res.json()
+      if (data.messages?.length > 0) {
+        setMessages(prev => [...data.messages, ...prev])
+        setHasMore(data.hasMore || false)
+        // Restore scroll position after prepending
+        requestAnimationFrame(() => {
+          if (viewport) {
+            const newScrollHeight = viewport.scrollHeight
+            viewport.scrollTop = prevScrollTop + (newScrollHeight - prevScrollHeight)
+          }
+        })
+      } else {
+        setHasMore(false)
+      }
+    } catch { toast.error('Erro ao carregar mensagens anteriores') }
+    finally { setLoadingMore(false) }
+  }, [selectedConversation, loadingMore, messages])
+
+  // Fetch profile picture for a contact
+  const fetchProfilePic = useCallback(async (chipId: string, phone: string, key: string) => {
+    if (profilePics[key]) return // Already cached
+    try {
+      const res = await fetch(`/api/inbox/profile-pic?chipId=${chipId}&phone=${encodeURIComponent(phone)}`)
+      const data = await res.json()
+      if (data.profilePicUrl) {
+        setProfilePics(prev => ({ ...prev, [key]: data.profilePicUrl }))
+      }
+    } catch { /* silent */ }
+  }, [profilePics])
+
+  // Update conversation status
+  const updateConvStatus = useCallback(async (status: string) => {
+    if (!selectedConversation?.chipId || !selectedConversation?.remoteJid) return
+    try {
+      await fetch('/api/inbox/conversations/status', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chipId: selectedConversation.chipId,
+          remoteJid: selectedConversation.remoteJid,
+          status,
+        }),
+      })
+      setConvStatus(status)
+      toast.success('Status atualizado')
+    } catch { toast.error('Erro ao atualizar status') }
+  }, [selectedConversation])
+
+  // Handle file attachment
+  const handleFileAttach = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = () => {
+      const dataUrl = reader.result as string
+      const mediaType = file.type.startsWith('image') ? 'image'
+        : file.type.startsWith('video') ? 'video'
+        : file.type.startsWith('audio') ? 'audio'
+        : 'document'
+      const preview = mediaType === 'image' ? dataUrl : ''
+      setAttachedFile({ file, preview, dataUrl, type: mediaType })
+    }
+    reader.readAsDataURL(file)
+    // Reset input so same file can be selected again
+    e.target.value = ''
+  }
+
+  // Fetch profile pic when conversation is selected
+  useEffect(() => {
+    if (selectedConversation?.chipId && selectedConversation?.remotePhone) {
+      const key = `${selectedConversation.chipId}-${selectedConversation.remotePhone}`
+      fetchProfilePic(selectedConversation.chipId, selectedConversation.remotePhone, key)
+    }
+    // Reset conversation status when switching conversations
+    setConvStatus('open')
+    setReplyingTo(null)
+    setAttachedFile(null)
+  }, [selectedConversation, fetchProfilePic])
 
   // Format time for conversation list
   const formatTime = (dateStr: string) => {
@@ -5580,7 +5707,15 @@ function InboxTab() {
                       }`}
                     >
                       <div className="relative shrink-0">
-                        <div className="size-9 rounded-full bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center text-primary font-bold text-sm">
+                        {chip.profilePicUrl ? (
+                          <img
+                            src={chip.profilePicUrl}
+                            alt={chip.name}
+                            className="size-9 rounded-full object-cover"
+                            onError={e => { (e.target as HTMLImageElement).style.display = 'none'; (e.target as HTMLImageElement).nextElementSibling?.classList.remove('hidden') }}
+                          />
+                        ) : null}
+                        <div className={`size-9 rounded-full bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center text-primary font-bold text-sm ${chip.profilePicUrl ? 'hidden' : ''}`}>
                           {chip.name.charAt(0).toUpperCase()}
                         </div>
                         <div className={`absolute -bottom-0.5 -right-0.5 size-3 rounded-full border-2 border-background ${statusColor(chip.status)}`} />
@@ -5658,13 +5793,32 @@ function InboxTab() {
                           : ''
                       } ${conv.unreadCount > 0 ? 'bg-primary/5' : ''}`}
                     >
-                      <div className={`size-10 rounded-full flex items-center justify-center font-bold text-sm shrink-0 ${
-                        conv.isGroup
-                          ? 'bg-gradient-to-br from-emerald-100 to-emerald-50 dark:from-emerald-900/30 dark:to-emerald-800/20 text-emerald-600 dark:text-emerald-400'
-                          : 'bg-gradient-to-br from-blue-100 to-blue-50 dark:from-blue-900/30 dark:to-blue-800/20 text-blue-600 dark:text-blue-400'
-                      }`}>
-                        {conv.isGroup ? <Users className="size-4" /> : conv.contactName.charAt(0).toUpperCase()}
-                      </div>
+                      {(() => {
+                        const picKey = `${conv.chipId}-${conv.remotePhone}`
+                        const picUrl = profilePics[picKey] || conv.profilePicUrl
+                        return conv.isGroup ? (
+                          <div className="size-10 rounded-full flex items-center justify-center bg-gradient-to-br from-emerald-100 to-emerald-50 dark:from-emerald-900/30 dark:to-emerald-800/20 text-emerald-600 dark:text-emerald-400 font-bold text-sm shrink-0">
+                            <Users className="size-4" />
+                          </div>
+                        ) : picUrl ? (
+                          <img
+                            src={picUrl}
+                            alt={conv.contactName}
+                            className="size-10 rounded-full object-cover shrink-0"
+                            onError={e => { (e.target as HTMLImageElement).style.display = 'none'; if ((e.target as HTMLImageElement).nextElementSibling) (e.target as HTMLImageElement).nextElementSibling!.classList.remove('hidden') }}
+                          />
+                        ) : null
+                      })()}
+                      {(() => {
+                        const picKey = `${conv.chipId}-${conv.remotePhone}`
+                        const picUrl = profilePics[picKey] || conv.profilePicUrl
+                        if (conv.isGroup) return null
+                        return (
+                          <div className={`size-10 rounded-full flex items-center justify-center font-bold text-sm shrink-0 bg-gradient-to-br from-blue-100 to-blue-50 dark:from-blue-900/30 dark:to-blue-800/20 text-blue-600 dark:text-blue-400 ${picUrl ? 'hidden' : ''}`}>
+                            {conv.contactName.charAt(0).toUpperCase()}
+                          </div>
+                        )
+                      })()}
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between gap-2">
                           <div className="flex items-center gap-1.5 min-w-0">
@@ -5736,13 +5890,32 @@ function InboxTab() {
               <>
                 {/* Chat Header */}
                 <div className="px-4 py-3 border-b bg-background flex items-center gap-3">
-                  <div className={`size-10 rounded-full flex items-center justify-center font-bold text-sm ${
-                    selectedConversation.isGroup
-                      ? 'bg-gradient-to-br from-emerald-100 to-emerald-50 dark:from-emerald-900/30 dark:to-emerald-800/20 text-emerald-600 dark:text-emerald-400'
-                      : 'bg-gradient-to-br from-blue-100 to-blue-50 dark:from-blue-900/30 dark:to-blue-800/20 text-blue-600 dark:text-blue-400'
-                  }`}>
-                    {selectedConversation.isGroup ? <Users className="size-5" /> : selectedConversation.contactName.charAt(0).toUpperCase()}
-                  </div>
+                  {(() => {
+                    const picKey = `${selectedConversation.chipId}-${selectedConversation.remotePhone}`
+                    const picUrl = profilePics[picKey] || selectedConversation.profilePicUrl
+                    return selectedConversation.isGroup ? (
+                      <div className="size-10 rounded-full flex items-center justify-center bg-gradient-to-br from-emerald-100 to-emerald-50 dark:from-emerald-900/30 dark:to-emerald-800/20 text-emerald-600 dark:text-emerald-400 font-bold text-sm">
+                        <Users className="size-5" />
+                      </div>
+                    ) : picUrl ? (
+                      <img
+                        src={picUrl}
+                        alt={selectedConversation.contactName}
+                        className="size-10 rounded-full object-cover"
+                        onError={e => { (e.target as HTMLImageElement).style.display = 'none'; if ((e.target as HTMLImageElement).nextElementSibling) (e.target as HTMLImageElement).nextElementSibling!.classList.remove('hidden') }}
+                      />
+                    ) : null
+                  })()}
+                  {(() => {
+                    const picKey = `${selectedConversation.chipId}-${selectedConversation.remotePhone}`
+                    const picUrl = profilePics[picKey] || selectedConversation.profilePicUrl
+                    if (selectedConversation.isGroup) return null
+                    return (
+                      <div className={`size-10 rounded-full flex items-center justify-center font-bold text-sm bg-gradient-to-br from-blue-100 to-blue-50 dark:from-blue-900/30 dark:to-blue-800/20 text-blue-600 dark:text-blue-400 ${picUrl ? 'hidden' : ''}`}>
+                        {selectedConversation.contactName.charAt(0).toUpperCase()}
+                      </div>
+                    )
+                  })()}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5">
                       <p className="font-semibold text-sm truncate">{selectedConversation.contactName}</p>
@@ -5751,6 +5924,26 @@ function InboxTab() {
                           <Users className="size-2.5 mr-0.5" />Grupo
                         </Badge>
                       )}
+                      {/* Conversation status selector */}
+                      <Select value={convStatus} onValueChange={updateConvStatus}>
+                        <SelectTrigger className="h-6 w-auto border-0 p-0 gap-0.5 text-[10px] focus:ring-0 focus:ring-offset-0">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="open">
+                            <Badge variant="secondary" className="text-[9px] px-1 py-0 bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400">Aberta</Badge>
+                          </SelectItem>
+                          <SelectItem value="pending">
+                            <Badge variant="secondary" className="text-[9px] px-1 py-0 bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400">Pendente</Badge>
+                          </SelectItem>
+                          <SelectItem value="resolved">
+                            <Badge variant="secondary" className="text-[9px] px-1 py-0 bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">Resolvida</Badge>
+                          </SelectItem>
+                          <SelectItem value="snoozed">
+                            <Badge variant="secondary" className="text-[9px] px-1 py-0 bg-gray-100 text-gray-700 dark:bg-gray-900/30 dark:text-gray-400">Adiada</Badge>
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
                     </div>
                     <p className="text-xs text-muted-foreground">
                       {selectedConversation.isGroup
@@ -5787,6 +5980,21 @@ function InboxTab() {
                     </div>
                   ) : (
                     <div className="space-y-2 max-w-2xl mx-auto">
+                      {/* Load more messages button */}
+                      {hasMore && (
+                        <div className="flex items-center justify-center py-2">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-xs text-muted-foreground"
+                            onClick={loadMoreMessages}
+                            disabled={loadingMore}
+                          >
+                            {loadingMore ? <RefreshCw className="size-3.5 animate-spin mr-1" /> : <ArrowDownToLine className="size-3.5 mr-1" />}
+                            Carregar mensagens anteriores
+                          </Button>
+                        </div>
+                      )}
                       {messages.map((msg, idx) => {
                         const isMe = msg.fromMe
                         const showDate = idx === 0 || (() => {
@@ -5799,9 +6007,34 @@ function InboxTab() {
                         const hasContent = msg.messageContent || msg.mediaUrl || ['reaction', 'deleted', 'sticker', 'image', 'video', 'audio', 'document'].includes(msg.messageType)
                         if (!hasContent) return null
 
+                        // Hide standalone reaction messages — they should appear as badges on the original message
+                        // But if the target message isn't in the current view, show them as fallback
+                        if (msg.messageType === 'reaction') {
+                          const targetMsgId = msg.quotedMsgId
+                          const targetInList = targetMsgId ? messages.some(m => m.evolutionMsgId === targetMsgId) : false
+                          if (targetInList) return null // Hide — will be rendered as badge on the target
+                        }
+
+                        // Parse reactionEmoji for this message
+                        const reactions: { emoji: string; from: string; fromJid: string }[] = (() => {
+                          if (!msg.reactionEmoji) return []
+                          try { return JSON.parse(msg.reactionEmoji) } catch { return [] }
+                        })()
+
                         // For group messages, show the sender's name above the bubble
                         const isGroupMsg = selectedConversation.isGroup && !isMe
                         const senderDisplayName = msg.pushName || msg.contactName || null
+
+                        // Delivery receipt status for fromMe messages
+                        const ackStatus = (() => {
+                          if (!isMe) return null
+                          const ack = msg.ack ?? 0
+                          const status = msg.status
+                          if (status === 'read' || ack >= 4) return 'read' as const
+                          if (status === 'delivered' || ack === 3) return 'delivered' as const
+                          if (status === 'sent' || ack === 1 || ack === 2) return 'sent' as const
+                          return 'pending' as const
+                        })()
 
                         return (
                           <React.Fragment key={msg.id}>
@@ -5823,18 +6056,39 @@ function InboxTab() {
                               </p>
                             )}
                             <div className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
-                              <div className={`max-w-[75%] rounded-2xl px-3.5 py-2 ${
-                                isMe
-                                  ? msg.isCampaign
-                                    ? 'bg-emerald-700/80 text-white rounded-br-md border border-emerald-600/50'
-                                    : 'bg-primary text-primary-foreground rounded-br-md'
-                                  : 'bg-background border rounded-bl-md'
-                              }`}>
+                              <div
+                                className={`max-w-[75%] rounded-2xl px-3.5 py-2 ${
+                                  isMe
+                                    ? msg.isCampaign
+                                      ? 'bg-emerald-700/80 text-white rounded-br-md border border-emerald-600/50'
+                                      : 'bg-primary text-primary-foreground rounded-br-md'
+                                    : 'bg-background border rounded-bl-md'
+                                }`}
+                                onDoubleClick={() => setReplyingTo(msg)}
+                                title="Clique duplo para responder"
+                              >
                                 {/* Campaign message badge */}
                                 {msg.isCampaign && isMe && (
                                   <div className="flex items-center gap-1 mb-1">
                                     <Megaphone className="size-3 opacity-70" />
                                     <span className="text-[9px] font-medium opacity-70 uppercase tracking-wider">Campanha</span>
+                                  </div>
+                                )}
+                                {/* Quoted reply preview */}
+                                {msg.quotedMsgId && (
+                                  <div className="bg-black/5 rounded-lg p-2 mb-1.5 border-l-2 border-primary/50 text-xs">
+                                    {msg.quotedPushName && (
+                                      <p className="font-medium text-primary/80 truncate">{msg.quotedPushName}</p>
+                                    )}
+                                    <p className="text-muted-foreground truncate">
+                                      {msg.quotedType === 'image' ? (
+                                        <span className="inline-flex items-center gap-1"><ImageIcon className="size-3" />Foto</span>
+                                      ) : msg.quotedContent ? (
+                                        msg.quotedContent.length > 80 ? msg.quotedContent.substring(0, 80) + '...' : msg.quotedContent
+                                      ) : msg.quotedType ? (
+                                        `Mensagem de ${msg.quotedType}`
+                                      ) : 'Mensagem'}
+                                    </p>
                                   </div>
                                 )}
                                 {/* Sticker */}
@@ -5853,30 +6107,47 @@ function InboxTab() {
                                   <div className="mb-1.5 rounded-lg overflow-hidden">
                                     <img
                                       src={msg.mediaUrl}
-                                      alt="Imagem"
-                                      className="max-w-full max-h-60 object-cover rounded-lg"
+                                      alt={msg.mediaCaption || 'Imagem'}
+                                      className="max-w-full max-h-60 object-cover rounded-lg cursor-pointer"
                                       onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
                                     />
+                                    {msg.mediaCaption && (
+                                      <p className="text-xs mt-1 opacity-80">{msg.mediaCaption}</p>
+                                    )}
                                   </div>
                                 )}
                                 {/* Video */}
                                 {msg.mediaUrl && msg.messageType === 'video' && (
-                                  <div className="mb-1.5 rounded-lg overflow-hidden bg-black/10 flex items-center justify-center h-32">
-                                    <Video className="size-8 text-muted-foreground" />
+                                  <div className="mb-1.5 rounded-lg overflow-hidden">
+                                    <video controls className="max-w-full max-h-60 rounded-lg" src={msg.mediaUrl} preload="metadata">
+                                      Seu navegador não suporta vídeo.
+                                    </video>
+                                    {msg.mediaCaption && (
+                                      <p className="text-xs mt-1 opacity-80">{msg.mediaCaption}</p>
+                                    )}
                                   </div>
                                 )}
                                 {/* Audio / Voice */}
                                 {msg.mediaUrl && msg.messageType === 'audio' && (
-                                  <div className="mb-1.5 flex items-center gap-2 px-1 py-0.5">
-                                    <Mic className="size-4" />
-                                    <span className="text-xs">Mensagem de voz</span>
+                                  <div className="mb-1.5">
+                                    <audio controls className="max-w-[240px] h-8" src={msg.mediaUrl} preload="metadata">
+                                      Seu navegador não suporta áudio.
+                                    </audio>
+                                    {msg.mediaDuration != null && msg.mediaDuration > 0 && (
+                                      <span className="text-[10px] text-muted-foreground ml-1">
+                                        {Math.floor(msg.mediaDuration / 60)}:{String(msg.mediaDuration % 60).padStart(2, '0')}
+                                      </span>
+                                    )}
                                   </div>
                                 )}
                                 {/* Document */}
                                 {msg.mediaUrl && msg.messageType === 'document' && (
                                   <div className="mb-1.5 flex items-center gap-2 px-1 py-0.5">
                                     <FileIcon className="size-4" />
-                                    <span className="text-xs">Documento</span>
+                                    <div className="min-w-0 flex-1">
+                                      <span className="text-xs block truncate">{msg.fileName || 'Documento'}</span>
+                                      {msg.mimeType && <span className="text-[9px] text-muted-foreground">{msg.mimeType}</span>}
+                                    </div>
                                   </div>
                                 )}
                                 {/* Template message indicator */}
@@ -5886,7 +6157,7 @@ function InboxTab() {
                                     <span className="text-xs">Mensagem de template</span>
                                   </div>
                                 )}
-                                {/* Reaction */}
+                                {/* Reaction (standalone — shown only when target message not in view) */}
                                 {msg.messageType === 'reaction' && (
                                   <div className="text-lg">{msg.messageContent?.replace('Reação: ', '') || '👍'}</div>
                                 )}
@@ -5933,7 +6204,7 @@ function InboxTab() {
                                     msg.messageType === 'template' ? 'italic text-muted-foreground' : ''
                                   }`}>{c}</p>
                                 })()}
-                                {/* Time */}
+                                {/* Time + delivery receipt check marks */}
                                 <div className={`flex items-center gap-1 mt-1 ${isMe ? 'justify-end' : 'justify-start'}`}>
                                   <span className={`text-[10px] ${isMe ? 'text-primary-foreground/70' : 'text-muted-foreground'}`}>
                                     {new Date(msg.createdAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
@@ -5943,9 +6214,40 @@ function InboxTab() {
                                       {msg.messageType}
                                     </span>
                                   )}
+                                  {/* WhatsApp-style delivery receipt */}
+                                  {isMe && ackStatus && (
+                                    <span className="ml-0.5">
+                                      {ackStatus === 'pending' && <Clock className="size-3 text-muted-foreground/70" />}
+                                      {ackStatus === 'sent' && <Check className="size-3 text-muted-foreground/70" />}
+                                      {ackStatus === 'delivered' && (
+                                        <span className="relative inline-block">
+                                          <Check className="size-3 text-muted-foreground/70 absolute left-[3px]" />
+                                          <Check className="size-3 text-muted-foreground/70" />
+                                        </span>
+                                      )}
+                                      {ackStatus === 'read' && (
+                                        <span className="relative inline-block">
+                                          <Check className="size-3 text-blue-500 absolute left-[3px]" />
+                                          <Check className="size-3 text-blue-500" />
+                                        </span>
+                                      )}
+                                    </span>
+                                  )}
                                 </div>
                               </div>
                             </div>
+                            {/* Reactions row */}
+                            {reactions.length > 0 && (
+                              <div className={`flex ${isMe ? 'justify-end' : 'justify-start'} -mt-1 ml-2`}>
+                                <div className="flex flex-wrap gap-0.5">
+                                  {reactions.map((r, ri) => (
+                                    <span key={ri} className="inline-flex items-center gap-0.5 bg-muted/80 rounded-full px-1.5 py-0.5 text-xs border">
+                                      {r.emoji}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
                           </React.Fragment>
                         )
                       })}
@@ -5958,30 +6260,88 @@ function InboxTab() {
                 {/* Reply Input */}
                 {selectedConversation.chip?.status === 'connected' ? (
                   <div className="px-4 py-3 border-t bg-background">
-                    <div className="flex items-end gap-2 max-w-2xl mx-auto">
-                      <div className="flex-1">
-                        <Textarea
-                          placeholder="Digite uma mensagem..."
-                          className="min-h-[42px] max-h-32 resize-none text-sm"
-                          value={replyText}
-                          onChange={e => setReplyText(e.target.value)}
-                          onKeyDown={e => {
-                            if (e.key === 'Enter' && !e.shiftKey) {
-                              e.preventDefault()
-                              handleReply()
-                            }
-                          }}
-                          disabled={sending}
+                    <div className="max-w-2xl mx-auto">
+                      {/* Replying-to preview bar */}
+                      {replyingTo && (
+                        <div className="flex items-center gap-2 mb-2 p-2 bg-muted/50 rounded-lg border-l-2 border-primary">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-[10px] font-medium text-primary">
+                              {replyingTo.pushName || replyingTo.contactName || 'Você'}
+                            </p>
+                            <p className="text-xs text-muted-foreground truncate">
+                              {replyingTo.messageContent
+                                ? (replyingTo.messageContent.length > 80 ? replyingTo.messageContent.substring(0, 80) + '...' : replyingTo.messageContent)
+                                : `Mensagem de ${replyingTo.messageType}`}
+                            </p>
+                          </div>
+                          <Button variant="ghost" size="icon" className="size-6 shrink-0" onClick={() => setReplyingTo(null)}>
+                            <X className="size-3" />
+                          </Button>
+                        </div>
+                      )}
+                      {/* Attached file preview */}
+                      {attachedFile && (
+                        <div className="flex items-center gap-2 mb-2 p-2 bg-muted/50 rounded-lg">
+                          {attachedFile.type === 'image' && attachedFile.preview ? (
+                            <img src={attachedFile.preview} alt="Preview" className="size-10 rounded object-cover" />
+                          ) : (
+                            <div className="size-10 rounded bg-muted flex items-center justify-center">
+                              {attachedFile.type === 'video' ? <Video className="size-4" /> :
+                               attachedFile.type === 'audio' ? <Mic className="size-4" /> :
+                               <FileIcon className="size-4" />}
+                            </div>
+                          )}
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-medium truncate">{attachedFile.file.name}</p>
+                            <p className="text-[10px] text-muted-foreground">{(attachedFile.file.size / 1024).toFixed(1)} KB</p>
+                          </div>
+                          <Button variant="ghost" size="icon" className="size-6 shrink-0" onClick={() => setAttachedFile(null)}>
+                            <X className="size-3" />
+                          </Button>
+                        </div>
+                      )}
+                      <div className="flex items-end gap-2">
+                        <input
+                          ref={fileInputRef}
+                          type="file"
+                          className="hidden"
+                          accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.txt"
+                          onChange={handleFileAttach}
                         />
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="size-10 shrink-0"
+                          onClick={() => fileInputRef.current?.click()}
+                          disabled={sending}
+                          title="Anexar arquivo"
+                        >
+                          <Paperclip className="size-4" />
+                        </Button>
+                        <div className="flex-1">
+                          <Textarea
+                            placeholder={replyingTo ? `Respondendo ${replyingTo.pushName || replyingTo.contactName || 'mensagem'}...` : "Digite uma mensagem..."}
+                            className="min-h-[42px] max-h-32 resize-none text-sm"
+                            value={replyText}
+                            onChange={e => setReplyText(e.target.value)}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter' && !e.shiftKey) {
+                                e.preventDefault()
+                                handleReply()
+                              }
+                            }}
+                            disabled={sending}
+                          />
+                        </div>
+                        <Button
+                          size="icon"
+                          className="size-10 shrink-0"
+                          onClick={handleReply}
+                          disabled={(!replyText.trim() && !attachedFile) || sending}
+                        >
+                          {sending ? <RefreshCw className="size-4 animate-spin" /> : <Send className="size-4" />}
+                        </Button>
                       </div>
-                      <Button
-                        size="icon"
-                        className="size-10 shrink-0"
-                        onClick={handleReply}
-                        disabled={!replyText.trim() || sending}
-                      >
-                        {sending ? <RefreshCw className="size-4 animate-spin" /> : <Send className="size-4" />}
-                      </Button>
                     </div>
                   </div>
                 ) : (
