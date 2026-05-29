@@ -964,7 +964,7 @@ export async function fetchGroupMetadata(
  */
 export async function fetchChats(
   instanceIdOrName: string
-): Promise<Array<{ id: string; archived?: boolean; remoteJid?: string }>> {
+): Promise<Array<{ id: string; archived?: boolean; remoteJid?: string; name?: string }>> {
   const { id: instanceId, token: instanceToken } = await resolveInstance(instanceIdOrName);
 
   try {
@@ -983,6 +983,7 @@ export async function fetchChats(
       id: String(chat.id || ''),
       archived: Boolean(chat.archived),
       remoteJid: String(chat.id || chat.remoteJid || chat.jid || ''),
+      name: String(chat.name || chat.subject || chat.pushName || ''),
     }));
   } catch {
     return [];
@@ -1003,6 +1004,27 @@ export async function getArchivedChatJids(instanceIdOrName: string): Promise<Set
     }
   }
   return archived;
+}
+
+/**
+ * Get all chat JIDs with their archived status and names.
+ * Used to extract group names from the chat list as a fallback
+ * when fetchGroupMetadata fails.
+ */
+export async function getArchivedChatJidsWithNames(
+  instanceIdOrName: string
+): Promise<Map<string, { archived: boolean; name: string }>> {
+  const chats = await fetchChats(instanceIdOrName);
+  const result = new Map<string, { archived: boolean; name: string }>();
+  for (const chat of chats) {
+    if (chat.remoteJid) {
+      result.set(chat.remoteJid, {
+        archived: chat.archived ?? false,
+        name: chat.name || '',
+      });
+    }
+  }
+  return result;
 }
 
 // ============ Proxy Configuration ============

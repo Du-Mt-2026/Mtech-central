@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { getArchivedChatJids } from '@/lib/evolution-api'
+import { getArchivedChatJidsWithNames } from '@/lib/evolution-api'
 
 /**
  * GET /api/inbox/conversations
@@ -407,14 +407,40 @@ export async function GET(request: NextRequest) {
 
     // ═══════════════════════════════════════════════════════════════════
     // STEP 5: Filter archived + sort
+    // Also use fetchChats to get group names from chat list
     // ═══════════════════════════════════════════════════════════════════
 
     let archivedJids = new Set<string>()
+    const chatNameMap = new Map<string, string>() // JID → name from chat list
     try {
       if (chip?.evolutionInstance) {
-        archivedJids = await getArchivedChatJids(chip.evolutionInstance)
+        const allChats = await getArchivedChatJidsWithNames(chip.evolutionInstance)
+        for (const [jid, info] of allChats) {
+          if (info.archived) archivedJids.add(jid)
+          if (info.name && !/^\d{10,}$/.test(info.name) && info.name !== 'unknown') {
+            chatNameMap.set(jid, info.name)
+          }
+        }
       }
     } catch { /* non-critical */ }
+
+    // Fill in group names from chat list if still missing
+    for (const [jid, name] of chatNameMap) {
+      if (jid.endsWith('@g.us')) {
+        const currentName = groupNameMap.get(jid)
+        if (!currentName || /^\d{10,}$/.test(currentName) || /^Grupo\s/i.test(currentName) || currentName === 'unknown') {
+          groupNameMap.set(jid, name)
+          // Also save to cache
+          try {
+            await db.groupMetadata.upsert({
+              where: { groupJid: jid },
+              create: { groupJid: jid, subject: name, chipId },
+              update: { subject: name, updatedAt: new Date() },
+            })
+          } catch { /* non-critical */ }
+        }
+      }
+    }
 
     // Fetch cached profile pictures from Conversation table
     const cachedPics = new Map<string, string>()
