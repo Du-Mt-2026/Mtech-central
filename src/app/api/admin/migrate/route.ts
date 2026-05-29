@@ -89,6 +89,22 @@ export async function POST(req: NextRequest) {
       })
     }
 
+    // Fix: Clear invalid profilePicUrl values (JIDs stored instead of URLs)
+    if (action === 'fix-profile-pic-urls') {
+      const result = await db.chip.updateMany({
+        where: {
+          profilePicUrl: { contains: '@s.whatsapp.net' },
+        },
+        data: { profilePicUrl: null },
+      })
+      return NextResponse.json({
+        success: true,
+        action: 'fix-profile-pic-urls',
+        chipsFixed: result.count,
+        message: `Limpos ${result.count} profilePicUrl inválidos (JIDs salvos como URL).`,
+      })
+    }
+
     // Default: Add pausedAt column to Campaign table if it doesn't exist
     await db.$executeRawUnsafe(`
       ALTER TABLE "Campaign" ADD COLUMN IF NOT EXISTS "pausedAt" TIMESTAMP(3)
