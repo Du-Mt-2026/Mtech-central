@@ -122,8 +122,10 @@ function displayName(conv: InboxConversation): string {
       if (name === 'unknown') continue
       return name
     }
-    // Last resort: show a generic label with participant count
-    return `Grupo ${conv.participantCount ? `(${conv.participantCount} pes.)` : ''}`
+    // Fallback: show partial JID (e.g., "Grupo ...326") — never just "Grupo"
+    const jidNum = conv.remoteJid.split('@')[0]
+    const shortId = jidNum.length > 6 ? `...${jidNum.slice(-6)}` : jidNum
+    return `Grupo ${shortId}`
   }
   return conv.contactName || conv.pushName || conv.remotePhone || 'Desconhecido'
 }
@@ -179,6 +181,125 @@ function WhatsAppChecks({ ack, status }: { ack?: number; status?: string }) {
     return <Check className="size-3.5 text-muted-foreground/60 shrink-0 ml-0.5" strokeWidth={2.5} />
   }
   return <Clock className="size-3 text-muted-foreground/40 shrink-0 ml-0.5" />
+}
+
+// ===== Audio Player Component (WhatsApp-style) =====
+function AudioPlayer({ src, duration, isMe }: { src: string; duration: number | null; isMe: boolean }) {
+  const audioRef = useRef<HTMLAudioElement>(null)
+  const [playing, setPlaying] = useState(false)
+  const [progress, setProgress] = useState(0)
+  const [currentTime, setCurrentTime] = useState(0)
+  const [audioDuration, setAudioDuration] = useState(duration ?? 0)
+
+  const togglePlay = () => {
+    const audio = audioRef.current
+    if (!audio) return
+    if (playing) {
+      audio.pause()
+    } else {
+      audio.play().catch(() => {})
+    }
+    setPlaying(!playing)
+  }
+
+  const formatDuration = (secs: number) => {
+    if (!secs || secs <= 0) return '0:00'
+    const m = Math.floor(secs / 60)
+    const s = Math.floor(secs % 60)
+    return `${m}:${String(s).padStart(2, '0')}`
+  }
+
+  return (
+    <div className={cn(
+      'flex items-center gap-2.5 min-w-[200px] max-w-[280px] py-1 px-0.5',
+    )}>
+      <audio
+        ref={audioRef}
+        src={src}
+        preload="metadata"
+        onPlay={() => setPlaying(true)}
+        onPause={() => setPlaying(false)}
+        onEnded={() => { setPlaying(false); setProgress(0); setCurrentTime(0) }}
+        onTimeUpdate={() => {
+          const audio = audioRef.current
+          if (!audio) return
+          setCurrentTime(audio.currentTime)
+          setProgress(audio.duration ? (audio.currentTime / audio.duration) * 100 : 0)
+        }}
+        onLoadedMetadata={() => {
+          const audio = audioRef.current
+          if (audio && audio.duration && isFinite(audio.duration)) {
+            setAudioDuration(audio.duration)
+          }
+        }}
+      />
+      {/* Play/Pause button */}
+      <button
+        onClick={togglePlay}
+        className={cn(
+          'size-9 rounded-full flex items-center justify-center shrink-0 transition-colors',
+          isMe ? 'bg-foreground/15 hover:bg-foreground/25' : 'bg-primary/15 hover:bg-primary/25'
+        )}
+      >
+        {playing ? (
+          <span className="size-3 rounded-sm bg-foreground/70" />
+        ) : (
+          <span className="ml-0.5 border-l-[7px] border-y-[5px] border-l-foreground/70 border-y-transparent" />
+        )}
+      </button>
+      {/* Waveform / Progress bar */}
+      <div className="flex-1 min-w-0 flex flex-col gap-0.5">
+        <div className="relative h-5 flex items-center gap-px">
+          {/* Fake waveform bars */}
+          {Array.from({ length: 32 }).map((_, i) => {
+            const barHeight = 15 + Math.abs(Math.sin(i * 0.8 + 3)) * 70 + Math.random() * 15
+            const filled = (i / 32) * 100 <= progress
+            return (
+              <div
+                key={i}
+                className={cn(
+                  'w-[3px] rounded-full shrink-0 transition-colors',
+                  filled
+                    ? (isMe ? 'bg-foreground/50' : 'bg-primary/50')
+                    : (isMe ? 'bg-foreground/15' : 'bg-primary/15')
+                )}
+                style={{ height: `${barHeight}%` }}
+              />
+            )
+          })}
+        </div>
+        {/* Time */}
+        <div className="flex items-center justify-between">
+          <span className="text-[10px] text-muted-foreground tabular-nums">
+            {playing ? formatDuration(currentTime) : '0:00'}
+          </span>
+          <span className="text-[10px] text-muted-foreground tabular-nums">
+            {formatDuration(audioDuration)}
+          </span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ===== Reaction Badges Component (WhatsApp-style) =====
+function ReactionBadges({ reactions, isMe }: { reactions: { emoji: string; from: string; fromJid: string }[]; isMe: boolean }) {
+  // Aggregate same emojis and count them
+  const emojiCounts = new Map<string, number>()
+  for (const r of reactions) {
+    const emoji = r.emoji || '👍'
+    emojiCounts.set(emoji, (emojiCounts.get(emoji) || 0) + 1)
+  }
+  return (
+    <div className={cn('flex flex-wrap gap-1 -mt-1.5', isMe ? 'justify-end mr-2' : 'justify-start ml-2')}>
+      {Array.from(emojiCounts.entries()).map(([emoji, count], ri) => (
+        <span key={ri} className="inline-flex items-center gap-0.5 bg-background/80 border border-border/30 rounded-full px-2 py-0.5 text-sm shadow-sm hover:bg-background transition-colors cursor-default">
+          <span className="text-base leading-none">{emoji}</span>
+          {count > 1 && <span className="text-[10px] text-muted-foreground tabular-nums">{count}</span>}
+        </span>
+      ))}
+    </div>
+  )
 }
 
 // ===== Main Component =====
@@ -942,14 +1063,11 @@ export function InboxTab() {
                               return prevDate !== currDate
                             })()
 
-                            const hasContent = msg.messageContent || msg.mediaUrl || ['reaction', 'deleted', 'sticker', 'image', 'video', 'audio', 'document'].includes(msg.messageType)
-                            if (!hasContent) return null
+                            // Skip reaction messages entirely — they appear as badges on the original message
+                            if (msg.messageType === 'reaction') return null
 
-                            if (msg.messageType === 'reaction') {
-                              const targetMsgId = msg.quotedMsgId
-                              const targetInList = targetMsgId ? messages.some(m => m.evolutionMsgId === targetMsgId || m.id === targetMsgId) : false
-                              if (targetInList) return null
-                            }
+                            const hasContent = msg.messageContent || msg.mediaUrl || ['deleted', 'sticker', 'image', 'video', 'audio', 'document'].includes(msg.messageType)
+                            if (!hasContent) return null
 
                             const reactions: { emoji: string; from: string; fromJid: string }[] = (() => {
                               if (!msg.reactionEmoji) return []
@@ -1055,16 +1173,9 @@ export function InboxTab() {
                                       </div>
                                     )}
 
-                                    {/* Audio */}
+                                    {/* Audio / Voice message — WhatsApp-style player */}
                                     {msg.mediaUrl && msg.messageType === 'audio' && (
-                                      <div className="mb-1.5">
-                                        <audio controls className="max-w-[260px] h-8" src={msg.mediaUrl} preload="metadata">Seu navegador nao suporta audio.</audio>
-                                        {msg.mediaDuration != null && msg.mediaDuration > 0 && (
-                                          <span className="text-[10px] text-muted-foreground ml-1">
-                                            {Math.floor(msg.mediaDuration / 60)}:{String(msg.mediaDuration % 60).padStart(2, '0')}
-                                          </span>
-                                        )}
-                                      </div>
+                                      <AudioPlayer src={msg.mediaUrl} duration={msg.mediaDuration} isMe={isMe} />
                                     )}
 
                                     {/* Document */}
@@ -1088,13 +1199,7 @@ export function InboxTab() {
                                       </div>
                                     )}
 
-                                    {/* Reaction standalone */}
-                                    {msg.messageType === 'reaction' && (
-                                      <div className="flex items-center gap-1.5">
-                                        <span className="text-base">{msg.messageContent?.replace('Reacao: ', '').replace('Reacao removida', '') || '👍'}</span>
-                                        <span className="text-[10px] text-muted-foreground">reagiu</span>
-                                      </div>
-                                    )}
+                                    {/* Reactions are handled as badges below the bubble — skip standalone rendering */}
 
                                     {/* Contact */}
                                     {msg.messageType === 'contact' && (
@@ -1142,12 +1247,18 @@ export function InboxTab() {
                                     )}
 
                                     {/* Text content */}
-                                    {msg.messageContent && msg.messageType !== 'deleted' && msg.messageType !== 'reaction' && (() => {
+                                    {msg.messageContent && msg.messageType !== 'deleted' && (() => {
                                       const c = msg.messageContent
                                       if (c.startsWith('{') || c.startsWith('[')) {
+                                        // Try to parse reaction emoji from JSON
                                         const reactionMatch = c.match(/"text"\s*:\s*"([^"]+)"/)
-                                        if (reactionMatch && msg.messageType === 'unknown') {
-                                          return <p className="text-sm italic text-muted-foreground">Reacao: {reactionMatch[1]}</p>
+                                        if (reactionMatch && (msg.messageType === 'unknown' || msg.messageType === 'reaction')) {
+                                          // Show as a small reaction bubble
+                                          return (
+                                            <div className="flex items-center gap-1.5 py-0.5">
+                                              <span className="text-lg">{reactionMatch[1]}</span>
+                                            </div>
+                                          )
                                         }
                                         return <p className="text-sm italic text-muted-foreground">Mensagem nao suportada</p>
                                       }
@@ -1179,16 +1290,8 @@ export function InboxTab() {
                                   </div>
                                 </div>
 
-                                {/* Reactions */}
-                                {reactions.length > 0 && (
-                                  <div className={cn('flex flex-wrap gap-0.5 -mt-0.5', isMe ? 'justify-end mr-3' : 'justify-start ml-3')}>
-                                    {reactions.map((r, ri) => (
-                                      <span key={ri} className="inline-flex items-center gap-0.5 bg-muted/60 border border-border/40 rounded-full px-1.5 py-0.5 text-xs shadow-sm">
-                                        {r.emoji}
-                                      </span>
-                                    ))}
-                                  </div>
-                                )}
+                                {/* Reactions — WhatsApp-style badges below the bubble */}
+                                {reactions.length > 0 && <ReactionBadges reactions={reactions} isMe={isMe} />}
                               </React.Fragment>
                             )
                           })}

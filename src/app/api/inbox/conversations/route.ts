@@ -235,25 +235,38 @@ export async function GET(request: NextRequest) {
       try {
         const cachedGroups = await db.groupMetadata.findMany({
           where: { groupJid: { in: groupJids } },
-          select: { groupJid: true, subject: true },
+          select: { groupJid: true, subject: true, participantCount: true },
         })
         for (const cg of cachedGroups) {
-          if (cg.subject) groupNameMap.set(cg.groupJid, cg.subject)
+          if (cg.subject && cg.subject !== 'unknown' && !/^\d{10,}$/.test(cg.subject)) {
+            groupNameMap.set(cg.groupJid, cg.subject)
+          }
         }
       } catch { /* non-critical */ }
 
-      // Then, for groups NOT in cache, fetch from Evolution API
-      const uncachedGroupJids = groupJids.filter(jid => !groupNameMap.has(jid))
+      // Then, for groups NOT in cache (or with bad cached names), fetch from Evolution API
+      const uncachedGroupJids = groupJids.filter(jid => {
+        const name = groupNameMap.get(jid)
+        return !name || name === 'unknown' || /^\d{10,}$/.test(name) || /^Grupo\s+\d{3,}$/i.test(name)
+      })
       if (uncachedGroupJids.length > 0 && chip?.evolutionInstance) {
         try {
           const { fetchGroupMetadata } = await import('@/lib/evolution-api')
           for (const jid of uncachedGroupJids) {
             try {
               const meta = await fetchGroupMetadata(chip.evolutionInstance, jid)
-              if (meta?.subject) {
+              if (meta?.subject && meta.subject !== 'unknown') {
                 groupNameMap.set(jid, meta.subject)
+                // Save to cache for future requests
+                try {
+                  await db.groupMetadata.upsert({
+                    where: { groupJid: jid },
+                    create: { groupJid: jid, subject: meta.subject, participantCount: meta.participants || 0, chipId },
+                    update: { subject: meta.subject, participantCount: meta.participants || 0, updatedAt: new Date() },
+                  })
+                } catch { /* non-critical */ }
               }
-            } catch { /* skip */ }
+            } catch { /* skip — Evolution API may be down */ }
           }
         } catch { /* skip */ }
       }
@@ -269,9 +282,10 @@ export async function GET(request: NextRequest) {
       if (namedMsg?.contactName) {
         groupNameMap.set(jid, namedMsg.contactName)
       } else {
-        // Don't use "Grupo XXXX" — just use the JID short form as last resort
+        // Show partial JID as last resort (e.g., "...326") — better than generic "Grupo"
         const jidNum = jid.split('@')[0]
-        groupNameMap.set(jid, `Grupo`)
+        const shortId = jidNum.length > 6 ? `...${jidNum.slice(-6)}` : jidNum
+        groupNameMap.set(jid, `Grupo ${shortId}`)
       }
     }
 
