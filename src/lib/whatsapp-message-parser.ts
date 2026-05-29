@@ -564,10 +564,38 @@ export function parseWhatsAppMessage(msg: Record<string, any>): ParsedMessage {
     }
   }
 
+  // ===== ENCRYPTED REACTION (device couldn't decrypt) =====
+  if (msg.encReactionMessage) {
+    return {
+      content: 'Reação',
+      type: 'reaction',
+      mediaUrl: null,
+      caption: null,
+      quotedMsgId: msg.encReactionMessage?.key?.id || null,
+      quotedContent: null, quotedType: null, quotedPushName: null,
+      reactionTargetId: msg.encReactionMessage?.key?.id || null,
+      reactionEmoji: '', // Can't decrypt the emoji
+      fileName: null, mimeType: null, mediaDuration: null,
+    }
+  }
+
+  // ===== ENCRYPTED MESSAGE (device couldn't decrypt) =====
+  if (msg.encMessage || msg.encryptedMessage) {
+    return {
+      content: 'Mensagem criptografada',
+      type: 'unknown',
+      mediaUrl: null,
+      caption: null,
+      quotedMsgId: null, quotedContent: null, quotedType: null, quotedPushName: null,
+      reactionTargetId: null, reactionEmoji: null,
+      fileName: null, mimeType: null, mediaDuration: null,
+    }
+  }
+
   // Último recurso
   const unhandledType = Object.keys(msg).find(k => k.endsWith('Message') || k.endsWith('message'))
   return {
-    content: unhandledType ? `Mensagem de ${unhandledType}` : 'Mensagem não suportada',
+    content: 'Mensagem não suportada',
     type: 'unknown',
     mediaUrl: null,
     caption: null,

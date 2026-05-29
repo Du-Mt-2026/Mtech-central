@@ -197,7 +197,7 @@ export async function POST(req: NextRequest) {
 
       for (const msg of unknownJson) {
         try {
-          if (msg.messageContent.includes('reactionMessage')) {
+          if (msg.messageContent.includes('reactionMessage') || msg.messageContent.includes('encReactionMessage')) {
             // This is an old reaction message that wasn't parsed correctly
             const emojiMatch = msg.messageContent.match(/"text"\s*:\s*"([^"]+)"/)
             const emoji = emojiMatch ? emojiMatch[1] : ''
@@ -300,6 +300,74 @@ export async function POST(req: NextRequest) {
         targetMessagesUpdated: updated,
         targetsNotFound: notFound,
         message: `Backfill: ${updated} mensagens originais tiveram reactionEmoji atualizado. ${notFound} targets não encontrados.`,
+      })
+    }
+
+    // Fix: Convert 'encReactionMessage' and other non-'unknown' but problematic message types
+    if (action === 'fix-special-message-types') {
+      // Fix messages with messageType containing 'Reaction' but not type 'reaction'
+      const encReactions = await db.inboxMessage.findMany({
+        where: {
+          messageType: { contains: 'Reaction' },
+          NOT: { messageType: 'reaction' },
+        },
+        select: { id: true, messageContent: true, messageType: true },
+        take: 500,
+      })
+
+      let fixed = 0
+      for (const msg of encReactions) {
+        try {
+          // Extract emoji from content if possible
+          const emojiMatch = msg.messageContent?.match(/"text"\s*:\s*"([^"]+)"/)
+          const emoji = emojiMatch ? emojiMatch[1] : ''
+          // Extract target ID
+          const targetMatch = msg.messageContent?.match(/"key"\s*:\s*\{[^}]*"id"\s*:\s*"([^"]+)"/)
+          const targetId = targetMatch ? targetMatch[1] : null
+
+          await db.inboxMessage.update({
+            where: { id: msg.id },
+            data: {
+              messageType: 'reaction',
+              messageContent: emoji ? `Reação: ${emoji}` : 'Reação',
+              ...(targetId ? { quotedMsgId: targetId } : {}),
+            },
+          })
+          fixed++
+        } catch {
+          // Skip
+        }
+      }
+
+      // Also fix messages with content "Mensagem de XMessage" that are old parser output
+      const oldParserMessages = await db.inboxMessage.findMany({
+        where: {
+          messageContent: { startsWith: 'Mensagem de ' },
+          messageType: { notIn: ['text', 'image', 'video', 'audio', 'document', 'sticker', 'reaction', 'deleted', 'contact', 'location'] },
+        },
+        select: { id: true, messageContent: true, messageType: true },
+        take: 500,
+      })
+
+      let fixedContent = 0
+      for (const msg of oldParserMessages) {
+        try {
+          await db.inboxMessage.update({
+            where: { id: msg.id },
+            data: { messageContent: 'Mensagem não suportada' },
+          })
+          fixedContent++
+        } catch {
+          // Skip
+        }
+      }
+
+      return NextResponse.json({
+        success: true,
+        action: 'fix-special-message-types',
+        encReactionsFixed: fixed,
+        oldParserContentFixed: fixedContent,
+        message: `Corrigidos ${fixed} encReactionMessage e ${fixedContent} mensagens com conteúdo antigo do parser.`,
       })
     }
 
