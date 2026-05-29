@@ -68,35 +68,67 @@ export interface ReconnectionStats {
 // CONFIGURATION
 // ============================================================
 
-const CONFIG = {
-  // How many chips can reconnect simultaneously
+// Default config — used as fallback when DB is not available
+const DEFAULT_CONFIG = {
   MAX_CONCURRENT: 2,
-
-  // Backoff: [attempt 1, attempt 2, attempt 3, attempt 4, attempt 5, attempt 6+]
   BACKOFF_MS: [5_000, 15_000, 45_000, 120_000, 300_000, 600_000],
-
-  // Add random jitter (0-50% of backoff) to prevent thundering herd
   JITTER_FACTOR: 0.5,
-
-  // Max reconnection attempts before giving up
   MAX_ATTEMPTS: 10,
-
-  // Rate limit: max N reconnections per time window
   RATE_LIMIT_COUNT: 5,
-  RATE_LIMIT_WINDOW_MS: 10 * 60 * 1000, // 10 minutes
-
-  // Circuit breaker: if Evolution API fails N times in a row, pause reconnections
+  RATE_LIMIT_WINDOW_MS: 10 * 60 * 1000,
   CIRCUIT_BREAKER_THRESHOLD: 3,
-  CIRCUIT_BREAKER_RESET_MS: 5 * 60 * 1000, // 5 minutes
-
-  // Don't reconnect chips outside sending window (optional, can be disabled)
+  CIRCUIT_BREAKER_RESET_MS: 5 * 60 * 1000,
   RESPECT_SENDING_WINDOW: false,
+  INTER_RECONNECT_DELAY_MS: 15_000,
+  CONNECT_TIMEOUT_MS: 60_000,
+}
 
-  // Delay between starting reconnection of consecutive chips
-  INTER_RECONNECT_DELAY_MS: 15_000, // 15 seconds between each reconnection start
+/**
+ * Load reconnection config from AntiBanSettings in DB.
+ * Falls back to defaults if DB is unavailable.
+ * Caches for 60 seconds to avoid excessive DB queries.
+ */
+let configCache: { data: typeof DEFAULT_CONFIG; expiresAt: number } | null = null
 
-  // How long to wait for a chip to connect before considering it timed out
-  CONNECT_TIMEOUT_MS: 60_000, // 60 seconds
+async function getConfig(): Promise<typeof DEFAULT_CONFIG> {
+  const now = Date.now()
+  if (configCache && configCache.expiresAt > now) {
+    return configCache.data
+  }
+
+  try {
+    const settings = await db.antiBanSettings.findFirst()
+    if (settings) {
+      let backoffMs = DEFAULT_CONFIG.BACKOFF_MS
+      try {
+        const parsed = typeof settings.reconnectBackoffMs === 'string'
+          ? JSON.parse(settings.reconnectBackoffMs)
+          : settings.reconnectBackoffMs
+        if (Array.isArray(parsed) && parsed.length > 0 && typeof parsed[0] === 'number') {
+          backoffMs = parsed
+        }
+      } catch { /* use default */ }
+
+      const config = {
+        MAX_CONCURRENT: settings.reconnectMaxConcurrent ?? DEFAULT_CONFIG.MAX_CONCURRENT,
+        BACKOFF_MS: backoffMs,
+        JITTER_FACTOR: 0.5, // Keep jitter as constant (not user-configurable)
+        MAX_ATTEMPTS: settings.reconnectMaxAttempts ?? DEFAULT_CONFIG.MAX_ATTEMPTS,
+        RATE_LIMIT_COUNT: settings.reconnectRateLimit ?? DEFAULT_CONFIG.RATE_LIMIT_COUNT,
+        RATE_LIMIT_WINDOW_MS: (settings.reconnectRateWindowMin ?? 10) * 60 * 1000,
+        CIRCUIT_BREAKER_THRESHOLD: settings.circuitBreakerThreshold ?? DEFAULT_CONFIG.CIRCUIT_BREAKER_THRESHOLD,
+        CIRCUIT_BREAKER_RESET_MS: 5 * 60 * 1000, // Keep as constant
+        RESPECT_SENDING_WINDOW: settings.reconnectRespectWindow ?? DEFAULT_CONFIG.RESPECT_SENDING_WINDOW,
+        INTER_RECONNECT_DELAY_MS: settings.reconnectInterDelayMs ?? DEFAULT_CONFIG.INTER_RECONNECT_DELAY_MS,
+        CONNECT_TIMEOUT_MS: settings.reconnectConnectTimeoutMs ?? DEFAULT_CONFIG.CONNECT_TIMEOUT_MS,
+      }
+      configCache = { data: config, expiresAt: now + 60_000 }
+      return config
+    }
+  } catch { /* fallback to defaults */ }
+
+  configCache = { data: DEFAULT_CONFIG, expiresAt: now + 60_000 }
+  return DEFAULT_CONFIG
 }
 
 // ============================================================
@@ -183,7 +215,7 @@ export async function enqueueReconnection(
     instanceName: chip.evolutionInstance || '',
     priority,
     attemptCount,
-    nextAttemptAt: options?.immediate ? new Date() : calculateNextAttempt(attemptCount),
+    nextAttemptAt: options?.immediate ? new Date() : calculateNextAttempt(attemptCount, await getConfig()),
     lastAttemptAt: existing?.lastAttemptAt || null,
     lastError: existing?.lastError || null,
     status: 'queued',
@@ -236,6 +268,7 @@ export async function markChipReconnected(chipId: string): Promise<void> {
 export async function processQueue(): Promise<void> {
   if (isProcessing) return
   isProcessing = true
+  const CONFIG = await getConfig()
 
   try {
     // Check circuit breaker
@@ -441,6 +474,7 @@ export function resetQueue(): void {
  * This is the core reconnection logic with full error handling.
  */
 async function attemptReconnection(entry: ReconnectionEntry): Promise<void> {
+  const CONFIG = await getConfig()
   const { chipId, chipName, instanceName } = entry
 
   // Mark as in progress
@@ -608,7 +642,7 @@ async function attemptReconnection(entry: ReconnectionEntry): Promise<void> {
     }
 
     // Queue for retry with backoff
-    const nextAttempt = calculateNextAttempt(newAttemptCount)
+    const nextAttempt = calculateNextAttempt(newAttemptCount, CONFIG)
     console.log(`[ReconnectQueue] Chip ${chipName} will retry at ${nextAttempt.toISOString()} (attempt ${newAttemptCount})`)
 
     reconnectionQueue.set(chipId, {
@@ -632,17 +666,12 @@ async function attemptReconnection(entry: ReconnectionEntry): Promise<void> {
  * Calculate next reconnection attempt time with exponential backoff + jitter.
  * Backoff: 5s → 15s → 45s → 2min → 5min → 10min (capped)
  */
-function calculateNextAttempt(attemptCount: number): Date {
-  const backoffIndex = Math.min(attemptCount, CONFIG.BACKOFF_MS.length - 1)
-  const baseDelay = CONFIG.BACKOFF_MS[backoffIndex]
-
-  // Add jitter (0-50% of base delay)
-  const jitter = Math.random() * baseDelay * CONFIG.JITTER_FACTOR
+function calculateNextAttempt(attemptCount: number, config: typeof DEFAULT_CONFIG): Date {
+  const backoffIndex = Math.min(attemptCount, config.BACKOFF_MS.length - 1)
+  const baseDelay = config.BACKOFF_MS[backoffIndex]
+  const jitter = Math.random() * baseDelay * config.JITTER_FACTOR
   const totalDelay = baseDelay + jitter
-
-  // Add inter-reconnect delay to spread out multiple reconnects
-  const interDelay = attemptCount === 0 ? CONFIG.INTER_RECONNECT_DELAY_MS : 0
-
+  const interDelay = attemptCount === 0 ? config.INTER_RECONNECT_DELAY_MS : 0
   return new Date(Date.now() + totalDelay + interDelay)
 }
 

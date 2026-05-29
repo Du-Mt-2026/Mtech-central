@@ -2,10 +2,24 @@ import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { testConnection, fetchOctupusZapInstances } from '@/lib/evolution-api'
 
-const DAILY_VERIFY_LIMIT = 300
+/**
+ * Get the daily verification limit from AntiBanSettings (UI-configurable).
+ * Falls back to 300 if DB is unavailable.
+ */
+async function getDailyVerifyLimit(): Promise<number> {
+  try {
+    const settings = await db.antiBanSettings.findFirst()
+    return settings?.verifyDailyLimit || 300
+  } catch {
+    return 300
+  }
+}
 
 export async function GET() {
   try {
+    // Get daily limit from UI settings (configurable)
+    const DAILY_VERIFY_LIMIT = await getDailyVerifyLimit()
+
     // Get all chips with verification stats
     const chips = await db.chip.findMany({
       select: {

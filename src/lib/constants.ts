@@ -200,6 +200,29 @@ export const DEFAULT_HUMAN_BEHAVIOR: HumanBehaviorConfig = {
   },
 }
 
+// ============================================================
+// RECONNECTION CONFIG — Zod Schema
+// ============================================================
+
+export const reconnectionConfigSchema = z.object({
+  reconnectMaxConcurrent: z.number().int().min(1).max(10).default(2),
+  reconnectMaxAttempts: z.number().int().min(1).max(50).default(10),
+  reconnectRespectWindow: z.boolean().default(false),
+  reconnectRateLimit: z.number().int().min(1).max(50).default(5),
+  reconnectRateWindowMin: z.number().int().min(1).max(60).default(10),
+  reconnectBackoffMs: z.union([
+    z.string(),
+    z.array(z.number().int().min(1000)),
+  ]).default('[5000,15000,45000,120000,300000,600000]'),
+  reconnectInterDelayMs: z.number().int().min(1000).max(120000).default(15000),
+  reconnectConnectTimeoutMs: z.number().int().min(10000).max(300000).default(60000),
+  circuitBreakerThreshold: z.number().int().min(1).max(20).default(3),
+})
+
+export type ReconnectionConfig = z.infer<typeof reconnectionConfigSchema>
+
+export const DEFAULT_RECONNECTION_BACKOFF_MS = [5000, 15000, 45000, 120000, 300000, 600000]
+
 export const antiBanUpdateSchema = z.object({
   typingMinDelay: z.number().int().min(1000).optional(),
   typingMaxDelay: z.number().int().min(1000).optional(),
@@ -235,6 +258,28 @@ export const antiBanUpdateSchema = z.object({
     z.string(),
     humanBehaviorConfigSchema,
   ]).optional(),
+
+  // Reconnection queue settings
+  reconnectMaxConcurrent: z.number().int().min(1).max(10).optional(),
+  reconnectMaxAttempts: z.number().int().min(1).max(50).optional(),
+  reconnectRespectWindow: z.boolean().optional(),
+  reconnectRateLimit: z.number().int().min(1).max(50).optional(),
+  reconnectRateWindowMin: z.number().int().min(1).max(60).optional(),
+  reconnectBackoffMs: z.union([
+    z.string(),
+    z.array(z.number().int().min(1000)),
+  ]).optional(),
+  reconnectInterDelayMs: z.number().int().min(1000).max(120000).optional(),
+  reconnectConnectTimeoutMs: z.number().int().min(10000).max(300000).optional(),
+  circuitBreakerThreshold: z.number().int().min(1).max(20).optional(),
+
+  // Verifier settings
+  verifyDailyLimit: z.number().int().min(10).max(5000).optional(),
+
+  // Evolution API settings
+  evolutionApiTimeoutMs: z.number().int().min(5000).max(120000).optional(),
+  autoRejectCalls: z.boolean().optional(),
+  autoRejectCallMessage: z.string().min(1).max(200).optional(),
 }).refine(
   d => {
     if (d.typingMinDelay !== undefined && d.typingMaxDelay !== undefined) {
@@ -278,6 +323,25 @@ export interface AntiBanSettings {
   linkPreviewEnabled: boolean
   humanBehaviorEnabled: boolean
   humanBehaviorConfig: string    // JSON string of HumanBehaviorConfig
+
+  // Reconnection queue settings
+  reconnectMaxConcurrent: number
+  reconnectMaxAttempts: number
+  reconnectRespectWindow: boolean
+  reconnectRateLimit: number
+  reconnectRateWindowMin: number
+  reconnectBackoffMs: string     // JSON string of number[]
+  reconnectInterDelayMs: number
+  reconnectConnectTimeoutMs: number
+  circuitBreakerThreshold: number
+
+  // Verifier settings
+  verifyDailyLimit: number
+
+  // Evolution API settings
+  evolutionApiTimeoutMs: number
+  autoRejectCalls: boolean
+  autoRejectCallMessage: string
 }
 
 // ============================================================
@@ -350,6 +414,25 @@ export const FIELD_DEFAULTS: Record<string, unknown> = {
   linkPreviewEnabled: false,
   humanBehaviorEnabled: true,
   humanBehaviorConfig: JSON.stringify(DEFAULT_HUMAN_BEHAVIOR),
+
+  // Reconnection queue settings
+  reconnectMaxConcurrent: 2,
+  reconnectMaxAttempts: 10,
+  reconnectRespectWindow: false,
+  reconnectRateLimit: 5,
+  reconnectRateWindowMin: 10,
+  reconnectBackoffMs: JSON.stringify(DEFAULT_RECONNECTION_BACKOFF_MS),
+  reconnectInterDelayMs: 15000,
+  reconnectConnectTimeoutMs: 60000,
+  circuitBreakerThreshold: 3,
+
+  // Verifier settings
+  verifyDailyLimit: 300,
+
+  // Evolution API settings
+  evolutionApiTimeoutMs: 15000,
+  autoRejectCalls: true,
+  autoRejectCallMessage: 'Desculpa, não posso atender agora.',
 }
 
 // Section-to-fields mapping for _resetSection
@@ -360,6 +443,9 @@ export const SECTION_FIELDS: Record<string, string[]> = {
   cooldown: ['dailyLimitPerChip', 'cooldownMinutes', 'cooldownMinutesMax', 'cooldownAfterMessages', 'cooldownAfterMessagesMax', 'stopOnWarning', 'linkPreviewEnabled'],
   sendingWindow: ['sendingWindowStart', 'sendingWindowEnd', 'timezone', 'breakWindows'],
   humanBehavior: ['humanBehaviorEnabled', 'humanBehaviorConfig'],
+  reconnection: ['reconnectMaxConcurrent', 'reconnectMaxAttempts', 'reconnectRespectWindow', 'reconnectRateLimit', 'reconnectRateWindowMin', 'reconnectBackoffMs', 'reconnectInterDelayMs', 'reconnectConnectTimeoutMs', 'circuitBreakerThreshold'],
+  verifier: ['verifyDailyLimit'],
+  evolutionApi: ['evolutionApiTimeoutMs', 'autoRejectCalls', 'autoRejectCallMessage'],
 }
 
 // Allowed fields whitelist for PATCH
@@ -386,6 +472,25 @@ export const ALLOWED_FIELDS = [
   'linkPreviewEnabled',
   'humanBehaviorEnabled',
   'humanBehaviorConfig',
+
+  // Reconnection queue settings
+  'reconnectMaxConcurrent',
+  'reconnectMaxAttempts',
+  'reconnectRespectWindow',
+  'reconnectRateLimit',
+  'reconnectRateWindowMin',
+  'reconnectBackoffMs',
+  'reconnectInterDelayMs',
+  'reconnectConnectTimeoutMs',
+  'circuitBreakerThreshold',
+
+  // Verifier settings
+  'verifyDailyLimit',
+
+  // Evolution API settings
+  'evolutionApiTimeoutMs',
+  'autoRejectCalls',
+  'autoRejectCallMessage',
 ]
 
 // Warming mode multipliers

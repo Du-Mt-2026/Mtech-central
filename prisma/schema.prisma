@@ -106,6 +106,31 @@ model AntiBanSettings {
   // JSON config with cluster sending, cooldown presence, day rhythm, nonlinear pauses
   humanBehaviorEnabled  Boolean  @default(true)    // Master toggle for human behavior features
   humanBehaviorConfig   String   @default("{\"cluster\":{\"enabled\":true,\"minSize\":2,\"maxSize\":4,\"microPauseMinSec\":3,\"microPauseMaxSec\":8,\"afterClusterPauseMinSec\":30,\"afterClusterPauseMaxSec\":90},\"cooldownPresence\":{\"enabled\":true,\"chancePercent\":40,\"durationMinSec\":5,\"durationMaxSec\":25,\"intervalMinMin\":2,\"intervalMaxMin\":5},\"dayRhythm\":{\"enabled\":true,\"morningFactor\":130,\"middayFactor\":80,\"afternoonFactor\":100},\"nonlinearPauses\":{\"enabled\":true,\"short\":{\"weight\":40,\"minMin\":2,\"maxMin\":5},\"medium\":{\"weight\":40,\"minMin\":8,\"maxMin\":15},\"long\":{\"weight\":20,\"minMin\":20,\"maxMin\":35}},\"typingSimulation\":{\"speedMin\":6,\"speedMax\":14,\"pauseChance\":30,\"pauseMinMs\":1000,\"pauseMaxMs\":4000,\"longMsgThreshold\":100,\"longMsgPauseChance\":40,\"segmentsMin\":2,\"segmentsMax\":3},\"presence\":{\"offlineDelayMinMs\":3000,\"offlineDelayMaxMs\":15000,\"idleReadingChance\":25,\"idleReadingDurationMinMs\":2000,\"idleReadingDurationMaxMs\":8000,\"idleReadingMinIntervalSec\":60,\"preSendOnlineMs\":1000,\"preComposePauseMinMs\":800,\"preComposePauseMaxMs\":3000,\"mediaRecordingMinMs\":2000,\"mediaRecordingMaxMs\":4000},\"deliveryRate\":{\"normalThreshold\":60,\"mediumThreshold\":40,\"mediumMultiplier\":1.5,\"lowThreshold\":20,\"lowMultiplier\":2.5,\"criticalMultiplier\":4.0,\"minSample\":10}}")
+
+  // ============================================================
+  // RECONNECTION QUEUE — UI-configurable (was hardcoded in reconnection-queue.ts)
+  // ============================================================
+  reconnectMaxConcurrent      Int      @default(2)       // Max simultaneous reconnections
+  reconnectMaxAttempts        Int      @default(10)      // Max reconnection attempts before giving up
+  reconnectRespectWindow      Boolean  @default(false)   // Respect sending window for reconnections
+  reconnectRateLimit          Int      @default(5)       // Max reconnections per rate window
+  reconnectRateWindowMin      Int      @default(10)      // Rate window in minutes
+  reconnectBackoffMs          String   @default("[5000,15000,45000,120000,300000,600000]") // JSON: backoff schedule in ms
+  reconnectInterDelayMs       Int      @default(15000)   // Delay between consecutive reconnection starts (ms)
+  reconnectConnectTimeoutMs   Int      @default(60000)   // Timeout for chip to connect (ms)
+  circuitBreakerThreshold     Int      @default(3)       // Consecutive API failures before circuit breaker opens
+
+  // ============================================================
+  // VERIFIER — UI-configurable (was hardcoded in verifier/check/route.ts)
+  // ============================================================
+  verifyDailyLimit            Int      @default(300)     // Daily verification limit per chip
+
+  // ============================================================
+  // EVOLUTION API — UI-configurable (was hardcoded in evolution-api.ts)
+  // ============================================================
+  evolutionApiTimeoutMs       Int      @default(15000)   // Evolution API request timeout (ms)
+  autoRejectCalls             Boolean  @default(true)    // Auto-reject incoming calls
+  autoRejectCallMessage       String   @default("Desculpa, não posso atender agora.") // Auto-reject message text
 }
 
 model MessageTemplate {

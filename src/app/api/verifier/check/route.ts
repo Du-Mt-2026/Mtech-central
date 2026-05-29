@@ -3,13 +3,26 @@ import { db } from '@/lib/db'
 import { getInstanceName, checkWhatsAppNumbers } from '@/lib/evolution-router'
 import { normalizePhone } from '@/lib/phone-utils'
 
-// Daily verification limit per chip (safe anti-ban threshold)
-const DAILY_VERIFY_LIMIT = 300
+/**
+ * Get the daily verification limit from AntiBanSettings (UI-configurable).
+ * Falls back to 300 if DB is unavailable.
+ */
+async function getDailyVerifyLimit(): Promise<number> {
+  try {
+    const settings = await db.antiBanSettings.findFirst()
+    return settings?.verifyDailyLimit || 300
+  } catch {
+    return 300
+  }
+}
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
     const { phones, chipId } = body
+    
+    // Get daily limit from UI settings (configurable)
+    const DAILY_VERIFY_LIMIT = await getDailyVerifyLimit()
 
     if (!phones || !Array.isArray(phones) || phones.length === 0) {
       return NextResponse.json(

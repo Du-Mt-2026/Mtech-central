@@ -213,6 +213,36 @@ export async function PATCH(request: NextRequest) {
       }
     }
 
+    // Convert reconnectBackoffMs array to JSON string for DB storage
+    if (updateData.reconnectBackoffMs !== undefined) {
+      if (typeof updateData.reconnectBackoffMs !== 'string') {
+        // Validate it's an array of positive numbers
+        const arr = updateData.reconnectBackoffMs as number[]
+        if (!Array.isArray(arr) || arr.length === 0 || !arr.every(n => typeof n === 'number' && n > 0)) {
+          return NextResponse.json(
+            { error: 'reconnectBackoffMs deve ser um array de números positivos', field: 'reconnectBackoffMs' },
+            { status: 400 }
+          )
+        }
+        updateData.reconnectBackoffMs = JSON.stringify(arr)
+      } else {
+        try {
+          const arr = JSON.parse(updateData.reconnectBackoffMs as string)
+          if (!Array.isArray(arr) || arr.length === 0 || !arr.every((n: number) => typeof n === 'number' && n > 0)) {
+            return NextResponse.json(
+              { error: 'reconnectBackoffMs deve ser um array de números positivos', field: 'reconnectBackoffMs' },
+              { status: 400 }
+            )
+          }
+        } catch {
+          return NextResponse.json(
+            { error: 'reconnectBackoffMs JSON inválido', field: 'reconnectBackoffMs' },
+            { status: 400 }
+          )
+        }
+      }
+    }
+
     const updated = await db.antiBanSettings.update({
       where: { id: settings.id },
       data: updateData,

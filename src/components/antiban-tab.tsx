@@ -6,7 +6,7 @@ import {
   RotateCcw, RefreshCw, Type, Timer, Flame, Baby, CheckCircle2,
   Clock, AlertCircle, UserPlus, EyeOff, ShieldAlert, MessageCircle,
   Plus, Trash2, Star, Brain, ChevronDown, ChevronUp, Activity, Zap,
-  Coffee, Sun, Moon, BarChart3,
+  Coffee, Sun, Moon, BarChart3, Wifi, PhoneOff, Search, Server,
 } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -1142,16 +1142,183 @@ export function AntiBanTab() {
           )}
         </Card>
 
-        {/* Tips */}
+      {/* Row: Reconnection + Verifier + Evolution API */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {/* Reconnection Queue */}
         <Card className="shadow-lg border-0 hover:shadow-xl transition-all duration-200">
           <CardHeader className="pb-3">
-            <div className="flex items-center gap-2">
-              <div className="flex size-7 items-center justify-center rounded-lg bg-amber-100 dark:bg-amber-900/30">
-                <Star className="size-3.5 text-amber-600" />
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="flex size-7 items-center justify-center rounded-lg bg-violet-100 dark:bg-violet-900/30">
+                  <Wifi className="size-3.5 text-violet-600" />
+                </div>
+                <CardTitle className="text-base">Reconexao</CardTitle>
               </div>
-              <CardTitle className="text-base">Dicas Anti-Ban</CardTitle>
+              <Button variant="ghost" size="sm" className="text-xs text-muted-foreground hover:text-violet-600 gap-1 h-7" onClick={() => resetSection('reconnection', 'Reconexão')} disabled={saving}>
+                <RotateCcw className="size-3" />
+              </Button>
             </div>
           </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label className="text-[10px] text-muted-foreground">Max simultaneas</Label>
+                <div className="flex items-center gap-1">
+                  <Input type="number" min={1} max={10} step={1} value={settings.reconnectMaxConcurrent ?? 2} onChange={e => updateSetting('reconnectMaxConcurrent', Math.max(1, parseInt(e.target.value) || 2))} className="w-16 h-7 text-xs" disabled={saving} />
+                  <span className="text-[9px] text-muted-foreground">chips</span>
+                </div>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-[10px] text-muted-foreground">Max tentativas</Label>
+                <div className="flex items-center gap-1">
+                  <Input type="number" min={1} max={50} step={1} value={settings.reconnectMaxAttempts ?? 10} onChange={e => updateSetting('reconnectMaxAttempts', Math.max(1, parseInt(e.target.value) || 10))} className="w-16 h-7 text-xs" disabled={saving} />
+                  <span className="text-[9px] text-muted-foreground">vezes</span>
+                </div>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label className="text-[10px] text-muted-foreground">Rate limit</Label>
+                <div className="flex items-center gap-1">
+                  <Input type="number" min={1} max={50} step={1} value={settings.reconnectRateLimit ?? 5} onChange={e => updateSetting('reconnectRateLimit', Math.max(1, parseInt(e.target.value) || 5))} className="w-16 h-7 text-xs" disabled={saving} />
+                  <span className="text-[9px] text-muted-foreground">/{settings.reconnectRateWindowMin ?? 10}min</span>
+                </div>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-[10px] text-muted-foreground">Janela rate (min)</Label>
+                <div className="flex items-center gap-1">
+                  <Input type="number" min={1} max={60} step={1} value={settings.reconnectRateWindowMin ?? 10} onChange={e => updateSetting('reconnectRateWindowMin', Math.max(1, parseInt(e.target.value) || 10))} className="w-16 h-7 text-xs" disabled={saving} />
+                  <span className="text-[9px] text-muted-foreground">min</span>
+                </div>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label className="text-[10px] text-muted-foreground">Delay entre reconexoes</Label>
+                <div className="flex items-center gap-1">
+                  <Input type="number" min={1000} max={120000} step={1000} value={settings.reconnectInterDelayMs ?? 15000} onChange={e => updateSetting('reconnectInterDelayMs', Math.max(1000, parseInt(e.target.value) || 15000))} className="w-16 h-7 text-xs" disabled={saving} />
+                  <span className="text-[9px] text-muted-foreground">ms</span>
+                </div>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-[10px] text-muted-foreground">Timeout conexao</Label>
+                <div className="flex items-center gap-1">
+                  <Input type="number" min={10000} max={300000} step={5000} value={settings.reconnectConnectTimeoutMs ?? 60000} onChange={e => updateSetting('reconnectConnectTimeoutMs', Math.max(10000, parseInt(e.target.value) || 60000))} className="w-16 h-7 text-xs" disabled={saving} />
+                  <span className="text-[9px] text-muted-foreground">ms</span>
+                </div>
+              </div>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-[10px] text-muted-foreground">Circuit breaker (falhas consecutivas)</Label>
+              <div className="flex items-center gap-1">
+                <Input type="number" min={1} max={20} step={1} value={settings.circuitBreakerThreshold ?? 3} onChange={e => updateSetting('circuitBreakerThreshold', Math.max(1, parseInt(e.target.value) || 3))} className="w-16 h-7 text-xs" disabled={saving} />
+                <span className="text-[9px] text-muted-foreground">falhas</span>
+              </div>
+            </div>
+            <div className="flex items-center justify-between p-2 bg-muted/50 rounded-lg">
+              <div>
+                <p className="text-[10px] font-medium">Respeitar janela de envio</p>
+                <p className="text-[9px] text-muted-foreground">So reconecta durante horario comercial</p>
+              </div>
+              <Switch checked={settings.reconnectRespectWindow ?? false} onCheckedChange={v => updateSetting('reconnectRespectWindow', v)} />
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Verifier Settings */}
+        <Card className="shadow-lg border-0 hover:shadow-xl transition-all duration-200">
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="flex size-7 items-center justify-center rounded-lg bg-cyan-100 dark:bg-cyan-900/30">
+                  <Search className="size-3.5 text-cyan-600" />
+                </div>
+                <CardTitle className="text-base">Verificador</CardTitle>
+              </div>
+              <Button variant="ghost" size="sm" className="text-xs text-muted-foreground hover:text-cyan-600 gap-1 h-7" onClick={() => resetSection('verifier', 'Verificador')} disabled={saving}>
+                <RotateCcw className="size-3" />
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="space-y-1.5">
+              <div className="flex justify-between items-center">
+                <Label className="text-xs">Limite diario de verificacoes</Label>
+                <Button variant="ghost" size="icon" className="size-5 text-muted-foreground hover:text-cyan-600" onClick={() => resetField('verifyDailyLimit')} title={`Padrao: ${DEFAULTS.verifyDailyLimit}`}>
+                  <RotateCcw className="size-2.5" />
+                </Button>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <Input type="number" min={10} max={5000} step={10} value={settings.verifyDailyLimit ?? 300} onChange={e => updateSetting('verifyDailyLimit', Math.max(10, parseInt(e.target.value) || 300))} className="w-24 h-8 text-sm" disabled={saving} />
+                <span className="text-[11px] text-muted-foreground">verific/chip/dia</span>
+              </div>
+            </div>
+            <div className="p-3 bg-muted/50 rounded-lg">
+              <p className="text-[10px] text-muted-foreground">
+                Cada chip pode verificar ate <strong>{settings.verifyDailyLimit ?? 300}</strong> numeros por dia. Verificacoes demais podem acionar limites do WhatsApp.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Evolution API Settings */}
+        <Card className="shadow-lg border-0 hover:shadow-xl transition-all duration-200">
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="flex size-7 items-center justify-center rounded-lg bg-indigo-100 dark:bg-indigo-900/30">
+                  <Server className="size-3.5 text-indigo-600" />
+                </div>
+                <CardTitle className="text-base">Evolution API</CardTitle>
+              </div>
+              <Button variant="ghost" size="sm" className="text-xs text-muted-foreground hover:text-indigo-600 gap-1 h-7" onClick={() => resetSection('evolutionApi', 'Evolution API')} disabled={saving}>
+                <RotateCcw className="size-3" />
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="space-y-1.5">
+              <div className="flex justify-between items-center">
+                <Label className="text-xs">Timeout da API</Label>
+                <Button variant="ghost" size="icon" className="size-5 text-muted-foreground hover:text-indigo-600" onClick={() => resetField('evolutionApiTimeoutMs')} title={`Padrao: ${DEFAULTS.evolutionApiTimeoutMs}ms`}>
+                  <RotateCcw className="size-2.5" />
+                </Button>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <Input type="number" min={5000} max={120000} step={1000} value={settings.evolutionApiTimeoutMs ?? 15000} onChange={e => updateSetting('evolutionApiTimeoutMs', Math.max(5000, parseInt(e.target.value) || 15000))} className="w-24 h-8 text-sm" disabled={saving} />
+                <span className="text-[11px] text-muted-foreground">ms</span>
+              </div>
+            </div>
+            <div className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">
+              <div>
+                <p className="text-xs font-medium">Rejeitar ligacoes</p>
+                <p className="text-[10px] text-muted-foreground">Rejeita chamadas de voz automaticamente</p>
+              </div>
+              <div className="flex items-center gap-1">
+                <Switch checked={settings.autoRejectCalls ?? true} onCheckedChange={v => updateSetting('autoRejectCalls', v)} />
+                <Button variant="ghost" size="icon" className="size-5 text-muted-foreground hover:text-indigo-600" onClick={() => resetField('autoRejectCalls')} title="Restaurar padrao">
+                  <RotateCcw className="size-2.5" />
+                </Button>
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Mensagem de rejeicao</Label>
+              <Input type="text" maxLength={200} value={settings.autoRejectCallMessage ?? 'Desculpa, nao posso atender agora.'} onChange={e => updateSetting('autoRejectCallMessage', e.target.value)} className="h-8 text-sm" disabled={saving} />
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Tips */}
+      <Card className="shadow-lg border-0 hover:shadow-xl transition-all duration-200">
+        <CardHeader className="pb-3">
+          <div className="flex items-center gap-2">
+            <div className="flex size-7 items-center justify-center rounded-lg bg-amber-100 dark:bg-amber-900/30">
+              <Star className="size-3.5 text-amber-600" />
+            </div>
+            <CardTitle className="text-base">Dicas Anti-Ban</CardTitle>
+          </div>
+        </CardHeader>
           <CardContent>
             <div className="space-y-2">
               {tips.map((tip, i) => (
