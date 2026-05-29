@@ -170,6 +170,90 @@ export async function POST(request: Request) {
       }
     }
 
+    // ============================================
+    // ZOMBIE INSTANCE DETECTION & AUTO-RECOVERY
+    // ============================================
+    // If after connecting, we still have no QR code AND the instance is not open,
+    // the instance may be in a "zombie" state where Evolution Go returns success
+    // from /instance/connect but the instance stays "client disconnected" and
+    // never generates a QR code. This happens with instances that were created
+    // without proper events configuration or have corrupted internal state.
+    //
+    // Fix: Delete the zombie instance and recreate it from scratch.
+    if (!qrcode && effectiveState !== 'open') {
+      console.log(`[Connect] No QR code and not connected for "${effectiveInstanceName}" — checking for zombie state...`)
+
+      try {
+        // Wait a bit more and check status
+        await new Promise(r => setTimeout(r, 3000))
+        const statusCheck = await v3GetConnectionState(effectiveInstanceName)
+
+        if (statusCheck.state === 'close') {
+          console.log(`[Connect] Instance "${effectiveInstanceName}" is zombie (state=close after connect). Deleting and recreating...`)
+
+          // Delete the zombie instance
+          try { await routerDisconnectInstance(effectiveInstanceName) } catch { /* may fail */ }
+          try { await routerDeleteInstance(effectiveInstanceName) } catch { /* may fail */ }
+
+          // Wait for deletion to take effect
+          await new Promise(r => setTimeout(r, 2000))
+
+          // Clear instance ID cache — the old UUID/token is now invalid
+          clearInstanceIdCache()
+
+          // Recreate instance from scratch
+          const newInstance = await createInstance(instanceName, proxyConfig ? v3ToEvolutionGoProxy(proxyConfig) : undefined)
+          const newEffectiveName = newInstance.name || instanceName
+
+          const newConnectResult = await routerConnectInstance(newEffectiveName, webhookUrl)
+
+          qrcode = newConnectResult.qrcode
+          code = newConnectResult.code || newConnectResult.pairingCode || null
+          effectiveState = newConnectResult.state || 'close'
+
+          if (!qrcode && effectiveState !== 'open') {
+            try {
+              await new Promise(r => setTimeout(r, 2000))
+              const retryQr = await getInstanceQRCode(newEffectiveName)
+              qrcode = retryQr.qrcode ?? null
+              code = code ?? retryQr.code ?? null
+              if (retryQr.state === 'open') {
+                effectiveState = 'open'
+              }
+            } catch {
+              // QR not available yet
+            }
+          }
+
+          console.log(`[Connect] Zombie recovery: qrcode=${!!qrcode}, state=${effectiveState}`)
+
+          const isRecoveredConnected = effectiveState === 'open'
+          const recoveryStatus = isRecoveredConnected ? 'connected' : 'connecting'
+
+          await db.chip.update({
+            where: { id: chipId },
+            data: {
+              status: recoveryStatus,
+              evolutionInstance: newEffectiveName,
+              qrPairingCode: code,
+              lastSeen: isRecoveredConnected ? new Date() : chip.lastSeen,
+              ...(isRecoveredConnected ? { isQrPaired: true } : {}),
+            },
+          })
+
+          return NextResponse.json({
+            instanceName: newEffectiveName,
+            qrcode: qrcode || null,
+            code: code || null,
+            state: effectiveState,
+          })
+        }
+      } catch (zombieErr) {
+        console.error(`[Connect] Zombie detection failed for "${effectiveInstanceName}":`, zombieErr)
+        // Fall through to normal response
+      }
+    }
+
     const isConnected = effectiveState === 'open'
     const newStatus = isConnected ? 'connected' : 'connecting'
 

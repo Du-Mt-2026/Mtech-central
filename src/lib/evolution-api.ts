@@ -599,27 +599,34 @@ export async function connectInstance(
     // Status check failed — proceed with connect anyway
   }
 
+  // BUG FIX: subscribe must ALWAYS be sent in /instance/connect, even without webhookUrl.
+  // Evolution Go v3 ignores the `events` field in POST /instance/create — the only way
+  // to register events is via the `subscribe` field in POST /instance/connect.
+  // Without subscribe, the instance gets events="" and cannot generate QR codes or
+  // deliver webhook events, leaving it in a broken "client disconnected" state.
+  const DEFAULT_SUBSCRIBE_EVENTS = [
+    'MESSAGE',
+    'SEND_MESSAGE',
+    'SEND_MESSAGE_ACK',
+    'READ_RECEIPT',
+    'PRESENCE',
+    'CHAT_PRESENCE',
+    'CALL',
+    'CONNECTION',
+    'QRCODE',
+    'LABEL',
+    'CONTACT',
+    'GROUP',
+    'MESSAGES_UPDATE',
+  ];
+
   const body: any = {
     immediate: true,
+    subscribe: subscribeEvents || DEFAULT_SUBSCRIBE_EVENTS,
   };
 
   if (webhookUrl) {
     body.webhookUrl = webhookUrl;
-    body.subscribe = subscribeEvents || [
-      'MESSAGE',
-      'SEND_MESSAGE',
-      'SEND_MESSAGE_ACK',
-      'READ_RECEIPT',
-      'PRESENCE',
-      'CHAT_PRESENCE',
-      'CALL',
-      'CONNECTION',
-      'QRCODE',
-      'LABEL',
-      'CONTACT',
-      'GROUP',
-      'MESSAGES_UPDATE',
-    ];
   }
 
   const response = await evolutionFetch('/instance/connect', {
