@@ -263,7 +263,9 @@ function calculateTypingDuration(text: string, antiBanSettings: AntiBanSettings 
   const charCount = text.length
   const typingSpeed = gaussianRandomFloat(10, 2.5, tc.speedMin, tc.speedMax)
   let durationMs = (charCount / typingSpeed) * 1000
-  durationMs = Math.max(TYPING_MIN_MS, Math.min(TYPING_MAX_MS, durationMs))
+  const minMs = antiBanSettings?.typingMinDelay ?? TYPING_MIN_MS
+  const maxMs = antiBanSettings?.typingMaxDelay ?? TYPING_MAX_MS
+  durationMs = Math.max(minMs, Math.min(maxMs, durationMs))
   if (Math.random() < tc.pauseChance) {
     durationMs += randomInt(tc.pauseMinMs, tc.pauseMaxMs)
   }

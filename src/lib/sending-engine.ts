@@ -25,7 +25,7 @@ import {
 import { enqueueReconnection } from './reconnection-queue'
 import { db } from './db'
 import type { Chip } from '@prisma/client'
-import { NURSERY_SCHEDULE, PREWARM_SCHEDULE, WARMING_MODE_MULTIPLIERS, DEFAULT_HUMAN_BEHAVIOR, humanBehaviorConfigSchema, type ScheduleEntry, type BreakWindow, type HumanBehaviorConfig } from './constants'
+import { NURSERY_SCHEDULE, PREWARM_SCHEDULE, WARMING_MODE_MULTIPLIERS, DEFAULT_HUMAN_BEHAVIOR, humanBehaviorConfigSchema, FIELD_DEFAULTS, type ScheduleEntry, type BreakWindow, type HumanBehaviorConfig } from './constants'
 import { toMins, getCurrentMinutes } from './time-utils'
 
 // ============================================================
@@ -115,7 +115,6 @@ const IDLE_READING_CHANCE = 0.25       // 25% chance of a "reading" presence dur
 const IDLE_READING_DURATION_MIN_MS = 2000   // Minimum "reading" time (2s)
 const IDLE_READING_DURATION_MAX_MS = 8000   // Maximum "reading" time (8s)
 const IDLE_READING_INTERVAL_MIN_S = 60     // Only do idle reading if interval >= 60s
-const IDLE_READING_COOLDOWN_CHANCE = 0.4   // 40% chance of appearing online during cooldown
 
 // ============================================================
 // CONFIG ACCESS HELPERS — read from humanBehaviorConfig (UI/DB) with fallback to constants
@@ -191,10 +190,10 @@ const DEFAULT_SETTINGS: AntiBanConfig = {
   linkPreviewEnabled: false,  // Default OFF — link previews in bulk are a bot signature. User can enable via UI.
   humanBehaviorEnabled: true,
   humanBehaviorConfig: DEFAULT_HUMAN_BEHAVIOR,
-  // Ban detection defaults
-  banCodes: [401, 403, 428, 440],
-  restrictionKeywords: ['conta está restringida', 'conta esta restringida', 'envio de spam', 'mensagens automáticas', 'mensagens automaticas', 'mensagens em massa', 'atividade recente', 'account is restricted', 'sending spam', 'automated messages', 'bulk messages', 'recent activity', 'temporarily restricted', 'não será possível', 'nao sera possivel', 'iniciar novas conversas', 'start new conversations'],
-  warningKeywords: ['segurança', 'suspeita', 'violação', 'banimento', 'restrição', 'security', 'violation', 'restricted', 'banned', 'warning', 'alerta', 'aviso'],
+  // Ban detection defaults — SINGLE SOURCE OF TRUTH from constants.ts FIELD_DEFAULTS
+  banCodes: JSON.parse(FIELD_DEFAULTS.banCodes as string) as number[],
+  restrictionKeywords: JSON.parse(FIELD_DEFAULTS.restrictionKeywords as string) as string[],
+  warningKeywords: JSON.parse(FIELD_DEFAULTS.warningKeywords as string) as string[],
   banLookbackHours: 24,
   banKeywordThreshold: 2,
   banMaxMessagesCheck: 50,
@@ -795,7 +794,9 @@ async function performIdleReadingPresence(
   } else {
     // Use presence config from UI (or fallback constants)
     const pc = getPresenceConfig(settings ?? DEFAULT_SETTINGS)
-    chance = isCooldown ? IDLE_READING_COOLDOWN_CHANCE : pc.idleReadingChance
+    // For cooldown context, use cooldownPresence default from config (not hardcoded constant)
+    const cooldownDefaultChance = DEFAULT_HUMAN_BEHAVIOR.cooldownPresence.chancePercent / 100
+    chance = isCooldown ? cooldownDefaultChance : pc.idleReadingChance
     durationMinMs = pc.idleReadingDurationMinMs
     durationMaxMs = pc.idleReadingDurationMaxMs
   }
@@ -1687,8 +1688,10 @@ export async function processNextMessage(campaignId: string): Promise<{
   //   5. On error, release the claim with a short retry delay
   if (antiBanEnabled) {
     // Calculate estimated delay for the claim (use the interval midpoint as a safe estimate)
-    const intervalMin = campaignIntervalMin ?? settings.messageIntervalMin
-    const intervalMax = campaignIntervalMax ?? settings.messageIntervalMax
+    // ANTI-BAN SAFETY: UI settings are the minimum safety floor.
+    // Campaign can go SLOWER (higher) but never FASTER (lower) than UI settings.
+    const intervalMin = Math.max(campaignIntervalMin ?? 0, settings.messageIntervalMin)
+    const intervalMax = Math.max(campaignIntervalMax ?? 0, settings.messageIntervalMax)
     const estimatedDelayMs = gaussianDelaySeconds(intervalMin, intervalMax) * 1000
 
     // Apply warming mode multiplier to the estimate
@@ -2568,8 +2571,10 @@ export async function processNextMessage(campaignId: string): Promise<{
     // interval stays consistent with the configured settings.
     let readingTimeMs = 0
     if (antiBanEnabled) {
-      const intervalMin = campaignIntervalMin ?? settings.messageIntervalMin
-      const intervalMax = campaignIntervalMax ?? settings.messageIntervalMax
+      // ANTI-BAN SAFETY: UI settings are the minimum safety floor.
+      // Campaign can go SLOWER (higher) but never FASTER (lower) than UI settings.
+      const intervalMin = Math.max(campaignIntervalMin ?? 0, settings.messageIntervalMin)
+      const intervalMax = Math.max(campaignIntervalMax ?? 0, settings.messageIntervalMax)
       const avgInterval = (intervalMin + intervalMax) / 2
       const pc = getPresenceConfig(settings)
       if (avgInterval >= pc.idleReadingMinIntervalSec) {
@@ -2665,8 +2670,10 @@ export async function processNextMessage(campaignId: string): Promise<{
     // makes the chip appear more human — it does NOT replace the configured interval.
     // Previously, we subtracted alreadySpentMs from the delay, which collapsed
     // intervals to as low as 5s. Now the interval is respected as-is.
-    const intervalMin = campaignIntervalMin ?? settings.messageIntervalMin
-    const intervalMax = campaignIntervalMax ?? settings.messageIntervalMax
+    // ANTI-BAN SAFETY: UI settings are the minimum safety floor.
+    // Campaign can go SLOWER (higher) but never FASTER (lower) than UI settings.
+    const intervalMin = Math.max(campaignIntervalMin ?? 0, settings.messageIntervalMin)
+    const intervalMax = Math.max(campaignIntervalMax ?? 0, settings.messageIntervalMax)
     let nextDelay: number
 
     // HUMAN BEHAVIOR: Cluster Sending — burst-like sending pattern

@@ -118,8 +118,11 @@ export async function POST(request: Request) {
 
     // Load campaign defaults from AntiBanSettings
     const settings = await db.antiBanSettings.findFirst()
-    const defaultSendIntervalMin = settings?.defaultSendIntervalMin ?? 30
-    const defaultSendIntervalMax = settings?.defaultSendIntervalMax ?? 90
+    // Use campaign-specific defaults if configured, otherwise fall back to the
+    // AntiBan interval (which is the safety floor). Never create a campaign
+    // that sends FASTER than what the AntiBan UI says.
+    const defaultSendIntervalMin = settings?.defaultSendIntervalMin ?? settings?.messageIntervalMin ?? 59
+    const defaultSendIntervalMax = settings?.defaultSendIntervalMax ?? settings?.messageIntervalMax ?? 148
     const defaultAntiBanEnabled = settings?.defaultAntiBanEnabled ?? true
     const defaultWarmingMode = settings?.defaultWarmingMode ?? 'normal'
 
