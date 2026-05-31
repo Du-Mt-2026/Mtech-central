@@ -426,9 +426,15 @@ export async function createInstance(
       // via setPresence('available'/'unavailable') calls.
       // A chip that is always online is a known bot signature.
       alwaysOnline: false,
-      // Reject incoming calls — reads from AntiBanSettings (UI-configurable)
-      rejectCall: apiSettings.autoRejectCalls,
-      msgRejectCall: apiSettings.autoRejectCallMessage,
+      // CRITICAL FIX: rejectCall must be FALSE at instance creation time!
+      // When rejectCall=true, Evolution Go tries to reject incoming WhatsApp calls,
+      // which can interfere with the connection handshake and cause the instance
+      // to go into a "Reconnecting" loop after QR code scan.
+      // The Dudinha instance (which works) has rejectCall=false, while all
+      // OctupusZap instances (which break) had rejectCall=true.
+      // rejectCall should be enabled AFTER the connection is established.
+      rejectCall: false,
+      msgRejectCall: "",
       readMessages: false,
       ignoreGroups: false,
       ignoreStatus: false,
@@ -667,36 +673,34 @@ export async function connectInstance(
     // Status check failed — proceed with connect anyway
   }
 
-  // CRITICAL FIX: subscribe events must match Evolution Go's valid event types.
-  // Evolution Go validates each event type against its internal list and DISCARDS
-  // invalid types with a warning log. Previously we sent invalid types like
-  // SEND_MESSAGE_ACK, MESSAGES_UPDATE, INSTANCE_DELETED, INSTANCE_CREATE which
-  // were silently discarded. While the valid events were still registered, sending
-  // invalid types could cause unexpected behavior.
+  // CRITICAL FIX: subscribe events must match what actually works.
+  // The Dudinha instance (connected and stable) uses these exact events:
+  //   MESSAGE, SEND_MESSAGE, READ_RECEIPT, PRESENCE, CHAT_PRESENCE,
+  //   CALL, CONNECTION, QRCODE, LABEL, CONTACT, GROUP
+  //
+  // Previously we also included HISTORY_SYNC, NEWSLETTER, BUTTON_CLICK.
+  // HISTORY_SYNC in particular generates massive amounts of data during
+  // initial connection (full chat history sync), which can overwhelm the
+  // connection and cause it to drop into "Reconnecting" state.
   //
   // Valid Evolution Go event types (from pkg/internal/event_types/event_types.go):
   //   ALL, MESSAGE, SEND_MESSAGE, READ_RECEIPT, PRESENCE, HISTORY_SYNC,
   //   CHAT_PRESENCE, CALL, CONNECTION, LABEL, CONTACT, GROUP, NEWSLETTER,
   //   QRCODE, BUTTON_CLICK
   //
-  // Note: The `subscribe` field in POST /instance/connect is the ONLY way to
-  // register events in Evolution Go. The `events` field in POST /instance/create
-  // does NOT exist in Evolution Go's CreateStruct and is silently ignored.
+  // We use the minimal set that matches the working Dudinha configuration.
   const DEFAULT_SUBSCRIBE_EVENTS = [
     'MESSAGE',
     'SEND_MESSAGE',
     'READ_RECEIPT',
     'PRESENCE',
-    'HISTORY_SYNC',
     'CHAT_PRESENCE',
     'CALL',
     'CONNECTION',
+    'QRCODE',
     'LABEL',
     'CONTACT',
     'GROUP',
-    'NEWSLETTER',
-    'QRCODE',
-    'BUTTON_CLICK',
   ];
 
   const body: any = {
@@ -870,10 +874,11 @@ export async function getInstanceQRCode(instanceIdOrName: string): Promise<Conne
         // Previously this was calling /instance/connect with only { immediate: true }
         // which caused the instance to lose all event subscriptions, breaking
         // webhook delivery and QR code generation.
+        // Use same minimal events as Dudinha (working instance)
         const RECONNECT_SUBSCRIBE_EVENTS = [
           'MESSAGE', 'SEND_MESSAGE', 'READ_RECEIPT', 'PRESENCE',
-          'HISTORY_SYNC', 'CHAT_PRESENCE', 'CALL', 'CONNECTION',
-          'LABEL', 'CONTACT', 'GROUP', 'NEWSLETTER', 'QRCODE', 'BUTTON_CLICK',
+          'CHAT_PRESENCE', 'CALL', 'CONNECTION',
+          'QRCODE', 'LABEL', 'CONTACT', 'GROUP',
         ];
         await evolutionFetch('/instance/connect', {
           method: 'POST',
@@ -945,6 +950,46 @@ export async function disconnectInstance(instanceIdOrName: string): Promise<void
   await evolutionFetch('/instance/disconnect', {
     method: 'POST',
   }, instanceId, instanceToken);
+}
+
+/**
+ * Enable rejectCall AFTER the WhatsApp connection is established.
+ *
+ * CRITICAL: rejectCall must be FALSE at instance creation time because it
+ * interferes with the WhatsApp connection handshake, causing the instance
+ * to go into a "Reconnecting" loop after QR code scan. Once the connection
+ * is fully established (Connected=true, LoggedIn=true), we can safely
+ * enable rejectCall.
+ *
+ * This function updates the instance settings via POST /instance/settings
+ * to enable call rejection with the message configured in AntiBanSettings.
+ */
+export async function enableRejectCallAfterConnection(instanceIdOrName: string): Promise<void> {
+  const apiSettings = await getAntiBanApiSettings()
+
+  // Only enable if the user has configured auto-reject calls
+  if (!apiSettings.autoRejectCalls) {
+    return
+  }
+
+  try {
+    const { id: instanceId, token: instanceToken } = await resolveInstance(instanceIdOrName);
+
+    // Wait a few seconds after connection to ensure the session is fully stable
+    await new Promise(r => setTimeout(r, 3000))
+
+    await evolutionFetch('/instance/settings', {
+      method: 'POST',
+      body: JSON.stringify({
+        rejectCall: true,
+        msgRejectCall: apiSettings.autoRejectCallMessage,
+      }),
+    }, instanceId, instanceToken);
+
+    console.log(`[enableRejectCall] Enabled rejectCall for ${instanceIdOrName}`)
+  } catch (err) {
+    console.warn(`[enableRejectCall] Failed to enable rejectCall for ${instanceIdOrName}:`, err)
+  }
 }
 
 /**

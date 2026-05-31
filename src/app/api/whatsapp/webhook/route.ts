@@ -112,7 +112,7 @@ export async function POST(request: Request) {
           // Set proxy AFTER the instance is connected (non-blocking).
           // Instances are created WITHOUT proxy to allow QR code generation.
           // Once connected, we add the proxy for anti-ban routing.
-          import('@/lib/evolution-api').then(({ setProxy, resolveChipProxy, getGlobalProxy }) => {
+          import('@/lib/evolution-api').then(({ setProxy, resolveChipProxy, getGlobalProxy, enableRejectCallAfterConnection }) => {
             getGlobalProxy().then(globalProxy => {
               const proxyConfig = resolveChipProxy(chip, globalProxy)
               if (proxyConfig && proxyConfig.enabled) {
@@ -123,6 +123,14 @@ export async function POST(request: Request) {
                 })
               }
             }).catch(() => {})
+
+            // Enable rejectCall AFTER the connection is established.
+            // rejectCall=true at creation time causes the "Reconnecting" loop bug.
+            // We create instances with rejectCall=false and only enable it
+            // once the WhatsApp session is fully active.
+            enableRejectCallAfterConnection(chipInstanceName).catch(err => {
+              console.warn(`[Webhook] Failed to enable rejectCall for ${chip.name}:`, err)
+            })
           }).catch(() => {})
 
           console.log(`[Webhook] Chip ${chip.name} connected!`)

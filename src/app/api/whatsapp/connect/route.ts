@@ -8,7 +8,7 @@ import {
   getGlobalProxy,
   findInstanceByName,
 } from '@/lib/evolution-router'
-import { getInstanceName as v3GetInstanceName, findInstanceByName as v3FindInstanceByName, resolveChipProxy, getInstanceQRCode, getConnectionState as v3GetConnectionState, clearInstanceIdCache, setProxy } from '@/lib/evolution-api'
+import { getInstanceName as v3GetInstanceName, findInstanceByName as v3FindInstanceByName, resolveChipProxy, getInstanceQRCode, getConnectionState as v3GetConnectionState, clearInstanceIdCache, setProxy, enableRejectCallAfterConnection } from '@/lib/evolution-api'
 
 export async function POST(request: Request) {
   try {
@@ -187,6 +187,14 @@ export async function POST(request: Request) {
       if (isConnected && proxyConfig && proxyConfig.enabled) {
         setProxy(effectiveInstanceName, proxyConfig).catch(err => {
           console.warn(`[Connect] Failed to set proxy for ${effectiveInstanceName} (non-blocking):`, err)
+        })
+      }
+
+      // Enable rejectCall AFTER connection is established (non-blocking).
+      // rejectCall=true at creation causes "Reconnecting" loop bug.
+      if (isConnected) {
+        enableRejectCallAfterConnection(effectiveInstanceName).catch(err => {
+          console.warn(`[Connect] Failed to enable rejectCall for ${effectiveInstanceName}:`, err)
         })
       }
 
