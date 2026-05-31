@@ -130,6 +130,37 @@ export async function POST(request: Request) {
           const reason = data?.Reason || data?.reason || data?.disconnect_reason || ''
           const disconnectionCode = data?.Code || data?.code || null
 
+          // CRITICAL FIX: "Reconnecting" is a TEMPORARY state — Evolution Go is
+          // trying to restore the WhatsApp connection automatically. This happens
+          // frequently after QR code scans and during normal operation.
+          // Treating it as a real disconnection causes:
+          //   1. Chip marked as 'disconnected' in DB → user sees disconnected
+          //   2. isQrPaired cleared → loses pairing state
+          //   3. Auto-reconnection queue → stale session detection → DELETE AND RECREATE
+          //      the instance → kills the active session that Evolution Go was restoring!
+          //
+          // Fix: For "Reconnecting" and similar temporary reasons, keep the chip
+          // as 'connecting' (not 'disconnected') and DON'T clear isQrPaired.
+          // Evolution Go will either restore the session (sending Connected event)
+          // or fail permanently (sending another Disconnected with a different reason).
+          const TEMPORARY_DISCONNECT_REASONS = ['reconnecting', 'reconnect', 'replacing', 'replaced', 'restart']
+          const isTemporaryDisconnect = TEMPORARY_DISCONNECT_REASONS.some(r =>
+            reason.toLowerCase().includes(r)
+          )
+
+          if (isTemporaryDisconnect) {
+            console.log(`[Webhook] Instance ${chipInstanceName} temporary disconnect (reason: "${reason}"). Keeping as 'connecting' — Evolution Go will auto-restore.`)
+            await db.chip.update({
+              where: { id: chip.id },
+              data: {
+                status: 'connecting',
+                // DON'T clear isQrPaired or qrPairingCode — session may be restored
+              },
+            })
+            // DON'T queue for reconnection — Evolution Go handles this automatically
+            break
+          }
+
           const updateData: Record<string, unknown> = {
             status: 'disconnected',
             isQrPaired: false,
