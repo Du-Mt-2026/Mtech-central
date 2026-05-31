@@ -232,7 +232,11 @@ export function VerificarSection() {
   // ===== Disconnect WhatsApp for a chip =====
   const disconnectWhatsApp = async (chipId?: string) => {
     try {
-      const res = await fetch('/api/verifier/disconnect', { method: 'POST' })
+      const res = await fetch('/api/verifier/disconnect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chipId: chipId || undefined }),
+      })
       if (!res.ok) {
         const data = await res.json()
         throw new Error(data.error || 'Erro ao desconectar')

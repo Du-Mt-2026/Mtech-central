@@ -1,17 +1,43 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { disconnectInstance, getInstanceName, deleteInstance } from '@/lib/evolution-api'
+import { disconnectInstance, deleteInstance, getInstanceName } from '@/lib/evolution-api'
 
-export async function POST() {
+/**
+ * POST /api/verifier/disconnect
+ *
+ * FIX: Now accepts chipId in the request body to disconnect a SPECIFIC chip.
+ * Previously disconnected the first connected chip found (wrong chip if multiple connected).
+ * Falls back to finding the first connected chip if no chipId is provided (backward compat).
+ */
+export async function POST(request: NextRequest) {
   try {
-    // Find the currently connected chip used for verification
-    const chip = await db.chip.findFirst({
-      where: {
-        status: 'connected',
-        evolutionInstance: { not: '' },
-      },
-      orderBy: { updatedAt: 'desc' },
-    })
+    // Try to read chipId from request body
+    let chipId: string | null = null
+    try {
+      const body = await request.json()
+      chipId = body.chipId || null
+    } catch {
+      // No body or invalid JSON — fall back to finding any connected chip
+    }
+
+    let chip
+
+    if (chipId) {
+      // Disconnect the specific chip requested
+      chip = await db.chip.findUnique({ where: { id: chipId } })
+      if (!chip) {
+        return NextResponse.json({ error: 'Chip não encontrado' }, { status: 404 })
+      }
+    } else {
+      // Backward compat: find the currently connected chip used for verification
+      chip = await db.chip.findFirst({
+        where: {
+          status: 'connected',
+          evolutionInstance: { not: '' },
+        },
+        orderBy: { updatedAt: 'desc' },
+      })
+    }
 
     if (!chip) {
       // No connected chip, nothing to disconnect

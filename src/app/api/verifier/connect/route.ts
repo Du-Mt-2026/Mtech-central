@@ -9,6 +9,10 @@ import {
   resolveChipProxy,
   getGlobalProxy,
   setProxy,
+  getConnectionState as v3GetConnectionState,
+  clearInstanceIdCache,
+  disconnectInstance,
+  deleteInstance,
 } from '@/lib/evolution-api'
 
 export async function POST(request: NextRequest) {
@@ -38,16 +42,41 @@ export async function POST(request: NextRequest) {
     // Check if instance already exists
     let existing = await findInstanceByName(instanceName)
 
+    // ===== Stale session detection =====
+    // If the chip is marked as disconnected in our DB but the Evolution API
+    // instance still has a stored WhatsApp session, calling connect will
+    // auto-restore the session and return state='open' with no QR code.
+    // The user expects a QR code, so we must delete and recreate the instance.
+    if (existing && chip.status !== 'connected') {
+      const storedJid = existing.jid || existing.ownerJid || ''
+      const hasStoredSession = storedJid.length > 0
+      try {
+        const realState = await v3GetConnectionState(existing.name || instanceName)
+        const needsRecreate = realState.state === 'open' ||
+          (realState.state === 'connecting' && hasStoredSession)
+        if (needsRecreate) {
+          console.log(`[Verifier Connect] Chip "${chip.name}" is "${chip.status}" in DB but Evolution instance has stale session (state=${realState.state}, jid=${storedJid}). Deleting and recreating for fresh QR code.`)
+          try { await disconnectInstance(existing.name || instanceName) } catch { /* may fail */ }
+          try { await deleteInstance(existing.name || instanceName) } catch { /* may fail */ }
+          await new Promise(r => setTimeout(r, 2000))
+          clearInstanceIdCache()
+          existing = null
+        }
+      } catch {
+        // Status check failed — proceed with normal connect flow
+      }
+    }
+
     if (!existing) {
       // Create instance WITHOUT proxy — proxy blocks QR code generation
-      // (proxy is set after connection via POST /instance/proxy/{instanceId})
       const newInstance = await createInstance(instanceName, undefined)
       existing = newInstance
     }
 
     const effectiveInstanceName = existing.name || instanceName
 
-    // Connect with webhook (v3: webhook is configured at connect time)
+    // Connect with webhook URL — CRITICAL: always pass webhookUrl so that
+    // Evolution Go knows where to send events (Connected, Disconnected, QRCode, etc.)
     const connectResult = await connectInstance(effectiveInstanceName, webhookUrl)
 
     // Try to fetch QR code if not yet connected
@@ -55,9 +84,14 @@ export async function POST(request: NextRequest) {
     let code = connectResult.code
     if (!qrcode && connectResult.state !== 'open') {
       try {
+        await new Promise(r => setTimeout(r, 1500))
         const qrResult = await getInstanceQRCode(effectiveInstanceName)
         qrcode = qrResult.qrcode
         code = qrResult.code
+        // If QR fetch returns 'open' (session already logged in), use that state
+        if (qrResult.state === 'open') {
+          connectResult.state = 'open'
+        }
       } catch {
         // QR code not available yet
       }
