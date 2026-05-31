@@ -109,25 +109,23 @@ export async function POST(request: Request) {
             }).catch(() => {})
           }
 
-          // Set proxy AFTER the instance is connected (non-blocking).
-          // Instances are created WITHOUT proxy to allow QR code generation.
-          // Once connected, we add the proxy for anti-ban routing.
-          import('@/lib/evolution-api').then(({ setProxy, resolveChipProxy, getGlobalProxy, enableRejectCallAfterConnection }) => {
-            getGlobalProxy().then(globalProxy => {
-              const proxyConfig = resolveChipProxy(chip, globalProxy)
-              if (proxyConfig && proxyConfig.enabled) {
-                setProxy(chipInstanceName, proxyConfig).then(() => {
-                  console.log(`[Webhook] Proxy set for ${chip.name} after connection`)
-                }).catch(err => {
-                  console.warn(`[Webhook] Failed to set proxy for ${chip.name}:`, err)
-                })
-              }
-            }).catch(() => {})
+          // CRITICAL FIX: Do NOT call setProxy() after connection!
+          // In Evolution API Go, POST /instance/proxy/{instanceId} RESTARTS the
+          // WhatsApp connection by design (it disconnects the client and reconnects
+          // through the new proxy). If the proxy is unreachable (e.g., WireGuard
+          // VPN at 10.0.0.x), the reconnection fails and the instance stays
+          // permanently disconnected. This was the root cause of the bug where
+          // chips would disconnect shortly after a successful QR code scan.
+          //
+          // Proxy must be configured at instance creation time if the Evolution Go
+          // server can reach it, or not used at all if it's on a private network.
 
-            // Enable rejectCall AFTER the connection is established.
-            // rejectCall=true at creation time causes the "Reconnecting" loop bug.
-            // We create instances with rejectCall=false and only enable it
-            // once the WhatsApp session is fully active.
+          // Enable rejectCall AFTER the connection is established (non-blocking).
+          // rejectCall=true at creation time causes the "Reconnecting" loop bug.
+          // We create instances with rejectCall=false and only enable it
+          // once the WhatsApp session is fully active.
+          // This is SAFE — POST /instance/settings does NOT restart the connection.
+          import('@/lib/evolution-api').then(({ enableRejectCallAfterConnection }) => {
             enableRejectCallAfterConnection(chipInstanceName).catch(err => {
               console.warn(`[Webhook] Failed to enable rejectCall for ${chip.name}:`, err)
             })

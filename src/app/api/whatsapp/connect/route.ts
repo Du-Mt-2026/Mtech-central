@@ -8,7 +8,7 @@ import {
   getGlobalProxy,
   findInstanceByName,
 } from '@/lib/evolution-router'
-import { getInstanceName as v3GetInstanceName, findInstanceByName as v3FindInstanceByName, resolveChipProxy, getInstanceQRCode, getConnectionState as v3GetConnectionState, clearInstanceIdCache, setProxy, enableRejectCallAfterConnection } from '@/lib/evolution-api'
+import { getInstanceName as v3GetInstanceName, findInstanceByName as v3FindInstanceByName, resolveChipProxy, getInstanceQRCode, getConnectionState as v3GetConnectionState, clearInstanceIdCache, enableRejectCallAfterConnection } from '@/lib/evolution-api'
 
 export async function POST(request: Request) {
   try {
@@ -181,14 +181,12 @@ export async function POST(request: Request) {
         },
       })
 
-      // Set proxy AFTER the instance is created and connected.
-      // This uses POST /instance/proxy/{instanceId} which doesn't block
-      // the initial WhatsApp connection / QR code generation.
-      if (isConnected && proxyConfig && proxyConfig.enabled) {
-        setProxy(effectiveInstanceName, proxyConfig).catch(err => {
-          console.warn(`[Connect] Failed to set proxy for ${effectiveInstanceName} (non-blocking):`, err)
-        })
-      }
+      // CRITICAL FIX: Do NOT call setProxy() after connection!
+      // POST /instance/proxy/{instanceId} RESTARTS the WhatsApp connection in
+      // Evolution Go. If the proxy is unreachable, the reconnection fails and
+      // the instance stays permanently disconnected. This was the root cause
+      // of chips disconnecting shortly after QR code scan.
+      // Proxy should be set at creation time if accessible by the Evolution Go server.
 
       // Enable rejectCall AFTER connection is established (non-blocking).
       // rejectCall=true at creation causes "Reconnecting" loop bug.
@@ -369,12 +367,8 @@ export async function POST(request: Request) {
             },
           })
 
-          // Set proxy AFTER instance is connected (non-blocking)
-          if (isRecoveredConnected && proxyConfig && proxyConfig.enabled) {
-            setProxy(newEffectiveName, proxyConfig).catch(err => {
-              console.warn(`[Connect] Failed to set proxy after recovery for ${newEffectiveName}:`, err)
-            })
-          }
+          // CRITICAL FIX: Do NOT call setProxy() after connection!
+          // Same reason as above — POST /instance/proxy restarts the connection.
 
           return NextResponse.json({
             instanceName: newEffectiveName,
