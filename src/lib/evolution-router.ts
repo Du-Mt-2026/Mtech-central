@@ -108,30 +108,32 @@ export async function connectInstance(
 ): Promise<UnifiedConnectResult> {
   const result = await v3.connectInstance(instanceName, webhookUrl)
 
-  // If not connected yet, try to fetch QR code
-  let qrcode = result.qrcode
-  let state = result.state || 'close'
-  if (!qrcode && state !== 'open') {
-    try {
-      const qrResult = await v3.getInstanceQRCode(instanceName)
-      qrcode = qrResult.qrcode
-      if (qrResult.code && !result.code) {
-        result.code = qrResult.code
-      }
-      // If QR fetch returns 'open' (session already logged in), update state
-      if (qrResult.state === 'open') {
-        state = 'open'
-      }
-    } catch {
-      // QR not available yet
-    }
-  }
+  // CRITICAL FIX: Do NOT fetch QR code here!
+  //
+  // Previously this function called v3.getInstanceQRCode() IMMEDIATELY after
+  // v3.connectInstance() with NO delay. This caused a critical race condition:
+  //
+  // 1. POST /instance/connect starts a goroutine to connect to WhatsApp (Client #1)
+  // 2. GET /instance/qr is called immediately — Evolution Go's GetQr sees client==nil
+  //    (because the goroutine hasn't finished yet) and calls StartInstance(),
+  //    starting a SECOND WhatsApp client (Client #2)
+  // 3. Client #2 generates a QR code, but Client #1 is also running
+  // 4. The two clients conflict, causing the session to become unstable
+  // 5. After scanning the QR code (from Client #2), the session goes into
+  //    a "Reconnecting" loop because Client #1 keeps interfering
+  //
+  // The QR code fetch MUST be done by the calling code (connect/route.ts)
+  // with a proper delay (4+ seconds) to give Evolution Go time to start
+  // the client goroutine before requesting the QR code.
+  //
+  // This was the root cause of: "QR codes from OctupusZap don't work for
+  // connection, but QR codes from the Evolution API dashboard do work."
 
   return {
-    qrcode: qrcode ?? null,
+    qrcode: result.qrcode ?? null,
     code: result.code || null,
     pairingCode: result.pairingCode || result.code || null,
-    state: state as 'open' | 'close' | 'connecting',
+    state: (result.state || 'close') as 'open' | 'close' | 'connecting',
     instanceName,
     instanceId: result.instanceId,
   }
