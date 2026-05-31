@@ -892,7 +892,10 @@ function ChipsTab() {
           const statusRes = await fetch(`/api/whatsapp/status?chipId=${chip.id}`)
           const statusData = await statusRes.json()
 
-          if (statusData.state === 'open' || statusData.chipStatus === 'connected') {
+          // Only trust 'open' from the actual Evolution API status check,
+          // not stale DB status. This prevents false "connected" after QR scan
+          // when the session wasn't actually established.
+          if (statusData.state === 'open') {
             setQrConnected(true)
             setConnectAttempts(0)
             if (pollingRef.current) clearInterval(pollingRef.current)
@@ -967,20 +970,29 @@ function ChipsTab() {
         setWhatsappQr(qrSrc)
       }
 
+      // FIX: Only mark as connected if there's no QR code showing.
+      // If there's a QR code + state=open, it's a race condition —
+      // show QR and let polling verify the actual connection state.
       if (data.status === 'open' || data.state === 'open') {
-        setQrConnected(true)
-        setConnectAttempts(0)
-        fetchChips()
-        return
+        if (!data.qrcode) {
+          setQrConnected(true)
+          setConnectAttempts(0)
+          fetchChips()
+          toast.success(`WhatsApp conectado: ${selectedChip.name}`)
+          return
+        }
       }
 
-      // Restart polling
+      // Restart polling for connection status
       pollingRef.current = setInterval(async () => {
         try {
           const statusRes = await fetch(`/api/whatsapp/status?chipId=${selectedChip.id}`)
           const statusData = await statusRes.json()
 
-          if (statusData.state === 'open' || statusData.chipStatus === 'connected') {
+          // Only trust 'open' from the actual Evolution API status check,
+          // not stale DB status. This prevents false "connected" after QR scan
+          // when the session wasn't actually established.
+          if (statusData.state === 'open') {
             setQrConnected(true)
             setConnectAttempts(0)
             if (pollingRef.current) clearInterval(pollingRef.current)

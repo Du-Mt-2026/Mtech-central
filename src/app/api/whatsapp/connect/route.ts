@@ -123,6 +123,25 @@ export async function POST(request: Request) {
         }
       }
 
+      // CRITICAL FIX: Verify effectiveState against /instance/status before trusting it.
+      // The connect result or QR code fetch may report 'open' based on stale data
+      // (e.g., a stored jid from a previous session). We must verify the ACTUAL
+      // connection state before marking the chip as connected in our DB.
+      if (effectiveState === 'open') {
+        try {
+          const verifiedState = await v3GetConnectionState(effectiveInstanceName)
+          const verifiedRealState = verifiedState.state || 'close'
+          if (verifiedRealState !== 'open') {
+            console.log(`[Connect] effectiveState was 'open' but /instance/status returned '${verifiedRealState}'. Correcting.`)
+            effectiveState = verifiedRealState
+          }
+        } catch {
+          // Verification failed — don't assume connected, be safe
+          console.warn(`[Connect] Could not verify connection state for ${effectiveInstanceName}. Defaulting to 'close'.`)
+          effectiveState = 'close'
+        }
+      }
+
       const isConnected = effectiveState === 'open'
       const newStatus = isConnected ? 'connected' : 'connecting'
 
@@ -245,6 +264,21 @@ export async function POST(request: Request) {
 
           console.log(`[Connect] Zombie recovery: qrcode=${!!qrcode}, state=${effectiveState}`)
 
+          // CRITICAL FIX: Verify effectiveState against /instance/status before trusting it.
+          if (effectiveState === 'open') {
+            try {
+              const verifiedState = await v3GetConnectionState(newEffectiveName)
+              const verifiedRealState = verifiedState.state || 'close'
+              if (verifiedRealState !== 'open') {
+                console.log(`[Connect] Zombie recovery: effectiveState was 'open' but /instance/status returned '${verifiedRealState}'. Correcting.`)
+                effectiveState = verifiedRealState
+              }
+            } catch {
+              console.warn(`[Connect] Zombie recovery: Could not verify connection state for ${newEffectiveName}. Defaulting to 'close'.`)
+              effectiveState = 'close'
+            }
+          }
+
           const isRecoveredConnected = effectiveState === 'open'
           const recoveryStatus = isRecoveredConnected ? 'connected' : 'connecting'
 
@@ -276,6 +310,22 @@ export async function POST(request: Request) {
       } catch (zombieErr) {
         console.error(`[Connect] Zombie detection failed for "${effectiveInstanceName}":`, zombieErr)
         // Fall through to normal response
+      }
+    }
+
+    // CRITICAL FIX: Verify effectiveState against /instance/status before trusting it.
+    // Same verification as the new-instance path above.
+    if (effectiveState === 'open') {
+      try {
+        const verifiedState = await v3GetConnectionState(effectiveInstanceName)
+        const verifiedRealState = verifiedState.state || 'close'
+        if (verifiedRealState !== 'open') {
+          console.log(`[Connect] effectiveState was 'open' but /instance/status returned '${verifiedRealState}'. Correcting.`)
+          effectiveState = verifiedRealState
+        }
+      } catch {
+        console.warn(`[Connect] Could not verify connection state for ${effectiveInstanceName}. Defaulting to 'close'.`)
+        effectiveState = 'close'
       }
     }
 

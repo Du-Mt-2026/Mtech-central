@@ -705,17 +705,57 @@ export async function connectInstance(
 
   const result = data.data || data;
 
-  // Check if already connected (jid is present) — session was restored by Evolution Go
+  // Check if already connected (jid is present) — session was restored by Evolution Go.
+  // CRITICAL FIX: Don't trust jid alone! A jid in the connect response just means Evolution Go
+  // has a stored session — it does NOT mean the session is actually active (LoggedIn=true).
+  // We must verify against /instance/status to avoid falsely reporting "connected" when the
+  // session is actually stale or disconnected.
   if (result.jid) {
-    console.log(`[connectInstance] Instance ${instanceIdOrName} restored existing session (jid present). State=open.`);
-    return {
-      state: 'open',
-      instanceName: instanceIdOrName,
-      instanceId: instanceId,
-      qrcode: null,
-      code: null,
-      pairingCode: null,
-    };
+    console.log(`[connectInstance] Instance ${instanceIdOrName} returned jid=${result.jid} from /instance/connect. Verifying actual connection state...`);
+
+    try {
+      const verifyResponse = await evolutionFetch('/instance/status', {}, instanceId, instanceToken);
+      const verifyData = await verifyResponse.json();
+      const verifyStatus = verifyData.data || verifyData;
+
+      console.log(`[connectInstance] Verification for ${instanceIdOrName}: Connected=${verifyStatus.Connected}, LoggedIn=${verifyStatus.LoggedIn}`);
+
+      if (verifyStatus.Connected && verifyStatus.LoggedIn) {
+        // Session is truly active — safe to report as open
+        return {
+          state: 'open',
+          instanceName: instanceIdOrName,
+          instanceId: instanceId,
+          qrcode: null,
+          code: null,
+          pairingCode: null,
+        };
+      } else {
+        // jid present but NOT actually logged in — stale session.
+        // Return 'close' so the caller proceeds with the QR code flow.
+        console.log(`[connectInstance] Instance ${instanceIdOrName} has jid but NOT LoggedIn (Connected=${verifyStatus.Connected}, LoggedIn=${verifyStatus.LoggedIn}). Treating as close — QR code flow will proceed.`);
+        return {
+          state: 'close',
+          instanceName: instanceIdOrName,
+          instanceId: instanceId,
+          qrcode: null,
+          code: null,
+          pairingCode: null,
+        };
+      }
+    } catch (verifyErr) {
+      // Verification failed — don't assume connected. Be safe and return 'close'
+      // so the QR code flow proceeds instead of falsely claiming connected.
+      console.warn(`[connectInstance] Status verification failed for ${instanceIdOrName} after jid found. Defaulting to 'close' to avoid false positive.`);
+      return {
+        state: 'close',
+        instanceName: instanceIdOrName,
+        instanceId: instanceId,
+        qrcode: null,
+        code: null,
+        pairingCode: null,
+      };
+    }
   }
 
   // Not yet connected — QR code will come via webhook event
