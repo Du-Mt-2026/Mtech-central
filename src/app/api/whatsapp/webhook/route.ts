@@ -26,12 +26,25 @@ export async function POST(request: Request) {
     const event = body.event
     const data = body.data
     const instanceId = body.instanceId || ''
+    const instanceName = body.instanceName || ''
 
-    // === Resolve instance name from v3 format ===
+    // === Resolve instance name from Evolution Go webhook format ===
+    // Evolution Go sends webhooks with these fields:
+    //   - instanceId: UUID of the instance
+    //   - instanceName: name of the instance (e.g., "OctupusZap_xxx")
+    //   - instanceToken: token of the instance
+    //
+    // We prefer instanceName (direct name match) over instanceId (requires API lookup)
+    // because it's faster and doesn't require an extra API call.
     let chipInstanceName = ''
 
-    // v3 format: instanceId is a UUID, need to look up the name
-    if (instanceId) {
+    // First try: use instanceName directly (Evolution Go provides this)
+    if (instanceName) {
+      chipInstanceName = instanceName
+    }
+
+    // Second try: look up instanceId via Evolution API (slower, requires API call)
+    if (!chipInstanceName && instanceId) {
       try {
         const { fetchInstances } = await import('@/lib/evolution-api')
         const instances = await fetchInstances()

@@ -414,33 +414,25 @@ export async function createInstance(
   const body: any = {
     name: instanceName,
     token,
-    // ANTI-BAN: alwaysOnline=false ensures the chip does NOT appear
-    // permanently online — presence is managed by the sending engine
-    // via setPresence('available'/'unavailable') calls.
-    // A chip that is always online is a known bot signature.
-    alwaysOnline: false,
-    // Reject incoming calls — reads from AntiBanSettings (UI-configurable)
-    rejectCall: apiSettings.autoRejectCalls,
-    msgRejectCall: apiSettings.autoRejectCallMessage,
-    // BUG FIX: Events must be specified at instance creation time.
-    // Without this field, Evolution Go creates the instance with events=""
-    // which prevents QR code generation and webhook event delivery.
-    // This was causing all OctupusZap instances to fail QR code scanning.
-    events: [
-      'MESSAGE',
-      'SEND_MESSAGE',
-      'SEND_MESSAGE_ACK',
-      'READ_RECEIPT',
-      'PRESENCE',
-      'CHAT_PRESENCE',
-      'CALL',
-      'CONNECTION',
-      'QRCODE',
-      'LABEL',
-      'CONTACT',
-      'GROUP',
-      'MESSAGES_UPDATE',
-    ],
+    // CRITICAL FIX: Evolution Go expects advanced settings inside an
+    // "advancedSettings" object, NOT as top-level fields. Top-level
+    // fields like alwaysOnline, rejectCall, msgRejectCall are silently
+    // ignored by Evolution Go's CreateStruct.
+    // Also, the "events" field does NOT exist in CreateStruct — events
+    // are configured via the "subscribe" field in POST /instance/connect.
+    advancedSettings: {
+      // ANTI-BAN: alwaysOnline=false ensures the chip does NOT appear
+      // permanently online — presence is managed by the sending engine
+      // via setPresence('available'/'unavailable') calls.
+      // A chip that is always online is a known bot signature.
+      alwaysOnline: false,
+      // Reject incoming calls — reads from AntiBanSettings (UI-configurable)
+      rejectCall: apiSettings.autoRejectCalls,
+      msgRejectCall: apiSettings.autoRejectCallMessage,
+      readMessages: false,
+      ignoreGroups: false,
+      ignoreStatus: false,
+    },
   };
 
   // Proxy is set at creation time
@@ -675,27 +667,36 @@ export async function connectInstance(
     // Status check failed — proceed with connect anyway
   }
 
-  // BUG FIX: subscribe must ALWAYS be sent in /instance/connect, even without webhookUrl.
-  // Evolution Go v3 ignores the `events` field in POST /instance/create — the only way
-  // to register events is via the `subscribe` field in POST /instance/connect.
-  // Without subscribe, the instance gets events="" and cannot generate QR codes or
-  // deliver webhook events, leaving it in a broken "client disconnected" state.
+  // CRITICAL FIX: subscribe events must match Evolution Go's valid event types.
+  // Evolution Go validates each event type against its internal list and DISCARDS
+  // invalid types with a warning log. Previously we sent invalid types like
+  // SEND_MESSAGE_ACK, MESSAGES_UPDATE, INSTANCE_DELETED, INSTANCE_CREATE which
+  // were silently discarded. While the valid events were still registered, sending
+  // invalid types could cause unexpected behavior.
+  //
+  // Valid Evolution Go event types (from pkg/internal/event_types/event_types.go):
+  //   ALL, MESSAGE, SEND_MESSAGE, READ_RECEIPT, PRESENCE, HISTORY_SYNC,
+  //   CHAT_PRESENCE, CALL, CONNECTION, LABEL, CONTACT, GROUP, NEWSLETTER,
+  //   QRCODE, BUTTON_CLICK
+  //
+  // Note: The `subscribe` field in POST /instance/connect is the ONLY way to
+  // register events in Evolution Go. The `events` field in POST /instance/create
+  // does NOT exist in Evolution Go's CreateStruct and is silently ignored.
   const DEFAULT_SUBSCRIBE_EVENTS = [
     'MESSAGE',
     'SEND_MESSAGE',
-    'SEND_MESSAGE_ACK',
     'READ_RECEIPT',
     'PRESENCE',
+    'HISTORY_SYNC',
     'CHAT_PRESENCE',
     'CALL',
     'CONNECTION',
-    'QRCODE',
     'LABEL',
     'CONTACT',
     'GROUP',
-    'MESSAGES_UPDATE',
-    'INSTANCE_DELETED',
-    'INSTANCE_CREATE',
+    'NEWSLETTER',
+    'QRCODE',
+    'BUTTON_CLICK',
   ];
 
   const body: any = {
@@ -864,12 +865,24 @@ export async function getInstanceQRCode(instanceIdOrName: string): Promise<Conne
         }, instanceId, instanceToken);
         await new Promise(r => setTimeout(r, 1500));
 
-        // Reconnect to get a fresh session with reset QR counter
+        // Reconnect to get a fresh session with reset QR counter.
+        // CRITICAL: Must include subscribe events in the reconnect call!
+        // Previously this was calling /instance/connect with only { immediate: true }
+        // which caused the instance to lose all event subscriptions, breaking
+        // webhook delivery and QR code generation.
+        const RECONNECT_SUBSCRIBE_EVENTS = [
+          'MESSAGE', 'SEND_MESSAGE', 'READ_RECEIPT', 'PRESENCE',
+          'HISTORY_SYNC', 'CHAT_PRESENCE', 'CALL', 'CONNECTION',
+          'LABEL', 'CONTACT', 'GROUP', 'NEWSLETTER', 'QRCODE', 'BUTTON_CLICK',
+        ];
         await evolutionFetch('/instance/connect', {
           method: 'POST',
-          body: JSON.stringify({ immediate: true }),
+          body: JSON.stringify({
+            immediate: true,
+            subscribe: RECONNECT_SUBSCRIBE_EVENTS,
+          }),
         }, instanceId, instanceToken);
-        await new Promise(r => setTimeout(r, 2000));
+        await new Promise(r => setTimeout(r, 4000));
 
         // Try fetching QR code again after reconnect
         const retryResponse = await evolutionFetch('/instance/qr', {}, instanceId, instanceToken);
@@ -1393,17 +1406,18 @@ export async function setWebhook(
   events: string[] = [
     'MESSAGE',
     'SEND_MESSAGE',
-    'SEND_MESSAGE_ACK',
     'READ_RECEIPT',
     'PRESENCE',
+    'HISTORY_SYNC',
     'CHAT_PRESENCE',
     'CALL',
     'CONNECTION',
-    'QRCODE',
     'LABEL',
     'CONTACT',
     'GROUP',
-    'MESSAGES_UPDATE',
+    'NEWSLETTER',
+    'QRCODE',
+    'BUTTON_CLICK',
   ]
 ): Promise<void> {
   // Webhook is set during connect.

@@ -132,14 +132,23 @@ export async function POST(request: Request) {
       const connectResult = await routerConnectInstance(effectiveInstanceName, webhookUrl)
 
       // Evolution Go: QR code comes via webhook, not in connect response.
-      // Try to fetch QR code immediately as fallback.
+      // Try to fetch QR code after giving Evolution Go time to start the client.
+      //
+      // CRITICAL: We must wait long enough for Evolution Go to start the client
+      // in the background goroutine before calling GET /instance/qr. If we call
+      // it too early, Evolution Go's GetQr function might see client==nil and
+      // call StartInstance(), starting a SECOND client that invalidates the
+      // QR code from the first client — this was the root cause of the
+      // "QR code doesn't work when created through OctupusZap" bug.
       let qrcode: string | null = connectResult.qrcode
       let code: string | null = connectResult.code || connectResult.pairingCode || null
       let effectiveState: string = connectResult.state || 'close'
       if (!qrcode && effectiveState !== 'open') {
         try {
-          // Wait a moment for Evolution Go to generate the QR code
-          await new Promise(r => setTimeout(r, 1500))
+          // Wait 4 seconds for Evolution Go to fully start the client and
+          // generate the QR code. The client is started in a goroutine by
+          // POST /instance/connect, so we need to give it time.
+          await new Promise(r => setTimeout(r, 4000))
           const qrResult = await getInstanceQRCode(effectiveInstanceName)
           qrcode = qrResult.qrcode ?? null
           code = code ?? qrResult.code ?? null
@@ -201,14 +210,23 @@ export async function POST(request: Request) {
     const connectResult = await routerConnectInstance(effectiveInstanceName, webhookUrl)
 
     // Evolution Go: QR code comes via webhook, not in connect response.
-    // Try to fetch QR code immediately as fallback.
+    // Try to fetch QR code after giving Evolution Go time to start the client.
+    //
+    // CRITICAL: We must wait long enough for Evolution Go to start the client
+    // in the background goroutine before calling GET /instance/qr. If we call
+    // it too early, Evolution Go's GetQr function might see client==nil and
+    // call StartInstance(), starting a SECOND client that invalidates the
+    // QR code from the first client — this was the root cause of the
+    // "QR code doesn't work when created through OctupusZap" bug.
     let qrcode: string | null = connectResult.qrcode
     let code: string | null = connectResult.code || connectResult.pairingCode || null
     let effectiveState: string = connectResult.state || 'close'
     if (!qrcode && effectiveState !== 'open') {
       try {
-        // Wait a moment for Evolution Go to generate the QR code
-        await new Promise(r => setTimeout(r, 1500))
+        // Wait 4 seconds for Evolution Go to fully start the client and
+        // generate the QR code. The client is started in a goroutine by
+        // POST /instance/connect, so we need to give it time.
+        await new Promise(r => setTimeout(r, 4000))
         const qrResult = await getInstanceQRCode(effectiveInstanceName)
         qrcode = qrResult.qrcode ?? null
         code = code ?? qrResult.code ?? null
