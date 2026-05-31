@@ -322,13 +322,25 @@ function parseJsonField<T>(jsonStr: string | null | undefined, fallback: T): T {
 }
 
 /**
- * Pick a random variation from a template, with consecutive dedup
+ * Pick a random variation from a template, with consecutive dedup.
+ * C4/C5 FIX: Cap the map size to prevent unbounded memory growth
+ * in serverless warm starts (Vercel reuses function instances).
  */
+const MAX_VARIATION_CACHE_SIZE = 200
 const lastUsedVariation = new Map<string, number>()
 
 function pickVariation(variations: string[], cacheKey: string): string {
   if (variations.length === 0) return ''
   if (variations.length === 1) return variations[0]
+
+  // C4/C5 FIX: Evict oldest entries when cache grows too large
+  if (lastUsedVariation.size > MAX_VARIATION_CACHE_SIZE) {
+    const keysIter = lastUsedVariation.keys()
+    for (let i = 0; i < MAX_VARIATION_CACHE_SIZE / 2; i++) {
+      const oldest = keysIter.next().value
+      if (oldest !== undefined) lastUsedVariation.delete(oldest)
+    }
+  }
 
   const lastIdx = lastUsedVariation.get(cacheKey)
   let chosenIdx: number

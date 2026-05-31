@@ -621,14 +621,30 @@ async function getAntiBanSettings(): Promise<AntiBanConfig> {
  * They tend to send a few messages in quick succession (a "cluster"),
  * then pause for a while before the next burst. This makes the
  * sending pattern look natural instead of metronome-like.
+ *
+ * C4/C5 FIX: Cap the map size to prevent unbounded memory growth
+ * in serverless warm starts (Vercel reuses function instances).
  */
+const MAX_CLUSTER_CACHE_SIZE = 200
 interface ClusterState {
   count: number           // How many messages sent in current cluster
   inCluster: boolean      // Whether currently in an active cluster
   targetSize: number      // How many messages this cluster should contain
 }
-
 const clusterStateMap = new Map<string, ClusterState>()
+
+/**
+ * Clean up cluster state map if it grows too large.
+ * Evicts the oldest half of entries when over the limit.
+ */
+function evictClusterCacheIfNeeded(): void {
+  if (clusterStateMap.size <= MAX_CLUSTER_CACHE_SIZE) return
+  const keysIter = clusterStateMap.keys()
+  for (let i = 0; i < MAX_CLUSTER_CACHE_SIZE / 2; i++) {
+    const oldest = keysIter.next().value
+    if (oldest !== undefined) clusterStateMap.delete(oldest)
+  }
+}
 
 /**
  * Get the day-rhythm multiplier for the current time.
@@ -686,6 +702,10 @@ function getClusterDelaySeconds(
   if (!cluster.enabled) return null
 
   const key = `${campaignId}:${chipId}`
+
+  // C4/C5 FIX: Evict old entries before adding new ones
+  evictClusterCacheIfNeeded()
+
   let state = clusterStateMap.get(key)
 
   if (!state || !state.inCluster) {
@@ -1224,9 +1244,23 @@ async function checkForWarnings(chipId: string, settings: AntiBanConfig = DEFAUL
  * contacts, which is detectable. Uses a simple static cache keyed by block content.
  */
 // Cache of last-used variation index per KEY block content
+// C4/C5 FIX: Cap the variation cache to prevent unbounded memory growth
+const MAX_SPINTAX_CACHE_SIZE = 500
 const lastUsedVariation = new Map<string, number>()
 
+function evictSpintaxCacheIfNeeded(): void {
+  if (lastUsedVariation.size <= MAX_SPINTAX_CACHE_SIZE) return
+  const keysIter = lastUsedVariation.keys()
+  for (let i = 0; i < MAX_SPINTAX_CACHE_SIZE / 2; i++) {
+    const oldest = keysIter.next().value
+    if (oldest !== undefined) lastUsedVariation.delete(oldest)
+  }
+}
+
 function resolveKeyBlocks(text: string): string {
+  // C4/C5 FIX: Evict old entries before potentially adding new ones
+  evictSpintaxCacheIfNeeded()
+
   // Use a custom parser to handle nested {{ }} inside KEY blocks
   let result = ''
   let i = 0
@@ -1824,6 +1858,9 @@ export async function processNextMessage(campaignId: string): Promise<{
   const targetContactId = earliestPending.contactId
 
   // Find the next pending step for THIS contact (lowest stepOrder first)
+  // H6 FIX: Use atomic claim to prevent race condition — two concurrent cron
+  // invocations could both find the same pending message and send it twice.
+  // By atomically updating the status to 'sending', only ONE invocation succeeds.
   const message = await db.message.findFirst({
     where: { campaignId, contactId: targetContactId, status: 'pending' },
     include: { chip: true, contact: true },
@@ -1833,6 +1870,19 @@ export async function processNextMessage(campaignId: string): Promise<{
   if (!message) {
     // No more pending messages for this contact — might have been picked up by another process
     return { processed: false, delayMs: 1000, remaining: -1, completed: false, reason: 'no_pending_message' }
+  }
+
+  // H6 FIX: Atomic message claim — try to set status to 'sending' only if still 'pending'.
+  // If count=0, another invocation already claimed this message — skip it.
+  const claimResult = await db.message.updateMany({
+    where: { id: message.id, status: 'pending' },
+    data: { status: 'sending' },
+  })
+
+  if (claimResult.count === 0) {
+    // Another process already claimed this message — back off briefly
+    console.debug(`[SendingEngine] Message ${message.id} already claimed by another process — skipping`)
+    return { processed: false, delayMs: 2000, remaining: -1, completed: false, reason: 'message_already_claimed' }
   }
 
   // For multi-step campaigns: check if this contact's previous step has been sent
@@ -3027,13 +3077,58 @@ export async function recoverStuckMessages(campaignId?: string): Promise<number>
 }
 
 /**
+ * H5 FIX: Release orphaned campaign slots.
+ *
+ * When a process claims a campaign slot (sets nextSendAt) and then crashes or
+ * times out before completing, the slot remains "locked" forever — nextSendAt
+ * is set to a time in the future, and no new messages can be sent for that campaign.
+ *
+ * This function finds campaign slots that have been held for too long (more than
+ * SLOT_STALE_THRESHOLD_MS) and releases them by setting nextSendAt = null.
+ *
+ * Threshold: 10 minutes — generous enough to allow for long anti-ban intervals
+ * (up to ~5 min), but short enough to prevent campaigns from getting stuck.
+ */
+const SLOT_STALE_THRESHOLD_MS = 10 * 60 * 1000 // 10 minutes
+
+export async function releaseStaleCampaignSlots(): Promise<number> {
+  try {
+    const staleThreshold = new Date(Date.now() - SLOT_STALE_THRESHOLD_MS)
+
+    // Find campaigns with nextSendAt in the past by more than the threshold
+    // (meaning the slot was claimed a long time ago and never released)
+    const result = await db.campaign.updateMany({
+      where: {
+        status: 'running',
+        nextSendAt: { lt: staleThreshold },
+      },
+      data: { nextSendAt: null },
+    })
+
+    if (result.count > 0) {
+      console.warn(`[SendingEngine] Released ${result.count} stale campaign slots (held for >${Math.round(SLOT_STALE_THRESHOLD_MS / 60000)}min)`)
+    }
+
+    return result.count
+  } catch (error: any) {
+    console.error('[SendingEngine] Error releasing stale campaign slots:', error.message)
+    return 0
+  }
+}
+
+/**
  * Get all running campaigns that need processing.
- * Also recovers any stuck "sending" messages before returning.
+ * Also recovers any stuck "sending" messages and releases stale slots.
  */
 export async function getRunningCampaigns(): Promise<string[]> {
   // Recover stuck messages across all running campaigns (best-effort)
   try {
     await recoverStuckMessages()
+  } catch { /* non-critical */ }
+
+  // H5 FIX: Release orphaned campaign slots that have been stuck for too long
+  try {
+    await releaseStaleCampaignSlots()
   } catch { /* non-critical */ }
 
   const campaigns = await db.campaign.findMany({

@@ -85,31 +85,32 @@ export async function GET() {
       // API unavailable — return DB data as-is
     }
 
-    // Sync cleanup: delete chips whose instances no longer exist
-    // Only auto-delete OctupusZap_-prefixed chips to avoid deleting
-    // instances created manually in the Evolution Go manager.
+    // Sync cleanup: mark chips whose instances no longer exist as "instance_not_found"
+    // instead of auto-deleting them. This prevents accidental data loss when the
+    // Evolution API has a temporary error or someone deletes an instance manually.
+    // The user can manually delete chips from the UI when they're sure it's safe.
     if (apiReachable) {
-      const orphanedIds: string[] = []
+      const orphanedChips: { id: string; name: string }[] = []
       for (const chip of chips) {
         if (chip.evolutionInstance && !instanceMap.has(chip.evolutionInstance)) {
-          // Only auto-delete OctupusZap-managed instances (with prefix)
+          // Only auto-mark OctupusZap-managed instances (with prefix)
           if (v3IsOctupusZap(chip.evolutionInstance)) {
-            orphanedIds.push(chip.id)
+            orphanedChips.push({ id: chip.id, name: chip.name })
           }
         }
       }
-      if (orphanedIds.length > 0) {
-        console.log(`[Chips Cleanup] Deleting ${orphanedIds.length} orphaned chips...`)
-        for (const id of orphanedIds) {
-          await db.message.deleteMany({ where: { chipId: id } }).catch(() => {})
-          await db.contact.deleteMany({ where: { chipId: id } }).catch(() => {})
-          await db.campaignChip.deleteMany({ where: { chipId: id } }).catch(() => {})
-          await db.inboxMessage.deleteMany({ where: { chipId: id } }).catch(() => {})
-          await db.chip.delete({ where: { id } }).catch(() => {})
+      if (orphanedChips.length > 0) {
+        console.log(`[Chips Cleanup] Marking ${orphanedChips.length} orphaned chips as instance_not_found...`)
+        for (const { id, name } of orphanedChips) {
+          await db.chip.update({
+            where: { id },
+            data: {
+              status: 'disconnected',
+              isQrPaired: false,
+            },
+          }).catch(() => {})
         }
-        console.log(`[Chips Cleanup] Deleted ${orphanedIds.length} orphaned chips`)
-        const orphanedSet = new Set(orphanedIds)
-        chips = chips.filter(c => !orphanedSet.has(c.id))
+        console.log(`[Chips Cleanup] Marked ${orphanedChips.length} orphaned chips as disconnected (instance_not_found) — they will NOT be deleted automatically`)
       }
     }
 
