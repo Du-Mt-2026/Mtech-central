@@ -261,59 +261,65 @@ export async function POST(request: Request) {
       }
 
       // ===== Instance Deleted =====
-      // H9 FIX: Only delete the chip if BOTH instanceName AND instanceId match,
-      // to prevent accidentally deleting multiple chips that share the same instanceName.
-      // The instanceId from the webhook body provides the unique identifier.
+      // BIDIRECTIONAL SYNC: When an instance is deleted from the Evolution API dashboard,
+      // the corresponding chip in OctupusZap should also be deleted.
+      // This ensures that the two systems stay in sync.
       case 'INSTANCE_DELETED':
       case 'INSTANCE_DELETE': {
-        // Use linkedChip which was found by instanceName earlier (line ~52)
-        // Additionally verify instanceId if available, for extra safety
         const chip = linkedChip
 
         if (chip) {
-          // If instanceId is provided in the webhook, verify it matches this chip's instance.
-          // This prevents deleting the wrong chip if multiple chips somehow share the same name.
-          // We check via the Evolution API instance list — if the instanceId matches, it's safe to delete.
-          let instanceIdMatches = true // Default to true if we can't verify
+          // Verify instanceId if available for extra safety
+          let instanceIdMatches = true
           if (instanceId && chip.evolutionInstance) {
             try {
               const { fetchInstances } = await import('@/lib/evolution-api')
               const instances = await fetchInstances()
               const matched = instances.find((i: any) => i.id === instanceId)
-              // If the instance still exists in API (race condition), check the name matches
-              // If the instance no longer exists in API, we can't verify — proceed with name match only
               if (matched) {
                 instanceIdMatches = matched.name === chip.evolutionInstance
               }
             } catch {
-              // Can't verify — fall back to name match only (which already happened via linkedChip)
+              // Can't verify — fall back to name match only
             }
           }
 
           if (!instanceIdMatches) {
-            console.warn(`[Webhook] INSTANCE_DELETED: instanceId ${instanceId} does not match chip ${chip.name}'s instance. Skipping deletion for safety.`)
+            console.warn(`[Webhook] INSTANCE_DELETED: instanceId ${instanceId} does not match chip ${chip.name}'s instance. Skipping for safety.`)
             break
           }
 
-          console.log(`[Webhook] Instance ${chipInstanceName} was deleted. Marking chip ${chip.name} as disconnected instead of auto-deleting.`)
+          console.log(`[Webhook] Instance ${chipInstanceName} was deleted from Evolution API. Deleting chip ${chip.name} from OctupusZap (bidirectional sync).`)
 
-          // H4/H9 FIX: Mark as disconnected instead of deleting.
-          // Auto-deleting can cause accidental data loss. The user can manually
-          // delete the chip from the UI when they confirm the instance is truly gone.
-          await db.chip.update({
-            where: { id: chip.id },
-            data: {
-              status: 'disconnected',
-              isQrPaired: false,
-              qrPairingCode: null,
-            },
-          })
+          // Delete the chip from our DB since the instance no longer exists in Evolution API
+          try {
+            // Clean up related records first
+            await db.message.deleteMany({ where: { chipId: chip.id } }).catch(() => {})
+            await db.contact.deleteMany({ where: { chipId: chip.id } }).catch(() => {})
+            await db.campaignChip.deleteMany({ where: { chipId: chip.id } }).catch(() => {})
 
-          // Clean up WireGuard peer in the background (non-blocking)
-          if (chip.wireguardPubKey && chip.wireguardIp) {
-            removeWireGuardPeer(chip.wireguardPubKey, chip.wireguardIp).catch(err => {
-              console.error('[Webhook INSTANCE_DELETED] WireGuard peer remove failed:', err)
-            })
+            // Delete the chip
+            await db.chip.delete({ where: { id: chip.id } })
+
+            console.log(`[Webhook] ✅ Chip ${chip.name} deleted from OctupusZap (instance was deleted from Evolution API)`)
+
+            // Clean up WireGuard peer
+            if (chip.wireguardPubKey && chip.wireguardIp) {
+              removeWireGuardPeer(chip.wireguardPubKey, chip.wireguardIp).catch(err => {
+                console.error('[Webhook INSTANCE_DELETED] WireGuard peer remove failed:', err)
+              })
+            }
+          } catch (deleteErr) {
+            console.error(`[Webhook] Failed to delete chip ${chip.name} from DB:`, deleteErr)
+            // Fall back to marking as disconnected
+            await db.chip.update({
+              where: { id: chip.id },
+              data: {
+                status: 'disconnected',
+                isQrPaired: false,
+                qrPairingCode: null,
+              },
+            }).catch(() => {})
           }
         }
         break

@@ -647,6 +647,7 @@ export async function connectInstance(
                 'MESSAGE', 'SEND_MESSAGE', 'SEND_MESSAGE_ACK', 'READ_RECEIPT', 'PRESENCE',
                 'CHAT_PRESENCE', 'CALL', 'CONNECTION', 'QRCODE',
                 'LABEL', 'CONTACT', 'GROUP', 'MESSAGES_UPDATE',
+                'INSTANCE_DELETED', 'INSTANCE_CREATE',
               ],
               immediate: true,
             }),
@@ -693,6 +694,8 @@ export async function connectInstance(
     'CONTACT',
     'GROUP',
     'MESSAGES_UPDATE',
+    'INSTANCE_DELETED',
+    'INSTANCE_CREATE',
   ];
 
   const body: any = {

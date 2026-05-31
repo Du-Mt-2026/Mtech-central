@@ -85,22 +85,93 @@ export async function GET() {
       // API unavailable — return DB data as-is
     }
 
-    // Sync cleanup: mark chips whose instances no longer exist as "instance_not_found"
-    // instead of auto-deleting them. This prevents accidental data loss when the
-    // Evolution API has a temporary error or someone deletes an instance manually.
-    // The user can manually delete chips from the UI when they're sure it's safe.
+    // ============================================
+    // BIDIRECTIONAL SYNC: Evolution API ↔ OctupusZap
+    // ============================================
     if (apiReachable) {
+      // --- Direction 1: Evolution → OctupusZap (auto-import new instances) ---
+      // Auto-import OctupusZap_ instances that exist in Evolution API but NOT in our DB.
+      // This handles the case where someone creates an instance directly in the
+      // Evolution API dashboard — it should automatically appear in OctupusZap.
+      const dbInstanceNames = new Set(
+        chips.filter(c => c.evolutionInstance).map(c => c.evolutionInstance)
+      )
+      const evoOctupusInstances = [...instanceMap.values()].filter(
+        (inst: any) => inst.name && inst.name.startsWith('OctupusZap_')
+      )
+
+      for (const evoInst of evoOctupusInstances) {
+        if (!dbInstanceNames.has(evoInst.name)) {
+          // This OctupusZap instance exists in Evolution but NOT in our DB — auto-import!
+          console.log(`[Chips Sync] Auto-importing instance "${evoInst.name}" from Evolution API (not in DB)`)
+
+          // Extract phone number from ownerJid (e.g., "554891742716:7@s.whatsapp.net" → "554891742716")
+          const jid = evoInst.ownerJid || ''
+          const phoneFromJid = jid.split('@')[0].split(':')[0] || ''
+
+          // Generate a readable name from instance name
+          // e.g., "OctupusZap_Artur_d4x0u0j8" → "Artur"
+          const namePart = evoInst.name.replace('OctupusZap_', '').replace(/_[a-z0-9]+$/, '')
+          const displayName = namePart || evoInst.name
+
+          try {
+            const existingChipsForGen = await db.chip.findMany({
+              select: { wireguardIp: true, socksPort: true },
+            })
+            const usedIps = existingChipsForGen.map((c) => c.wireguardIp).filter(Boolean) as string[]
+            const usedPorts = existingChipsForGen.map((c) => c.socksPort).filter(Boolean) as number[]
+            const wireguardIp = generateWireGuardIp(usedIps)
+            const socksPort = generateSocksPort(usedPorts)
+            const { privateKey, publicKey } = generateWireGuardKeys()
+
+            const newChip = await db.chip.create({
+              data: {
+                name: displayName,
+                phoneNumber: phoneFromJid || `auto-${Date.now()}`,
+                wireguardIp,
+                wireguardPrivKey: privateKey,
+                wireguardPubKey: publicKey,
+                socksPort,
+                evolutionInstance: evoInst.name,
+                status: evoInst.connected ? 'connected' : 'disconnected',
+                isQrPaired: evoInst.connected,
+                profileName: evoInst.profileName || null,
+                lastSeen: evoInst.connected ? new Date() : undefined,
+              },
+            })
+
+            // Add WireGuard peer on the server
+            if (publicKey && wireguardIp) {
+              addWireGuardPeer(publicKey, wireguardIp).catch(err => {
+                console.error('[Chips Sync] WireGuard peer add failed for auto-imported chip:', err)
+              })
+            }
+
+            // Add to chips list for the response
+            chips.push(newChip as any)
+            dbInstanceNames.add(evoInst.name)
+
+            console.log(`[Chips Sync] Auto-imported chip "${displayName}" (instance: ${evoInst.name})`)
+          } catch (importErr) {
+            console.error(`[Chips Sync] Failed to auto-import instance "${evoInst.name}":`, importErr)
+          }
+        }
+      }
+
+      // --- Direction 2: Evolution → OctupusZap (mark orphaned chips) ---
+      // Mark chips whose instances no longer exist in Evolution API.
+      // This handles the case where someone deletes an instance directly in the
+      // Evolution API dashboard — the chip should show as disconnected.
       const orphanedChips: { id: string; name: string }[] = []
       for (const chip of chips) {
         if (chip.evolutionInstance && !instanceMap.has(chip.evolutionInstance)) {
-          // Only auto-mark OctupusZap-managed instances (with prefix)
           if (v3IsOctupusZap(chip.evolutionInstance)) {
             orphanedChips.push({ id: chip.id, name: chip.name })
           }
         }
       }
       if (orphanedChips.length > 0) {
-        console.log(`[Chips Cleanup] Marking ${orphanedChips.length} orphaned chips as instance_not_found...`)
+        console.log(`[Chips Sync] Marking ${orphanedChips.length} orphaned chips as disconnected (instance deleted from Evolution API)...`)
         for (const { id, name } of orphanedChips) {
           await db.chip.update({
             where: { id },
@@ -110,7 +181,6 @@ export async function GET() {
             },
           }).catch(() => {})
         }
-        console.log(`[Chips Cleanup] Marked ${orphanedChips.length} orphaned chips as disconnected (instance_not_found) — they will NOT be deleted automatically`)
       }
     }
 
@@ -245,9 +315,42 @@ export async function DELETE(request: NextRequest) {
     if (chip) {
       const instanceName = chip.evolutionInstance || v3GetInstanceName(chip.id, chip.name)
 
-      // Disconnect and delete instance
-      try { await routerDisconnectInstance(instanceName) } catch { /* may already be disconnected */ }
-      try { await routerDeleteInstance(instanceName) } catch { /* may not exist */ }
+      // ============================================
+      // BIDIRECTIONAL SYNC: Delete instance from Evolution API
+      // ============================================
+      // When a chip is deleted from OctupusZap, the corresponding instance
+      // in Evolution API MUST also be deleted. We try multiple times to
+      // ensure the instance is cleaned up — no silent failures.
+      if (instanceName && v3IsOctupusZap(instanceName)) {
+        // First, disconnect the instance
+        try {
+          await routerDisconnectInstance(instanceName)
+          console.log(`[Chips DELETE] Disconnected instance "${instanceName}" from Evolution API`)
+        } catch (err) {
+          console.log(`[Chips DELETE] Disconnect failed for "${instanceName}" (may already be disconnected):`, err instanceof Error ? err.message : err)
+        }
+
+        // Then, delete the instance with retry
+        let deleted = false
+        for (let attempt = 1; attempt <= 3 && !deleted; attempt++) {
+          try {
+            await routerDeleteInstance(instanceName)
+            deleted = true
+            console.log(`[Chips DELETE] Deleted instance "${instanceName}" from Evolution API (attempt ${attempt})`)
+          } catch (err) {
+            const errMsg = err instanceof Error ? err.message : String(err)
+            console.warn(`[Chips DELETE] Delete attempt ${attempt}/3 failed for "${instanceName}": ${errMsg}`)
+            if (attempt < 3) {
+              // Wait before retrying
+              await new Promise(r => setTimeout(r, 2000))
+            }
+          }
+        }
+
+        if (!deleted) {
+          console.error(`[Chips DELETE] ⚠️ FAILED to delete instance "${instanceName}" from Evolution API after 3 attempts! Instance may be orphaned.`)
+        }
+      }
 
       // Remove WireGuard peer from KVM8 server
       if (chip.wireguardPubKey && chip.wireguardIp) {
