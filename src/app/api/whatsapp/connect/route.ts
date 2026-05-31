@@ -91,22 +91,24 @@ export async function POST(request: Request) {
         if (hasStoredSession && realStateValue === 'connecting') {
           // Instance has a stored session and is in "connecting" state.
           // This likely means Evolution Go is trying to auto-restore the session.
-          // Try calling /instance/connect — it may auto-restore without QR code.
-          console.log(`[Connect] Chip "${chip.name}" has stored session (jid=${storedJid}) and state=connecting. Trying auto-restore via /instance/connect...`)
-
-          // Fall through to the normal connect flow below — DON'T delete the instance.
-          // The connect flow will call /instance/connect which may auto-restore the session.
-          // If auto-restore works (returns state=open), great!
-          // If not, it will return a QR code for the user to scan.
+          // Fall through to the normal connect flow — it will try /instance/connect
+          // which may auto-restore the session. If it fails, the stale session
+          // cleanup logic below will handle it (delete + recreate).
+          console.log(`[Connect] Chip "${chip.name}" has stored session (jid=${storedJid}) and state=connecting. Will try auto-restore via /instance/connect...`)
         }
 
-        // Only delete+recreate if there's NO stored session AND the instance
-        // is not in a usable state (stuck at 'close' with no jid).
-        // This handles the case where the instance was created but never connected
-        // and is now in a zombie state.
+        // If the instance has a stored session but is in 'close' state,
+        // the session is STALE — Evolution Go can't restore it.
+        // Fall through to the normal connect flow. The connectInstance() function
+        // will detect the stale jid and disconnect+reconnect to get a fresh QR code.
+        // If that still fails, the zombie detection below will delete and recreate.
+        if (hasStoredSession && realStateValue === 'close') {
+          console.log(`[Connect] Chip "${chip.name}" has STALE stored session (jid=${storedJid}, state=close). Will try disconnect+reconnect...`)
+        }
+
+        // No stored session and state=close — normal case, just fall through.
         if (!hasStoredSession && realStateValue === 'close') {
-          console.log(`[Connect] Chip "${chip.name}" has no stored session and state=close. Will try normal connect (no deletion needed).`)
-          // Fall through to normal connect — no deletion needed
+          console.log(`[Connect] Chip "${chip.name}" has no stored session and state=close. Will try normal connect.`)
         }
       } catch {
         // Status check failed — proceed with normal connect flow
@@ -244,8 +246,10 @@ export async function POST(request: Request) {
     // Deleting would destroy the session and force another QR scan.
     // Only delete if there's no jid (instance was created but never connected).
     if (!qrcode && effectiveState !== 'open') {
-      // Check if instance has a stored session before deciding to delete
+      // No QR code and not connected — the instance is stuck.
+      // Check if instance has a stored session (jid) and whether it's active or stale.
       let instanceHasJid = false
+      let instanceSessionIsStale = false
       try {
         const { fetchInstances } = await import('@/lib/evolution-api')
         const allInstances = await fetchInstances()
@@ -253,105 +257,133 @@ export async function POST(request: Request) {
         if (currentInstance) {
           instanceHasJid = !!(currentInstance.jid || currentInstance.ownerJid)
         }
-      } catch { /* can't check — be safe and don't delete */ }
 
-      if (instanceHasJid) {
-        // Instance has a stored session — DON'T delete it!
-        // It might be reconnecting. Just return the current state.
-        console.log(`[Connect] Instance "${effectiveInstanceName}" has stored session (jid) but no QR code. NOT deleting — session may be reconnecting.`)
-      } else {
-        // No stored session — safe to delete and recreate
-        console.log(`[Connect] No QR code, not connected, no stored session for "${effectiveInstanceName}" — checking for zombie state...`)
-
-        try {
-          // Wait a bit more and check status
-          await new Promise(r => setTimeout(r, 3000))
-          const statusCheck = await v3GetConnectionState(effectiveInstanceName)
-
-          if (statusCheck.state === 'close') {
-            console.log(`[Connect] Instance "${effectiveInstanceName}" is zombie (state=close after connect, no jid). Deleting and recreating...`)
-
-            // Delete the zombie instance
-            try { await routerDisconnectInstance(effectiveInstanceName) } catch { /* may fail */ }
-            try { await routerDeleteInstance(effectiveInstanceName) } catch { /* may fail */ }
-
-            // Wait for deletion to take effect
-            await new Promise(r => setTimeout(r, 2000))
-
-            // Clear instance ID cache — the old UUID/token is now invalid
-            clearInstanceIdCache()
-
-            // Recreate instance from scratch — WITHOUT proxy!
-            const newInstance = await createInstance(instanceName, undefined)
-            const newEffectiveName = newInstance.name || instanceName
-
-            const newConnectResult = await routerConnectInstance(newEffectiveName, webhookUrl)
-
-            qrcode = newConnectResult.qrcode
-            code = newConnectResult.code || newConnectResult.pairingCode || null
-            effectiveState = newConnectResult.state || 'close'
-
-            if (!qrcode && effectiveState !== 'open') {
-              try {
-                await new Promise(r => setTimeout(r, 2000))
-                const retryQr = await getInstanceQRCode(newEffectiveName)
-                qrcode = retryQr.qrcode ?? null
-                code = code ?? retryQr.code ?? null
-                if (retryQr.state === 'open') {
-                  effectiveState = 'open'
-                }
-              } catch {
-                // QR not available yet
-              }
-            }
-
-            console.log(`[Connect] Zombie recovery: qrcode=${!!qrcode}, state=${effectiveState}`)
-
-            // Verify state after zombie recovery
-            if (effectiveState === 'open') {
-              try {
-                const verifiedState = await v3GetConnectionState(newEffectiveName)
-                const verifiedRealState = verifiedState.state || 'close'
-                if (verifiedRealState !== 'open') {
-                  console.log(`[Connect] Zombie recovery: effectiveState was 'open' but /instance/status returned '${verifiedRealState}'. Correcting.`)
-                  effectiveState = verifiedRealState
-                }
-              } catch {
-                console.warn(`[Connect] Zombie recovery: Could not verify connection state for ${newEffectiveName}. Defaulting to 'close'.`)
-                effectiveState = 'close'
-              }
-            }
-
-            const isRecoveredConnected = effectiveState === 'open'
-            const recoveryStatus = isRecoveredConnected ? 'connected' : 'connecting'
-
-            await db.chip.update({
-              where: { id: chipId },
-              data: {
-                status: recoveryStatus,
-                evolutionInstance: newEffectiveName,
-                qrPairingCode: code,
-                lastSeen: isRecoveredConnected ? new Date() : chip.lastSeen,
-                ...(isRecoveredConnected ? { isQrPaired: true } : {}),
-              },
-            })
-
-            // Set proxy AFTER instance is connected (non-blocking)
-            if (isRecoveredConnected && proxyConfig && proxyConfig.enabled) {
-              setProxy(newEffectiveName, proxyConfig).catch(err => {
-                console.warn(`[Connect] Failed to set proxy after zombie recovery for ${newEffectiveName}:`, err)
+        // If the instance has a jid, verify whether the session is actually active
+        if (instanceHasJid) {
+          try {
+            const statusCheck = await v3GetConnectionState(effectiveInstanceName)
+            const realState = statusCheck.state || 'close'
+            // If the real state is NOT 'open', the session is stale — the jid is from
+            // a dead session that Evolution Go can't restore. We need to clear it.
+            if (realState !== 'open') {
+              instanceSessionIsStale = true
+              console.log(`[Connect] Instance "${effectiveInstanceName}" has jid but session is STALE (state=${realState}). Will force cleanup.`)
+            } else {
+              // Session is actually active — the initial connect just missed it
+              console.log(`[Connect] Instance "${effectiveInstanceName}" has active session (state=open). Restoring DB status.`)
+              await db.chip.update({
+                where: { id: chipId },
+                data: {
+                  status: 'connected',
+                  isQrPaired: true,
+                  lastSeen: new Date(),
+                },
+              })
+              return NextResponse.json({
+                instanceName: effectiveInstanceName,
+                qrcode: null,
+                code: null,
+                state: 'open',
               })
             }
+          } catch {
+            // Can't verify — assume stale to be safe
+            instanceSessionIsStale = true
+          }
+        }
+      } catch { /* can't check — proceed with cleanup */ }
 
-            return NextResponse.json({
-              instanceName: newEffectiveName,
-              qrcode: qrcode || null,
-              code: code || null,
-              state: effectiveState,
+      // For instances with stale sessions OR no jid at all — we need to
+      // delete and recreate to force a fresh QR code.
+      // The connectInstance() function already tried disconnect+reconnect for stale sessions,
+      // but if we still don't have a QR code, the instance needs a full reset.
+      if (!instanceHasJid || instanceSessionIsStale) {
+        console.log(`[Connect] No QR code after connect for "${effectiveInstanceName}" (hasJid=${instanceHasJid}, stale=${instanceSessionIsStale}). Deleting and recreating...`)
+
+        try {
+          // Wait a bit more for any pending operations
+          await new Promise(r => setTimeout(r, 2000))
+
+          // Disconnect and delete the instance
+          try { await routerDisconnectInstance(effectiveInstanceName) } catch { /* may fail */ }
+          try { await routerDeleteInstance(effectiveInstanceName) } catch { /* may fail */ }
+
+          // Wait for deletion to take effect
+          await new Promise(r => setTimeout(r, 2000))
+
+          // Clear instance ID cache — the old UUID/token is now invalid
+          clearInstanceIdCache()
+
+          // Recreate instance from scratch — WITHOUT proxy!
+          const newInstance = await createInstance(instanceName, undefined)
+          const newEffectiveName = newInstance.name || instanceName
+
+          const newConnectResult = await routerConnectInstance(newEffectiveName, webhookUrl)
+
+          qrcode = newConnectResult.qrcode
+          code = newConnectResult.code || newConnectResult.pairingCode || null
+          effectiveState = newConnectResult.state || 'close'
+
+          if (!qrcode && effectiveState !== 'open') {
+            try {
+              await new Promise(r => setTimeout(r, 2000))
+              const retryQr = await getInstanceQRCode(newEffectiveName)
+              qrcode = retryQr.qrcode ?? null
+              code = code ?? retryQr.code ?? null
+              if (retryQr.state === 'open') {
+                effectiveState = 'open'
+              }
+            } catch {
+              // QR not available yet
+            }
+          }
+
+          console.log(`[Connect] Instance recovery: qrcode=${!!qrcode}, state=${effectiveState}`)
+
+          // Verify state after recovery
+          if (effectiveState === 'open') {
+            try {
+              const verifiedState = await v3GetConnectionState(newEffectiveName)
+              const verifiedRealState = verifiedState.state || 'close'
+              if (verifiedRealState !== 'open') {
+                console.log(`[Connect] Recovery: effectiveState was 'open' but /instance/status returned '${verifiedRealState}'. Correcting.`)
+                effectiveState = verifiedRealState
+              }
+            } catch {
+              console.warn(`[Connect] Recovery: Could not verify connection state for ${newEffectiveName}. Defaulting to 'close'.`)
+              effectiveState = 'close'
+            }
+          }
+
+          const isRecoveredConnected = effectiveState === 'open'
+          const recoveryStatus = isRecoveredConnected ? 'connected' : 'connecting'
+
+          await db.chip.update({
+            where: { id: chipId },
+            data: {
+              status: recoveryStatus,
+              evolutionInstance: newEffectiveName,
+              qrPairingCode: code,
+              lastSeen: isRecoveredConnected ? new Date() : chip.lastSeen,
+              ...(isRecoveredConnected ? { isQrPaired: true } : {}),
+            },
+          })
+
+          // Set proxy AFTER instance is connected (non-blocking)
+          if (isRecoveredConnected && proxyConfig && proxyConfig.enabled) {
+            setProxy(newEffectiveName, proxyConfig).catch(err => {
+              console.warn(`[Connect] Failed to set proxy after recovery for ${newEffectiveName}:`, err)
             })
           }
-        } catch (zombieErr) {
-          console.error(`[Connect] Zombie detection failed for "${effectiveInstanceName}":`, zombieErr)
+
+          return NextResponse.json({
+            instanceName: newEffectiveName,
+            qrcode: qrcode || null,
+            code: code || null,
+            state: effectiveState,
+          })
+        } catch (recoveryErr) {
+          console.error(`[Connect] Instance recovery failed for "${effectiveInstanceName}":`, recoveryErr)
           // Fall through to normal response
         }
       }

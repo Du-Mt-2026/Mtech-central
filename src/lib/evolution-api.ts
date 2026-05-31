@@ -731,17 +731,115 @@ export async function connectInstance(
           pairingCode: null,
         };
       } else {
-        // jid present but NOT actually logged in — stale session.
-        // Return 'close' so the caller proceeds with the QR code flow.
-        console.log(`[connectInstance] Instance ${instanceIdOrName} has jid but NOT LoggedIn (Connected=${verifyStatus.Connected}, LoggedIn=${verifyStatus.LoggedIn}). Treating as close — QR code flow will proceed.`);
-        return {
-          state: 'close',
-          instanceName: instanceIdOrName,
-          instanceId: instanceId,
-          qrcode: null,
-          code: null,
-          pairingCode: null,
-        };
+        // jid present but NOT actually logged in — STALE session.
+        // Evolution Go is stuck trying to restore a dead session, which prevents
+        // QR code generation. We must disconnect to clear the stale session,
+        // then reconnect to get a fresh QR code.
+        console.log(`[connectInstance] Instance ${instanceIdOrName} has STALE session (jid present, Connected=${verifyStatus.Connected}, LoggedIn=${verifyStatus.LoggedIn}). Disconnecting to force new QR code...`);
+
+        try {
+          await evolutionFetch('/instance/disconnect', {
+            method: 'POST',
+          }, instanceId, instanceToken);
+          // Wait for disconnect to take effect
+          await new Promise(r => setTimeout(r, 2000));
+        } catch (disconnectErr) {
+          console.warn(`[connectInstance] Disconnect failed for stale session ${instanceIdOrName}:`, disconnectErr);
+        }
+
+        // Reconnect — this time without a stale session, Evolution Go should generate a new QR code
+        try {
+          const reconnectResponse = await evolutionFetch('/instance/connect', {
+            method: 'POST',
+            body: JSON.stringify(body),
+          }, instanceId, instanceToken);
+          const reconnectData = await reconnectResponse.json();
+          const reconnectResult = reconnectData.data || reconnectData;
+
+          // If reconnect returned a jid again AND is actually logged in, great
+          if (reconnectResult.jid) {
+            try {
+              const reverifyResponse = await evolutionFetch('/instance/status', {}, instanceId, instanceToken);
+              const reverifyData = await reverifyResponse.json();
+              const reverifyStatus = reverifyData.data || reverifyData;
+              if (reverifyStatus.Connected && reverifyStatus.LoggedIn) {
+                console.log(`[connectInstance] Stale session recovered for ${instanceIdOrName} after disconnect+reconnect!`);
+                return {
+                  state: 'open',
+                  instanceName: instanceIdOrName,
+                  instanceId: instanceId,
+                  qrcode: null,
+                  code: null,
+                  pairingCode: null,
+                };
+              }
+            } catch { /* verification failed */ }
+          }
+
+          // After disconnect+reconnect, instance should be generating a new QR code
+          // Try to fetch it immediately
+          try {
+            await new Promise(r => setTimeout(r, 2000));
+            const qrResponse = await evolutionFetch('/instance/qr', {}, instanceId, instanceToken);
+            const qrData = await qrResponse.json();
+            if (qrData.error === 'session already logged in') {
+              return {
+                state: 'open',
+                instanceName: instanceIdOrName,
+                instanceId: instanceId,
+                qrcode: null,
+                code: null,
+                pairingCode: null,
+              };
+            }
+            const qrResult = qrData.data || qrData;
+            if (qrResult.Qrcode) {
+              console.log(`[connectInstance] QR code obtained for ${instanceIdOrName} after stale session cleanup!`);
+              return {
+                state: 'close',
+                instanceName: instanceIdOrName,
+                instanceId: instanceId,
+                qrcode: qrResult.Qrcode,
+                code: qrResult.Code || null,
+                pairingCode: null,
+              };
+            }
+          } catch (qrErr: any) {
+            const errMsg = String(qrErr?.message || qrErr);
+            if (errMsg.includes('session already logged in')) {
+              return {
+                state: 'open',
+                instanceName: instanceIdOrName,
+                instanceId: instanceId,
+                qrcode: null,
+                code: null,
+                pairingCode: null,
+              };
+            }
+            console.warn(`[connectInstance] QR fetch after stale cleanup failed for ${instanceIdOrName}:`, errMsg);
+          }
+
+          // QR code not available yet — will come via webhook
+          console.log(`[connectInstance] QR code not yet available for ${instanceIdOrName} after stale cleanup. Will arrive via webhook.`);
+          return {
+            state: 'close',
+            instanceName: instanceIdOrName,
+            instanceId: instanceId,
+            qrcode: null,
+            code: null,
+            pairingCode: null,
+          };
+        } catch (reconnectErr) {
+          console.warn(`[connectInstance] Reconnect after stale session cleanup failed for ${instanceIdOrName}:`, reconnectErr);
+          return {
+            state: 'close',
+            instanceName: instanceIdOrName,
+            instanceId: instanceId,
+            qrcode: null,
+            code: null,
+            pairingCode: null,
+          };
+        }
       }
     } catch (verifyErr) {
       // Verification failed — don't assume connected. Be safe and return 'close'

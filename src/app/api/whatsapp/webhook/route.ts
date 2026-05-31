@@ -143,13 +143,22 @@ export async function POST(request: Request) {
           // as 'connecting' (not 'disconnected') and DON'T clear isQrPaired.
           // Evolution Go will either restore the session (sending Connected event)
           // or fail permanently (sending another Disconnected with a different reason).
-          const TEMPORARY_DISCONNECT_REASONS = ['reconnecting', 'reconnect', 'replacing', 'replaced', 'restart']
+          const TEMPORARY_DISCONNECT_REASONS = ['reconnecting', 'reconnect', 'replacing', 'replaced', 'restart', 'logged out', 'logout']
           const isTemporaryDisconnect = TEMPORARY_DISCONNECT_REASONS.some(r =>
             reason.toLowerCase().includes(r)
           )
 
-          if (isTemporaryDisconnect) {
-            console.log(`[Webhook] Instance ${chipInstanceName} temporary disconnect (reason: "${reason}"). Keeping as 'connecting' — Evolution Go will auto-restore.`)
+          // CRITICAL FIX 2: If the chip was JUST connected (within the last 60 seconds),
+          // treat ANY disconnect as temporary. Evolution Go frequently sends a brief
+          // Disconnected event right after a QR code scan, which is part of the normal
+          // connection establishment process. If we process this as a real disconnect,
+          // we'll immediately mark the chip as disconnected and potentially destroy
+          // the active session.
+          const wasRecentlyConnected = chip.status === 'connected' && chip.lastSeen &&
+            (Date.now() - new Date(chip.lastSeen).getTime()) < 60000 // 60 seconds
+
+          if (isTemporaryDisconnect || wasRecentlyConnected) {
+            console.log(`[Webhook] Instance ${chipInstanceName} temporary disconnect (reason: "${reason}", recentlyConnected=${wasRecentlyConnected}). Keeping as 'connecting' — Evolution Go will auto-restore.`)
             await db.chip.update({
               where: { id: chip.id },
               data: {
