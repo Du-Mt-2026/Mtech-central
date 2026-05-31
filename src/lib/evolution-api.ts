@@ -740,9 +740,48 @@ export async function connectInstance(
   // that's still in the handshake phase.
 
   if (result.jid) {
-    console.log(`[connectInstance] Instance ${instanceIdOrName} returned jid=${result.jid} from /instance/connect. Treating as connected (session restored or restoring).`);
+    // /instance/connect returned a jid — this means there IS a stored session,
+    // but it might be stale (Connected=true, LoggedIn=false) or active (both true).
+    // We MUST verify against /instance/status to know the real state.
+    //
+    // Previously we returned 'open' blindly, which caused the bug where the website
+    // showed "Conectado" for instances that were actually "Desconectado" in the
+    // Evolution API dashboard (Connected=true, LoggedIn=false = not really connected).
+    console.log(`[connectInstance] Instance ${instanceIdOrName} returned jid=${result.jid} from /instance/connect. Verifying real status...`);
+
+    try {
+      const verifyResponse = await evolutionFetch('/instance/status', {}, instanceId, instanceToken);
+      const verifyData = await verifyResponse.json();
+      const verifyStatus = verifyData.data || verifyData;
+
+      if (verifyStatus.Connected && verifyStatus.LoggedIn) {
+        // Truly connected — session is active
+        console.log(`[connectInstance] Instance ${instanceIdOrName} is truly connected (Connected=true, LoggedIn=true)`);
+        return {
+          state: 'open',
+          instanceName: instanceIdOrName,
+          instanceId: instanceId,
+          qrcode: null,
+          code: null,
+          pairingCode: null,
+        };
+      }
+
+      // Has jid but NOT fully connected — stale or disconnected session.
+      // The instance needs a fresh QR code scan to connect.
+      // Fall through to let the caller handle this (e.g., disconnect + reconnect).
+      console.log(`[connectInstance] Instance ${instanceIdOrName} has jid but NOT fully connected (Connected=${verifyStatus.Connected}, LoggedIn=${verifyStatus.LoggedIn}). Session is stale — needs fresh QR code.`);
+    } catch (verifyErr) {
+      // Verification failed — be conservative and assume NOT connected.
+      // Better to show "disconnected" and let the user try again than
+      // to falsely show "connected".
+      console.warn(`[connectInstance] Status verification failed for ${instanceIdOrName}:`, verifyErr);
+    }
+
+    // Session is stale or verification failed — return 'close' so caller
+    // can disconnect + reconnect to get a fresh QR code.
     return {
-      state: 'open',
+      state: 'close',
       instanceName: instanceIdOrName,
       instanceId: instanceId,
       qrcode: null,

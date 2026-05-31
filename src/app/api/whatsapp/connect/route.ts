@@ -152,13 +152,10 @@ export async function POST(request: Request) {
         }
       }
 
-      // NOTE: We do NOT verify effectiveState='open' against /instance/status here.
-      // After /instance/connect returns a jid, the session may still be in the
-      // WhatsApp handshake phase (Connected=true, LoggedIn=false). If we call
-      // /instance/status during this window, it would return 'connecting' and we'd
-      // incorrectly override 'open' to 'connecting' — losing the connection status.
-      // The webhook will confirm the connection via 'Connected' event, and the
-      // frontend polling will eventually see the real state.
+      // connectInstance() already verifies against /instance/status when a jid is returned.
+      // If state='open', it means Connected=true AND LoggedIn=true — truly connected.
+      // If state='close', the session was stale (Connected=true, LoggedIn=false) or
+      // there was no stored session — needs QR code to connect.
 
       const isConnected = effectiveState === 'open'
       const newStatus = isConnected ? 'connected' : 'connecting'
@@ -366,11 +363,9 @@ export async function POST(request: Request) {
       }
     }
 
-    // NOTE: We do NOT verify effectiveState='open' against /instance/status here.
-    // Same reason as the new-instance path — the WhatsApp handshake may still be
-    // in progress (Connected=true, LoggedIn=false), and calling /instance/status
-    // would incorrectly return 'connecting', causing us to override the 'open' state.
-    // The webhook and polling will confirm the actual state.
+    // connectInstance() already verifies against /instance/status when a jid is returned.
+    // If state='open', the instance is truly connected (Connected=true AND LoggedIn=true).
+    // If state='close', the session is stale or missing — needs QR code.
 
     const isConnected = effectiveState === 'open'
     const newStatus = isConnected ? 'connected' : 'connecting'
