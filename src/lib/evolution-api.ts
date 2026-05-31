@@ -1244,10 +1244,19 @@ export function resolveChipProxy(chip: {
 }
 
 /**
- * Set proxy on an instance.
- * Proxy is set at instance creation time via the `proxy` field.
- * To update proxy after creation, the instance needs to be deleted and recreated.
- * Alternative: Delete proxy via DELETE /instance/proxy/{instanceId}
+ * Set proxy on an instance AFTER creation using POST /instance/proxy/{instanceId}.
+ *
+ * CRITICAL: Proxy must NOT be set at instance creation time because:
+ *   1. The proxy (WireGuard/SOCKS5) may be unreachable from the Evolution Go server
+ *   2. Adding proxy at creation prevents the instance from connecting to WhatsApp
+ *   3. This blocks QR code generation entirely
+ *
+ * Instead, create the instance WITHOUT proxy, connect it (get QR code),
+ * then add the proxy via this function after the instance is connected.
+ *
+ * The POST /instance/proxy/{instanceId} endpoint accepts:
+ *   { host, port, username, password, protocol }
+ * Protocol defaults to "http" — must explicitly set "socks5" for WireGuard proxies.
  */
 export async function setProxy(
   instanceIdOrName: string,
@@ -1257,27 +1266,39 @@ export async function setProxy(
     port: string;
     username: string;
     password: string;
+    protocol?: string;
   }
 ): Promise<void> {
-  // Proxy is configured at instance creation time.
-  // To update proxy after creation, the instance needs to be deleted and recreated.
+  const { id: instanceId } = await resolveInstance(instanceIdOrName);
 
   // If proxy is being disabled, delete the proxy configuration
   if (!proxy.enabled) {
     try {
-      const { id: instanceId, token: instanceToken } = await resolveInstance(instanceIdOrName);
       await evolutionFetch(`/instance/proxy/${instanceId}`, {
         method: 'DELETE',
-      }, undefined, instanceToken);
+      });
     } catch {
       // Silently ignore — proxy removal is not critical
     }
     return;
   }
 
-  // For enabling/changing proxy, we would need to recreate the instance.
-  // For now, this is handled at connect time where we recreate with proxy.
-  console.log(`[Evolution Go] Proxy update for ${instanceIdOrName} will be applied on next instance creation/reconnect`);
+  // Set proxy via POST /instance/proxy/{instanceId}
+  // Uses the GLOBAL API key (not instance token) — confirmed working via API testing.
+  // The protocol field defaults to "http" in Evolution Go — we MUST explicitly
+  // pass "socks5" for WireGuard/Every Proxy configurations.
+  await evolutionFetch(`/instance/proxy/${instanceId}`, {
+    method: 'POST',
+    body: JSON.stringify({
+      host: proxy.host,
+      port: proxy.port,
+      username: proxy.username || 'none',
+      password: proxy.password || 'none',
+      protocol: proxy.protocol || 'socks5',
+    }),
+  });
+
+  console.log(`[Evolution Go] Proxy set for ${instanceIdOrName}: ${proxy.protocol || 'socks5'}://${proxy.host}:${proxy.port}`);
 }
 
 // ============ Webhook Configuration ============

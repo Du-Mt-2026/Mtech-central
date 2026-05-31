@@ -30,7 +30,6 @@ import {
   getGlobalProxy,
   setWebhook,
   createInstance,
-  toEvolutionGoProxy,
   findInstanceByName,
   testAllConnections as testConnection,
 } from './evolution-router'
@@ -551,11 +550,10 @@ async function attemptReconnection(entry: ReconnectionEntry): Promise<void> {
     const existing = await findInstanceByName(instanceName)
 
     if (!existing) {
-      // Instance was deleted — need to recreate
+      // Instance was deleted — need to recreate WITHOUT proxy
+      // (proxy blocks QR code generation; it's set after connection via POST /instance/proxy)
       console.log(`[ReconnectQueue] Instance ${instanceName} no longer exists, recreating`)
-      const globalProxy = await getGlobalProxy()
-      const proxyConfig = resolveChipProxy(chip, globalProxy)
-      const newInstance = await createInstance(instanceName, proxyConfig ? toEvolutionGoProxy(proxyConfig) : undefined)
+      const newInstance = await createInstance(instanceName, undefined)
       effectiveInstanceName = newInstance.name || instanceName
     }
 

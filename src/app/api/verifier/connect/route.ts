@@ -8,7 +8,7 @@ import {
   getInstanceName,
   resolveChipProxy,
   getGlobalProxy,
-  toEvolutionGoProxy,
+  setProxy,
 } from '@/lib/evolution-api'
 
 export async function POST(request: NextRequest) {
@@ -39,8 +39,9 @@ export async function POST(request: NextRequest) {
     let existing = await findInstanceByName(instanceName)
 
     if (!existing) {
-      // Create new instance with proxy at creation time (v3)
-      const newInstance = await createInstance(instanceName, toEvolutionGoProxy(proxyConfig))
+      // Create instance WITHOUT proxy — proxy blocks QR code generation
+      // (proxy is set after connection via POST /instance/proxy/{instanceId})
+      const newInstance = await createInstance(instanceName, undefined)
       existing = newInstance
     }
 
@@ -76,6 +77,13 @@ export async function POST(request: NextRequest) {
         ...(isConnected ? { isQrPaired: true } : {}),
       },
     })
+
+    // Set proxy AFTER instance is connected (non-blocking)
+    if (isConnected && proxyConfig && proxyConfig.enabled) {
+      setProxy(effectiveInstanceName, proxyConfig).catch(err => {
+        console.warn(`[Verifier] Failed to set proxy for ${effectiveInstanceName}:`, err)
+      })
+    }
 
     // Return in the format the frontend expects
     if (isConnected) {

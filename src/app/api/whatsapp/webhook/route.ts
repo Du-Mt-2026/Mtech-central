@@ -95,6 +95,23 @@ export async function POST(request: Request) {
               }).catch(() => {})
             }).catch(() => {})
           }
+
+          // Set proxy AFTER the instance is connected (non-blocking).
+          // Instances are created WITHOUT proxy to allow QR code generation.
+          // Once connected, we add the proxy for anti-ban routing.
+          import('@/lib/evolution-api').then(({ setProxy, resolveChipProxy, getGlobalProxy }) => {
+            getGlobalProxy().then(globalProxy => {
+              const proxyConfig = resolveChipProxy(chip, globalProxy)
+              if (proxyConfig && proxyConfig.enabled) {
+                setProxy(chipInstanceName, proxyConfig).then(() => {
+                  console.log(`[Webhook] Proxy set for ${chip.name} after connection`)
+                }).catch(err => {
+                  console.warn(`[Webhook] Failed to set proxy for ${chip.name}:`, err)
+                })
+              }
+            }).catch(() => {})
+          }).catch(() => {})
+
           console.log(`[Webhook] Chip ${chip.name} connected!`)
 
           // Notify reconnection queue — chip successfully reconnected

@@ -8,7 +8,7 @@ import {
   getGlobalProxy,
   findInstanceByName,
 } from '@/lib/evolution-router'
-import { getInstanceName as v3GetInstanceName, findInstanceByName as v3FindInstanceByName, toEvolutionGoProxy as v3ToEvolutionGoProxy, resolveChipProxy, getInstanceQRCode, getConnectionState as v3GetConnectionState, clearInstanceIdCache } from '@/lib/evolution-api'
+import { getInstanceName as v3GetInstanceName, findInstanceByName as v3FindInstanceByName, resolveChipProxy, getInstanceQRCode, getConnectionState as v3GetConnectionState, clearInstanceIdCache, setProxy } from '@/lib/evolution-api'
 
 export async function POST(request: Request) {
   try {
@@ -87,8 +87,16 @@ export async function POST(request: Request) {
     }
 
     if (!existing) {
-      // Create new instance in Evolution Go
-      const newInstance = await createInstance(instanceName, proxyConfig ? v3ToEvolutionGoProxy(proxyConfig) : undefined)
+      // Create new instance in Evolution Go — WITHOUT proxy!
+      //
+      // CRITICAL BUG FIX: Proxy must NOT be set at instance creation time.
+      // The proxy (WireGuard/SOCKS5 at 10.0.0.x:8084) is on a private VPN network
+      // that the Evolution Go server cannot reach. Adding proxy at creation prevents
+      // the instance from connecting to WhatsApp, which blocks QR code generation.
+      //
+      // Fix: Create the instance WITHOUT proxy → get QR code → connect → then
+      // add proxy via POST /instance/proxy/{instanceId} after connection.
+      const newInstance = await createInstance(instanceName, undefined)
       const effectiveInstanceName = newInstance.name || instanceName
 
       // Connect via router
@@ -129,6 +137,15 @@ export async function POST(request: Request) {
           ...(isConnected ? { isQrPaired: true } : {}),
         },
       })
+
+      // Set proxy AFTER the instance is created and connected.
+      // This uses POST /instance/proxy/{instanceId} which doesn't block
+      // the initial WhatsApp connection / QR code generation.
+      if (isConnected && proxyConfig && proxyConfig.enabled) {
+        setProxy(effectiveInstanceName, proxyConfig).catch(err => {
+          console.warn(`[Connect] Failed to set proxy for ${effectiveInstanceName} (non-blocking):`, err)
+        })
+      }
 
       return NextResponse.json({
         instanceName: effectiveInstanceName,
@@ -201,8 +218,9 @@ export async function POST(request: Request) {
           // Clear instance ID cache — the old UUID/token is now invalid
           clearInstanceIdCache()
 
-          // Recreate instance from scratch
-          const newInstance = await createInstance(instanceName, proxyConfig ? v3ToEvolutionGoProxy(proxyConfig) : undefined)
+          // Recreate instance from scratch — WITHOUT proxy!
+          // Same bug fix as above: proxy at creation blocks QR code generation.
+          const newInstance = await createInstance(instanceName, undefined)
           const newEffectiveName = newInstance.name || instanceName
 
           const newConnectResult = await routerConnectInstance(newEffectiveName, webhookUrl)
@@ -240,6 +258,13 @@ export async function POST(request: Request) {
               ...(isRecoveredConnected ? { isQrPaired: true } : {}),
             },
           })
+
+          // Set proxy AFTER instance is connected (non-blocking)
+          if (isRecoveredConnected && proxyConfig && proxyConfig.enabled) {
+            setProxy(newEffectiveName, proxyConfig).catch(err => {
+              console.warn(`[Connect] Failed to set proxy after zombie recovery for ${newEffectiveName}:`, err)
+            })
+          }
 
           return NextResponse.json({
             instanceName: newEffectiveName,
