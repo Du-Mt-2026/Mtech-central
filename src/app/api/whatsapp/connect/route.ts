@@ -152,24 +152,13 @@ export async function POST(request: Request) {
         }
       }
 
-      // CRITICAL FIX: Verify effectiveState against /instance/status before trusting it.
-      // The connect result or QR code fetch may report 'open' based on stale data
-      // (e.g., a stored jid from a previous session). We must verify the ACTUAL
-      // connection state before marking the chip as connected in our DB.
-      if (effectiveState === 'open') {
-        try {
-          const verifiedState = await v3GetConnectionState(effectiveInstanceName)
-          const verifiedRealState = verifiedState.state || 'close'
-          if (verifiedRealState !== 'open') {
-            console.log(`[Connect] effectiveState was 'open' but /instance/status returned '${verifiedRealState}'. Correcting.`)
-            effectiveState = verifiedRealState
-          }
-        } catch {
-          // Verification failed — don't assume connected, be safe
-          console.warn(`[Connect] Could not verify connection state for ${effectiveInstanceName}. Defaulting to 'close'.`)
-          effectiveState = 'close'
-        }
-      }
+      // NOTE: We do NOT verify effectiveState='open' against /instance/status here.
+      // After /instance/connect returns a jid, the session may still be in the
+      // WhatsApp handshake phase (Connected=true, LoggedIn=false). If we call
+      // /instance/status during this window, it would return 'connecting' and we'd
+      // incorrectly override 'open' to 'connecting' — losing the connection status.
+      // The webhook will confirm the connection via 'Connected' event, and the
+      // frontend polling will eventually see the real state.
 
       const isConnected = effectiveState === 'open'
       const newStatus = isConnected ? 'connected' : 'connecting'
@@ -340,20 +329,8 @@ export async function POST(request: Request) {
 
           console.log(`[Connect] Instance recovery: qrcode=${!!qrcode}, state=${effectiveState}`)
 
-          // Verify state after recovery
-          if (effectiveState === 'open') {
-            try {
-              const verifiedState = await v3GetConnectionState(newEffectiveName)
-              const verifiedRealState = verifiedState.state || 'close'
-              if (verifiedRealState !== 'open') {
-                console.log(`[Connect] Recovery: effectiveState was 'open' but /instance/status returned '${verifiedRealState}'. Correcting.`)
-                effectiveState = verifiedRealState
-              }
-            } catch {
-              console.warn(`[Connect] Recovery: Could not verify connection state for ${newEffectiveName}. Defaulting to 'close'.`)
-              effectiveState = 'close'
-            }
-          }
+          // NOTE: No verification of effectiveState='open' against /instance/status here.
+          // Same reason — the WhatsApp handshake may be in progress.
 
           const isRecoveredConnected = effectiveState === 'open'
           const recoveryStatus = isRecoveredConnected ? 'connected' : 'connecting'
@@ -389,21 +366,11 @@ export async function POST(request: Request) {
       }
     }
 
-    // CRITICAL FIX: Verify effectiveState against /instance/status before trusting it.
-    // Same verification as the new-instance path above.
-    if (effectiveState === 'open') {
-      try {
-        const verifiedState = await v3GetConnectionState(effectiveInstanceName)
-        const verifiedRealState = verifiedState.state || 'close'
-        if (verifiedRealState !== 'open') {
-          console.log(`[Connect] effectiveState was 'open' but /instance/status returned '${verifiedRealState}'. Correcting.`)
-          effectiveState = verifiedRealState
-        }
-      } catch {
-        console.warn(`[Connect] Could not verify connection state for ${effectiveInstanceName}. Defaulting to 'close'.`)
-        effectiveState = 'close'
-      }
-    }
+    // NOTE: We do NOT verify effectiveState='open' against /instance/status here.
+    // Same reason as the new-instance path — the WhatsApp handshake may still be
+    // in progress (Connected=true, LoggedIn=false), and calling /instance/status
+    // would incorrectly return 'connecting', causing us to override the 'open' state.
+    // The webhook and polling will confirm the actual state.
 
     const isConnected = effectiveState === 'open'
     const newStatus = isConnected ? 'connected' : 'connecting'

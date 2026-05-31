@@ -705,155 +705,42 @@ export async function connectInstance(
 
   const result = data.data || data;
 
-  // Check if already connected (jid is present) — session was restored by Evolution Go.
-  // CRITICAL FIX: Don't trust jid alone! A jid in the connect response just means Evolution Go
-  // has a stored session — it does NOT mean the session is actually active (LoggedIn=true).
-  // We must verify against /instance/status to avoid falsely reporting "connected" when the
-  // session is actually stale or disconnected.
+  // After calling /instance/connect, check the result.
+  //
+  // CRITICAL ARCHITECTURE DECISION:
+  // We do NOT verify against /instance/status after /instance/connect returns a jid.
+  // Here's why:
+  //
+  // 1. When /instance/connect returns a jid, it means Evolution Go has a stored session.
+  // 2. The session might be in one of these states:
+  //    a) Connected=true, LoggedIn=true  → fully active session (state=open)
+  //    b) Connected=true, LoggedIn=false → WebSocket connected, session restoring (state=connecting)
+  //    c) Connected=false                → dead/stale session (state=close)
+  //
+  // 3. State (b) is the CRITICAL case: this happens AFTER a QR code scan!
+  //    The WhatsApp handshake takes a few seconds, and during that time
+  //    Connected=true but LoggedIn=false. If we call /instance/status during
+  //    this window and see !LoggedIn, we'd incorrectly think it's stale and
+  //    DISCONNECT it — killing the active connection the user just scanned!
+  //
+  // 4. Instead of verifying here, we TRUST the /instance/connect response:
+  //    - If it returns a jid → assume the session is being restored → return 'open'
+  //    - The webhook will confirm via 'Connected' event if the session is truly active
+  //    - The connect route's polling will catch the actual state via /instance/status
+  //
+  // This prevents the race condition where we disconnect an active session
+  // that's still in the handshake phase.
+
   if (result.jid) {
-    console.log(`[connectInstance] Instance ${instanceIdOrName} returned jid=${result.jid} from /instance/connect. Verifying actual connection state...`);
-
-    try {
-      const verifyResponse = await evolutionFetch('/instance/status', {}, instanceId, instanceToken);
-      const verifyData = await verifyResponse.json();
-      const verifyStatus = verifyData.data || verifyData;
-
-      console.log(`[connectInstance] Verification for ${instanceIdOrName}: Connected=${verifyStatus.Connected}, LoggedIn=${verifyStatus.LoggedIn}`);
-
-      if (verifyStatus.Connected && verifyStatus.LoggedIn) {
-        // Session is truly active — safe to report as open
-        return {
-          state: 'open',
-          instanceName: instanceIdOrName,
-          instanceId: instanceId,
-          qrcode: null,
-          code: null,
-          pairingCode: null,
-        };
-      } else {
-        // jid present but NOT actually logged in — STALE session.
-        // Evolution Go is stuck trying to restore a dead session, which prevents
-        // QR code generation. We must disconnect to clear the stale session,
-        // then reconnect to get a fresh QR code.
-        console.log(`[connectInstance] Instance ${instanceIdOrName} has STALE session (jid present, Connected=${verifyStatus.Connected}, LoggedIn=${verifyStatus.LoggedIn}). Disconnecting to force new QR code...`);
-
-        try {
-          await evolutionFetch('/instance/disconnect', {
-            method: 'POST',
-          }, instanceId, instanceToken);
-          // Wait for disconnect to take effect
-          await new Promise(r => setTimeout(r, 2000));
-        } catch (disconnectErr) {
-          console.warn(`[connectInstance] Disconnect failed for stale session ${instanceIdOrName}:`, disconnectErr);
-        }
-
-        // Reconnect — this time without a stale session, Evolution Go should generate a new QR code
-        try {
-          const reconnectResponse = await evolutionFetch('/instance/connect', {
-            method: 'POST',
-            body: JSON.stringify(body),
-          }, instanceId, instanceToken);
-          const reconnectData = await reconnectResponse.json();
-          const reconnectResult = reconnectData.data || reconnectData;
-
-          // If reconnect returned a jid again AND is actually logged in, great
-          if (reconnectResult.jid) {
-            try {
-              const reverifyResponse = await evolutionFetch('/instance/status', {}, instanceId, instanceToken);
-              const reverifyData = await reverifyResponse.json();
-              const reverifyStatus = reverifyData.data || reverifyData;
-              if (reverifyStatus.Connected && reverifyStatus.LoggedIn) {
-                console.log(`[connectInstance] Stale session recovered for ${instanceIdOrName} after disconnect+reconnect!`);
-                return {
-                  state: 'open',
-                  instanceName: instanceIdOrName,
-                  instanceId: instanceId,
-                  qrcode: null,
-                  code: null,
-                  pairingCode: null,
-                };
-              }
-            } catch { /* verification failed */ }
-          }
-
-          // After disconnect+reconnect, instance should be generating a new QR code
-          // Try to fetch it immediately
-          try {
-            await new Promise(r => setTimeout(r, 2000));
-            const qrResponse = await evolutionFetch('/instance/qr', {}, instanceId, instanceToken);
-            const qrData = await qrResponse.json();
-            if (qrData.error === 'session already logged in') {
-              return {
-                state: 'open',
-                instanceName: instanceIdOrName,
-                instanceId: instanceId,
-                qrcode: null,
-                code: null,
-                pairingCode: null,
-              };
-            }
-            const qrResult = qrData.data || qrData;
-            if (qrResult.Qrcode) {
-              console.log(`[connectInstance] QR code obtained for ${instanceIdOrName} after stale session cleanup!`);
-              return {
-                state: 'close',
-                instanceName: instanceIdOrName,
-                instanceId: instanceId,
-                qrcode: qrResult.Qrcode,
-                code: qrResult.Code || null,
-                pairingCode: null,
-              };
-            }
-          } catch (qrErr: any) {
-            const errMsg = String(qrErr?.message || qrErr);
-            if (errMsg.includes('session already logged in')) {
-              return {
-                state: 'open',
-                instanceName: instanceIdOrName,
-                instanceId: instanceId,
-                qrcode: null,
-                code: null,
-                pairingCode: null,
-              };
-            }
-            console.warn(`[connectInstance] QR fetch after stale cleanup failed for ${instanceIdOrName}:`, errMsg);
-          }
-
-          // QR code not available yet — will come via webhook
-          console.log(`[connectInstance] QR code not yet available for ${instanceIdOrName} after stale cleanup. Will arrive via webhook.`);
-          return {
-            state: 'close',
-            instanceName: instanceIdOrName,
-            instanceId: instanceId,
-            qrcode: null,
-            code: null,
-            pairingCode: null,
-          };
-        } catch (reconnectErr) {
-          console.warn(`[connectInstance] Reconnect after stale session cleanup failed for ${instanceIdOrName}:`, reconnectErr);
-          return {
-            state: 'close',
-            instanceName: instanceIdOrName,
-            instanceId: instanceId,
-            qrcode: null,
-            code: null,
-            pairingCode: null,
-          };
-        }
-      }
-    } catch (verifyErr) {
-      // Verification failed — don't assume connected. Be safe and return 'close'
-      // so the QR code flow proceeds instead of falsely claiming connected.
-      console.warn(`[connectInstance] Status verification failed for ${instanceIdOrName} after jid found. Defaulting to 'close' to avoid false positive.`);
-      return {
-        state: 'close',
-        instanceName: instanceIdOrName,
-        instanceId: instanceId,
-        qrcode: null,
-        code: null,
-        pairingCode: null,
-      };
-    }
+    console.log(`[connectInstance] Instance ${instanceIdOrName} returned jid=${result.jid} from /instance/connect. Treating as connected (session restored or restoring).`);
+    return {
+      state: 'open',
+      instanceName: instanceIdOrName,
+      instanceId: instanceId,
+      qrcode: null,
+      code: null,
+      pairingCode: null,
+    };
   }
 
   // Not yet connected — QR code will come via webhook event
