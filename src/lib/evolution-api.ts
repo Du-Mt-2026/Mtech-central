@@ -559,11 +559,14 @@ async function enrichInstancesWithRealStatus(instances: EvolutionInstance[]): Pr
           const data = await response.json();
           const status = data.data || data;
 
-          const realConnected = !!(status.Connected && status.LoggedIn);
-          const realConnecting = !!(status.Connected && !status.LoggedIn);
+          // Connected=true means the instance has an active WhatsApp session.
+          // LoggedIn can be false during the handshake after QR scan, but the
+          // session is still valid and being established. We treat Connected=true
+          // as 'open' to be consistent with getConnectionState() and connectInstance().
+          const realConnected = !!status.Connected;
 
           inst.connected = realConnected;
-          inst.connectionStatus = (realConnected ? 'open' : realConnecting ? 'connecting' : 'close') as 'open' | 'close' | 'connecting';
+          inst.connectionStatus = (realConnected ? 'open' : 'close') as 'open' | 'close' | 'connecting';
 
           // Also update profileName if available
           if (status.Name) {
