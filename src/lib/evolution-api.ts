@@ -518,7 +518,9 @@ export async function fetchInstances(): Promise<EvolutionInstance[]> {
     ignoreStatus: inst.ignoreStatus || false,
     createdAt: inst.createdAt || '',
     disconnect_reason: inst.disconnect_reason || '',
-    connectionStatus: (inst.connected ? 'open' : 'close') as 'open' | 'close' | 'connecting',
+    // Use the API's connectionStatus if available, otherwise derive from connected.
+    // The enrichment function will correct this with the real status.
+    connectionStatus: (inst.connectionStatus || (inst.connected ? 'open' : 'close')) as 'open' | 'close' | 'connecting',
     ownerJid: inst.jid || null,
     profileName: null,
     profilePicUrl: null,
@@ -530,9 +532,9 @@ export async function fetchInstances(): Promise<EvolutionInstance[]> {
     Proxy: null,
   }));
 
-  // CRITICAL FIX: The /instance/all endpoint's `connected` field is unreliable in Evolution Go v3.
-  // It can show `false` even when the instance is actually Connected+LoggedIn.
-  // We must call /instance/status individually for each instance to get the real status.
+  // Enrich with real connection status from /instance/status.
+  // The /instance/all endpoint's `connected` field can be unreliable in Evolution Go v3.
+  // The enrichment function checks both Connected AND LoggedIn for accurate status.
   await enrichInstancesWithRealStatus(mapped);
 
   return mapped;
@@ -559,11 +561,14 @@ async function enrichInstancesWithRealStatus(instances: EvolutionInstance[]): Pr
           const data = await response.json();
           const status = data.data || data;
 
-          // Connected=true means the instance has an active WhatsApp session.
-          // LoggedIn can be false during the handshake after QR scan, but the
-          // session is still valid and being established. We treat Connected=true
-          // as 'open' to be consistent with getConnectionState() and connectInstance().
-          const realConnected = !!status.Connected;
+          // CRITICAL FIX: An instance is only truly connected when BOTH Connected AND LoggedIn are true.
+          // In Evolution Go v3:
+          //   Connected=true, LoggedIn=true  → Actually online and connected (open)
+          //   Connected=true, LoggedIn=false → Has a stored session but NOT currently connected.
+          //     The dashboard shows this as "Desconectado". Treating it as "open" causes the bug
+          //     where the website shows chips as connected when they're actually disconnected.
+          //   Connected=false → No session at all (close)
+          const realConnected = !!(status.Connected && status.LoggedIn);
 
           inst.connected = realConnected;
           inst.connectionStatus = (realConnected ? 'open' : 'close') as 'open' | 'close' | 'connecting';
@@ -900,19 +905,16 @@ export async function getConnectionState(instanceIdOrName: string): Promise<Conn
     const data = await response.json();
     const status = data.data || data;
 
+    // CRITICAL FIX: An instance is only truly connected when BOTH Connected AND LoggedIn are true.
     // In Evolution Go v3:
     //   Connected: true + LoggedIn: true  → WhatsApp session is fully active (open)
-    //   Connected: true + LoggedIn: false → WebSocket connected, session restoring (open)
-    //     NOTE: We treat this as 'open' because:
-    //     - After QR scan, the WhatsApp handshake takes a few seconds
-    //     - During this time Connected=true but LoggedIn=false
-    //     - Treating it as 'connecting' causes the frontend to show "connecting"
-    //       when the session is actually being established
-    //     - The webhook 'Connected' event will fire when LoggedIn becomes true
-    //     - If the session fails, the webhook 'Disconnected' event will fire
+    //   Connected: true + LoggedIn: false → Has stored session but NOT currently connected.
+    //     The Evolution API dashboard shows this as "Desconectado/close".
+    //     Treating it as 'open' was causing the bug where the website showed chips as
+    //     connected when they were actually disconnected.
     //   Connected: false → Disconnected (close)
     const state: 'open' | 'close' | 'connecting' =
-      status.Connected ? 'open' :
+      (status.Connected && status.LoggedIn) ? 'open' :
       'close'
 
     return {
