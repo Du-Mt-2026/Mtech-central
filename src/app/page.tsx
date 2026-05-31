@@ -382,8 +382,8 @@ function DashboardTab({ stats, onRefresh, setActiveTab }: { stats: Stats | null;
 
   const handleRefresh = async () => {
     setRefreshing(true)
-    onRefresh()
-    setTimeout(() => setRefreshing(false), 1000)
+    await onRefresh()
+    setRefreshing(false)
   }
 
   if (!stats) return <div className="flex items-center justify-center py-20"><RefreshCw className="size-6 animate-spin text-muted-foreground" /></div>
@@ -703,12 +703,18 @@ function ChipsTab() {
     init()
   }, [fetchChips, fetchAntiBanSettings])
 
-  // Auto-check proxy statuses when chips are loaded
+  // Auto-check proxy statuses when chips are loaded or changed
+  const chipsIdRef = useRef<string>('')
   useEffect(() => {
     if (chips.length > 0) {
-      checkAllProxies(chips)
+      // Generate a stable fingerprint of chip IDs to detect actual changes
+      const chipFingerprint = chips.map(c => c.id).sort().join(',')
+      if (chipFingerprint !== chipsIdRef.current) {
+        chipsIdRef.current = chipFingerprint
+        checkAllProxies(chips)
+      }
     }
-  }, [chips.length, checkAllProxies])
+  }, [chips, checkAllProxies])
 
   // === Calculate effective daily limit and phase day for a chip ===
   const getChipEffectiveInfo = useCallback((chip: Chip): { effectiveLimit: number; phaseDay: number; phaseMaxDays: number } => {

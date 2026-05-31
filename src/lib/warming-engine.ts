@@ -30,7 +30,7 @@
 import { sendTextMessage, sendMediaMessage, setPresence, formatPhoneNumber, getConnectionState } from './evolution-api'
 import { db } from './db'
 import { toMins, getCurrentMinutes } from './time-utils'
-import { NURSERY_SCHEDULE, PREWARM_SCHEDULE, DEFAULT_HUMAN_BEHAVIOR, type ScheduleEntry, type AntiBanSettings, type HumanBehaviorConfig, type TypingSimulationConfig, type PresenceConfig } from './constants'
+import { NURSERY_SCHEDULE, PREWARM_SCHEDULE, DEFAULT_HUMAN_BEHAVIOR, FIELD_DEFAULTS, type ScheduleEntry, type AntiBanSettings, type HumanBehaviorConfig, type TypingSimulationConfig, type PresenceConfig } from './constants'
 
 // ============================================================
 // TYPES
@@ -1061,12 +1061,20 @@ export async function processNextWarmingMessage(
     })
 
     // If too many errors, pause the session
-    if (session.errorCount >= 10) {
+    // Note: errorCount was just incremented in DB (line above), but session var is stale (pre-increment).
+    // So session.errorCount + 1 is the actual current count in DB.
+    const currentErrorCount = session.errorCount + 1
+    let maxErrors: number = (FIELD_DEFAULTS.warmingAutoPauseErrors as number) ?? 10
+    try {
+      const dbSettings = await db.antiBanSettings.findFirst()
+      if (dbSettings?.warmingAutoPauseErrors) maxErrors = Number(dbSettings.warmingAutoPauseErrors)
+    } catch { /* use default */ }
+    if (currentErrorCount >= maxErrors) {
       await db.warmingSession.update({
         where: { id: sessionId },
         data: {
           status: 'paused',
-          lastError: `Pausado automaticamente após ${session.errorCount + 1} erros: ${error.message?.substring(0, 200)}`,
+          lastError: `Pausado automaticamente após ${currentErrorCount} erros: ${error.message?.substring(0, 200)}`,
         },
       })
       return { processed: false, delayMs: 0, completed: false, reason: 'auto_paused_errors' }

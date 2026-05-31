@@ -412,6 +412,10 @@ export function InboxTab() {
   }, [autoSync])
 
   // Quick polling for new messages + ack changes
+  // Uses a ref to always access latest messages without re-creating the interval
+  const messagesRef = useRef(messages)
+  messagesRef.current = messages
+
   useEffect(() => {
     if (!selectedConversation) return
     const interval = setInterval(async () => {
@@ -424,13 +428,14 @@ export function InboxTab() {
         const res = await fetch(`/api/inbox/messages?${params}`)
         const data = await res.json()
         const newMsgs = data.messages || []
-        if (newMsgs.length !== messages.length) {
+        const currentMessages = messagesRef.current
+        if (newMsgs.length !== currentMessages.length) {
           setMessages(newMsgs)
         } else {
           let statusChanged = false
           for (const nm of newMsgs) {
             if (!nm.fromMe) continue
-            const existing = messages.find(m => m.id === nm.id)
+            const existing = currentMessages.find(m => m.id === nm.id)
             if (existing && (existing.ack !== nm.ack || existing.status !== nm.status)) {
               statusChanged = true; break
             }
@@ -440,25 +445,41 @@ export function InboxTab() {
       } catch { /* silent */ }
     }, 5000)
     return () => clearInterval(interval)
-  }, [selectedConversation, messages])
+  }, [selectedConversation]) // Removed 'messages' from deps — uses ref instead
 
   // ===== Action handlers =====
   const handleReply = async () => {
     if ((!replyText.trim() && !attachedFile) || !selectedConversation) return
     setSending(true)
     try {
-      const res = await fetch('/api/inbox/reply', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chipId: selectedConversation.chipId,
-          remoteJid: selectedConversation.remoteJid,
-          content: replyText.trim(),
-          mediaUrl: attachedFile?.dataUrl || undefined,
-          mediatype: attachedFile?.type || undefined,
-          quotedMsgId: replyingTo?.evolutionMsgId || undefined,
-        }),
-      })
+      // If there's an attached file, use FormData for proper upload instead of sending base64 as mediaUrl
+      let res: Response
+      if (attachedFile?.file) {
+        const formData = new FormData()
+        formData.append('chipId', selectedConversation.chipId || '')
+        formData.append('remoteJid', selectedConversation.remoteJid || '')
+        formData.append('content', replyText.trim())
+        formData.append('mediatype', attachedFile.type || 'document')
+        formData.append('file', attachedFile.file)
+        if (replyingTo?.evolutionMsgId) {
+          formData.append('quotedMsgId', replyingTo.evolutionMsgId)
+        }
+        res = await fetch('/api/inbox/reply', {
+          method: 'POST',
+          body: formData,
+        })
+      } else {
+        res = await fetch('/api/inbox/reply', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chipId: selectedConversation.chipId,
+            remoteJid: selectedConversation.remoteJid,
+            content: replyText.trim(),
+            quotedMsgId: replyingTo?.evolutionMsgId || undefined,
+          }),
+        })
+      }
       const data = await res.json()
       if (data.success) {
         setReplyText('')
@@ -503,6 +524,7 @@ export function InboxTab() {
   }, [selectedConversation, loadingMore, messages])
 
   const fetchProfilePic = useCallback(async (chipId: string, phone: string, key: string) => {
+    // Prevent refetch if already fetched or currently fetching
     if (profilePics[key]) return
     try {
       const res = await fetch(`/api/inbox/profile-pic?chipId=${chipId}&phone=${encodeURIComponent(phone)}`)
@@ -511,7 +533,7 @@ export function InboxTab() {
         setProfilePics(prev => ({ ...prev, [key]: data.profilePicUrl }))
       }
     } catch { /* silent */ }
-  }, [profilePics])
+  }, []) // Removed profilePics from deps to prevent infinite loop
 
   const updateConvStatus = useCallback(async (status: string) => {
     if (!selectedConversation?.chipId || !selectedConversation?.remoteJid) return

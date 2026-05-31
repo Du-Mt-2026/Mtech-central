@@ -127,11 +127,11 @@ function getTypingConfig(settings: AntiBanConfig) {
   return {
     speedMin: ts?.speedMin ?? TYPING_SPEED_MIN,
     speedMax: ts?.speedMax ?? TYPING_SPEED_MAX,
-    pauseChance: (ts?.pauseChance ?? TYPING_PAUSE_CHANCE * 100) / 100,
+    pauseChance: (ts?.pauseChance ?? Math.round(TYPING_PAUSE_CHANCE * 100)) / 100,
     pauseMinMs: ts?.pauseMinMs ?? TYPING_PAUSE_MIN_MS,
     pauseMaxMs: ts?.pauseMaxMs ?? TYPING_PAUSE_MAX_MS,
     longMsgThreshold: ts?.longMsgThreshold ?? TYPING_LONG_MSG_THRESHOLD,
-    longMsgPauseChance: (ts?.longMsgPauseChance ?? TYPING_LONG_MSG_PAUSE_CHANCE * 100) / 100,
+    longMsgPauseChance: (ts?.longMsgPauseChance ?? Math.round(TYPING_LONG_MSG_PAUSE_CHANCE * 100)) / 100,
     segmentsMin: ts?.segmentsMin ?? TYPING_SEGMENTS_MIN,
     segmentsMax: ts?.segmentsMax ?? TYPING_SEGMENTS_MAX,
   }
@@ -142,7 +142,7 @@ function getPresenceConfig(settings: AntiBanConfig) {
   return {
     offlineDelayMinMs: p?.offlineDelayMinMs ?? OFFLINE_DELAY_MIN_MS,
     offlineDelayMaxMs: p?.offlineDelayMaxMs ?? OFFLINE_DELAY_MAX_MS,
-    idleReadingChance: (p?.idleReadingChance ?? IDLE_READING_CHANCE * 100) / 100,
+    idleReadingChance: (p?.idleReadingChance ?? Math.round(IDLE_READING_CHANCE * 100)) / 100,
     idleReadingDurationMinMs: p?.idleReadingDurationMinMs ?? IDLE_READING_DURATION_MIN_MS,
     idleReadingDurationMaxMs: p?.idleReadingDurationMaxMs ?? IDLE_READING_DURATION_MAX_MS,
     idleReadingMinIntervalSec: p?.idleReadingMinIntervalSec ?? IDLE_READING_INTERVAL_MIN_S,
@@ -441,7 +441,10 @@ function getWarmingLimitForDay(
       return entry.limit
     }
   }
-  // Beyond schedule: return the max limit from the last entry
+  // Beyond schedule: return the max limit from the last entry, or a safe default if schedule is empty
+  if (schedule.length === 0) {
+    return phase === 'nursery' ? 10 : 200
+  }
   return schedule[schedule.length - 1].limit
 }
 
@@ -528,8 +531,9 @@ function getEffectiveDailyLimit(
   } else if (phase === 'nursery') {
     dayInPhase = Math.floor((now.getTime() - warmingStart.getTime()) / (1000 * 60 * 60 * 24)) + 1
   } else {
-    // prewarm phase — use warmingStartedAt as reference
-    dayInPhase = Math.floor((now.getTime() - warmingStart.getTime()) / (1000 * 60 * 60 * 24)) + 1
+    // prewarm phase — use prewarmStartedAt as reference (not warmingStartedAt)
+    const prewarmStart = chip.prewarmStartedAt ? new Date(chip.prewarmStartedAt) : warmingStart
+    dayInPhase = Math.floor((now.getTime() - prewarmStart.getTime()) / (1000 * 60 * 60 * 24)) + 1
   }
   
   dayInPhase = Math.max(1, dayInPhase)
@@ -1311,7 +1315,8 @@ async function resolveMessageKeyMarkers(text: string): Promise<string> {
       const variations: string[] = JSON.parse(key.variations)
       if (variations.length > 0) {
         const chosen = variations[Math.floor(Math.random() * variations.length)]
-        result = result.replace(new RegExp(`\\{\\{${key.name}\\}\\}`, 'g'), chosen)
+        const escapedName = key.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+        result = result.replace(new RegExp(`\\{\\{${escapedName}\\}\\}`, 'g'), chosen)
       }
     } catch { /* ignore */ }
   }

@@ -111,6 +111,8 @@ export async function POST(request: NextRequest) {
 
     if (campaignIds.length === 0 && startedCampaigns.length === 0) {
       // Still process warming sessions even when no campaigns are running
+      // Note: This is the ONLY warming processing path when there are no campaigns.
+      // When there ARE campaigns, warming is processed below (step 5) — don't process twice.
       try {
         const autoStarted = await autoStartScheduledSessions()
         if (autoStarted.length > 0) {

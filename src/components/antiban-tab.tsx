@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useCallback, useEffect } from 'react'
+import React, { useState, useCallback, useEffect, useRef } from 'react'
 import { motion } from 'framer-motion'
 import {
   RotateCcw, RefreshCw, Type, Timer, Flame, Baby, CheckCircle2,
@@ -116,52 +116,60 @@ export function AntiBanTab() {
 
   useEffect(() => { fetchSettings() }, [fetchSettings])
 
-  const updateSetting = async (key: string, value: unknown) => {
+  // Debounced updateSetting — avoids firing multiple PATCH requests while typing
+  const debounceRef = useRef<NodeJS.Timeout | null>(null)
+  const updateSetting = useCallback(async (key: string, value: unknown) => {
     if (!settings) return
-    setSaving(true)
-    try {
-      const res = await fetch('/api/antiban', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [key]: value }) })
-      const updated = await res.json()
-      setSettings(updated)
-      // Re-parse breakWindows if it was updated
-      if (key === 'breakWindows') {
-        try {
-          const parsed = typeof updated.breakWindows === 'string' ? JSON.parse(updated.breakWindows) : (updated.breakWindows || [])
-          setBreakWindows(parseBreakWindows(parsed))
-        } catch { setBreakWindows([]) }
-      }
-      // Re-parse humanBehaviorConfig if it was updated
-      if (key === 'humanBehaviorConfig') {
-        try {
-          const hbParsed = typeof updated.humanBehaviorConfig === 'string' ? JSON.parse(updated.humanBehaviorConfig) : (updated.humanBehaviorConfig || DEFAULT_HUMAN_BEHAVIOR)
-          setHumanBehavior(hbParsed)
-        } catch { setHumanBehavior(DEFAULT_HUMAN_BEHAVIOR) }
-      }
-      // Re-parse banCodes if it was updated
-      if (key === 'banCodes') {
-        try {
-          const parsed = typeof updated.banCodes === 'string' ? JSON.parse(updated.banCodes) : (updated.banCodes || [])
-          setBanCodesText(Array.isArray(parsed) ? parsed.join(', ') : '')
-        } catch { setBanCodesText('') }
-      }
-      // Re-parse restrictionKeywords if it was updated
-      if (key === 'restrictionKeywords') {
-        try {
-          const parsed = typeof updated.restrictionKeywords === 'string' ? JSON.parse(updated.restrictionKeywords) : (updated.restrictionKeywords || [])
-          setRestrictionKeywordsText(Array.isArray(parsed) ? parsed.join('\n') : '')
-        } catch { setRestrictionKeywordsText('') }
-      }
-      // Re-parse warningKeywords if it was updated
-      if (key === 'warningKeywords') {
-        try {
-          const parsed = typeof updated.warningKeywords === 'string' ? JSON.parse(updated.warningKeywords) : (updated.warningKeywords || [])
-          setWarningKeywordsText(Array.isArray(parsed) ? parsed.join('\n') : '')
-        } catch { setWarningKeywordsText('') }
-      }
-      toast.success('Configuração atualizada!')
-    } catch { toast.error('Erro ao atualizar') }
-    finally { setSaving(false) }
-  }
+    // Optimistic update: apply to local state immediately
+    setSettings(prev => prev ? { ...prev, [key]: value } : prev)
+    // Debounce the API call (500ms)
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(async () => {
+      setSaving(true)
+      try {
+        const res = await fetch('/api/antiban', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [key]: value }) })
+        const updated = await res.json()
+        setSettings(updated)
+        // Re-parse breakWindows if it was updated
+        if (key === 'breakWindows') {
+          try {
+            const parsed = typeof updated.breakWindows === 'string' ? JSON.parse(updated.breakWindows) : (updated.breakWindows || [])
+            setBreakWindows(parseBreakWindows(parsed))
+          } catch { setBreakWindows([]) }
+        }
+        // Re-parse humanBehaviorConfig if it was updated
+        if (key === 'humanBehaviorConfig') {
+          try {
+            const hbParsed = typeof updated.humanBehaviorConfig === 'string' ? JSON.parse(updated.humanBehaviorConfig) : (updated.humanBehaviorConfig || DEFAULT_HUMAN_BEHAVIOR)
+            setHumanBehavior(hbParsed)
+          } catch { setHumanBehavior(DEFAULT_HUMAN_BEHAVIOR) }
+        }
+        // Re-parse banCodes if it was updated
+        if (key === 'banCodes') {
+          try {
+            const parsed = typeof updated.banCodes === 'string' ? JSON.parse(updated.banCodes) : (updated.banCodes || [])
+            setBanCodesText(Array.isArray(parsed) ? parsed.join(', ') : '')
+          } catch { setBanCodesText('') }
+        }
+        // Re-parse restrictionKeywords if it was updated
+        if (key === 'restrictionKeywords') {
+          try {
+            const parsed = typeof updated.restrictionKeywords === 'string' ? JSON.parse(updated.restrictionKeywords) : (updated.restrictionKeywords || [])
+            setRestrictionKeywordsText(Array.isArray(parsed) ? parsed.join('\n') : '')
+          } catch { setRestrictionKeywordsText('') }
+        }
+        // Re-parse warningKeywords if it was updated
+        if (key === 'warningKeywords') {
+          try {
+            const parsed = typeof updated.warningKeywords === 'string' ? JSON.parse(updated.warningKeywords) : (updated.warningKeywords || [])
+            setWarningKeywordsText(Array.isArray(parsed) ? parsed.join('\n') : '')
+          } catch { setWarningKeywordsText('') }
+        }
+        toast.success('Configuração atualizada!')
+      } catch { toast.error('Erro ao atualizar') }
+      finally { setSaving(false) }
+    }, 500)
+  }, [settings])
 
   // Break window helpers
   const addBreakWindow = () => {

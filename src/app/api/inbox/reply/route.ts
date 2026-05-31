@@ -1,23 +1,72 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { sendTextMessage, sendMediaMessage, sendQuotedReply, markChatAsRead } from '@/lib/evolution-api'
+import { writeFile } from 'fs/promises'
+import path from 'path'
 
 /**
  * POST /api/inbox/reply
  * Send a reply message from the inbox
  *
- * Body:
- * - chipId: the chip ID to send from
- * - remoteJid: the contact's JID to send to
- * - content: text content
- * - mediaUrl: optional media URL
- * - mediatype: optional media type (image, video, document, audio)
- * - quotedMsgId: optional evolutionMsgId of the message being replied to (for quoted reply)
+ * Supports two content types:
+ * 1. application/json — for text-only or text + mediaUrl replies
+ * 2. multipart/form-data — for file uploads (proper media sending)
+ *
+ * JSON Body:
+ * - chipId, remoteJid, content, mediaUrl, mediatype, quotedMsgId
+ *
+ * FormData Body:
+ * - chipId, remoteJid, content, mediatype, quotedMsgId, file (File object)
  */
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json()
-    const { chipId, remoteJid, content, mediaUrl, mediatype, quotedMsgId } = body
+    const contentType = request.headers.get('content-type') || ''
+    let chipId: string, remoteJid: string, content: string, mediaUrl: string | undefined, mediatype: string | undefined, quotedMsgId: string | undefined
+
+    if (contentType.includes('multipart/form-data')) {
+      // Handle file upload via FormData
+      const formData = await request.formData()
+      chipId = formData.get('chipId') as string
+      remoteJid = formData.get('remoteJid') as string
+      content = (formData.get('content') as string) || ''
+      mediatype = (formData.get('mediatype') as string) || undefined
+      quotedMsgId = (formData.get('quotedMsgId') as string) || undefined
+
+      const file = formData.get('file') as File | null
+      if (file) {
+        // Save file to /upload directory and create a data URL for Evolution API
+        const bytes = await file.arrayBuffer()
+        const buffer = Buffer.from(bytes)
+
+        // Generate unique filename
+        const ext = file.name.split('.').pop() || 'bin'
+        const uniqueName = `${Date.now()}-${Math.random().toString(36).substring(2, 8)}.${ext}`
+        const filePath = path.join(process.cwd(), 'upload', uniqueName)
+
+        await writeFile(filePath, buffer)
+
+        // For Evolution API, use base64 data URI (works reliably with sendMediaMessage)
+        const base64 = buffer.toString('base64')
+        const mimeType = file.type || 'application/octet-stream'
+        mediaUrl = `data:${mimeType};base64,${base64}`
+
+        if (!mediatype) {
+          mediatype = file.type.startsWith('image') ? 'image'
+            : file.type.startsWith('video') ? 'video'
+            : file.type.startsWith('audio') ? 'audio'
+            : 'document'
+        }
+      }
+    } else {
+      // Handle JSON body (backward compatible)
+      const body = await request.json()
+      chipId = body.chipId
+      remoteJid = body.remoteJid
+      content = body.content
+      mediaUrl = body.mediaUrl
+      mediatype = body.mediatype
+      quotedMsgId = body.quotedMsgId
+    }
 
     if (!chipId || !remoteJid) {
       return NextResponse.json(
@@ -70,7 +119,7 @@ export async function POST(request: NextRequest) {
 
     // Send message via Evolution API
     if (quotedMsgId && !mediaUrl) {
-      // v2.1: Quoted reply (contextInfo) — shows "you replied to: ..." in WhatsApp
+      // Quoted reply (contextInfo) — shows "you replied to: ..." in WhatsApp
       evolutionResponse = await sendQuotedReply(
         chip.evolutionInstance,
         phoneNumber,
@@ -94,8 +143,6 @@ export async function POST(request: NextRequest) {
     }
 
     // Save the sent message to InboxMessage
-    // CRITICAL: Set ack=1, status='sent' immediately so the UI shows ✓ (not clock)
-    // The webhook will upgrade this to delivered/read when the receipt arrives.
     const evolutionMsgId = evolutionResponse?.key?.id || null
     const savedMessage = await db.inboxMessage.create({
       data: {
@@ -115,7 +162,7 @@ export async function POST(request: NextRequest) {
         isCampaign: false,  // Manual reply from inbox — not a campaign blast
         ack: 1,             // SENT — message was dispatched to Evolution API
         status: 'sent',     // Show ✓ immediately (webhook upgrades later)
-        // v2.1: Quoted reply fields (contextInfo)
+        // Quoted reply fields (contextInfo)
         quotedMsgId: quotedMsgId || null,
         quotedContent,
         quotedType,
@@ -123,7 +170,7 @@ export async function POST(request: NextRequest) {
       },
     })
 
-    // Mark the chat as read on the WhatsApp side (so the contact sees blue ✓✓)
+    // Mark the chat as read on the WhatsApp side
     try {
       await markChatAsRead(chip.evolutionInstance, remoteJid)
     } catch {
