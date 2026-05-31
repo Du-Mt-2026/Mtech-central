@@ -898,12 +898,18 @@ export async function getConnectionState(instanceIdOrName: string): Promise<Conn
     const status = data.data || data;
 
     // In Evolution Go v3:
-    //   Connected: true + LoggedIn: true  → WhatsApp session is active (open)
-    //   Connected: true + LoggedIn: false → WebSocket connected, waiting for QR scan (connecting)
-    //   Connected: false                  → Disconnected (close)
+    //   Connected: true + LoggedIn: true  → WhatsApp session is fully active (open)
+    //   Connected: true + LoggedIn: false → WebSocket connected, session restoring (open)
+    //     NOTE: We treat this as 'open' because:
+    //     - After QR scan, the WhatsApp handshake takes a few seconds
+    //     - During this time Connected=true but LoggedIn=false
+    //     - Treating it as 'connecting' causes the frontend to show "connecting"
+    //       when the session is actually being established
+    //     - The webhook 'Connected' event will fire when LoggedIn becomes true
+    //     - If the session fails, the webhook 'Disconnected' event will fire
+    //   Connected: false → Disconnected (close)
     const state: 'open' | 'close' | 'connecting' =
-      status.Connected && status.LoggedIn ? 'open' :
-      status.Connected && !status.LoggedIn ? 'connecting' :
+      status.Connected ? 'open' :
       'close'
 
     return {
