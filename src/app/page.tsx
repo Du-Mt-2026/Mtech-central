@@ -3332,6 +3332,65 @@ function CampanhasTab() {
     return () => clearInterval(interval)
   }, [campaigns, fetchCampaigns])
 
+  // Auto-refresh campaign detail dialog every 3 seconds when open and campaign is active
+  // Uses refs to avoid re-creating interval on every data update
+  const detailPollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const detailCampaignIdRef = useRef<string | null>(null)
+  const detailHasActiveMessagesRef = useRef(false)
+
+  useEffect(() => {
+    // Clear previous polling
+    if (detailPollingRef.current) {
+      clearInterval(detailPollingRef.current)
+      detailPollingRef.current = null
+    }
+
+    if (!detailDialogOpen || !selectedCampaign) return
+
+    // Track the campaign ID for polling
+    detailCampaignIdRef.current = selectedCampaign.id
+
+    // Check if campaign is in an active state
+    const isActive = ['running', 'scheduled'].includes(selectedCampaign.status) ||
+      detailMessages.some(m => m.status === 'pending' || m.status === 'sending')
+    detailHasActiveMessagesRef.current = detailMessages.some(m => m.status === 'pending' || m.status === 'sending')
+
+    if (!isActive) return
+
+    detailPollingRef.current = setInterval(async () => {
+      const campaignId = detailCampaignIdRef.current
+      if (!campaignId) return
+      try {
+        // Refresh campaign data
+        const res = await fetch(`/api/campaigns/${campaignId}`, { cache: 'no-store' })
+        if (!res.ok) return
+        const updated = await res.json()
+        setSelectedCampaign(updated)
+        // Refresh messages
+        const msgRes = await fetch(`/api/messages?campaignId=${campaignId}`, { cache: 'no-store' })
+        const msgData = await msgRes.json()
+        const messages = Array.isArray(msgData) ? msgData : []
+        setDetailMessages(messages)
+        // Also refresh the campaign list so cards stay in sync
+        fetchCampaigns()
+        // Stop polling if campaign is no longer active and no messages are pending/sending
+        const stillActive = ['running', 'scheduled'].includes(updated.status) ||
+          messages.some((m: MessageItem) => m.status === 'pending' || m.status === 'sending')
+        if (!stillActive && detailPollingRef.current) {
+          clearInterval(detailPollingRef.current)
+          detailPollingRef.current = null
+        }
+      } catch { /* silent — will retry next interval */ }
+    }, 3000)
+
+    return () => {
+      if (detailPollingRef.current) {
+        clearInterval(detailPollingRef.current)
+        detailPollingRef.current = null
+      }
+    }
+  }, [detailDialogOpen, selectedCampaign?.id, selectedCampaign?.status, fetchCampaigns])
+
   // When contact list changes, fetch available variables
   useEffect(() => {
     if (newCampaign.contactListId) {
