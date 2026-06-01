@@ -1165,6 +1165,140 @@ export function AntiBanTab() {
                 </div>
               </div>
 
+              {/* Typing Simulation */}
+              <div className="border border-pink-200 dark:border-pink-800 rounded-lg p-3 space-y-3">
+                <div className="flex items-center gap-2">
+                  <Type className="size-4 text-pink-600" />
+                  <span className="text-xs font-semibold text-pink-700 dark:text-pink-400">Simulação de Digitação</span>
+                  <span className="text-[10px] text-muted-foreground">"Digitando..." realista</span>
+                </div>
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] w-24 text-right text-muted-foreground shrink-0">Velocidade</span>
+                    <Input type="number" min={1} max={30} step={1} value={humanBehavior.typingSimulation?.speedMin ?? 6} onChange={e => updateHumanBehavior('typingSimulation.speedMin', Math.max(1, parseInt(e.target.value) || 6))} className="w-12 h-7 text-[11px]" disabled={saving} />
+                    <span className="text-[10px] text-muted-foreground">-</span>
+                    <Input type="number" min={1} max={40} step={1} value={humanBehavior.typingSimulation?.speedMax ?? 14} onChange={e => updateHumanBehavior('typingSimulation.speedMax', Math.max(1, parseInt(e.target.value) || 14))} className="w-12 h-7 text-[11px]" disabled={saving} />
+                    <span className="text-[10px] text-muted-foreground">carac/s</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] w-24 text-right text-muted-foreground shrink-0">Pausa no meio</span>
+                    <Input type="number" min={0} max={100} step={5} value={humanBehavior.typingSimulation?.pauseChance ?? 30} onChange={e => updateHumanBehavior('typingSimulation.pauseChance', Math.max(0, parseInt(e.target.value) || 30))} className="w-12 h-7 text-[11px]" disabled={saving} />
+                    <span className="text-[10px] text-muted-foreground">% chance</span>
+                    <Input type="number" min={500} max={10000} step={500} value={humanBehavior.typingSimulation?.pauseMinMs ?? 1000} onChange={e => updateHumanBehavior('typingSimulation.pauseMinMs', Math.max(500, parseInt(e.target.value) || 1000))} className="w-14 h-7 text-[11px]" disabled={saving} />
+                    <span className="text-[10px] text-muted-foreground">-</span>
+                    <Input type="number" min={500} max={15000} step={500} value={humanBehavior.typingSimulation?.pauseMaxMs ?? 4000} onChange={e => updateHumanBehavior('typingSimulation.pauseMaxMs', Math.max(500, parseInt(e.target.value) || 4000))} className="w-14 h-7 text-[11px]" disabled={saving} />
+                    <span className="text-[10px] text-muted-foreground">ms</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] w-24 text-right text-muted-foreground shrink-0">Msg longa</span>
+                    <Input type="number" min={50} max={500} step={10} value={humanBehavior.typingSimulation?.longMsgThreshold ?? 100} onChange={e => updateHumanBehavior('typingSimulation.longMsgThreshold', Math.max(50, parseInt(e.target.value) || 100))} className="w-14 h-7 text-[11px]" disabled={saving} />
+                    <span className="text-[10px] text-muted-foreground">carac | pausa</span>
+                    <Input type="number" min={0} max={100} step={5} value={humanBehavior.typingSimulation?.longMsgPauseChance ?? 40} onChange={e => updateHumanBehavior('typingSimulation.longMsgPauseChance', Math.max(0, parseInt(e.target.value) || 40))} className="w-12 h-7 text-[11px]" disabled={saving} />
+                    <span className="text-[10px] text-muted-foreground">% | segmentos</span>
+                    <Input type="number" min={2} max={5} step={1} value={humanBehavior.typingSimulation?.segmentsMin ?? 2} onChange={e => updateHumanBehavior('typingSimulation.segmentsMin', Math.max(2, parseInt(e.target.value) || 2))} className="w-10 h-7 text-[11px]" disabled={saving} />
+                    <span className="text-[10px] text-muted-foreground">-</span>
+                    <Input type="number" min={2} max={6} step={1} value={humanBehavior.typingSimulation?.segmentsMax ?? 3} onChange={e => updateHumanBehavior('typingSimulation.segmentsMax', Math.max(2, parseInt(e.target.value) || 3))} className="w-10 h-7 text-[11px]" disabled={saving} />
+                  </div>
+                </div>
+                <div className="p-2 bg-muted/50 rounded text-[10px] text-muted-foreground">
+                  Simula digitação humana: velocidade variável, pausas no meio da mensagem, segmentos para textos longos. Sem isso, o "digitando..." aparece e desaparece no mesmo tempo = padrão de bot.
+                </div>
+              </div>
+
+              {/* Presence Simulation */}
+              <div className="border border-teal-200 dark:border-teal-800 rounded-lg p-3 space-y-3">
+                <div className="flex items-center gap-2">
+                  <EyeOff className="size-4 text-teal-600" />
+                  <span className="text-xs font-semibold text-teal-700 dark:text-teal-400">Presença Online</span>
+                  <span className="text-[10px] text-muted-foreground">Online/offline realista</span>
+                </div>
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] w-28 text-right text-muted-foreground shrink-0">Offline após envio</span>
+                    <Input type="number" min={1000} max={30000} step={1000} value={humanBehavior.presence?.offlineDelayMinMs ?? 3000} onChange={e => updateHumanBehavior('presence.offlineDelayMinMs', Math.max(1000, parseInt(e.target.value) || 3000))} className="w-14 h-7 text-[11px]" disabled={saving} />
+                    <span className="text-[10px] text-muted-foreground">-</span>
+                    <Input type="number" min={1000} max={60000} step={1000} value={humanBehavior.presence?.offlineDelayMaxMs ?? 15000} onChange={e => updateHumanBehavior('presence.offlineDelayMaxMs', Math.max(1000, parseInt(e.target.value) || 15000))} className="w-14 h-7 text-[11px]" disabled={saving} />
+                    <span className="text-[10px] text-muted-foreground">ms</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] w-28 text-right text-muted-foreground shrink-0">Leitura idle</span>
+                    <Input type="number" min={0} max={100} step={5} value={humanBehavior.presence?.idleReadingChance ?? 25} onChange={e => updateHumanBehavior('presence.idleReadingChance', Math.max(0, parseInt(e.target.value) || 25))} className="w-12 h-7 text-[11px]" disabled={saving} />
+                    <span className="text-[10px] text-muted-foreground">% |</span>
+                    <Input type="number" min={1000} max={30000} step={1000} value={humanBehavior.presence?.idleReadingDurationMinMs ?? 2000} onChange={e => updateHumanBehavior('presence.idleReadingDurationMinMs', Math.max(1000, parseInt(e.target.value) || 2000))} className="w-14 h-7 text-[11px]" disabled={saving} />
+                    <span className="text-[10px] text-muted-foreground">-</span>
+                    <Input type="number" min={1000} max={60000} step={1000} value={humanBehavior.presence?.idleReadingDurationMaxMs ?? 8000} onChange={e => updateHumanBehavior('presence.idleReadingDurationMaxMs', Math.max(1000, parseInt(e.target.value) || 8000))} className="w-14 h-7 text-[11px]" disabled={saving} />
+                    <span className="text-[10px] text-muted-foreground">ms</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] w-28 text-right text-muted-foreground shrink-0">Intervalo idle</span>
+                    <Input type="number" min={30} max={300} step={10} value={humanBehavior.presence?.idleReadingMinIntervalSec ?? 60} onChange={e => updateHumanBehavior('presence.idleReadingMinIntervalSec', Math.max(30, parseInt(e.target.value) || 60))} className="w-14 h-7 text-[11px]" disabled={saving} />
+                    <span className="text-[10px] text-muted-foreground">s min</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] w-28 text-right text-muted-foreground shrink-0">Online pré-envio</span>
+                    <Input type="number" min={500} max={5000} step={500} value={humanBehavior.presence?.preSendOnlineMs ?? 1000} onChange={e => updateHumanBehavior('presence.preSendOnlineMs', Math.max(500, parseInt(e.target.value) || 1000))} className="w-14 h-7 text-[11px]" disabled={saving} />
+                    <span className="text-[10px] text-muted-foreground">ms | pausa pré-digitando</span>
+                    <Input type="number" min={500} max={5000} step={100} value={humanBehavior.presence?.preComposePauseMinMs ?? 800} onChange={e => updateHumanBehavior('presence.preComposePauseMinMs', Math.max(500, parseInt(e.target.value) || 800))} className="w-14 h-7 text-[11px]" disabled={saving} />
+                    <span className="text-[10px] text-muted-foreground">-</span>
+                    <Input type="number" min={500} max={10000} step={100} value={humanBehavior.presence?.preComposePauseMaxMs ?? 3000} onChange={e => updateHumanBehavior('presence.preComposePauseMaxMs', Math.max(500, parseInt(e.target.value) || 3000))} className="w-14 h-7 text-[11px]" disabled={saving} />
+                    <span className="text-[10px] text-muted-foreground">ms</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] w-28 text-right text-muted-foreground shrink-0">Gravação mídia</span>
+                    <Input type="number" min={1000} max={10000} step={500} value={humanBehavior.presence?.mediaRecordingMinMs ?? 2000} onChange={e => updateHumanBehavior('presence.mediaRecordingMinMs', Math.max(1000, parseInt(e.target.value) || 2000))} className="w-14 h-7 text-[11px]" disabled={saving} />
+                    <span className="text-[10px] text-muted-foreground">-</span>
+                    <Input type="number" min={1000} max={15000} step={500} value={humanBehavior.presence?.mediaRecordingMaxMs ?? 4000} onChange={e => updateHumanBehavior('presence.mediaRecordingMaxMs', Math.max(1000, parseInt(e.target.value) || 4000))} className="w-14 h-7 text-[11px]" disabled={saving} />
+                    <span className="text-[10px] text-muted-foreground">ms</span>
+                  </div>
+                </div>
+                <div className="p-2 bg-muted/50 rounded text-[10px] text-muted-foreground">
+                  Simula presença humana: fica online antes de digitar, demora para sair após enviar, aparece "online" aleatoriamente entre mensagens (como quem está lendo o WhatsApp). Sem isso, o chip entra e sai instantaneamente = comportamento de bot.
+                </div>
+              </div>
+
+              {/* Delivery Rate Auto-Adjust */}
+              <div className="border border-amber-200 dark:border-amber-800 rounded-lg p-3 space-y-3">
+                <div className="flex items-center gap-2">
+                  <Activity className="size-4 text-amber-600" />
+                  <span className="text-xs font-semibold text-amber-700 dark:text-amber-400">Ajuste por Taxa de Entrega</span>
+                  <span className="text-[10px] text-muted-foreground">Desacelera automaticamente</span>
+                </div>
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] w-24 text-right text-muted-foreground shrink-0">Normal</span>
+                    <Input type="number" min={0} max={100} step={5} value={humanBehavior.deliveryRate?.normalThreshold ?? 60} onChange={e => updateHumanBehavior('deliveryRate.normalThreshold', Math.max(0, parseInt(e.target.value) || 60))} className="w-12 h-7 text-[11px]" disabled={saving} />
+                    <span className="text-[10px] text-muted-foreground">% entregues = velocidade normal</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] w-24 text-right text-muted-foreground shrink-0">Médio</span>
+                    <Input type="number" min={0} max={100} step={5} value={humanBehavior.deliveryRate?.mediumThreshold ?? 40} onChange={e => updateHumanBehavior('deliveryRate.mediumThreshold', Math.max(0, parseInt(e.target.value) || 40))} className="w-12 h-7 text-[11px]" disabled={saving} />
+                    <span className="text-[10px] text-muted-foreground">% |</span>
+                    <Input type="number" min={1} max={5} step={0.5} value={humanBehavior.deliveryRate?.mediumMultiplier ?? 1.5} onChange={e => updateHumanBehavior('deliveryRate.mediumMultiplier', Math.max(1, parseFloat(e.target.value) || 1.5))} className="w-12 h-7 text-[11px]" disabled={saving} />
+                    <span className="text-[10px] text-muted-foreground">x mais lento</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] w-24 text-right text-muted-foreground shrink-0">Baixo</span>
+                    <Input type="number" min={0} max={100} step={5} value={humanBehavior.deliveryRate?.lowThreshold ?? 20} onChange={e => updateHumanBehavior('deliveryRate.lowThreshold', Math.max(0, parseInt(e.target.value) || 20))} className="w-12 h-7 text-[11px]" disabled={saving} />
+                    <span className="text-[10px] text-muted-foreground">% |</span>
+                    <Input type="number" min={1} max={10} step={0.5} value={humanBehavior.deliveryRate?.lowMultiplier ?? 2.5} onChange={e => updateHumanBehavior('deliveryRate.lowMultiplier', Math.max(1, parseFloat(e.target.value) || 2.5))} className="w-12 h-7 text-[11px]" disabled={saving} />
+                    <span className="text-[10px] text-muted-foreground">x mais lento</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] w-24 text-right text-muted-foreground shrink-0">Crítico</span>
+                    <Input type="number" min={2} max={10} step={0.5} value={humanBehavior.deliveryRate?.criticalMultiplier ?? 4.0} onChange={e => updateHumanBehavior('deliveryRate.criticalMultiplier', Math.max(2, parseFloat(e.target.value) || 4.0))} className="w-12 h-7 text-[11px]" disabled={saving} />
+                    <span className="text-[10px] text-muted-foreground">x mais lento</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] w-24 text-right text-muted-foreground shrink-0">Amostra mínima</span>
+                    <Input type="number" min={5} max={50} step={5} value={humanBehavior.deliveryRate?.minSample ?? 10} onChange={e => updateHumanBehavior('deliveryRate.minSample', Math.max(5, parseInt(e.target.value) || 10))} className="w-12 h-7 text-[11px]" disabled={saving} />
+                    <span className="text-[10px] text-muted-foreground">msgs para análise</span>
+                  </div>
+                </div>
+                <div className="p-2 bg-muted/50 rounded text-[10px] text-muted-foreground">
+                  Se a taxa de entrega cair (mensagens não chegam), o sistema desacelera automaticamente. Poucas entregas = sinal de spam para o WhatsApp. Desacelerar reduz o risco de ban.
+                </div>
+              </div>
+
               {/* Summary */}
               <div className="p-3 bg-cyan-50 dark:bg-cyan-900/20 rounded-lg border border-cyan-200 dark:border-cyan-800">
                 <div className="flex items-center gap-2 mb-1.5">
@@ -1173,7 +1307,7 @@ export function AntiBanTab() {
                 </div>
                 <p className="text-[10px] text-muted-foreground leading-relaxed">
                   {humanBehavior.cluster?.enabled !== false && (
-                    <>Clusters de {humanBehavior.cluster?.minSize ?? 2}-{humanBehavior.cluster?.maxSize ?? 4} msgs com pausa de {humanBehavior.cluster?.microPauseMinSec ?? 3}-{humanBehavior.cluster?.microPauseMaxSec ?? 8}s entre elas. </>
+                    <>Clusters de {humanBehavior.cluster?.minSize ?? 2}-{humanBehavior.cluster?.maxSize ?? 4} msgs com pausa de {humanBehavior.cluster?.microPauseMinSec ?? 10}-{humanBehavior.cluster?.microPauseMaxSec ?? 25}s entre elas. </>
                   )}
                   {humanBehavior.cooldownPresence?.enabled !== false && (
                     <>Durante cooldown: {humanBehavior.cooldownPresence?.chancePercent ?? 40}% chance de aparecer online por {humanBehavior.cooldownPresence?.durationMinSec ?? 5}-{humanBehavior.cooldownPresence?.durationMaxSec ?? 25}s a cada {humanBehavior.cooldownPresence?.intervalMinMin ?? 2}-{humanBehavior.cooldownPresence?.intervalMaxMin ?? 5}min. </>
@@ -1182,8 +1316,10 @@ export function AntiBanTab() {
                     <>Ritmo: manhã {(humanBehavior.dayRhythm?.morningFactor ?? 130)}%, meio-dia {(humanBehavior.dayRhythm?.middayFactor ?? 80)}%, tarde {(humanBehavior.dayRhythm?.afternoonFactor ?? 100)}%. </>
                   )}
                   {humanBehavior.nonlinearPauses?.enabled !== false && (
-                    <>Pausas: {(humanBehavior.nonlinearPauses?.short?.weight ?? 40)}% curta, {(humanBehavior.nonlinearPauses?.medium?.weight ?? 40)}% média, {(humanBehavior.nonlinearPauses?.long?.weight ?? 20)}% longa.</>
+                    <>Pausas: {(humanBehavior.nonlinearPauses?.short?.weight ?? 40)}% curta, {(humanBehavior.nonlinearPauses?.medium?.weight ?? 40)}% média, {(humanBehavior.nonlinearPauses?.long?.weight ?? 20)}% longa. </>
                   )}
+                  <>Digitação: {humanBehavior.typingSimulation?.speedMin ?? 6}-{humanBehavior.typingSimulation?.speedMax ?? 14} carac/s. Presença: offline em {Math.round((humanBehavior.presence?.offlineDelayMinMs ?? 3000)/1000)}-{Math.round((humanBehavior.presence?.offlineDelayMaxMs ?? 15000)/1000)}s. </>
+                  <>Entrega: normal ≥{humanBehavior.deliveryRate?.normalThreshold ?? 60}%, crítico {(humanBehavior.deliveryRate?.criticalMultiplier ?? 4.0)}x.</>
                 </p>
               </div>
             </CardContent>
