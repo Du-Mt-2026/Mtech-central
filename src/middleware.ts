@@ -9,7 +9,8 @@ const PUBLIC_API_ROUTES = [
   '/api/auth/',                // Login/logout/session/reset-password/seed-users
   '/api/setup/',               // Schema sync (protected by secret in request body)
   '/api/whatsapp/webhook',     // Evolution API webhook callbacks
-  '/api/campaigns/process-all', // cron-job.org endpoint (protected by CRON_SECRET in code — NOT session cookie)
+  '/api/campaigns/process-all', // cron endpoint (protected by CRON_SECRET in code — NOT session cookie)
+  '/api/cron/',                 // Cron health check (protected by CRON_SECRET in code)
   '/api/sync/',                 // Linvix sync endpoint (protected by CRON_SECRET in code)
   '/api/upload/serve',         // Serves uploaded media files (needs to be public so Evolution API can fetch media URLs)
   '/api/inbox/normalize-phones', // Data cleanup (protected by CRON_SECRET in code)

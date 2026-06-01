@@ -391,22 +391,28 @@ function calculateTypingDuration(text: string, settings?: AntiBanConfig): number
 
 /**
  * Check if current time is within the sending window
+ *
+ * BUGFIX: Removed double toMins() call — getAntiBanSettings() already converts
+ * DB values to minutes. Calling toMins() again was redundant and confusing.
+ * Also added robust handling for the 0-1440 (all-day) window case.
  */
 function isWithinSendingWindow(settings: AntiBanConfig): boolean {
   const currentMins = getCurrentMinutes(settings.timezone)
-  const start = toMins(settings.sendingWindowStart)
-  const end = toMins(settings.sendingWindowEnd)
+  // NOTE: settings.sendingWindowStart/End are already in minutes (converted by getAntiBanSettings)
+  // No need to call toMins() again — they're already minutes-from-midnight values.
+  const start = settings.sendingWindowStart
+  const end = settings.sendingWindowEnd
 
-  // Edge case: end=1440 (24:00) means "until end of day" — always within window if start=0
-  if (end >= 1440 && start === 0) return true
+  // Edge case: 0-1440 (00:00-24:00) means "all day" — always within window
+  // This must be checked FIRST to avoid any comparison issues
+  if (start === 0 && end >= 1440) return true
 
   if (start <= end) {
-    // Same day window: e.g., 8:00-21:00
-    // If end >= 1440, just check currentMins >= start
+    // Same day window: e.g., 540-1020 (9:00-17:00)
     if (end >= 1440) return currentMins >= start
     return currentMins >= start && currentMins < end
   } else {
-    // Overnight window: e.g., 22:00-06:00
+    // Overnight window: e.g., 1320-360 (22:00-06:00)
     return currentMins >= start || currentMins < end
   }
 }
@@ -1781,9 +1787,7 @@ export async function processNextMessage(campaignId: string): Promise<{
   // CHECK SENDING WINDOW — don't send outside business hours
   if (antiBanEnabled && !isWithinSendingWindow(settings)) {
     const currentMins = getCurrentMinutes(settings.timezone)
-    const startMins = toMins(settings.sendingWindowStart)
-    const endMins = toMins(settings.sendingWindowEnd)
-    console.debug(`[SendingEngine] Outside sending window (${currentMins}min, window: ${startMins}-${endMins}). Pausing.`)
+    console.debug(`[SendingEngine] Outside sending window (${currentMins}min, window: ${settings.sendingWindowStart}-${settings.sendingWindowEnd}, tz: ${settings.timezone}). Pausing.`)
     // Release the campaign slot claim with a 1-minute wait (next check)
     await db.campaign.update({
       where: { id: campaignId },

@@ -324,9 +324,11 @@ export async function processQueue(): Promise<void> {
         const currentMins = getCurrentMinutes(settings.timezone)
         const start = toMins(settings.sendingWindowStart)
         const end = toMins(settings.sendingWindowEnd)
-        const inWindow = start <= end
-          ? (currentMins >= start && currentMins < end)
-          : (currentMins >= start || currentMins < end)
+        // All-day window (0-1440) means always in window
+        const inWindow = (start === 0 && end >= 1440) ? true
+          : start <= end
+            ? (currentMins >= start && currentMins < end)
+            : (currentMins >= start || currentMins < end)
         if (!inWindow) {
           console.log(`[ReconnectQueue] Outside sending window, delaying reconnection for ${entry.chipName}`)
           return

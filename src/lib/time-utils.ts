@@ -20,6 +20,9 @@ export function toMins(val: number): number {
 /**
  * Get current time as minutes-from-midnight in the given timezone.
  * Handles the edge case where hour12:false returns "24" for midnight (ISO 8601 convention).
+ *
+ * BUGFIX: Some Node.js Alpine builds with ICU quirks can return hour > 23,
+ * producing values > 1440. We clamp the result to [0, 1439] via modulo.
  */
 export function getCurrentMinutes(timezone: string): number {
   const now = new Date()
@@ -32,7 +35,18 @@ export function getCurrentMinutes(timezone: string): number {
   const parts = formatter.formatToParts(now)
   let hour = parseInt(parts.find(p => p.type === 'hour')?.value || '0', 10)
   const minute = parseInt(parts.find(p => p.type === 'minute')?.value || '0', 10)
+
+  // Debug: log raw Intl output to diagnose ICU issues
+  if (hour > 23 || isNaN(hour) || isNaN(minute)) {
+    const rawParts = parts.map(p => `${p.type}=${p.value}`).join(', ')
+    console.warn(`[getCurrentMinutes] Unexpected Intl result: hour=${hour}, minute=${minute}, parts=[${rawParts}], timezone=${timezone}`)
+  }
+
   // hour12:false can return hour=24 for midnight (ISO 8601) — treat as 0
-  if (hour === 24) hour = 0
-  return hour * 60 + minute
+  // Also handle hour > 24 from some ICU implementations
+  if (hour >= 24) hour = hour - 24
+
+  const result = hour * 60 + minute
+  // Safety clamp: a day has 1440 minutes, result must be in [0, 1439]
+  return ((result % 1440) + 1440) % 1440
 }
