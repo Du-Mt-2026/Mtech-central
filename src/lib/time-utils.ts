@@ -19,6 +19,7 @@ export function toMins(val: number): number {
 
 /**
  * Get current time as minutes-from-midnight in the given timezone.
+ * Handles the edge case where hour12:false returns "24" for midnight (ISO 8601 convention).
  */
 export function getCurrentMinutes(timezone: string): number {
   const now = new Date()
@@ -29,7 +30,9 @@ export function getCurrentMinutes(timezone: string): number {
     timeZone: timezone,
   })
   const parts = formatter.formatToParts(now)
-  const hour = parseInt(parts.find(p => p.type === 'hour')?.value || '0', 10)
+  let hour = parseInt(parts.find(p => p.type === 'hour')?.value || '0', 10)
   const minute = parseInt(parts.find(p => p.type === 'minute')?.value || '0', 10)
+  // hour12:false can return hour=24 for midnight (ISO 8601) — treat as 0
+  if (hour === 24) hour = 0
   return hour * 60 + minute
 }

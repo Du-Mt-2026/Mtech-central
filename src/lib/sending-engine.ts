@@ -397,8 +397,13 @@ function isWithinSendingWindow(settings: AntiBanConfig): boolean {
   const start = toMins(settings.sendingWindowStart)
   const end = toMins(settings.sendingWindowEnd)
 
+  // Edge case: end=1440 (24:00) means "until end of day" — always within window if start=0
+  if (end >= 1440 && start === 0) return true
+
   if (start <= end) {
     // Same day window: e.g., 8:00-21:00
+    // If end >= 1440, just check currentMins >= start
+    if (end >= 1440) return currentMins >= start
     return currentMins >= start && currentMins < end
   } else {
     // Overnight window: e.g., 22:00-06:00
