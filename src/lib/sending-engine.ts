@@ -2408,20 +2408,20 @@ export async function processNextMessage(campaignId: string): Promise<{
   }
 
   // ============================================================
-  // CRITICAL: Atomically claim this message to prevent duplicates
-  // Use updateMany with status='pending' filter — only claims if still pending
-  // If another process already claimed it, this returns count=0 and we skip
-  // This MUST be done right before sending, after all checks pass
+  // CRITICAL: Verify this message is still in 'sending' status (our claim from line ~1886)
+  // The first atomic claim already set status from 'pending' → 'sending'.
+  // Here we just verify it hasn't been reset by another process.
+  // If count=0, the message was recovered/reset — skip it.
   // ============================================================
   const claimed = await db.message.updateMany({
-    where: { id: message.id, status: 'pending' },
-    data: { status: 'sending' },
+    where: { id: message.id, status: 'sending' },
+    data: { status: 'sending' },  // No-op update to verify claim is still valid
   })
 
   if (claimed.count === 0) {
-    // Message was already claimed by another concurrent process — skip it
-    console.debug(`[SendingEngine] Message ${message.id} already claimed by another process, skipping`)
-    return { processed: false, delayMs: 500, remaining: -1, completed: false, reason: 'message_already_claimed' }
+    // Message was recovered/reset by another process — skip it
+    console.debug(`[SendingEngine] Message ${message.id} claim lost (no longer in 'sending'), skipping`)
+    return { processed: false, delayMs: 500, remaining: -1, completed: false, reason: 'message_claim_lost' }
   }
 
   try {
@@ -2545,7 +2545,7 @@ export async function processNextMessage(campaignId: string): Promise<{
     // SEND THE MESSAGE
     // ============================================
     // DIAGNOSTIC: Log what we're about to send (step, content preview, media info)
-    console.debug(`[SendingEngine] Sending message ${message.id} step=${message.stepOrder} to ${formattedPhone}: mediaUrl=${message.mediaUrl || 'null'} mediatype=${message.mediatype || 'null'} content="${finalContent.substring(0, 80)}..."`)
+    console.debug(`[SendingEngine] Sending message ${message.id} step=${message.stepOrder} to ${formattedPhone} via chip ${chip.evolutionInstance}: mediaUrl=${message.mediaUrl || 'null'} mediatype=${message.mediatype || 'null'} content="${finalContent.substring(0, 80)}..."`)
 
     let result
     if (message.mediaUrl && message.mediatype) {
