@@ -1105,6 +1105,98 @@ export async function POST(request: Request) {
           break
         }
         
+        // Handle HISTORY_SYNC — Evolution Go v3 sends historical messages
+        // These have the same format as regular Message events but arrive in bulk
+        if (event === 'HISTORY_SYNC') {
+          try {
+            // HISTORY_SYNC can come as:
+            // 1. A single message (same format as 'Message' event)
+            // 2. An array of messages under data.messages or data.Data
+            const messages = Array.isArray(data?.messages) ? data.messages
+              : Array.isArray(data?.Data) ? data.Data
+              : Array.isArray(data) ? data
+              : [data] // Single message — same format as 'Message'
+
+            let synced = 0
+            for (const msg of messages) {
+              try {
+                const chatJid = msg?.Info?.Chat || msg?.key?.remoteJid || ''
+                if (!chatJid) continue
+
+                const msgId = msg?.Info?.ID || msg?.key?.id || ''
+                const fromMe = msg?.Info?.IsFromMe ?? msg?.key?.fromMe ?? false
+                const pushName = msg?.Info?.PushName || null
+
+                if (!msgId) continue
+
+                // Same LID resolution as Message handler
+                const addressingMode = msg?.Info?.AddressingMode || ''
+                const remoteJidAlt = msg?.Info?.RecipientAlt || null
+                let remoteJid = chatJid
+                if (addressingMode === 'lid' && remoteJidAlt) {
+                  remoteJid = remoteJidAlt
+                } else if (chatJid.endsWith('@lid')) {
+                  // Keep LID — will be resolved later
+                  remoteJid = chatJid
+                }
+
+                const isGroup = remoteJid.includes('@g.us')
+                let remotePhone = remoteJid.replace(/@s\.whatsapp\.net|@lid|@g\.us/g, '')
+                if (remotePhone.startsWith('55') && remotePhone.length === 12) {
+                  remotePhone = remotePhone.slice(0, 4) + '9' + remotePhone.slice(4)
+                }
+
+                // Parse message content using same parser
+                const parsed = parseWhatsAppMessage(msg)
+
+                // Determine contact name
+                const contactName = isGroup ? null : (pushName || null)
+
+                // Check if message already exists (avoid duplicates)
+                const existing = await db.inboxMessage.findUnique({
+                  where: { evolutionMsgId: msgId },
+                })
+                if (existing) continue // Skip duplicates
+
+                await db.inboxMessage.create({
+                  data: {
+                    instanceName: chipInstanceName || '',
+                    chipId: linkedChip?.id || '',
+                    remoteJid,
+                    remotePhone,
+                    fromMe,
+                    messageContent: parsed.content || '',
+                    messageType: parsed.type || 'text',
+                    mediaUrl: parsed.mediaUrl || '',
+                    pushName: pushName || '',
+                    contactName,
+                    evolutionMsgId: msgId,
+                    isRead: true, // Historical messages are already read
+                    isGroup,
+                    isCampaign: false, // Will be updated if matched to campaign
+                    ack: fromMe ? 3 : 3,
+                    status: 'delivered',
+                    quotedMsgId: parsed.quotedId || null,
+                    quotedContent: parsed.quotedContent || null,
+                    fileName: parsed.fileName || null,
+                    mimeType: parsed.mimeType || null,
+                    mediaCaption: parsed.caption || null,
+                    mediaDuration: parsed.duration || null,
+                  },
+                })
+                synced++
+              } catch (msgErr: any) {
+                // Skip individual message errors — continue processing
+                console.error('[Webhook] HISTORY_SYNC msg error:', msgErr.message)
+              }
+            }
+            console.log(`[Webhook] HISTORY_SYNC: ${synced}/${messages.length} messages saved for ${chipInstanceName}`)
+          } catch (err: any) {
+            console.error('[Webhook] HISTORY_SYNC error:', err.message)
+          }
+          break
+        }
+
         // Log unhandled events for debugging (but not too verbosely)
         if (!['PRESENCE', 'CHAT_PRESENCE', 'CONTACT', 'LABEL'].includes(event)) {
           console.log(`[Webhook] Unhandled event: ${event} for ${chipInstanceName}`)
