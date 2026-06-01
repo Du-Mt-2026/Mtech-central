@@ -387,7 +387,11 @@ export function InboxTab() {
   }, [fetchChips, fetchConversations, fetchMessages, selectedConversation])
 
   // ===== Effects =====
-  useEffect(() => { fetchChips() }, [fetchChips])
+  useEffect(() => {
+    fetchChips()
+    const interval = setInterval(fetchChips, 10000)
+    return () => clearInterval(interval)
+  }, [fetchChips])
   useEffect(() => { fetchConversations() }, [fetchConversations])
 
   useEffect(() => {

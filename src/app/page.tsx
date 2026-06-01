@@ -701,6 +701,9 @@ function ChipsTab() {
       fetchAntiBanSettings()
     }
     init()
+    // Auto-refresh chips every 5 seconds for real-time status updates
+    const interval = setInterval(fetchChips, 5000)
+    return () => clearInterval(interval)
   }, [fetchChips, fetchAntiBanSettings])
 
   // Auto-check proxy statuses when chips are loaded or changed
@@ -780,7 +783,7 @@ function ChipsTab() {
     return { effectiveLimit: limit, phaseDay: dayInPhase, phaseMaxDays }
   }, [antiBanSettings])
 
-  // Sync WhatsApp status on load
+  // Sync WhatsApp status on load + every 5 seconds
   useEffect(() => {
     const syncStatuses = async () => {
       try {
@@ -797,6 +800,8 @@ function ChipsTab() {
       }
     }
     syncStatuses()
+    const interval = setInterval(syncStatuses, 5000)
+    return () => clearInterval(interval)
   }, [fetchChips])
 
   useEffect(() => {
@@ -2091,7 +2096,11 @@ function ContatosTab() {
     } catch { toast.error('Erro ao carregar contatos') }
   }, [searchQuery])
 
-  useEffect(() => { fetchLists() }, [fetchLists])
+  useEffect(() => {
+    fetchLists()
+    const interval = setInterval(fetchLists, 10000)
+    return () => clearInterval(interval)
+  }, [fetchLists])
   useEffect(() => { if (selectedList) fetchContacts(selectedList.id) }, [selectedList, fetchContacts])
 
   const createList = async () => {
@@ -4930,7 +4939,11 @@ function TemplatesTab() {
     catch { toast.error('Erro ao carregar templates') } finally { setLoading(false) }
   }, [])
 
-  useEffect(() => { fetchTemplates() }, [fetchTemplates])
+  useEffect(() => {
+    fetchTemplates()
+    const interval = setInterval(fetchTemplates, 10000)
+    return () => clearInterval(interval)
+  }, [fetchTemplates])
 
   const createTemplate = async () => {
     try {
@@ -5294,7 +5307,11 @@ function MensagensTab() {
     finally { setLoading(false); setRefreshing(false) }
   }, [])
 
-  useEffect(() => { fetchMessages() }, [fetchMessages])
+  useEffect(() => {
+    fetchMessages()
+    const interval = setInterval(() => fetchMessages(), 5000)
+    return () => clearInterval(interval)
+  }, [fetchMessages])
 
   const filtered = messages.filter(m => {
     const matchStatus = statusFilter === 'all' || m.status === statusFilter
@@ -6116,7 +6133,11 @@ function UsuariosTab() {
     }
   }, [])
 
-  useEffect(() => { fetchUsers() }, [fetchUsers])
+  useEffect(() => {
+    fetchUsers()
+    const interval = setInterval(fetchUsers, 15000)
+    return () => clearInterval(interval)
+  }, [fetchUsers])
 
   const createUser = async () => {
     try {
@@ -6514,13 +6535,13 @@ export default function OctupusZapApp() {
     }).catch(() => {}).finally(() => setAuthLoading(false))
   }, [])
 
-  // Auto-refresh stats every 60 seconds when logged in
+  // Auto-refresh stats every 5 seconds when logged in (smooth real-time updates)
   useEffect(() => {
     if (!loggedIn) return
     fetch('/api/stats').then(r => r.json()).then(setStats).catch(() => {})
     const interval = setInterval(() => {
       fetch('/api/stats').then(r => r.json()).then(setStats).catch(() => {})
-    }, 60000)
+    }, 5000)
     return () => clearInterval(interval)
   }, [loggedIn])
 
