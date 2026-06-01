@@ -35,10 +35,10 @@ export const clusterConfigSchema = z.object({
   enabled: z.boolean().default(true),
   minSize: z.number().int().min(2).max(6).default(2),           // Min messages per cluster burst
   maxSize: z.number().int().min(2).max(8).default(4),           // Max messages per cluster burst
-  microPauseMinSec: z.number().int().min(1).max(30).default(3), // Min pause between cluster msgs (seconds)
-  microPauseMaxSec: z.number().int().min(1).max(60).default(8), // Max pause between cluster msgs (seconds)
-  afterClusterPauseMinSec: z.number().int().min(10).max(300).default(30), // Min pause after cluster (seconds)
-  afterClusterPauseMaxSec: z.number().int().min(10).max(600).default(90), // Max pause after cluster (seconds)
+  microPauseMinSec: z.number().int().min(5).max(30).default(10), // Min pause between cluster msgs (seconds) — minimum 10s for anti-ban safety
+  microPauseMaxSec: z.number().int().min(10).max(60).default(25), // Max pause between cluster msgs (seconds)
+  afterClusterPauseMinSec: z.number().int().min(30).max(300).default(59), // Min pause after cluster (seconds) — matches messageIntervalMin floor
+  afterClusterPauseMaxSec: z.number().int().min(60).max(600).default(148), // Max pause after cluster (seconds)
 }).refine(d => d.maxSize >= d.minSize, { message: 'Tamanho máximo deve ser >= mínimo', path: ['maxSize'] })
   .refine(d => d.microPauseMaxSec >= d.microPauseMinSec, { message: 'Micro-pausa máxima deve ser >= mínima', path: ['microPauseMaxSec'] })
   .refine(d => d.afterClusterPauseMaxSec >= d.afterClusterPauseMinSec, { message: 'Pausa pós-cluster máxima deve ser >= mínima', path: ['afterClusterPauseMaxSec'] })
@@ -140,10 +140,10 @@ export const DEFAULT_HUMAN_BEHAVIOR: HumanBehaviorConfig = {
     enabled: true,
     minSize: 2,
     maxSize: 4,
-    microPauseMinSec: 3,
-    microPauseMaxSec: 8,
-    afterClusterPauseMinSec: 30,
-    afterClusterPauseMaxSec: 90,
+    microPauseMinSec: 10,
+    microPauseMaxSec: 25,
+    afterClusterPauseMinSec: 59,
+    afterClusterPauseMaxSec: 148,
   },
   cooldownPresence: {
     enabled: true,

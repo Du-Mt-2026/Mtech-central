@@ -2748,10 +2748,8 @@ export async function processNextMessage(campaignId: string): Promise<{
     //
     // CRITICAL: Track whether the delay came from a cluster MICRO-pause
     // (within a burst) vs an after-cluster pause. Micro-pauses are
-    // intentionally short (3-8s) and must NOT be overridden by the
-    // messageIntervalMin floor — that would destroy the burst pattern
-    // and create a perfectly robotic fixed interval (the exact bug
-    // that caused 2-minute-exact gaps between messages).
+    // intentionally shorter than normal intervals but must still be safe
+    // (10-30s range) to avoid WhatsApp spam detection.
     let isClusterMicroPause = false
     const clusterResult = getClusterDelaySeconds(campaignId, message.chipId, settings)
     if (clusterResult !== null) {
@@ -2764,17 +2762,20 @@ export async function processNextMessage(campaignId: string): Promise<{
     // ============================================
     // INTERVAL FLOOR — with cluster micro-pause exception
     // ============================================
-    // The messageIntervalMin floor prevents sending too fast — BUT it must NOT
-    // override cluster micro-pauses. Cluster micro-pauses (3-8s) are the core
-    // of human-like burst sending. If we floor them to messageIntervalMin (e.g., 120s),
-    // we get a perfectly robotic fixed interval — the exact pattern Meta detects.
+    // The messageIntervalMin floor prevents sending too fast.
     //
     // For after-cluster pauses and normal gaussian intervals, the floor applies normally.
-    // For cluster micro-pauses, we skip the messageIntervalMin floor entirely,
-    // but still enforce a minimum of 3 seconds to prevent truly instant sends.
+    // For cluster micro-pauses, we apply a PROPORTIONAL floor instead of the full
+    // messageIntervalMin. The micro-pause should be a fraction of the normal interval
+    // to create a natural burst pattern, but NOT so short that it triggers WhatsApp spam
+    // detection. The floor is 25-35% of messageIntervalMin (minimum 10s), which for a
+    // 59s minimum gives a micro-pause floor of ~15s — fast enough to look like a burst
+    // but slow enough to not look automated.
     if (isClusterMicroPause) {
-      // Cluster micro-pause: allow short delays (minimum 3 seconds for safety)
-      nextDelay = Math.max(nextDelay, 3000)
+      // Cluster micro-pause: proportional floor (25-35% of intervalMin, min 10s)
+      // This creates a natural burst without triggering spam detection
+      const microPauseFloorMs = Math.max(10000, Math.round(settings.messageIntervalMin * 1000 * 0.3))
+      nextDelay = Math.max(nextDelay, microPauseFloorMs)
     } else {
       // Normal interval or after-cluster pause: apply messageIntervalMin floor
       nextDelay = Math.max(nextDelay, settings.messageIntervalMin * 1000)
