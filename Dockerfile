@@ -1,22 +1,35 @@
 # ============================================
 # OctupusZap - Dockerfile (Next.js standalone)
 # ============================================
-# Multi-stage build para imagem leve e rápida
 
-# Stage 1: Install dependencies
+# Stage 1: Install ALL dependencies (including dev for build)
 FROM node:20-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json* ./
-RUN npm ci --only=production
+# Copy prisma schema before npm install (postinstall runs prisma generate)
+COPY prisma ./prisma
+# npm install (not ci) because package-lock.json may be out of sync with bun.lock
+# --ignore-scripts skips postinstall (prisma generate) — we run it explicitly in builder
+RUN npm install --ignore-scripts
 
-# Stage 2: Build
+# Stage 2: Build the application
+# This stage IS used by the "migrate" container in docker-compose.
 FROM node:20-alpine AS builder
 WORKDIR /app
+
+# Copy all dependencies (including dev)
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+
+# Generate Prisma client (must run before next build)
+RUN npx prisma generate
+
+# Build Next.js (standalone output)
+# NOTE: prisma db push in the build script will fail here (no DB)
+# and the || fallback will continue — that's expected.
 RUN npm run build
 
-# Stage 3: Production (standalone output)
+# Stage 3: Production (standalone output — minimal image)
 FROM node:20-alpine AS runner
 WORKDIR /app
 
@@ -27,10 +40,15 @@ ENV NEXT_TELEMETRY_DISABLED=1
 RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 nextjs
 
-# Copy standalone build output
+# Copy standalone build output (includes node_modules with only production deps)
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
+
+# CRITICAL: Copy Prisma engine files that Next.js standalone misses
+COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
+COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
+COPY --from=builder /app/prisma ./prisma
 
 USER nextjs
 

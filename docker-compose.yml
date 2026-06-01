@@ -13,6 +13,27 @@
 
 services:
   # ==========================================
+  # Migrations - Roda prisma db push antes do app
+  # ==========================================
+  # Usa uma imagem com todas as deps (inclusive prisma CLI)
+  # para criar/atualizar o schema do banco.
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: builder  # Para no estágio builder (tem todas as deps)
+    container_name: octupuszap-migrate
+    environment:
+      - DATABASE_URL=postgresql://octupuszap:${DB_PASSWORD:-octupuszap123}@db:5432/octupuszap?schema=public
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - internal
+    command: ["sh", "-c", "npx prisma@6 db push --accept-data-loss && echo 'Migrations done!'"]
+    restart: "no"  # Roda uma vez e sai
+
+  # ==========================================
   # App - Next.js (OctupusZap)
   # ==========================================
   app:
@@ -24,12 +45,15 @@ services:
     env_file: .env
     environment:
       - DATABASE_URL=postgresql://octupuszap:${DB_PASSWORD:-octupuszap123}@db:5432/octupuszap?schema=public
-      # Evolution Go local (mesma VPS, rede Docker)
-      - EVOLUTION_API_URL=http://evolution-go:8080
+      # Evolution Go local (mesma VPS, rede Traefik)
+      # Usa o hostname do container evolution-go na rede Traefik
+      - EVOLUTION_API_URL=${EVOLUTION_API_URL:-http://evolution-go:8080}
       # A URL pública do app (para webhooks)
       - NEXT_PUBLIC_APP_URL=${APP_PUBLIC_URL:-https://octupuszap.seudominio.com}
       - NODE_ENV=production
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       db:
         condition: service_healthy
     networks:
@@ -50,7 +74,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: 768M
 
   # ==========================================
   # Database - PostgreSQL (isolado do restante)
@@ -78,57 +102,95 @@ services:
           memory: 256M
 
   # ==========================================
-  # Health Check Cron - Monitora instâncias
+  # Campaign Cron - Processa campanhas a cada 1 minuto
   # ==========================================
-  # Roda a cada 5 minutos e verifica se as
-  # instâncias estão presas em "Reconnecting"
-  health-cron:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: octupuszap-health
+  # Substitui o cron-job.org (Vercel) por um loop nativo no Docker.
+  # Na VPS não tem limite de frequência nem timeout de 30s!
+  campaign-cron:
+    image: curlimages/curl:latest
+    container_name: octupuszap-campaigns
     restart: unless-stopped
-    env_file: .env
     environment:
-      - DATABASE_URL=postgresql://octupuszap:${DB_PASSWORD:-octupuszap123}@db:5432/octupuszap?schema=public
-      - EVOLUTION_API_URL=http://evolution-go:8080
-      - NEXT_PUBLIC_APP_URL=${APP_PUBLIC_URL:-https://octupuszap.seudominio.com}
-      - NODE_ENV=production
-      - HEALTH_CHECK_MODE=true
+      - CRON_SECRET=${CRON_SECRET:-}
     depends_on:
-      db:
-        condition: service_healthy
+      - app
     networks:
       - internal
-      - traefik
     entrypoint: ["sh", "-c"]
     command:
       - |
-        echo "⏰ Starting health check cron (every 5 minutes)..."
+        echo "📋 Campaign cron started (every 60 seconds)..."
+        # Wait for app to be ready
+        sleep 15
         while true; do
-          echo "[$(date)] Running health check..."
-          curl -s -X POST http://app:3000/api/cron/health-check || echo "Health check failed"
+          if [ -n "$$CRON_SECRET" ]; then
+            curl -sf -X POST http://app:3000/api/campaigns/process-all \
+              -H "x-cron-secret: $$CRON_SECRET" \
+              || echo "[$(date)] Campaign cron request failed"
+          else
+            curl -sf -X POST http://app:3000/api/campaigns/process-all \
+              || echo "[$(date)] Campaign cron request failed"
+          fi
+          sleep 60
+        done
+    deploy:
+      resources:
+        limits:
+          memory: 32M
+
+  # ==========================================
+  # Health Check Cron - Monitora instâncias a cada 5 minutos
+  # ==========================================
+  # Detecta instâncias presas em "Reconnecting" e tenta recuperar.
+  # Usa imagem leve (curl) ao invés do Next.js inteiro.
+  health-cron:
+    image: curlimages/curl:latest
+    container_name: octupuszap-health
+    restart: unless-stopped
+    environment:
+      - CRON_SECRET=${CRON_SECRET:-}
+    depends_on:
+      - app
+    networks:
+      - internal
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        echo "⏰ Health check cron started (every 5 minutes)..."
+        # Wait for app to be ready
+        sleep 30
+        while true; do
+          if [ -n "$$CRON_SECRET" ]; then
+            curl -sf -X POST http://app:3000/api/cron/health-check \
+              -H "Authorization: Bearer $$CRON_SECRET" \
+              || echo "[$(date)] Health check request failed"
+          else
+            curl -sf -X POST http://app:3000/api/cron/health-check \
+              || echo "[$(date)] Health check request failed"
+          fi
           sleep 300
         done
     deploy:
       resources:
         limits:
-          memory: 128M
+          memory: 32M
 
 # ==========================================
 # Networks
 # ==========================================
 networks:
-  # Rede interna (app ↔ banco) — isolada do resto
+  # Rede interna (app ↔ banco ↔ crons) — isolada do resto
   internal:
     driver: bridge
 
-  # Rede do Traefik (existente na VPS) — para roteamento
+  # Rede do Traefik (existente na VPS) — para roteamento + acesso ao evolution-go
   # IMPORTANTE: O nome deve ser o mesmo da rede Traefik que já existe!
   # Descubra com: docker network ls | grep traefik
+  # O container evolution-go DEVE estar nesta rede para que o app
+  # consiga acessá-lo via http://evolution-go:8080
   traefik:
     external: true
-    name: ${TRAEFIK_NETWORK:-traefik_default}
+    name: ${TRAEFIK_NETWORK:-duda-bot_duda-network}
 
 # ==========================================
 # Volumes
