@@ -1,0 +1,138 @@
+# ============================================
+# OctupusZap - Docker Compose (isolado)
+# ============================================
+# Roda completamente separado dos outros serviços da VPS.
+# Usa a rede Traefik existente para roteamento.
+#
+# Para iniciar:  docker compose up -d
+# Para parar:    docker compose down
+# Para logs:     docker compose logs -f app
+# Para rebuild:  docker compose up -d --build
+#
+# IMPORTANTE: Antes de usar, edite o .env com suas configurações!
+
+services:
+  # ==========================================
+  # App - Next.js (OctupusZap)
+  # ==========================================
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: octupuszap-app
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - DATABASE_URL=postgresql://octupuszap:${DB_PASSWORD:-octupuszap123}@db:5432/octupuszap?schema=public
+      # Evolution Go local (mesma VPS, rede Docker)
+      - EVOLUTION_API_URL=http://evolution-go:8080
+      # A URL pública do app (para webhooks)
+      - NEXT_PUBLIC_APP_URL=${APP_PUBLIC_URL:-https://octupuszap.seudominio.com}
+      - NODE_ENV=production
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - internal
+      - traefik
+    labels:
+      # Traefik routing
+      - "traefik.enable=true"
+      - "traefik.http.routers.octupuszap.rule=Host(`${APP_DOMAIN:-octupuszap.localhost}`)"
+      - "traefik.http.routers.octupuszap.entrypoints=websecure"
+      - "traefik.http.routers.octupuszap.tls=true"
+      - "traefik.http.routers.octupuszap.tls.certresolver=letsencrypt"
+      - "traefik.http.services.octupuszap.loadbalancer.server.port=3000"
+      # HTTP → HTTPS redirect
+      - "traefik.http.routers.octupuszap-http.rule=Host(`${APP_DOMAIN:-octupuszap.localhost}`)"
+      - "traefik.http.routers.octupuszap-http.entrypoints=web"
+      - "traefik.http.routers.octupuszap-http.middlewares=redirect-to-https"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  # ==========================================
+  # Database - PostgreSQL (isolado do restante)
+  # ==========================================
+  db:
+    image: postgres:16-alpine
+    container_name: octupuszap-db
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=octupuszap
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-octupuszap123}
+      - POSTGRES_DB=octupuszap
+    volumes:
+      - octupuszap-db-data:/var/lib/postgresql/data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U octupuszap"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  # ==========================================
+  # Health Check Cron - Monitora instâncias
+  # ==========================================
+  # Roda a cada 5 minutos e verifica se as
+  # instâncias estão presas em "Reconnecting"
+  health-cron:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: octupuszap-health
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - DATABASE_URL=postgresql://octupuszap:${DB_PASSWORD:-octupuszap123}@db:5432/octupuszap?schema=public
+      - EVOLUTION_API_URL=http://evolution-go:8080
+      - NEXT_PUBLIC_APP_URL=${APP_PUBLIC_URL:-https://octupuszap.seudominio.com}
+      - NODE_ENV=production
+      - HEALTH_CHECK_MODE=true
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - internal
+      - traefik
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        echo "⏰ Starting health check cron (every 5 minutes)..."
+        while true; do
+          echo "[$(date)] Running health check..."
+          curl -s -X POST http://app:3000/api/cron/health-check || echo "Health check failed"
+          sleep 300
+        done
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+
+# ==========================================
+# Networks
+# ==========================================
+networks:
+  # Rede interna (app ↔ banco) — isolada do resto
+  internal:
+    driver: bridge
+
+  # Rede do Traefik (existente na VPS) — para roteamento
+  # IMPORTANTE: O nome deve ser o mesmo da rede Traefik que já existe!
+  # Descubra com: docker network ls | grep traefik
+  traefik:
+    external: true
+    name: ${TRAEFIK_NETWORK:-traefik_default}
+
+# ==========================================
+# Volumes
+# ==========================================
+volumes:
+  octupuszap-db-data:
+    driver: local
