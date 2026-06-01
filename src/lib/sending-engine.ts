@@ -1861,6 +1861,21 @@ export async function processNextMessage(campaignId: string): Promise<{
       return { processed: false, delayMs: 0, remaining: 0, completed: true }
     }
 
+    // AUTO-COMPLETION FIX: Recover stuck "sending" messages (stuck > 5 min)
+    // When there are no pending messages but some are stuck in "sending",
+    // the campaign can never complete. This recovers stale messages so they
+    // can be reprocessed or the campaign can be marked as completed.
+    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000)
+    const recovered = await db.message.updateMany({
+      where: { campaignId, status: 'sending', updatedAt: { lt: fiveMinutesAgo } },
+      data: { status: 'pending' },
+    })
+    if (recovered.count > 0) {
+      console.debug(`[SendingEngine] Recovered ${recovered.count} stuck "sending" messages during completion check — will reprocess`)
+      return { processed: false, delayMs: 1000, remaining: -1, completed: false, reason: 'recovered_stuck_messages' }
+    }
+
+    // Messages are genuinely in "sending" state (not stale yet) — wait
     return { processed: false, delayMs: 3000, remaining: stillSending, completed: false, reason: 'message_in_sending_state' }
   }
 
@@ -1996,6 +2011,18 @@ export async function processNextMessage(campaignId: string): Promise<{
   }
 
   if (!message) {
+    // AUTO-COMPLETION FIX: Same recovery logic as above
+    // Check for stale "sending" messages and recover them before deciding
+    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000)
+    const recovered = await db.message.updateMany({
+      where: { campaignId, status: 'sending', updatedAt: { lt: fiveMinutesAgo } },
+      data: { status: 'pending' },
+    })
+    if (recovered.count > 0) {
+      console.debug(`[SendingEngine] Recovered ${recovered.count} stuck "sending" messages during completion check (path 2) — will reprocess`)
+      return { processed: false, delayMs: 1000, remaining: -1, completed: false, reason: 'recovered_stuck_messages' }
+    }
+
     const stillPending = await db.message.count({
       where: { campaignId, status: { in: ['pending', 'sending'] } },
     })
