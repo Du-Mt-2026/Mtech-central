@@ -733,6 +733,18 @@ export async function POST(request: Request) {
 
           if (!chatJid) break
 
+          // Skip WhatsApp Status posts — these are not real conversations
+          // Status JID format: status@broadcast or remotePhone="status"
+          if (chatJid === 'status@broadcast') {
+            break
+          }
+
+          // Skip WhatsApp Channel/Newsletter messages — not relevant for inbox
+          // Channel JIDs start with 120363... and end with @newsletter
+          if (chatJid.endsWith('@newsletter')) {
+            break
+          }
+
           const msgId = data?.Info?.ID || ''
           const fromMe = data?.Info?.IsFromMe ?? false
           const pushName: string | null = data?.Info?.PushName || null
@@ -1122,6 +1134,11 @@ export async function POST(request: Request) {
               try {
                 const chatJid = msg?.Info?.Chat || msg?.key?.remoteJid || ''
                 if (!chatJid) continue
+
+                // Skip WhatsApp Status posts and Channel/Newsletter messages
+                if (chatJid === 'status@broadcast' || chatJid.endsWith('@newsletter')) {
+                  continue
+                }
 
                 const msgId = msg?.Info?.ID || msg?.key?.id || ''
                 const fromMe = msg?.Info?.IsFromMe ?? msg?.key?.fromMe ?? false
