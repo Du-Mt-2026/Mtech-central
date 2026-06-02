@@ -1,0 +1,45 @@
+name: Deploy to KVM8
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:  # Allow manual trigger from GitHub UI
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.KVM8_HOST }}
+          username: ${{ secrets.KVM8_USER }}
+          key: ${{ secrets.KVM8_SSH_KEY }}
+          port: ${{ secrets.KVM8_PORT }}
+          script: |
+            cd /opt/octupuszap
+
+            echo "📥 Pulling latest changes..."
+            git pull origin main
+
+            echo "🐳 Building Docker image..."
+            docker compose build app
+
+            echo "🚀 Restarting app container..."
+            docker compose up -d app
+
+            echo "⏳ Waiting for app to be healthy..."
+            for i in $(seq 1 30); do
+              if docker compose ps app --format json 2>/dev/null | grep -q '"running"'; then
+                echo "✅ App is running!"
+                break
+              fi
+              sleep 2
+            done
+
+            echo "📋 Container status:"
+            docker compose ps
+
+            echo "✅ Deploy completed successfully!"
