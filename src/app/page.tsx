@@ -2050,6 +2050,9 @@ function ChipsTab() {
 function ContatosTab() {
   const [contactLists, setContactLists] = useState<ContactList[]>([])
   const [contacts, setContacts] = useState<ContactItem[]>([])
+  const [totalContacts, setTotalContacts] = useState(0)
+  const [contactsPage, setContactsPage] = useState(1)
+  const CONTACTS_PER_PAGE = 50
   const [loading, setLoading] = useState(true)
   const [selectedList, setSelectedList] = useState<ContactList | null>(null)
   const [addListDialog, setAddListDialog] = useState(false)
@@ -2087,12 +2090,19 @@ function ContatosTab() {
     } catch { /* ignore */ }
   }, [])
 
-  const fetchContacts = useCallback(async (listId: string) => {
+  const fetchContacts = useCallback(async (listId: string, page = 1) => {
     try {
-      const res = await fetch(`/api/contact-lists/${listId}/contacts${searchQuery ? `?search=${searchQuery}` : ''}`)
+      const params = new URLSearchParams()
+      if (searchQuery) params.set('search', searchQuery)
+      params.set('page', String(page))
+      params.set('limit', String(CONTACTS_PER_PAGE))
+      const res = await fetch(`/api/contact-lists/${listId}/contacts?${params}`)
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Erro ao carregar contatos')
-      setContacts(Array.isArray(data) ? data : data.contacts || [])
+      const list = Array.isArray(data) ? data : data.contacts || []
+      setContacts(list)
+      setTotalContacts(data.total ?? list.length)
+      setContactsPage(page)
     } catch { toast.error('Erro ao carregar contatos') }
   }, [searchQuery])
 
@@ -2101,7 +2111,7 @@ function ContatosTab() {
     const interval = setInterval(fetchLists, 10000)
     return () => clearInterval(interval)
   }, [fetchLists])
-  useEffect(() => { if (selectedList) fetchContacts(selectedList.id) }, [selectedList, fetchContacts])
+  useEffect(() => { if (selectedList) fetchContacts(selectedList.id, 1) }, [selectedList, fetchContacts])
 
   const createList = async () => {
     try {
@@ -2334,7 +2344,7 @@ function ContatosTab() {
               className="text-lg font-semibold outline-none border-b border-transparent hover:border-muted-foreground/30 focus:border-primary px-1 rounded cursor-text"
               title="Clique para editar o nome"
             >{selectedList.name}</h3>
-            <Badge variant="secondary">{contacts.length} contatos</Badge>
+            <Badge variant="secondary">{totalContacts} contatos</Badge>
           </div>
 
           <div className="flex gap-2">
@@ -2352,18 +2362,28 @@ function ContatosTab() {
               if (!selectedList) return
               const doExport = async () => {
                 try {
-                  const res = await fetch(`/api/contact-lists/${selectedList.id}/contacts`)
-                  const exportContacts = await res.json()
-                  const list = Array.isArray(exportContacts) ? exportContacts : exportContacts.contacts || []
-                  if (list.length === 0) { toast.error('Nenhum contato para exportar'); return }
+                  // Fetch ALL contacts for export (paginate through all pages)
+                  const allExported: any[] = []
+                  let exportPage = 1
+                  const exportLimit = 200
+                  let hasMore = true
+                  while (hasMore) {
+                    const res = await fetch(`/api/contact-lists/${selectedList.id}/contacts?page=${exportPage}&limit=${exportLimit}`)
+                    const exportContacts = await res.json()
+                    const pageList = Array.isArray(exportContacts) ? exportContacts : exportContacts.contacts || []
+                    allExported.push(...pageList)
+                    hasMore = pageList.length >= exportLimit
+                    exportPage++
+                  }
+                  if (allExported.length === 0) { toast.error('Nenhum contato para exportar'); return }
                   const allCustomKeys = new Set<string>()
-                  list.forEach((c: any) => {
+                  allExported.forEach((c: any) => {
                     if (c.customFields) {
                       try { Object.keys(JSON.parse(c.customFields)).forEach(k => allCustomKeys.add(k)) } catch {}
                     }
                   })
                   const headers = ['Nome', 'Telefone', ...Array.from(allCustomKeys).sort()]
-                  const rows = list.map((c: any) => {
+                  const rows = allExported.map((c: any) => {
                     let cf: Record<string, string> = {}
                     if (c.customFields) { try { cf = JSON.parse(c.customFields) } catch {} }
                     return [c.name || '', c.phone || '', ...Array.from(allCustomKeys).sort().map(k => cf[k] || '')]
@@ -2376,7 +2396,7 @@ function ContatosTab() {
                   a.download = `${selectedList.name}_contatos.csv`
                   a.click()
                   URL.revokeObjectURL(url)
-                  toast.success(`${list.length} contatos exportados!`)
+                  toast.success(`${allExported.length} contatos exportados!`)
                 } catch { toast.error('Erro ao exportar contatos') }
               }
               doExport()
@@ -2452,6 +2472,31 @@ function ContatosTab() {
                     </tbody>
                   </table>
                 </ScrollArea>
+                {totalContacts > CONTACTS_PER_PAGE && (
+                  <div className="flex items-center justify-between px-4 py-3 border-t">
+                    <span className="text-sm text-muted-foreground">
+                      {Math.min((contactsPage - 1) * CONTACTS_PER_PAGE + 1, totalContacts)}–{Math.min(contactsPage * CONTACTS_PER_PAGE, totalContacts)} de {totalContacts}
+                    </span>
+                    <div className="flex gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={contactsPage <= 1}
+                        onClick={() => selectedList && fetchContacts(selectedList.id, contactsPage - 1)}
+                      >
+                        Anterior
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={contactsPage * CONTACTS_PER_PAGE >= totalContacts}
+                        onClick={() => selectedList && fetchContacts(selectedList.id, contactsPage + 1)}
+                      >
+                        Próximo
+                      </Button>
+                    </div>
+                  </div>
+                )}
               </CardContent>
             </Card>
           )}
