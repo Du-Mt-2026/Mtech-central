@@ -16,15 +16,15 @@ jobs:
           echo "Triggering deploy webhook..."
           RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
             "${{ secrets.DEPLOY_WEBHOOK_URL }}" \
-            -H "Authorization: Bearer ${{ secrets.DEPLOY_SECRET }}" \
+            -H "X-Deploy-Secret: ${{ secrets.DEPLOY_SECRET }}" \
             -H "Content-Type: application/json" \
             -d '{"ref":"main","sha":"${{ github.sha }}"}')
           HTTP_CODE=$(echo "$RESPONSE" | tail -1)
           BODY=$(echo "$RESPONSE" | sed '$d')
           echo "HTTP Status: $HTTP_CODE"
           echo "Response: $BODY"
-          if [ "$HTTP_CODE" -ge 400 ]; then
+          if [ "$HTTP_CODE" -ge 400 ] || echo "$BODY" | grep -qi "not satisfied\|error\|hook not found"; then
             echo "❌ Deploy webhook failed!"
             exit 1
           fi
-          echo "✅ Deploy webhook triggered!"
+          echo "✅ Deploy webhook triggered! Build will happen on the server."
