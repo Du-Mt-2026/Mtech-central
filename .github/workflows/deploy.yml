@@ -19,9 +19,11 @@ jobs:
           key: ${{ secrets.KVM8_SSH_KEY }}
           port: ${{ secrets.KVM8_PORT || 22 }}
           debug: true
-          script_stop: true
+          script_stop: false
           command_timeout: 5m
           script: |
+            set -e
+
             echo "=== OctupusZap Auto Deploy ==="
             echo "Timestamp: $(date)"
             echo "Host: $(hostname)"
@@ -29,7 +31,8 @@ jobs:
             cd /opt/octupuszap
 
             echo "📥 Pulling latest changes..."
-            git pull origin main
+            git fetch origin main
+            git reset --hard origin/main
 
             echo "🐳 Building Docker image..."
             docker compose build app
@@ -41,10 +44,15 @@ jobs:
             for i in $(seq 1 30); do
               MIGRATE_STATUS=$(docker inspect octupuszap-migrate --format='{{.State.Status}}' 2>/dev/null || echo "not found")
               if [ "$MIGRATE_STATUS" = "exited" ]; then
-                echo "✅ Migrate completed!"
+                MIGRATE_EXIT=$(docker inspect octupuszap-migrate --format='{{.State.ExitCode}}' 2>/dev/null || echo "1")
+                if [ "$MIGRATE_EXIT" = "0" ]; then
+                  echo "✅ Migrate completed successfully!"
+                else
+                  echo "⚠️ Migrate exited with code $MIGRATE_EXIT"
+                fi
                 break
               fi
-              echo "  Migrate status: $MIGRATE_STATUS... waiting"
+              echo "  Migrate status: $MIGRATE_STATUS... waiting ($i/30)"
               sleep 3
             done
 
@@ -54,6 +62,7 @@ jobs:
                 echo "✅ App is responding!"
                 break
               fi
+              echo "  Waiting for app... ($i/30)"
               sleep 2
             done
 
