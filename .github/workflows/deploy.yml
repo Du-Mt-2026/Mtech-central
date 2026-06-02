@@ -8,65 +8,23 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
 
     steps:
-      - name: Deploy via SSH
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.KVM8_HOST }}
-          username: ${{ secrets.KVM8_USER }}
-          key: ${{ secrets.KVM8_SSH_KEY }}
-          port: ${{ secrets.KVM8_PORT || 22 }}
-          debug: true
-          script_stop: false
-          command_timeout: 5m
-          script: |
-            set -e
-
-            echo "=== OctupusZap Auto Deploy ==="
-            echo "Timestamp: $(date)"
-            echo "Host: $(hostname)"
-
-            cd /opt/octupuszap
-
-            echo "📥 Pulling latest changes..."
-            git fetch origin main
-            git reset --hard origin/main
-
-            echo "🐳 Building Docker image..."
-            docker compose build app
-
-            echo "🚀 Restarting app container..."
-            docker compose up -d app
-
-            echo "⏳ Waiting for migrate to complete..."
-            for i in $(seq 1 30); do
-              MIGRATE_STATUS=$(docker inspect octupuszap-migrate --format='{{.State.Status}}' 2>/dev/null || echo "not found")
-              if [ "$MIGRATE_STATUS" = "exited" ]; then
-                MIGRATE_EXIT=$(docker inspect octupuszap-migrate --format='{{.State.ExitCode}}' 2>/dev/null || echo "1")
-                if [ "$MIGRATE_EXIT" = "0" ]; then
-                  echo "✅ Migrate completed successfully!"
-                else
-                  echo "⚠️ Migrate exited with code $MIGRATE_EXIT"
-                fi
-                break
-              fi
-              echo "  Migrate status: $MIGRATE_STATUS... waiting ($i/30)"
-              sleep 3
-            done
-
-            echo "⏳ Waiting for app to be healthy..."
-            for i in $(seq 1 30); do
-              if curl -sf http://localhost:3000 > /dev/null 2>&1; then
-                echo "✅ App is responding!"
-                break
-              fi
-              echo "  Waiting for app... ($i/30)"
-              sleep 2
-            done
-
-            echo "📋 Container status:"
-            docker compose ps
-
-            echo "✅ Deploy completed successfully!"
+      - name: Trigger deploy webhook
+        run: |
+          echo "Triggering deploy webhook..."
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+            "${{ secrets.DEPLOY_WEBHOOK_URL }}" \
+            -H "Authorization: Bearer ${{ secrets.DEPLOY_SECRET }}" \
+            -H "Content-Type: application/json" \
+            -d '{"ref":"main","sha":"${{ github.sha }}"}')
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+          echo "HTTP Status: $HTTP_CODE"
+          echo "Response: $BODY"
+          if [ "$HTTP_CODE" -ge 400 ]; then
+            echo "❌ Deploy webhook failed!"
+            exit 1
+          fi
+          echo "✅ Deploy webhook triggered!"
