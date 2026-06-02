@@ -41,6 +41,10 @@ export async function GET(request: NextRequest) {
     const baseWhere: Record<string, unknown> = {
       chipId,
       isGroup: showGroups ? undefined : false,
+      AND: [
+        { remoteJid: { not: 'status@broadcast' } },
+        { remoteJid: { not: { startsWith: '120363' } } },
+      ],
     }
     if (search) {
       baseWhere.OR = [

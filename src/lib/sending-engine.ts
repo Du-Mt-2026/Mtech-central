@@ -2636,6 +2636,64 @@ export async function processNextMessage(campaignId: string): Promise<{
     })
 
     // ============================================
+    // INBOX: Create InboxMessage so campaign messages appear in inbox
+    // ============================================
+    try {
+      const remoteJid = `${formattedPhone}@s.whatsapp.net`
+      const evolutionMsgId = result.key?.id || null
+      // Skip if already exists (e.g., webhook already created it)
+      if (evolutionMsgId) {
+        const existing = await db.inboxMessage.findUnique({ where: { evolutionMsgId } }).catch(() => null)
+        if (!existing) {
+          await db.inboxMessage.create({
+            data: {
+              instanceName: chip.evolutionInstance || '',
+              chipId: chip.id,
+              remoteJid,
+              remotePhone: formattedPhone,
+              fromMe: true,
+              messageContent: finalContent || '',
+              messageType: message.mediatype || 'text',
+              mediaUrl: message.mediaUrl || null,
+              contactName: message.contact?.name || null,
+              evolutionMsgId,
+              isRead: true,
+              isGroup: false,
+              isCampaign: true,
+              ack: 1,
+              status: 'sent',
+              createdAt: new Date(),
+            },
+          })
+        }
+      }
+      // Upsert conversation so it appears in the conversation list
+      await db.conversation.upsert({
+        where: { chipId_remoteJid: { chipId: chip.id, remoteJid } },
+        create: {
+          chipId: chip.id,
+          remoteJid,
+          remotePhone: formattedPhone,
+          contactName: message.contact?.name || formattedPhone,
+          lastMessagePreview: (finalContent || '').substring(0, 200),
+          lastMessageAt: new Date(),
+          lastMessageType: message.mediatype || 'text',
+          lastMessageFromMe: true,
+          lastMessageStatus: 'sent',
+        },
+        update: {
+          lastMessagePreview: (finalContent || '').substring(0, 200),
+          lastMessageAt: new Date(),
+          lastMessageType: message.mediatype || 'text',
+          lastMessageFromMe: true,
+          lastMessageStatus: 'sent',
+        },
+      }).catch(() => { /* non-critical */ })
+    } catch (inboxErr: any) {
+      console.debug(`[SendingEngine] InboxMessage creation skipped: ${inboxErr.message}`)
+    }
+
+    // ============================================
     // ANTI-BAN: DELAYED OFFLINE with jitter
     // ============================================
     // After the message is sent, the human doesn't go offline instantly.
