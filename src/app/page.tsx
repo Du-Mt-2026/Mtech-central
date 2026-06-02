@@ -2424,9 +2424,9 @@ function ContatosTab() {
           ) : (
             <Card className="shadow-lg border-0 overflow-hidden">
               <CardContent className="p-0 flex flex-col h-[620px]">
-                <ScrollArea className="flex-1 overflow-hidden">
+                <div className="flex-1 overflow-y-auto scrollbar-thin">
                   <table className="w-full text-sm">
-                    <thead className="bg-muted/50 sticky top-0">
+                    <thead className="bg-muted/50 sticky top-0 z-[1]">
                       <tr>
                         {STANDARD_CONTACT_FIELDS.map(f => (
                           <th key={f.key} className="text-left p-3 font-medium">{f.header}</th>
@@ -2471,9 +2471,9 @@ function ContatosTab() {
                       })}
                     </tbody>
                   </table>
-                </ScrollArea>
+                </div>
                 {totalContacts > CONTACTS_PER_PAGE && (
-                  <div className="flex items-center justify-between px-4 py-3 border-t bg-background shrink-0 sticky bottom-0 z-10">
+                  <div className="flex items-center justify-between px-4 py-3 border-t bg-background shrink-0">
                     <span className="text-sm text-muted-foreground">
                       {Math.min((contactsPage - 1) * CONTACTS_PER_PAGE + 1, totalContacts)}–{Math.min(contactsPage * CONTACTS_PER_PAGE, totalContacts)} de {totalContacts}
                     </span>
