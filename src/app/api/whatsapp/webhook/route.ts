@@ -1054,7 +1054,8 @@ export async function POST(request: Request) {
             })
 
           // v2.1: SSE broadcast — push new message to inbox clients in real-time
-          if (!isCampaignMsg && linkedChip?.id) {
+          // Broadcast ALL messages (including campaign) so inbox updates in real-time
+          if (linkedChip?.id) {
             try {
               broadcastToChip(linkedChip.id, 'new_message', {
                 remoteJid,

@@ -2689,6 +2689,22 @@ export async function processNextMessage(campaignId: string): Promise<{
           lastMessageStatus: 'sent',
         },
       }).catch(() => { /* non-critical */ })
+
+      // SSE broadcast so inbox updates in real-time when campaign message is sent
+      try {
+        const { broadcastToChip } = await import('@/app/api/inbox/events/route')
+        broadcastToChip(chip.id, 'new_message', {
+          remoteJid,
+          fromMe: true,
+          messageType: message.mediatype || 'text',
+          messageContent: (finalContent || '').substring(0, 200),
+          pushName: chip.profileName || chip.name,
+          contactName: message.contact?.name || formattedPhone,
+          isGroup: false,
+          isCampaign: true,
+          timestamp: Date.now(),
+        })
+      } catch { /* SSE broadcast is non-critical */ }
     } catch (inboxErr: any) {
       console.debug(`[SendingEngine] InboxMessage creation skipped: ${inboxErr.message}`)
     }
