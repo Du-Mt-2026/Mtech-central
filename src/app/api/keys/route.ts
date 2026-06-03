@@ -8,9 +8,20 @@ export async function GET() {
       orderBy: [{ category: 'asc' }, { label: 'asc' }],
     })
     return NextResponse.json(keys)
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error fetching keys:', error)
-    return NextResponse.json({ error: 'Erro ao buscar chaves' }, { status: 500 })
+    // Fallback: if Prisma query fails (e.g., missing columns), try raw SQL
+    try {
+      const rawKeys = await db.$queryRaw<Array<{
+        id: string; name: string; label: string; category: string;
+        variations: string; resolutionType?: string; timeSlots?: string;
+        isDefault: boolean; createdAt: Date; updatedAt: Date; userId: string | null;
+      }>>`SELECT id, name, label, category, variations, COALESCE("resolutionType", 'random') as "resolutionType", "timeSlots", "isDefault", "createdAt", "updatedAt", "userId" FROM "MessageKey" ORDER BY category ASC, label ASC`
+      return NextResponse.json(rawKeys)
+    } catch (rawError) {
+      console.error('Raw SQL fallback also failed:', rawError)
+      return NextResponse.json({ error: 'Erro ao buscar chaves' }, { status: 500 })
+    }
   }
 }
 
