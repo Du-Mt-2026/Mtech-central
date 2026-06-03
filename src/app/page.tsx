@@ -1338,7 +1338,7 @@ function ChipsTab() {
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-1.5 min-w-0">
-                          <CardTitle className="flex-1 min-w-0 truncate text-sm" title={chip.profileName || chip.name}>{chip.profileName || chip.name}</CardTitle>
+                          <CardTitle className="flex-1 min-w-0 truncate text-sm" title={chip.name}>{chip.name}</CardTitle>
                           <Badge variant="outline" className="gap-0.5 text-[9px] px-1 py-0 shrink-0 leading-none">
                             v3
                           </Badge>
@@ -1366,6 +1366,9 @@ function ChipsTab() {
                             </TooltipProvider>
                           )}
                         </div>
+                        {chip.profileName && chip.profileName !== chip.name && (
+                          <p className="text-[10px] text-muted-foreground/60 truncate" title={`Perfil WhatsApp: ${chip.profileName}`}>{chip.profileName}</p>
+                        )}
                         <div className="flex items-center gap-1.5 min-w-0">
                           <CardDescription className="flex-1 min-w-0 truncate text-xs" title={chip.phoneNumber}>{chip.phoneNumber}</CardDescription>
                           {chip.evolutionInstance && (

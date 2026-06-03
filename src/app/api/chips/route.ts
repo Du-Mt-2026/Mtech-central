@@ -111,8 +111,9 @@ export async function GET() {
 
           // Generate a readable name from instance name
           // e.g., "OctupusZap_Artur_d4x0u0j8" → "Artur"
-          const namePart = evoInst.name.replace('OctupusZap_', '').replace(/_[a-z0-9]+$/, '')
-          const displayName = namePart || evoInst.name
+          // e.g., "OctupusZap_Chip_Claro_01_d4x0u0j8" → "Chip Claro 01"
+          const namePart = evoInst.name.replace('OctupusZap_', '').replace(/_[a-z0-9]{8}$/, '')
+          const displayName = namePart.replace(/_/g, ' ') || evoInst.name
 
           try {
             const existingChipsForGen = await db.chip.findMany({
