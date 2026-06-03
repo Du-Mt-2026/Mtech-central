@@ -2423,18 +2423,38 @@ function ContatosTab() {
             </Card>
           ) : (
             <Card className="shadow-lg border-0 overflow-hidden">
-              <CardContent className="p-0 flex flex-col h-[620px]">
-                <div className="flex-1 overflow-y-auto scrollbar-thin">
-                  <table className="w-full text-sm">
-                    <thead className="bg-muted/50 sticky top-0 z-[1]">
+              <CardContent className="p-0 flex flex-col" style={{ maxHeight: 'calc(100vh - 280px)' }}>
+                {/* Fixed header */}
+                <div className="overflow-hidden bg-muted/50 border-b shrink-0">
+                  <table className="w-full text-sm table-fixed">
+                    <colgroup>
+                      {STANDARD_CONTACT_FIELDS.map(f => (
+                        <col key={f.key} className={f.core ? 'w-[18%]' : 'w-[12%]'} />
+                      ))}
+                      <col className="w-[16%]" />
+                      <col className="w-[8%]" />
+                    </colgroup>
+                    <thead>
                       <tr>
                         {STANDARD_CONTACT_FIELDS.map(f => (
-                          <th key={f.key} className="text-left p-3 font-medium">{f.header}</th>
+                          <th key={f.key} className="text-left p-3 font-medium truncate">{f.header}</th>
                         ))}
                         <th className="text-left p-3 font-medium">Incluído em</th>
                         <th className="text-left p-3 font-medium">Ações</th>
                       </tr>
                     </thead>
+                  </table>
+                </div>
+                {/* Scrollable body */}
+                <div className="flex-1 overflow-y-auto scrollbar-thin" style={{ minHeight: 0 }}>
+                  <table className="w-full text-sm table-fixed">
+                    <colgroup>
+                      {STANDARD_CONTACT_FIELDS.map(f => (
+                        <col key={f.key} className={f.core ? 'w-[18%]' : 'w-[12%]'} />
+                      ))}
+                      <col className="w-[16%]" />
+                      <col className="w-[8%]" />
+                    </colgroup>
                     <tbody>
                       {contacts.map(c => {
                         let customData: Record<string, string> = {}
@@ -2448,12 +2468,12 @@ function ContatosTab() {
                                 ? (f.key === 'nome' ? c.name : c.phone)
                                 : (customData[f.key] || '-')
                               return (
-                                <td key={f.key} className={`p-3 ${f.core ? 'font-medium' : 'text-muted-foreground text-xs'}`}>
+                                <td key={f.key} className={`p-3 truncate ${f.core ? 'font-medium' : 'text-muted-foreground text-xs'}`}>
                                   {value}
                                 </td>
                               )
                             })}
-                            <td className="p-3 text-muted-foreground text-xs">
+                            <td className="p-3 text-muted-foreground text-xs truncate">
                               {c.createdAt ? new Date(c.createdAt).toLocaleString('pt-BR') : '—'}
                             </td>
                             <td className="p-3">
@@ -2472,6 +2492,7 @@ function ContatosTab() {
                     </tbody>
                   </table>
                 </div>
+                {/* Pagination footer */}
                 {totalContacts > CONTACTS_PER_PAGE && (
                   <div className="flex items-center justify-between px-4 py-3 border-t bg-background shrink-0">
                     <span className="text-sm text-muted-foreground">
