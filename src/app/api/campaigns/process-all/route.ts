@@ -249,14 +249,13 @@ export async function POST(request: NextRequest) {
       // Process the existing queue first (pick next chip to reconnect)
       await processQueue()
 
-      // Run health check every 5 minutes (not every tick — it's expensive)
-      // Use a simple counter: processQueue runs every tick, healthCheck runs every 5th
-      // We check by looking at whether there's anything in the queue already
-      const stats = await import('@/lib/reconnection-queue').then(m => m.getReconnectionStats())
-      if (stats.queueLength === 0) {
-        // No items in queue — run health check to find disconnected chips
-        reconnectionResult = await healthCheckDisconnectedChips()
-      }
+      // v5.0 IMPROVEMENT: Always run health check on every tick.
+      // Previously, health check only ran when the queue was empty. But after
+      // Evolution Go crashes (e.g., OOM restart), ALL chips disconnect simultaneously.
+      // If we wait until the queue is empty, it takes much longer to detect new
+      // disconnections. The health check is cheap (one DB query + one API test)
+      // and already deduplicates against the in-memory queue.
+      reconnectionResult = await healthCheckDisconnectedChips()
     } catch (reconnectError: any) {
       console.error('[ProcessAll] Reconnection health check error:', reconnectError.message)
       // Non-critical — don't fail the whole cron

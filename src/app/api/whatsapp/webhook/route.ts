@@ -62,13 +62,80 @@ export async function POST(request: Request) {
     }
 
     // Find the chip linked to this instance
-    const linkedChip = await db.chip.findFirst({
+    let linkedChip = await db.chip.findFirst({
       where: { evolutionInstance: chipInstanceName },
     })
 
-    // If the instance is not linked in our DB, skip it
+    // ============================================
+    // FIX: Auto-link chips by phone number
+    // ============================================
+    // When a chip is created manually (POST /api/chips) with a pretty name
+    // like "Mari Mtech Promo 2", it starts WITHOUT an evolutionInstance.
+    // When it connects via QR code, the Evolution API creates an instance
+    // like "OctupusZap_Mari_Mtech_Promo_2_xxxxx" and sends a webhook.
+    // Without this fix, the webhook silently drops the event because
+    // no chip has that evolutionInstance set. This causes:
+    //   1. Chip stays "disconnected" even though it's connected in Evolution
+    //   2. The GET /api/chips auto-import creates a DUPLICATE chip
+    //
+    // Fix: If no chip is found by evolutionInstance, try to find a chip
+    // by phone number (from the webhook data) and link it automatically.
     if (!linkedChip) {
-      return NextResponse.json({ ok: true })
+      // Extract phone number from various webhook data fields
+      const jid = data?.JID || data?.jid || data?.id || data?.Info?.Chat || ''
+      const phoneFromJid = jid.split('@')[0].split(':')[0] || ''
+
+      if (phoneFromJid && phoneFromJid.length >= 10) {
+        // Try to find a chip with this phone number that has NO evolutionInstance yet
+        const unlinkedChip = await db.chip.findFirst({
+          where: {
+            phoneNumber: phoneFromJid,
+            evolutionInstance: null,
+          },
+          select: { id: true, name: true, phoneNumber: true },
+        })
+
+        // Also try with different phone formats (with/without country code, 9th digit)
+        const chipCandidates: Array<{ id: string; name: string; phoneNumber: string } | null> = [unlinkedChip]
+        if (!unlinkedChip) {
+          // Try without the leading "55" country code
+          const phoneWithoutCountry = phoneFromJid.replace(/^55/, '')
+          const chipByShortPhone = await db.chip.findFirst({
+            where: {
+              phoneNumber: { contains: phoneWithoutCountry.slice(-8) },
+              evolutionInstance: null,
+            },
+            select: { id: true, name: true, phoneNumber: true },
+          })
+          chipCandidates.push(chipByShortPhone)
+        }
+
+        for (const candidate of chipCandidates) {
+          if (candidate) {
+            // Found an unlinked chip with matching phone — link it!
+            try {
+              await db.chip.update({
+                where: { id: candidate.id },
+                data: { evolutionInstance: chipInstanceName },
+              })
+              console.log(`[Webhook] Auto-linked chip "${candidate.name}" (phone: ${candidate.phoneNumber}) to instance ${chipInstanceName}`)
+
+              // Re-fetch the chip with the updated evolutionInstance
+              linkedChip = await db.chip.findUnique({
+                where: { id: candidate.id },
+              })
+              break
+            } catch (linkErr) {
+              console.error(`[Webhook] Failed to auto-link chip ${candidate.id}:`, linkErr)
+            }
+          }
+        }
+      }
+
+      // If still not linked after phone search, skip this event
+      if (!linkedChip) {
+        return NextResponse.json({ ok: true })
+      }
     }
 
     console.log(`[Webhook] Event: ${event} | Instance: ${chipInstanceName}`)

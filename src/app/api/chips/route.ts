@@ -102,12 +102,66 @@ export async function GET() {
 
       for (const evoInst of evoOctupusInstances) {
         if (!dbInstanceNames.has(evoInst.name)) {
-          // This OctupusZap instance exists in Evolution but NOT in our DB — auto-import!
-          console.log(`[Chips Sync] Auto-importing instance "${evoInst.name}" from Evolution API (not in DB)`)
+          // This OctupusZap instance exists in Evolution but NOT in our DB.
+          // Before creating a new chip, check if there's an EXISTING chip with
+          // the same phone number but no evolutionInstance. This prevents duplicate
+          // chips when a chip was created manually before it connected via QR code.
+          //
+          // Bug history: Without this check, a manually-created chip "Mari Mtech Promo 2"
+          // (without evolutionInstance) would stay disconnected while the auto-import
+          // created a DUPLICATE chip "Mari Mtech Promo 2" (WITH evolutionInstance).
+          // The original chip would then be stuck without evolutionInstance forever.
 
           // Extract phone number from ownerJid (e.g., "554891742716:7@s.whatsapp.net" → "554891742716")
           const jid = evoInst.ownerJid || ''
           const phoneFromJid = jid.split('@')[0].split(':')[0] || ''
+
+          // Try to find an existing unlinked chip by phone number
+          let linkedExistingChip = false
+          if (phoneFromJid && phoneFromJid.length >= 10) {
+            // Exact phone match
+            const existingByPhone = await db.chip.findFirst({
+              where: {
+                phoneNumber: phoneFromJid,
+                evolutionInstance: null,
+              },
+            })
+
+            // Fuzzy phone match (last 8 digits)
+            const candidate = existingByPhone || await db.chip.findFirst({
+              where: {
+                phoneNumber: { contains: phoneFromJid.replace(/^55/, '').slice(-8) },
+                evolutionInstance: null,
+              },
+            })
+
+            if (candidate) {
+              // Found an existing unlinked chip — link it instead of creating a duplicate!
+              try {
+                await db.chip.update({
+                  where: { id: candidate.id },
+                  data: {
+                    evolutionInstance: evoInst.name,
+                    status: evoInst.connected ? 'connected' : 'disconnected',
+                    isQrPaired: evoInst.connected,
+                    profileName: evoInst.profileName || candidate.profileName,
+                    lastSeen: evoInst.connected ? new Date() : candidate.lastSeen,
+                  },
+                })
+                console.log(`[Chips Sync] Linked existing chip "${candidate.name}" (phone: ${candidate.phoneNumber}) to instance ${evoInst.name}`)
+                dbInstanceNames.add(evoInst.name)
+                linkedExistingChip = true
+              } catch (linkErr) {
+                console.error(`[Chips Sync] Failed to link existing chip ${candidate.id}:`, linkErr)
+                // Fall through to create a new chip
+              }
+            }
+          }
+
+          if (linkedExistingChip) continue
+
+          // No existing unlinked chip found — auto-import as new chip
+          console.log(`[Chips Sync] Auto-importing instance "${evoInst.name}" from Evolution API (not in DB)`)
 
           // Generate a readable name from instance name
           // e.g., "OctupusZap_Artur_d4x0u0j8" → "Artur"
