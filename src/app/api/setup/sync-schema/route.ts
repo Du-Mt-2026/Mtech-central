@@ -683,6 +683,32 @@ export async function POST(req: NextRequest) {
       results.push(`Erro ao criar Conversation: ${convErr.message}`)
     }
 
+    // Step 9: Sync MessageKey table — add resolutionType and timeSlots columns
+    try {
+      const mkColumns = await db.$queryRaw<Array<{ column_name: string }>>`
+        SELECT column_name FROM information_schema.columns
+        WHERE table_name = 'MessageKey'
+        ORDER BY ordinal_position
+      `
+      const mkColumnNames = mkColumns.map(c => c.column_name)
+
+      if (!mkColumnNames.includes('resolutionType')) {
+        await db.$executeRawUnsafe(`ALTER TABLE "MessageKey" ADD COLUMN IF NOT EXISTS "resolutionType" TEXT NOT NULL DEFAULT 'random'`)
+        results.push('MessageKey: adicionada coluna resolutionType')
+      } else {
+        results.push('MessageKey: resolutionType já existe')
+      }
+
+      if (!mkColumnNames.includes('timeSlots')) {
+        await db.$executeRawUnsafe(`ALTER TABLE "MessageKey" ADD COLUMN IF NOT EXISTS "timeSlots" TEXT`)
+        results.push('MessageKey: adicionada coluna timeSlots')
+      } else {
+        results.push('MessageKey: timeSlots já existe')
+      }
+    } catch (mkError: any) {
+      results.push(`Erro na migração MessageKey: ${mkError.message}`)
+    }
+
     return NextResponse.json({
       success: true,
       message: 'Migração processada',
