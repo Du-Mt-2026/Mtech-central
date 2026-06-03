@@ -2422,10 +2422,10 @@ function ContatosTab() {
               </CardContent>
             </Card>
           ) : (
-            <Card className="shadow-lg border-0 overflow-hidden">
+            <Card className="shadow-lg border-0">
               <CardContent className="p-0 flex flex-col" style={{ maxHeight: 'calc(100vh - 280px)' }}>
                 {/* Fixed header */}
-                <div className="overflow-hidden bg-muted/50 border-b shrink-0">
+                <div className="overflow-hidden bg-muted/50 border-b shrink-0 pr-[17px]">
                   <table className="w-full text-sm table-fixed">
                     <colgroup>
                       {STANDARD_CONTACT_FIELDS.map(f => (
@@ -2445,8 +2445,8 @@ function ContatosTab() {
                     </thead>
                   </table>
                 </div>
-                {/* Scrollable body */}
-                <div className="flex-1 overflow-y-auto scrollbar-thin" style={{ minHeight: 0 }}>
+                {/* Scrollable body - native scrollbar at edge */}
+                <div className="flex-1 overflow-y-auto" style={{ minHeight: 0 }}>
                   <table className="w-full text-sm table-fixed">
                     <colgroup>
                       {STANDARD_CONTACT_FIELDS.map(f => (
