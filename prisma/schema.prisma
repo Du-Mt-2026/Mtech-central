@@ -199,15 +199,17 @@ model MessageTemplate {
 }
 
 model MessageKey {
-  id          String   @id @default(cuid())
-  name        String   @unique          // "SAUDACAO_MANHA"
-  label       String                    // "Saudação - Bom dia" (nome amigável)
-  category    String   @default("geral") // "saudacao", "apresentacao", "pergunta", "encerramento", "emoji", "geral"
-  variations  String                     // JSON array: ["Oi, bom dia...", "Olá, tudo bem?...", ...]
-  isDefault   Boolean  @default(false)   // Keys pré-definidas do sistema
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  userId      String?                    // null = global, string = criada por usuário específico
+  id             String   @id @default(cuid())
+  name           String   @unique          // "SAUDACAO_MANHA"
+  label          String                    // "Saudação - Bom dia" (nome amigável)
+  category       String   @default("geral") // "saudacao", "apresentacao", "pergunta", "encerramento", "emoji", "geral"
+  variations     String                     // JSON array: ["Oi, bom dia...", "Olá, tudo bem?...", ...]
+  resolutionType String   @default("random") // "random" | "time_based"
+  timeSlots      String?                    // JSON: [{"key":"BOM_DIA","start":"06:01","end":"12:00"}, ...]
+  isDefault      Boolean  @default(false)   // Keys pré-definidas do sistema
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  userId         String?                    // null = global, string = criada por usuário específico
 }
 
 model Vendedor {

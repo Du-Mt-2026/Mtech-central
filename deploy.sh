@@ -211,6 +211,15 @@ curl -sf -X POST "http://localhost:3000/api/auth/seed-users" \
     echo "  curl -X POST http://localhost:3000/api/auth/seed-users -H 'Content-Type: application/json' -d '{\"secret\":\"$AUTH_SECRET_VAL\"}'"
   }
 
+# === Seed default message keys (SAUDACAO, BOM_DIA, BOA_TARDE, BOA_NOITE) ===
+echo ""
+echo "🔑 Criando chaves padrão..."
+curl -sf -X POST "http://localhost:3000/api/setup/seed-default-keys" \
+  -H "Content-Type: application/json" \
+  -d "{\"secret\":\"$AUTH_SECRET_VAL\"}" 2>/dev/null || {
+    echo -e "${YELLOW}⚠ Seed de chaves falhou (não é crítico).${NC}"
+  }
+
 # === Verificar status de todos os containers ===
 echo ""
 echo "📊 Status dos containers:"

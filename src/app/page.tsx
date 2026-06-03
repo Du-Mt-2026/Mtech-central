@@ -2844,7 +2844,7 @@ function parseKeyBlocksFromText(text: string): Array<{ fullMatch: string; variat
 // Helper: generate preview text replacing KEY blocks and contact variables
 // Logic: {{anything}} pulls from the linked contact list's first contact data
 // If the variable exists in the contact's data, show the real value; if not, leave {{name}} as-is
-function generatePreviewText(text: string, messageKeys: Array<{ id: string; name: string; label: string; category: string; variations: string }>, seed: number, contactVariables?: Array<{ tag: string; label: string; source: string }>, previewContactData?: { name: string; phone: string; customFields?: string } | null): string {
+function generatePreviewText(text: string, messageKeys: Array<{ id: string; name: string; label: string; category: string; variations: string; resolutionType?: string; timeSlots?: string | null }>, seed: number, contactVariables?: Array<{ tag: string; label: string; source: string }>, previewContactData?: { name: string; phone: string; customFields?: string } | null): string {
   // First, resolve {{KEY: ...}} blocks — pick a deterministic variation based on seed
   let preview = text.replace(/\{\{KEY:\s*((?:[^{}]|\{\{[^}]*\}\})*)\}\}/g, (_, inner) => {
     const options = inner.split('|').map((s: string) => s.trim()).filter(Boolean)
@@ -2853,11 +2853,41 @@ function generatePreviewText(text: string, messageKeys: Array<{ id: string; name
     return options[idx]
   })
 
-  // Replace old-style {{KEY_NAME}} with first variation from messageKeys (backward compat)
+  // Replace old-style {{KEY_NAME}} with resolved variation from messageKeys
   messageKeys.forEach(k => {
     try {
-      const vars = JSON.parse(k.variations)
-      if (vars?.length) preview = preview.replace(new RegExp(`\\{\\{${k.name}\\}\\}`, 'g'), vars[0])
+      if (k.resolutionType === 'time_based' && k.timeSlots) {
+        // Time-based key: resolve based on current time
+        const slots = JSON.parse(k.timeSlots)
+        const now = new Date()
+        const brazilTime = new Date(now.toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }))
+        const currentMinutes = brazilTime.getHours() * 60 + brazilTime.getMinutes()
+        let matchedKey: string | null = null
+        for (const slot of slots) {
+          const [startH, startM] = slot.start.split(':').map(Number)
+          const [endH, endM] = slot.end.split(':').map(Number)
+          const startMin = startH * 60 + startM
+          const endMin = endH * 60 + endM
+          if (startMin <= endMin) {
+            if (currentMinutes >= startMin && currentMinutes <= endMin) { matchedKey = slot.key; break }
+          } else {
+            if (currentMinutes >= startMin || currentMinutes <= endMin) { matchedKey = slot.key; break }
+          }
+        }
+        if (matchedKey) {
+          const refKey = messageKeys.find(mk => mk.name === matchedKey)
+          if (refKey) {
+            const vars = JSON.parse(refKey.variations)
+            if (vars?.length) preview = preview.replace(new RegExp(`\\{\\{${k.name}\\}\\}`, 'g'), vars[0])
+          } else {
+            preview = preview.replace(new RegExp(`\\{\\{${k.name}\\}\\}`, 'g'), matchedKey)
+          }
+        }
+      } else {
+        // Random key: use first variation for preview
+        const vars = JSON.parse(k.variations)
+        if (vars?.length) preview = preview.replace(new RegExp(`\\{\\{${k.name}\\}\\}`, 'g'), vars[0])
+      }
     } catch { /* ignore */ }
   })
 
@@ -2900,7 +2930,7 @@ function generatePreviewText(text: string, messageKeys: Array<{ id: string; name
 function MessageBuilder({ value, onChange, messageKeys, templates, contactVariables, previewContactData, rows = 3 }: {
   value: string
   onChange: (v: string) => void
-  messageKeys: Array<{ id: string; name: string; label: string; category: string; variations: string }>
+  messageKeys: Array<{ id: string; name: string; label: string; category: string; variations: string; resolutionType?: string; timeSlots?: string | null }>
   templates?: MessageTemplate[]
   contactVariables?: Array<{ tag: string; label: string; source: string }>
   previewContactData?: { name: string; phone: string; customFields?: string } | null
@@ -3313,7 +3343,7 @@ function CampanhasTab() {
   const [detailMessages, setDetailMessages] = useState<MessageItem[]>([])
   const [availableChips, setAvailableChips] = useState<Chip[]>([])
   const [availableLists, setAvailableLists] = useState<ContactList[]>([])
-  const [messageKeys, setMessageKeys] = useState<Array<{ id: string; name: string; label: string; category: string; variations: string }>>([])
+  const [messageKeys, setMessageKeys] = useState<Array<{ id: string; name: string; label: string; category: string; variations: string; resolutionType?: string; timeSlots?: string | null }>>([])
   const [templates, setTemplates] = useState<MessageTemplate[]>([])
   const [contactVariables, setContactVariables] = useState<Array<{ tag: string; label: string; source: string }>>([])
   const [previewContact, setPreviewContact] = useState<{ name: string; phone: string; customFields?: string } | null>(null)
