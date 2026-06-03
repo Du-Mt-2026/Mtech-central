@@ -1176,12 +1176,12 @@ export async function POST(request: Request) {
                     isCampaign: false, // Will be updated if matched to campaign
                     ack: fromMe ? 3 : 3,
                     status: 'delivered',
-                    quotedMsgId: parsed.quotedId || null,
+                    quotedMsgId: parsed.quotedMsgId || null,
                     quotedContent: parsed.quotedContent || null,
                     fileName: parsed.fileName || null,
                     mimeType: parsed.mimeType || null,
                     mediaCaption: parsed.caption || null,
-                    mediaDuration: parsed.duration || null,
+                    mediaDuration: parsed.mediaDuration || null,
                   },
                 })
                 synced++

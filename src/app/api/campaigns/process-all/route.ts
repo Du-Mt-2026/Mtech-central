@@ -147,40 +147,63 @@ export async function POST(request: NextRequest) {
     let totalProcessed = 0
     let totalSkipped = 0
 
-    // Process each campaign — ONE message per campaign per tick when anti-ban is active.
-    // CRITICAL: The old loop (up to 10 messages) truncated delays to fit within the
-    // 25s Vercel timeout, completely defeating the anti-ban interval system.
-    // Now: process 1 message, break, and let the next cron tick handle the next one.
-    // The nextSendAt field on chip+campaign persists the delay across serverless invocations.
+    // Process each campaign — v5.0 PARALLEL CHIP SENDING
+    // Instead of one message per campaign per tick, we now loop within each
+    // campaign to allow multiple chips to send in parallel. The loop continues
+    // until no more chips are ready (all in cooldown/interval) or we hit the
+    // function timeout. Each chip operates independently with its own nextSendAt.
+    const MAX_CONSECUTIVE_SKIPS = 3 // Stop after 3 consecutive skips without progress
+
     for (const campaignId of campaignIds) {
       let campaignProcessed = 0
       let campaignSkipped = 0
       let lastReason = ''
       let campaignError: string | undefined
+      let consecutiveSkips = 0
 
-      try {
-        const result = await processNextMessage(campaignId)
+      // Inner loop: keep processing messages for this campaign while chips are ready
+      while (Date.now() - startTime < FUNCTION_TIMEOUT_MS - 5000) {
+        try {
+          const result = await processNextMessage(campaignId)
 
-        if (result.processed) {
-          campaignProcessed++
-          totalProcessed++
-        } else {
+          if (result.processed) {
+            campaignProcessed++
+            totalProcessed++
+            consecutiveSkips = 0 // Reset on successful send
+          } else {
+            campaignSkipped++
+            totalSkipped++
+            lastReason = result.reason || ''
+            consecutiveSkips++
+
+            // Campaign-level blocks: stop trying this campaign entirely
+            if (result.completed) break
+            if (lastReason === 'paused') break
+            if (lastReason.includes('outside_sending_window')) break
+            if (lastReason.startsWith('break_')) break
+
+            // No ready chips at all: stop trying this campaign
+            if (lastReason === 'no_ready_chip') break
+
+            // Chip-specific issues (hourly_limit, daily_limit, cooldown, chip_interval_wait):
+            // Try again — other chips might be ready. But stop after too many consecutive skips.
+            if (consecutiveSkips >= MAX_CONSECUTIVE_SKIPS) {
+              console.debug(`[ProcessAll] Campaign ${campaignId}: ${consecutiveSkips} consecutive skips (${lastReason}) — moving to next campaign`)
+              break
+            }
+          }
+
+          // If campaign was just completed, stop
+          if (result.completed) break
+
+        } catch (msgError: any) {
+          // Individual message processing error — don't crash the whole loop
+          console.error(`[ProcessAll] Error processing message for campaign ${campaignId}:`, msgError.message)
+          campaignError = msgError.message
           campaignSkipped++
           totalSkipped++
-          lastReason = result.reason || ''
+          break // Stop on unexpected error
         }
-
-        // If campaign is complete, stop processing it
-        if (result.completed) {
-          // no more messages to process
-        }
-
-      } catch (msgError: any) {
-        // Individual message processing error — don't crash the whole loop
-        console.error(`[ProcessAll] Error processing message for campaign ${campaignId}:`, msgError.message)
-        campaignError = msgError.message
-        campaignSkipped++
-        totalSkipped++
       }
 
       allResults.push({

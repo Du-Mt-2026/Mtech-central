@@ -1706,7 +1706,7 @@ export async function processNextMessage(campaignId: string): Promise<{
     return { processed: false, delayMs: 0, remaining: -1, completed: false, reason: 'paused' }
   }
 
-  // Get campaign anti-ban settings (WITHOUT nextSendAt — we handle that atomically below)
+  // Get campaign anti-ban settings (nextSendAt is handled per-chip, not campaign-level)
   const campaignInfo = await db.campaign.findUnique({
     where: { id: campaignId },
     select: { antiBanEnabled: true, warmingMode: true, sendIntervalMin: true, sendIntervalMax: true },
@@ -1720,75 +1720,27 @@ export async function processNextMessage(campaignId: string): Promise<{
   const settings = await getAntiBanSettings()
 
   // ============================================
-  // ATOMIC CAMPAIGN SLOT CLAIM — anti-ban interval persistence
+  // PARALLEL CHIP SENDING — no campaign-level slot claim
   // ============================================
-  // CRITICAL FIX: The old non-atomic check-then-set (SELECT nextSendAt, then later UPDATE)
-  // had a race condition — multiple concurrent invocations could all read nextSendAt as
-  // null/expired before any of them wrote the new value, causing burst sends (2-4s gaps).
+  // v5.0: Removed the campaign-level atomic slot claim that blocked ALL chips.
+  // Each chip now operates independently with its own nextSendAt.
+  // The campaign.nextSendAt is ONLY used for campaign-level state
+  // (sending window, break windows, completion) — NOT for chip intervals.
   //
-  // This atomic claim uses UPDATE ... WHERE to check AND set nextSendAt in a single
-  // database operation. PostgreSQL row-level locking ensures that concurrent UPDATEs
-  // are serialized — the second UPDATE sees the first's changes and its WHERE clause fails.
+  // Message selection now filters for chips that are ready to send:
+  //   - chip.nextSendAt is null or in the past
+  //   - chip.cooldownUntil is null or in the past
+  //   - chip.status = 'connected'
+  //   - chip.evolutionInstance IS NOT NULL
   //
-  // Flow:
-  //   1. Try to set campaign.nextSendAt = NOW() + estimatedDelay WHERE nextSendAt IS NULL OR < NOW()
-  //   2. If count=1: we claimed the slot — proceed to send
-  //   3. If count=0: another invocation has the slot — read their nextSendAt and return wait
-  //   4. After sending, update nextSendAt with the ACTUAL calculated delay
-  //   5. On error, release the claim with a short retry delay
-  if (antiBanEnabled) {
-    // Calculate estimated delay for the claim (use the interval midpoint as a safe estimate)
-    // ANTI-BAN SAFETY: UI settings are the minimum safety floor.
-    // Campaign can go SLOWER (higher) but never FASTER (lower) than UI settings.
-    const intervalMin = Math.max(campaignIntervalMin ?? 0, settings.messageIntervalMin)
-    const intervalMax = Math.max(campaignIntervalMax ?? 0, settings.messageIntervalMax)
-    const estimatedDelayMs = gaussianDelaySeconds(intervalMin, intervalMax) * 1000
-
-    // Apply warming mode multiplier to the estimate
-    const modeMultiplier = WARMING_MODE_MULTIPLIERS[warmingMode]
-    const adjustedEstimateMs = modeMultiplier
-      ? Math.round(estimatedDelayMs * modeMultiplier.intervalMultiplier)
-      : estimatedDelayMs
-
-    // Atomic claim: only succeeds if nextSendAt is null or in the past
-    const claimResult = await db.campaign.updateMany({
-      where: {
-        id: campaignId,
-        OR: [
-          { nextSendAt: null },
-          { nextSendAt: { lt: new Date() } },
-        ],
-      },
-      data: { nextSendAt: new Date(Date.now() + adjustedEstimateMs) },
-    })
-
-    if (claimResult.count === 0) {
-      // Another invocation already claimed this campaign's slot — read their wait time
-      const currentCampaign = await db.campaign.findUnique({
-        where: { id: campaignId },
-        select: { nextSendAt: true },
-      })
-      const waitMs = currentCampaign?.nextSendAt
-        ? Math.max(new Date(currentCampaign.nextSendAt).getTime() - Date.now(), 1000)
-        : settings.messageIntervalMin * 1000
-      console.debug(`[SendingEngine] Campaign slot already claimed — waiting ${Math.round(waitMs/1000)}s (until ${currentCampaign?.nextSendAt?.toISOString()})`)
-      return {
-        processed: false,
-        delayMs: waitMs,
-        remaining: -1,
-        completed: false,
-        reason: `campaign_interval_wait`,
-      }
-    }
-
-    console.debug(`[SendingEngine] Campaign slot claimed for ${Math.round(adjustedEstimateMs/1000)}s`)
-  }
+  // This allows multiple chips in the same campaign to send in parallel.
+  // When one chip is in cooldown/interval, other chips continue sending.
 
   // CHECK SENDING WINDOW — don't send outside business hours
   if (antiBanEnabled && !isWithinSendingWindow(settings)) {
     const currentMins = getCurrentMinutes(settings.timezone)
     console.debug(`[SendingEngine] Outside sending window (${currentMins}min, window: ${settings.sendingWindowStart}-${settings.sendingWindowEnd}, tz: ${settings.timezone}). Pausing.`)
-    // Release the campaign slot claim with a 1-minute wait (next check)
+    // v5.0: Set campaign.nextSendAt to avoid re-checking too often (campaign-level state)
     await db.campaign.update({
       where: { id: campaignId },
       data: { nextSendAt: new Date(Date.now() + 60 * 1000) },
@@ -1816,7 +1768,7 @@ export async function processNextMessage(campaignId: string): Promise<{
       const endH = Math.floor(breakEndMins / 60)
       const endM = breakEndMins % 60
       console.debug(`[SendingEngine] In break window "${activeBreak.label}" (${String(startH).padStart(2,'0')}:${String(startM).padStart(2,'0')}-${String(endH).padStart(2,'0')}:${String(endM).padStart(2,'0')}). Waiting ${waitMins}min.`)
-      // Release the campaign slot claim with the break window wait time
+      // v5.0: Set campaign.nextSendAt until break ends (campaign-level state)
       await db.campaign.update({
         where: { id: campaignId },
         data: { nextSendAt: new Date(Date.now() + waitMs) },
@@ -1832,51 +1784,89 @@ export async function processNextMessage(campaignId: string): Promise<{
   }
 
   // ============================================================
-  // CONTACT-BY-CONTACT PROCESSING
+  // CONTACT-BY-CONTACT PROCESSING (with parallel chip support)
   // ============================================================
   // Process ALL steps for one contact before moving to the next.
   // Messages are created in order: A-step1, A-step2, B-step1, B-step2, ...
   // Using 'id' (auto-increment) preserves creation order even when createdAt is identical.
   //
-  // Step 1: Find the NEXT CONTACT to process (earliest pending message by ID)
+  // v5.0 PARALLEL: Message selection now filters for chips that are READY to send.
+  // If the earliest pending message's chip is in cooldown/interval, we skip it
+  // and find the next pending message whose chip IS ready. This allows multiple
+  // chips to send in parallel within the same campaign.
+  //
+  // Step 1: Find the NEXT CONTACT whose chip is ready (earliest pending message with ready chip)
   // Step 2: Find the NEXT STEP for that contact (lowest stepOrder)
-  // This guarantees contact-by-contact ordering: A1→A2→A3 → B1→B2→B3 → ...
+  // This preserves contact-by-contact ordering when chips are ready.
+
+  // Helper: chip readiness filter used in queries
+  const chipReadyFilter = antiBanEnabled ? {
+    status: 'connected',
+    evolutionInstance: { not: null },
+    AND: [
+      { OR: [{ nextSendAt: null }, { nextSendAt: { lt: new Date() } }] },
+      { OR: [{ cooldownUntil: null }, { cooldownUntil: { lt: new Date() } }] },
+    ],
+  } : {
+    // When anti-ban is disabled, only check connection status
+    status: 'connected',
+    evolutionInstance: { not: null },
+  }
 
   const earliestPending = await db.message.findFirst({
-    where: { campaignId, status: 'pending' },
+    where: { 
+      campaignId, 
+      status: 'pending',
+      chip: chipReadyFilter,
+    },
     orderBy: { id: 'asc' },  // id preserves creation order (A1, A2, B1, B2, ...)
     select: { contactId: true },
   })
 
   if (!earliestPending) {
-    const stillSending = await db.message.count({
-      where: { campaignId, status: 'sending' },
+    // No pending messages with ready chips. Check if there are ANY pending messages
+    // (regardless of chip readiness) to distinguish between "no messages" and "no ready chips".
+    const anyPending = await db.message.count({
+      where: { campaignId, status: 'pending' },
     })
 
-    if (stillSending === 0) {
-      await db.campaign.update({
-        where: { id: campaignId },
-        data: { status: 'completed', completedAt: new Date(), nextSendAt: null },
+    if (anyPending === 0) {
+      // No pending messages at all — check for campaign completion
+      const stillSending = await db.message.count({
+        where: { campaignId, status: 'sending' },
       })
-      return { processed: false, delayMs: 0, remaining: 0, completed: true }
+
+      if (stillSending === 0) {
+        await db.campaign.update({
+          where: { id: campaignId },
+          data: { status: 'completed', completedAt: new Date(), nextSendAt: null },
+        })
+        return { processed: false, delayMs: 0, remaining: 0, completed: true }
+      }
+
+      // AUTO-COMPLETION FIX: Recover stuck "sending" messages (stuck > 5 min)
+      const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000)
+      const recovered = await db.message.updateMany({
+        where: { campaignId, status: 'sending', updatedAt: { lt: fiveMinutesAgo } },
+        data: { status: 'pending' },
+      })
+      if (recovered.count > 0) {
+        console.debug(`[SendingEngine] Recovered ${recovered.count} stuck "sending" messages during completion check — will reprocess`)
+        return { processed: false, delayMs: 1000, remaining: -1, completed: false, reason: 'recovered_stuck_messages' }
+      }
+
+      // Messages are genuinely in "sending" state (not stale yet) — wait
+      return { processed: false, delayMs: 3000, remaining: stillSending, completed: false, reason: 'message_in_sending_state' }
     }
 
-    // AUTO-COMPLETION FIX: Recover stuck "sending" messages (stuck > 5 min)
-    // When there are no pending messages but some are stuck in "sending",
-    // the campaign can never complete. This recovers stale messages so they
-    // can be reprocessed or the campaign can be marked as completed.
-    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000)
-    const recovered = await db.message.updateMany({
-      where: { campaignId, status: 'sending', updatedAt: { lt: fiveMinutesAgo } },
-      data: { status: 'pending' },
+    // There ARE pending messages but NO chips are ready (all in cooldown/interval/disconnected)
+    // Set a short campaign.nextSendAt to avoid hammering the DB, then return no_ready_chip
+    console.debug(`[SendingEngine] ${anyPending} pending messages but no chips ready — waiting for next tick`)
+    await db.campaign.update({
+      where: { id: campaignId },
+      data: { nextSendAt: new Date(Date.now() + 60 * 1000) }, // Check again in 1 minute
     })
-    if (recovered.count > 0) {
-      console.debug(`[SendingEngine] Recovered ${recovered.count} stuck "sending" messages during completion check — will reprocess`)
-      return { processed: false, delayMs: 1000, remaining: -1, completed: false, reason: 'recovered_stuck_messages' }
-    }
-
-    // Messages are genuinely in "sending" state (not stale yet) — wait
-    return { processed: false, delayMs: 3000, remaining: stillSending, completed: false, reason: 'message_in_sending_state' }
+    return { processed: false, delayMs: 60 * 1000, remaining: anyPending, completed: false, reason: 'no_ready_chip' }
   }
 
   const targetContactId = earliestPending.contactId
@@ -2263,16 +2253,16 @@ export async function processNextMessage(campaignId: string): Promise<{
   const chipAfterHourly = await db.chip.findUnique({ where: { id: message.chipId } })
   const currentChip = chipAfterHourly || chip
 
-  // Check hourly limit
+  // Check hourly limit — v5.0: Don't block campaign, release claim so other chips can send
   if (antiBanEnabled && settings.hourlyLimit > 0) {
     const hourlySent = currentChip.hourlySent ?? 0
     if (hourlySent >= settings.hourlyLimit) {
-      console.debug(`[SendingEngine] Chip ${currentChip.name} hit hourly limit (${hourlySent}/${settings.hourlyLimit}) — waiting`)
-      // Release campaign slot claim with 1-minute wait
-      await db.campaign.update({ where: { id: campaignId }, data: { nextSendAt: new Date(Date.now() + 60 * 1000) } })
+      console.debug(`[SendingEngine] Chip ${currentChip.name} hit hourly limit (${hourlySent}/${settings.hourlyLimit}) — releasing claim, other chips may continue`)
+      // Release the message claim so it can be picked up by another chip later
+      await db.message.update({ where: { id: message.id }, data: { status: 'pending' } })
       return {
         processed: false,
-        delayMs: 60 * 1000, // Check again in 1 minute
+        delayMs: 1000, // Short delay — process-all loop will try other chips
         remaining: -1,
         completed: false,
         reason: `hourly_limit_${currentChip.name}`,
@@ -2283,23 +2273,23 @@ export async function processNextMessage(campaignId: string): Promise<{
   // ============================================
   // CHECK CHIP nextSendAt — anti-ban interval persistence
   // ============================================
-  // Replaces the old "minimum interval" check that only worked for warming chips.
-  // Now ALL chips have their interval persisted via nextSendAt, so even when
-  // the serverless function timeout truncates a long delay, the next invocation
-  // will respect the remaining wait time.
-  // This also ensures chips NOT in warming still respect their interval.
+  // v5.0: With the new message selection query filtering for ready chips,
+  // this check should rarely trigger (only due to race conditions where
+  // the chip's nextSendAt changed between the query and this check).
+  // When it does trigger, we release the message claim and return a
+  // chip-specific reason — DON'T block the campaign.
   if (antiBanEnabled && currentChip.nextSendAt) {
     const now = Date.now()
     const nextSendTime = new Date(currentChip.nextSendAt).getTime()
     if (nextSendTime > now) {
       const waitMs = nextSendTime - now
       const phase = currentChip.warmingPhase || 'nursery'
-      console.debug(`[SendingEngine] Chip ${currentChip.name} (${phase}) nextSendAt not reached — waiting ${Math.round(waitMs/1000)}s (until ${currentChip.nextSendAt!.toISOString()})`)
-      // Release campaign slot claim with the chip's wait time
-      await db.campaign.update({ where: { id: campaignId }, data: { nextSendAt: new Date(Date.now() + waitMs) } })
+      console.debug(`[SendingEngine] Chip ${currentChip.name} (${phase}) nextSendAt not reached — releasing claim, other chips may continue (wait ${Math.round(waitMs/1000)}s)`)
+      // Release the message claim so it can be picked up later when this chip is ready
+      await db.message.update({ where: { id: message.id }, data: { status: 'pending' } })
       return {
         processed: false,
-        delayMs: waitMs,
+        delayMs: 1000, // Short delay — process-all loop will try other chips
         remaining: -1,
         completed: false,
         reason: `chip_interval_wait_${currentChip.name}`,
@@ -2339,19 +2329,20 @@ export async function processNextMessage(campaignId: string): Promise<{
 
       console.debug(`[SendingEngine] Reassigned ${pendingMessages.length} messages from ${currentChip.name} to other chips`)
 
+      // v5.0: Release the message claim so it can be picked up by another chip
+      await db.message.update({ where: { id: message.id }, data: { status: 'pending' } })
+
       // Return with short delay so we can try processing again with the reassigned messages
       const remaining = await db.message.count({ where: { campaignId, status: 'pending' } })
-      // Release campaign slot claim with short delay (messages were reassigned)
-      await db.campaign.update({ where: { id: campaignId }, data: { nextSendAt: new Date(Date.now() + 1000) } })
       return { processed: false, delayMs: 1000, remaining, completed: remaining === 0, reason: `daily_limit_reassigned_${currentChip.name}` }
     }
 
-    // No other chips available — truly stuck
-    // Release campaign slot claim with 1-minute wait
-    await db.campaign.update({ where: { id: campaignId }, data: { nextSendAt: new Date(Date.now() + 60 * 1000) } })
+    // No other chips available — release claim and return chip-specific reason
+    // v5.0: Don't block campaign with nextSendAt; the process-all loop handles this
+    await db.message.update({ where: { id: message.id }, data: { status: 'pending' } })
     return {
       processed: false,
-      delayMs: 60 * 1000,
+      delayMs: 1000,
       remaining: -1,
       completed: false,
       reason: `daily_limit_${currentChip.name}`,
@@ -2392,14 +2383,17 @@ export async function processNextMessage(campaignId: string): Promise<{
         }
       }
 
-      // Release campaign slot claim with the cooldown wait time
-      await db.campaign.update({ where: { id: campaignId }, data: { nextSendAt: new Date(Date.now() + waitMs) } })
+      // v5.0: Don't block the campaign with campaign.nextSendAt during cooldown.
+      // Release the message claim so other chips can pick it up or the process-all
+      // loop can try other chips. The chip's cooldownUntil already prevents this
+      // chip from being selected by the message query.
+      await db.message.update({ where: { id: message.id }, data: { status: 'pending' } })
       return {
         processed: false,
-        delayMs: waitMs,
+        delayMs: 1000, // Short delay — process-all loop will try other chips
         remaining: -1,
         completed: false,
-        reason: 'cooldown',
+        reason: `cooldown_${currentChip.name}`,
       }
     }
   }
@@ -2900,13 +2894,13 @@ export async function processNextMessage(campaignId: string): Promise<{
     }
 
     // ============================================
-    // PERSIST nextSendAt ON CHIP AND CAMPAIGN
+    // PERSIST nextSendAt ON CHIP ONLY (v5.0 parallel)
     // ============================================
-    // This OVERWRITES the estimated claim from the atomic slot claim above
-    // with the ACTUAL calculated delay (which accounts for offline/reading time,
-    // warming minimums, and mode multipliers).
+    // v5.0: Only persist chip.nextSendAt — each chip has its own independent interval.
+    // Campaign.nextSendAt is NOT set here because other chips in the same campaign
+    // should be able to send independently. The process-all loop handles calling
+    // processNextMessage again for other ready chips in this campaign.
     const chipNextSendAt = new Date(Date.now() + nextDelay)
-    const campaignNextSendAt = new Date(Date.now() + nextDelay)
 
     // Persist chip nextSendAt — this chip cannot send again until this time
     await db.chip.update({
@@ -2914,14 +2908,7 @@ export async function processNextMessage(campaignId: string): Promise<{
       data: { nextSendAt: chipNextSendAt },
     })
 
-    // Persist campaign nextSendAt — overwrite the claim estimate with the actual delay
-    // This prevents multiple chips from sending for the same campaign in rapid succession
-    await db.campaign.update({
-      where: { id: campaignId },
-      data: { nextSendAt: campaignNextSendAt },
-    })
-
-    console.debug(`[SendingEngine] Next delay: ${Math.round(nextDelay/1000)}s — chip ${currentChip.name} nextSendAt=${chipNextSendAt.toISOString()}, campaign nextSendAt=${campaignNextSendAt.toISOString()}`)
+    console.debug(`[SendingEngine] Next delay: ${Math.round(nextDelay/1000)}s — chip ${currentChip.name} nextSendAt=${chipNextSendAt.toISOString()} (other chips can send independently)`)
 
     const remaining = await db.message.count({ where: { campaignId, status: 'pending' } })
 
@@ -3049,15 +3036,9 @@ export async function processNextMessage(campaignId: string): Promise<{
       },
     })
 
-    // Release the campaign slot claim with a retry delay based on user settings
-    // Previously hardcoded to 5000ms (5s) — now respects the configured minimum interval.
+    // v5.0: Don't block the campaign with nextSendAt on error.
+    // Other chips can still send. The failed message is already marked.
     const errorRetryDelayMs = settings.messageIntervalMin * 1000
-    if (antiBanEnabled) {
-      await db.campaign.update({
-        where: { id: campaignId },
-        data: { nextSendAt: new Date(Date.now() + errorRetryDelayMs) },
-      })
-    }
 
     const remaining = await db.message.count({ where: { campaignId, status: 'pending' } })
     return { processed: true, delayMs: errorRetryDelayMs, remaining, completed: remaining === 0 }
@@ -3114,17 +3095,18 @@ export async function recoverStuckMessages(campaignId?: string): Promise<number>
 }
 
 /**
- * H5 FIX: Release orphaned campaign slots.
+ * Release orphaned campaign nextSendAt values.
  *
- * When a process claims a campaign slot (sets nextSendAt) and then crashes or
- * times out before completing, the slot remains "locked" forever — nextSendAt
- * is set to a time in the future, and no new messages can be sent for that campaign.
+ * v5.0: With parallel chip sending, campaign.nextSendAt is only used for
+ * campaign-level state (sending window, break windows, no_ready_chip throttle).
+ * However, if a process sets campaign.nextSendAt and then crashes, the campaign
+ * could be stuck with nextSendAt far in the future.
  *
- * This function finds campaign slots that have been held for too long (more than
- * SLOT_STALE_THRESHOLD_MS) and releases them by setting nextSendAt = null.
+ * This function finds campaign nextSendAt values that have been in the past
+ * for more than SLOT_STALE_THRESHOLD_MS and resets them to null.
  *
- * Threshold: 10 minutes — generous enough to allow for long anti-ban intervals
- * (up to ~5 min), but short enough to prevent campaigns from getting stuck.
+ * Threshold: 10 minutes — generous enough to allow for break windows, but
+ * short enough to prevent campaigns from getting stuck.
  */
 const SLOT_STALE_THRESHOLD_MS = 10 * 60 * 1000 // 10 minutes
 
