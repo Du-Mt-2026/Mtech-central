@@ -1338,7 +1338,7 @@ function ChipsTab() {
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-1.5 min-w-0">
-                          <CardTitle className="flex-1 min-w-0 truncate text-sm" title={chip.profileName || chip.name}>{chip.profileName || chip.name}</CardTitle>
+                          <CardTitle className="flex-1 min-w-0 truncate text-sm" title={chip.name}>{chip.name}</CardTitle>
                           <Badge variant="outline" className="gap-0.5 text-[9px] px-1 py-0 shrink-0 leading-none">
                             v3
                           </Badge>
@@ -1366,6 +1366,9 @@ function ChipsTab() {
                             </TooltipProvider>
                           )}
                         </div>
+                        {chip.profileName && chip.profileName !== chip.name && (
+                          <p className="text-[10px] text-muted-foreground/60 truncate" title={`Perfil WhatsApp: ${chip.profileName}`}>{chip.profileName}</p>
+                        )}
                         <div className="flex items-center gap-1.5 min-w-0">
                           <CardDescription className="flex-1 min-w-0 truncate text-xs" title={chip.phoneNumber}>{chip.phoneNumber}</CardDescription>
                           {chip.evolutionInstance && (
@@ -2050,6 +2053,9 @@ function ChipsTab() {
 function ContatosTab() {
   const [contactLists, setContactLists] = useState<ContactList[]>([])
   const [contacts, setContacts] = useState<ContactItem[]>([])
+  const [totalContacts, setTotalContacts] = useState(0)
+  const [contactsPage, setContactsPage] = useState(1)
+  const CONTACTS_PER_PAGE = 50
   const [loading, setLoading] = useState(true)
   const [selectedList, setSelectedList] = useState<ContactList | null>(null)
   const [addListDialog, setAddListDialog] = useState(false)
@@ -2087,12 +2093,19 @@ function ContatosTab() {
     } catch { /* ignore */ }
   }, [])
 
-  const fetchContacts = useCallback(async (listId: string) => {
+  const fetchContacts = useCallback(async (listId: string, page = 1) => {
     try {
-      const res = await fetch(`/api/contact-lists/${listId}/contacts${searchQuery ? `?search=${searchQuery}` : ''}`)
+      const params = new URLSearchParams()
+      if (searchQuery) params.set('search', searchQuery)
+      params.set('page', String(page))
+      params.set('limit', String(CONTACTS_PER_PAGE))
+      const res = await fetch(`/api/contact-lists/${listId}/contacts?${params}`)
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Erro ao carregar contatos')
-      setContacts(Array.isArray(data) ? data : data.contacts || [])
+      const list = Array.isArray(data) ? data : data.contacts || []
+      setContacts(list)
+      setTotalContacts(data.total ?? list.length)
+      setContactsPage(page)
     } catch { toast.error('Erro ao carregar contatos') }
   }, [searchQuery])
 
@@ -2101,7 +2114,7 @@ function ContatosTab() {
     const interval = setInterval(fetchLists, 10000)
     return () => clearInterval(interval)
   }, [fetchLists])
-  useEffect(() => { if (selectedList) fetchContacts(selectedList.id) }, [selectedList, fetchContacts])
+  useEffect(() => { if (selectedList) fetchContacts(selectedList.id, 1) }, [selectedList, fetchContacts])
 
   const createList = async () => {
     try {
@@ -2334,7 +2347,7 @@ function ContatosTab() {
               className="text-lg font-semibold outline-none border-b border-transparent hover:border-muted-foreground/30 focus:border-primary px-1 rounded cursor-text"
               title="Clique para editar o nome"
             >{selectedList.name}</h3>
-            <Badge variant="secondary">{contacts.length} contatos</Badge>
+            <Badge variant="secondary">{totalContacts} contatos</Badge>
           </div>
 
           <div className="flex gap-2">
@@ -2352,18 +2365,28 @@ function ContatosTab() {
               if (!selectedList) return
               const doExport = async () => {
                 try {
-                  const res = await fetch(`/api/contact-lists/${selectedList.id}/contacts`)
-                  const exportContacts = await res.json()
-                  const list = Array.isArray(exportContacts) ? exportContacts : exportContacts.contacts || []
-                  if (list.length === 0) { toast.error('Nenhum contato para exportar'); return }
+                  // Fetch ALL contacts for export (paginate through all pages)
+                  const allExported: any[] = []
+                  let exportPage = 1
+                  const exportLimit = 200
+                  let hasMore = true
+                  while (hasMore) {
+                    const res = await fetch(`/api/contact-lists/${selectedList.id}/contacts?page=${exportPage}&limit=${exportLimit}`)
+                    const exportContacts = await res.json()
+                    const pageList = Array.isArray(exportContacts) ? exportContacts : exportContacts.contacts || []
+                    allExported.push(...pageList)
+                    hasMore = pageList.length >= exportLimit
+                    exportPage++
+                  }
+                  if (allExported.length === 0) { toast.error('Nenhum contato para exportar'); return }
                   const allCustomKeys = new Set<string>()
-                  list.forEach((c: any) => {
+                  allExported.forEach((c: any) => {
                     if (c.customFields) {
                       try { Object.keys(JSON.parse(c.customFields)).forEach(k => allCustomKeys.add(k)) } catch {}
                     }
                   })
                   const headers = ['Nome', 'Telefone', ...Array.from(allCustomKeys).sort()]
-                  const rows = list.map((c: any) => {
+                  const rows = allExported.map((c: any) => {
                     let cf: Record<string, string> = {}
                     if (c.customFields) { try { cf = JSON.parse(c.customFields) } catch {} }
                     return [c.name || '', c.phone || '', ...Array.from(allCustomKeys).sort().map(k => cf[k] || '')]
@@ -2376,7 +2399,7 @@ function ContatosTab() {
                   a.download = `${selectedList.name}_contatos.csv`
                   a.click()
                   URL.revokeObjectURL(url)
-                  toast.success(`${list.length} contatos exportados!`)
+                  toast.success(`${allExported.length} contatos exportados!`)
                 } catch { toast.error('Erro ao exportar contatos') }
               }
               doExport()
@@ -2403,18 +2426,38 @@ function ContatosTab() {
             </Card>
           ) : (
             <Card className="shadow-lg border-0">
-              <CardContent className="p-0">
-                <ScrollArea className="max-h-[600px]">
-                  <table className="w-full text-sm">
-                    <thead className="bg-muted/50">
+              <CardContent className="p-0 flex flex-col" style={{ maxHeight: 'calc(100vh - 280px)' }}>
+                {/* Fixed header */}
+                <div className="overflow-hidden bg-muted/50 border-b shrink-0 pr-[17px]">
+                  <table className="w-full text-sm table-fixed">
+                    <colgroup>
+                      {STANDARD_CONTACT_FIELDS.map(f => (
+                        <col key={f.key} className={f.core ? 'w-[18%]' : 'w-[12%]'} />
+                      ))}
+                      <col className="w-[16%]" />
+                      <col className="w-[8%]" />
+                    </colgroup>
+                    <thead>
                       <tr>
                         {STANDARD_CONTACT_FIELDS.map(f => (
-                          <th key={f.key} className="text-left p-3 font-medium">{f.header}</th>
+                          <th key={f.key} className="text-left p-3 font-medium truncate">{f.header}</th>
                         ))}
                         <th className="text-left p-3 font-medium">Incluído em</th>
                         <th className="text-left p-3 font-medium">Ações</th>
                       </tr>
                     </thead>
+                  </table>
+                </div>
+                {/* Scrollable body - native scrollbar at edge */}
+                <div className="flex-1 overflow-y-auto" style={{ minHeight: 0 }}>
+                  <table className="w-full text-sm table-fixed">
+                    <colgroup>
+                      {STANDARD_CONTACT_FIELDS.map(f => (
+                        <col key={f.key} className={f.core ? 'w-[18%]' : 'w-[12%]'} />
+                      ))}
+                      <col className="w-[16%]" />
+                      <col className="w-[8%]" />
+                    </colgroup>
                     <tbody>
                       {contacts.map(c => {
                         let customData: Record<string, string> = {}
@@ -2428,12 +2471,12 @@ function ContatosTab() {
                                 ? (f.key === 'nome' ? c.name : c.phone)
                                 : (customData[f.key] || '-')
                               return (
-                                <td key={f.key} className={`p-3 ${f.core ? 'font-medium' : 'text-muted-foreground text-xs'}`}>
+                                <td key={f.key} className={`p-3 truncate ${f.core ? 'font-medium' : 'text-muted-foreground text-xs'}`}>
                                   {value}
                                 </td>
                               )
                             })}
-                            <td className="p-3 text-muted-foreground text-xs">
+                            <td className="p-3 text-muted-foreground text-xs truncate">
                               {c.createdAt ? new Date(c.createdAt).toLocaleString('pt-BR') : '—'}
                             </td>
                             <td className="p-3">
@@ -2451,7 +2494,33 @@ function ContatosTab() {
                       })}
                     </tbody>
                   </table>
-                </ScrollArea>
+                </div>
+                {/* Pagination footer */}
+                {totalContacts > CONTACTS_PER_PAGE && (
+                  <div className="flex items-center justify-between px-4 py-3 border-t bg-background shrink-0">
+                    <span className="text-sm text-muted-foreground">
+                      {Math.min((contactsPage - 1) * CONTACTS_PER_PAGE + 1, totalContacts)}–{Math.min(contactsPage * CONTACTS_PER_PAGE, totalContacts)} de {totalContacts}
+                    </span>
+                    <div className="flex gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={contactsPage <= 1}
+                        onClick={() => selectedList && fetchContacts(selectedList.id, contactsPage - 1)}
+                      >
+                        Anterior
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={contactsPage * CONTACTS_PER_PAGE >= totalContacts}
+                        onClick={() => selectedList && fetchContacts(selectedList.id, contactsPage + 1)}
+                      >
+                        Próximo
+                      </Button>
+                    </div>
+                  </div>
+                )}
               </CardContent>
             </Card>
           )}
@@ -2775,7 +2844,7 @@ function parseKeyBlocksFromText(text: string): Array<{ fullMatch: string; variat
 // Helper: generate preview text replacing KEY blocks and contact variables
 // Logic: {{anything}} pulls from the linked contact list's first contact data
 // If the variable exists in the contact's data, show the real value; if not, leave {{name}} as-is
-function generatePreviewText(text: string, messageKeys: Array<{ id: string; name: string; label: string; category: string; variations: string }>, seed: number, contactVariables?: Array<{ tag: string; label: string; source: string }>, previewContactData?: { name: string; phone: string; customFields?: string } | null): string {
+function generatePreviewText(text: string, messageKeys: Array<{ id: string; name: string; label: string; category: string; variations: string; resolutionType?: string; timeSlots?: string | null }>, seed: number, contactVariables?: Array<{ tag: string; label: string; source: string }>, previewContactData?: { name: string; phone: string; customFields?: string } | null): string {
   // First, resolve {{KEY: ...}} blocks — pick a deterministic variation based on seed
   let preview = text.replace(/\{\{KEY:\s*((?:[^{}]|\{\{[^}]*\}\})*)\}\}/g, (_, inner) => {
     const options = inner.split('|').map((s: string) => s.trim()).filter(Boolean)
@@ -2784,11 +2853,41 @@ function generatePreviewText(text: string, messageKeys: Array<{ id: string; name
     return options[idx]
   })
 
-  // Replace old-style {{KEY_NAME}} with first variation from messageKeys (backward compat)
+  // Replace old-style {{KEY_NAME}} with resolved variation from messageKeys
   messageKeys.forEach(k => {
     try {
-      const vars = JSON.parse(k.variations)
-      if (vars?.length) preview = preview.replace(new RegExp(`\\{\\{${k.name}\\}\\}`, 'g'), vars[0])
+      if (k.resolutionType === 'time_based' && k.timeSlots) {
+        // Time-based key: resolve based on current time
+        const slots = JSON.parse(k.timeSlots)
+        const now = new Date()
+        const brazilTime = new Date(now.toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }))
+        const currentMinutes = brazilTime.getHours() * 60 + brazilTime.getMinutes()
+        let matchedKey: string | null = null
+        for (const slot of slots) {
+          const [startH, startM] = slot.start.split(':').map(Number)
+          const [endH, endM] = slot.end.split(':').map(Number)
+          const startMin = startH * 60 + startM
+          const endMin = endH * 60 + endM
+          if (startMin <= endMin) {
+            if (currentMinutes >= startMin && currentMinutes <= endMin) { matchedKey = slot.key; break }
+          } else {
+            if (currentMinutes >= startMin || currentMinutes <= endMin) { matchedKey = slot.key; break }
+          }
+        }
+        if (matchedKey) {
+          const refKey = messageKeys.find(mk => mk.name === matchedKey)
+          if (refKey) {
+            const vars = JSON.parse(refKey.variations)
+            if (vars?.length) preview = preview.replace(new RegExp(`\\{\\{${k.name}\\}\\}`, 'g'), vars[0])
+          } else {
+            preview = preview.replace(new RegExp(`\\{\\{${k.name}\\}\\}`, 'g'), matchedKey)
+          }
+        }
+      } else {
+        // Random key: use first variation for preview
+        const vars = JSON.parse(k.variations)
+        if (vars?.length) preview = preview.replace(new RegExp(`\\{\\{${k.name}\\}\\}`, 'g'), vars[0])
+      }
     } catch { /* ignore */ }
   })
 
@@ -2831,7 +2930,7 @@ function generatePreviewText(text: string, messageKeys: Array<{ id: string; name
 function MessageBuilder({ value, onChange, messageKeys, templates, contactVariables, previewContactData, rows = 3 }: {
   value: string
   onChange: (v: string) => void
-  messageKeys: Array<{ id: string; name: string; label: string; category: string; variations: string }>
+  messageKeys: Array<{ id: string; name: string; label: string; category: string; variations: string; resolutionType?: string; timeSlots?: string | null }>
   templates?: MessageTemplate[]
   contactVariables?: Array<{ tag: string; label: string; source: string }>
   previewContactData?: { name: string; phone: string; customFields?: string } | null
@@ -3244,7 +3343,7 @@ function CampanhasTab() {
   const [detailMessages, setDetailMessages] = useState<MessageItem[]>([])
   const [availableChips, setAvailableChips] = useState<Chip[]>([])
   const [availableLists, setAvailableLists] = useState<ContactList[]>([])
-  const [messageKeys, setMessageKeys] = useState<Array<{ id: string; name: string; label: string; category: string; variations: string }>>([])
+  const [messageKeys, setMessageKeys] = useState<Array<{ id: string; name: string; label: string; category: string; variations: string; resolutionType?: string; timeSlots?: string | null }>>([])
   const [templates, setTemplates] = useState<MessageTemplate[]>([])
   const [contactVariables, setContactVariables] = useState<Array<{ tag: string; label: string; source: string }>>([])
   const [previewContact, setPreviewContact] = useState<{ name: string; phone: string; customFields?: string } | null>(null)

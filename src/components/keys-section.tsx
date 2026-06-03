@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { motion } from 'framer-motion'
-import { Plus, Trash2, Edit2, Key, Loader2, Copy, Tag } from 'lucide-react'
+import { Plus, Trash2, Edit2, Key, Loader2, Copy, Tag, Clock, Shuffle } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -27,12 +27,20 @@ import {
 } from '@/components/ui/select'
 import { useToast } from '@/hooks/use-toast'
 
+interface TimeSlot {
+  key: string
+  start: string
+  end: string
+}
+
 interface MessageKey {
   id: string
   name: string
   label: string
   category: string
   variations: string // JSON string
+  resolutionType: string // "random" | "time_based"
+  timeSlots: string | null // JSON string
   isDefault: boolean
   createdAt: string
 }
@@ -75,6 +83,12 @@ export function KeysSection() {
   const [label, setLabel] = useState('')
   const [category, setCategory] = useState('geral')
   const [variations, setVariations] = useState<string[]>([''])
+  const [resolutionType, setResolutionType] = useState<'random' | 'time_based'>('random')
+  const [timeSlots, setTimeSlots] = useState<TimeSlot[]>([
+    { key: '', start: '06:01', end: '12:00' },
+    { key: '', start: '12:01', end: '19:00' },
+    { key: '', start: '19:01', end: '06:00' },
+  ])
   const [filterCategory, setFilterCategory] = useState('all')
   const { toast } = useToast()
 
@@ -104,6 +118,12 @@ export function KeysSection() {
     setLabel('')
     setCategory('geral')
     setVariations([''])
+    setResolutionType('random')
+    setTimeSlots([
+      { key: '', start: '06:01', end: '12:00' },
+      { key: '', start: '12:01', end: '19:00' },
+      { key: '', start: '19:01', end: '06:00' },
+    ])
     setDialogOpen(true)
   }
 
@@ -112,11 +132,30 @@ export function KeysSection() {
     setName(key.name)
     setLabel(key.label)
     setCategory(key.category)
+    setResolutionType((key.resolutionType as 'random' | 'time_based') || 'random')
     try {
       const parsed = JSON.parse(key.variations)
       setVariations(Array.isArray(parsed) ? parsed : [''])
     } catch {
       setVariations([''])
+    }
+    try {
+      if (key.timeSlots) {
+        const parsed = JSON.parse(key.timeSlots)
+        setTimeSlots(Array.isArray(parsed) ? parsed : [{ key: '', start: '06:01', end: '12:00' }])
+      } else {
+        setTimeSlots([
+          { key: '', start: '06:01', end: '12:00' },
+          { key: '', start: '12:01', end: '19:00' },
+          { key: '', start: '19:01', end: '06:00' },
+        ])
+      }
+    } catch {
+      setTimeSlots([
+        { key: '', start: '06:01', end: '12:00' },
+        { key: '', start: '12:01', end: '19:00' },
+        { key: '', start: '19:01', end: '06:00' },
+      ])
     }
     setDialogOpen(true)
   }
@@ -136,6 +175,21 @@ export function KeysSection() {
     setVariations(updated)
   }
 
+  const addTimeSlot = () => {
+    setTimeSlots([...timeSlots, { key: '', start: '00:00', end: '23:59' }])
+  }
+
+  const removeTimeSlot = (index: number) => {
+    if (timeSlots.length <= 1) return
+    setTimeSlots(timeSlots.filter((_, i) => i !== index))
+  }
+
+  const updateTimeSlot = (index: number, field: keyof TimeSlot, value: string) => {
+    const updated = [...timeSlots]
+    updated[index] = { ...updated[index], [field]: value }
+    setTimeSlots(updated)
+  }
+
   const handleSave = async () => {
     if (!name.trim()) {
       toast({ title: 'Informe o nome da chave', variant: 'destructive' })
@@ -151,6 +205,14 @@ export function KeysSection() {
       return
     }
 
+    if (resolutionType === 'time_based') {
+      const hasEmptySlots = timeSlots.some(s => !s.key.trim())
+      if (hasEmptySlots) {
+        toast({ title: 'Preencha a chave referenciada em todos os períodos', variant: 'destructive' })
+        return
+      }
+    }
+
     setSaving(true)
     try {
       const url = editingKey ? `/api/keys/${editingKey.id}` : '/api/keys'
@@ -158,7 +220,14 @@ export function KeysSection() {
       const res = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, label, category, variations: cleanVariations }),
+        body: JSON.stringify({
+          name,
+          label,
+          category,
+          variations: cleanVariations,
+          resolutionType,
+          timeSlots: resolutionType === 'time_based' ? timeSlots : undefined,
+        }),
       })
 
       if (res.status === 409) {
@@ -216,6 +285,16 @@ export function KeysSection() {
     acc[cat].push(key)
     return acc
   }, {})
+
+  // Get current greeting based on time (for preview)
+  const getCurrentGreeting = () => {
+    const now = new Date()
+    const brazilTime = new Date(now.toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }))
+    const h = brazilTime.getHours()
+    if (h >= 6 && h < 12) return 'Bom dia'
+    if (h >= 12 && h < 19) return 'Boa tarde'
+    return 'Boa noite'
+  }
 
   return (
     <div>
@@ -298,6 +377,10 @@ export function KeysSection() {
                   const parsedVariations = (() => {
                     try { return JSON.parse(key.variations) } catch { return [] }
                   })()
+                  const parsedTimeSlots = (() => {
+                    try { return key.timeSlots ? JSON.parse(key.timeSlots) : null } catch { return null }
+                  })()
+                  const isTimeBased = key.resolutionType === 'time_based'
                   return (
                     <motion.div key={key.id} variants={cardVariants}>
                       <Card className="relative group">
@@ -313,6 +396,12 @@ export function KeysSection() {
                               >
                                 {categoryLabels[key.category] || key.category}
                               </Badge>
+                              {isTimeBased && (
+                                <Badge variant="outline" className="text-xs bg-blue-500/20 text-blue-400 border-blue-500/30">
+                                  <Clock className="w-3 h-3 mr-1" />
+                                  Horário
+                                </Badge>
+                              )}
                             </div>
                             <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                               <Button
@@ -349,16 +438,32 @@ export function KeysSection() {
                           <p className="text-xs text-muted-foreground">{key.label}</p>
                         </CardHeader>
                         <CardContent className="pt-0">
-                          <div className="space-y-1">
-                            {parsedVariations.map((v: string, i: number) => (
-                              <p key={i} className="text-xs text-muted-foreground truncate pl-3 border-l-2 border-emerald-500/30">
-                                {v}
-                              </p>
-                            ))}
-                          </div>
+                          {isTimeBased && parsedTimeSlots ? (
+                            <div className="space-y-1 mb-2">
+                              {parsedTimeSlots.map((slot: TimeSlot, i: number) => (
+                                <div key={i} className="flex items-center gap-2 text-xs">
+                                  <span className="text-muted-foreground font-mono">{slot.start}-{slot.end}</span>
+                                  <span className="text-muted-foreground">→</span>
+                                  <code className="text-emerald-400 font-mono">{'{{'}{slot.key}{'}}'}</code>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="space-y-1">
+                              {parsedVariations.map((v: string, i: number) => (
+                                <p key={i} className="text-xs text-muted-foreground truncate pl-3 border-l-2 border-emerald-500/30">
+                                  {v}
+                                </p>
+                              ))}
+                            </div>
+                          )}
                           <div className="flex items-center justify-between mt-3 pt-2 border-t border-border">
-                            <span className="text-xs text-muted-foreground">
-                              {parsedVariations.length} variação{parsedVariations.length !== 1 ? 'ões' : ''}
+                            <span className="text-xs text-muted-foreground flex items-center gap-1">
+                              {isTimeBased ? (
+                                <><Clock className="w-3 h-3" /> Adaptativo por horário</>
+                              ) : (
+                                <><Shuffle className="w-3 h-3" /> {parsedVariations.length} variação{parsedVariations.length !== 1 ? 'ões' : ''}</>
+                              )}
                             </span>
                             <code className="text-xs bg-muted px-2 py-0.5 rounded font-mono">
                               {'{{'}{key.name}{'}}'}
@@ -410,22 +515,93 @@ export function KeysSection() {
                 />
               </div>
             </div>
-            <div className="space-y-2">
-              <Label>Categoria</Label>
-              <Select value={category} onValueChange={setCategory}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {Object.entries(categoryLabels).map(([key, label]) => (
-                    <SelectItem key={key} value={key}>{label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Categoria</Label>
+                <Select value={category} onValueChange={setCategory}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {Object.entries(categoryLabels).map(([key, label]) => (
+                      <SelectItem key={key} value={key}>{label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Tipo de Resolução</Label>
+                <Select value={resolutionType} onValueChange={(v) => setResolutionType(v as 'random' | 'time_based')}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="random">
+                      <span className="flex items-center gap-2">
+                        <Shuffle className="w-3.5 h-3.5" /> Aleatório
+                      </span>
+                    </SelectItem>
+                    <SelectItem value="time_based">
+                      <span className="flex items-center gap-2">
+                        <Clock className="w-3.5 h-3.5" /> Baseado em Horário
+                      </span>
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
+
+            {resolutionType === 'time_based' && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label className="flex items-center gap-1">
+                    <Clock className="w-3.5 h-3.5" /> Períodos do Dia
+                  </Label>
+                  <Button variant="ghost" size="sm" onClick={addTimeSlot} className="h-7 text-xs text-emerald-500">
+                    <Plus className="w-3 h-3 mr-1" />
+                    Período
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Define qual chave usar em cada período. A chave referenciada será resolvida com suas variações aleatórias.
+                </p>
+                <div className="space-y-2">
+                  {timeSlots.map((slot, i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <Input
+                        type="time"
+                        value={slot.start}
+                        onChange={(e) => updateTimeSlot(i, 'start', e.target.value)}
+                        className="w-28 text-xs font-mono"
+                      />
+                      <span className="text-xs text-muted-foreground">até</span>
+                      <Input
+                        type="time"
+                        value={slot.end}
+                        onChange={(e) => updateTimeSlot(i, 'end', e.target.value)}
+                        className="w-28 text-xs font-mono"
+                      />
+                      <span className="text-xs text-muted-foreground">→</span>
+                      <Input
+                        value={slot.key}
+                        onChange={(e) => updateTimeSlot(i, 'key', e.target.value.toUpperCase().replace(/\s+/g, '_').replace(/[^A-Z0-9_]/g, ''))}
+                        placeholder="NOME_DA_CHAVE"
+                        className="flex-1 text-xs font-mono"
+                      />
+                      {timeSlots.length > 1 && (
+                        <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0 text-red-500" onClick={() => removeTimeSlot(i)}>
+                          <Trash2 className="w-3 h-3" />
+                        </Button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <Label>Variações</Label>
+                <Label>Variações {resolutionType === 'time_based' ? '(referências)' : ''}</Label>
                 <Button variant="ghost" size="sm" onClick={addVariation} className="h-7 text-xs text-emerald-500">
                   <Plus className="w-3 h-3 mr-1" />
                   Adicionar
@@ -440,7 +616,7 @@ export function KeysSection() {
                     <Textarea
                       value={v}
                       onChange={(e) => updateVariation(i, e.target.value)}
-                      placeholder={`Variação ${i + 1}...`}
+                      placeholder={resolutionType === 'time_based' ? `Variação ${i + 1}... (texto da saudação)` : `Variação ${i + 1}...`}
                       rows={2}
                       className="text-sm"
                     />
@@ -458,14 +634,23 @@ export function KeysSection() {
                 ))}
               </div>
               <p className="text-xs text-muted-foreground">
-                O sistema escolherá uma variação aleatória cada vez que a chave for usada.
+                {resolutionType === 'time_based'
+                  ? 'Para chaves baseadas em horário, as variações servem como fallback. A resolução real vem dos períodos acima.'
+                  : 'O sistema escolherá uma variação aleatória cada vez que a chave for usada.'}
               </p>
             </div>
             <div className="bg-muted/50 rounded-lg p-3">
               <p className="text-xs text-muted-foreground mb-1">Pré-visualização do uso:</p>
-              <code className="text-sm text-emerald-400 font-mono">
-                {'{{'}{name || 'NOME_DA_CHAVE'}{'}}'}
-              </code>
+              <div className="flex items-center gap-2">
+                <code className="text-sm text-emerald-400 font-mono">
+                  {'{{'}{name || 'NOME_DA_CHAVE'}{'}}'}
+                </code>
+                {resolutionType === 'time_based' && (
+                  <span className="text-xs text-muted-foreground">
+                    → {getCurrentGreeting()} (agora)
+                  </span>
+                )}
+              </div>
             </div>
           </div>
           <DialogFooter>

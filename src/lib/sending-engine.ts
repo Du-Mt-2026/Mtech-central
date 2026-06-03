@@ -1332,7 +1332,9 @@ function resolveKeyBlocks(text: string): string {
 
 /**
  * Resolve old-style {{KEY_NAME}} markers using MessageKey records from the database.
- * Each key has variations stored as JSON; pick a random one.
+ * - For "random" resolutionType: pick a random variation
+ * - For "time_based" resolutionType: resolve based on current time of day using timeSlots config
+ *   The timeSlots reference other MessageKey names, which are then resolved recursively.
  */
 async function resolveMessageKeyMarkers(text: string): Promise<string> {
   // Find remaining {{SOME_NAME}} patterns that are NOT {{KEY:...}}
@@ -1354,14 +1356,90 @@ async function resolveMessageKeyMarkers(text: string): Promise<string> {
     where: { name: { in: Array.from(markers) } },
   })
 
+  // For time_based keys, we may need to resolve referenced key names
+  const referencedKeyNames = new Set<string>()
+  for (const key of keys) {
+    if (key.resolutionType === 'time_based' && key.timeSlots) {
+      try {
+        const slots = JSON.parse(key.timeSlots)
+        for (const slot of slots) {
+          if (slot.key) referencedKeyNames.add(slot.key)
+        }
+      } catch { /* ignore */ }
+    }
+  }
+
+  // Fetch any referenced keys that aren't already loaded
+  let allKeys = keys
+  if (referencedKeyNames.size > 0) {
+    const existingNames = new Set(keys.map(k => k.name))
+    const missingNames = Array.from(referencedKeyNames).filter(n => !existingNames.has(n))
+    if (missingNames.length > 0) {
+      const extraKeys = await db.messageKey.findMany({
+        where: { name: { in: missingNames } },
+      })
+      allKeys = [...keys, ...extraKeys]
+    }
+  }
+
+  const keyMap = new Map(allKeys.map(k => [k.name, k]))
+
   let result = text
   for (const key of keys) {
     try {
-      const variations: string[] = JSON.parse(key.variations)
-      if (variations.length > 0) {
-        const chosen = variations[Math.floor(Math.random() * variations.length)]
-        const escapedName = key.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-        result = result.replace(new RegExp(`\\{\\{${escapedName}\\}\\}`, 'g'), chosen)
+      const escapedName = key.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+      if (key.resolutionType === 'time_based' && key.timeSlots) {
+        // Time-based resolution: determine which slot matches current time
+        const slots = JSON.parse(key.timeSlots)
+        const now = new Date()
+        // Use Brazil timezone (America/Sao_Paulo)
+        const brazilTime = new Date(now.toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }))
+        const currentMinutes = brazilTime.getHours() * 60 + brazilTime.getMinutes()
+
+        let matchedKeyName: string | null = null
+        for (const slot of slots) {
+          const [startH, startM] = slot.start.split(':').map(Number)
+          const [endH, endM] = slot.end.split(':').map(Number)
+          const startMinutes = startH * 60 + startM
+          const endMinutes = endH * 60 + endM
+
+          if (startMinutes <= endMinutes) {
+            // Normal range (e.g., 06:01-12:00)
+            if (currentMinutes >= startMinutes && currentMinutes <= endMinutes) {
+              matchedKeyName = slot.key
+              break
+            }
+          } else {
+            // Overnight range (e.g., 19:01-06:00)
+            if (currentMinutes >= startMinutes || currentMinutes <= endMinutes) {
+              matchedKeyName = slot.key
+              break
+            }
+          }
+        }
+
+        if (matchedKeyName) {
+          // Resolve the referenced key
+          const refKey = keyMap.get(matchedKeyName)
+          if (refKey) {
+            const variations: string[] = JSON.parse(refKey.variations)
+            if (variations.length > 0) {
+              const chosen = variations[Math.floor(Math.random() * variations.length)]
+              result = result.replace(new RegExp(`\\{\\{${escapedName}\\}\\}`, 'g'), chosen)
+            }
+          } else {
+            // Referenced key not found — leave as the referenced key marker
+            result = result.replace(new RegExp(`\\{\\{${escapedName}\\}\\}`, 'g'), `{{${matchedKeyName}}}`)
+          }
+        }
+      } else {
+        // Default: random resolution
+        const variations: string[] = JSON.parse(key.variations)
+        if (variations.length > 0) {
+          const chosen = variations[Math.floor(Math.random() * variations.length)]
+          result = result.replace(new RegExp(`\\{\\{${escapedName}\\}\\}`, 'g'), chosen)
+        }
       }
     } catch { /* ignore */ }
   }
@@ -2628,6 +2706,80 @@ export async function processNextMessage(campaignId: string): Promise<{
         evolutionMessageId: result.key?.id || null,
       },
     })
+
+    // ============================================
+    // INBOX: Create InboxMessage so campaign messages appear in inbox
+    // ============================================
+    try {
+      const remoteJid = `${formattedPhone}@s.whatsapp.net`
+      const evolutionMsgId = result.key?.id || null
+      // Skip if already exists (e.g., webhook already created it)
+      if (evolutionMsgId) {
+        const existing = await db.inboxMessage.findUnique({ where: { evolutionMsgId } }).catch(() => null)
+        if (!existing) {
+          await db.inboxMessage.create({
+            data: {
+              instanceName: chip.evolutionInstance || '',
+              chipId: chip.id,
+              remoteJid,
+              remotePhone: formattedPhone,
+              fromMe: true,
+              messageContent: finalContent || '',
+              messageType: message.mediatype || 'text',
+              mediaUrl: message.mediaUrl || null,
+              contactName: message.contact?.name || null,
+              evolutionMsgId,
+              isRead: true,
+              isGroup: false,
+              isCampaign: true,
+              ack: 1,
+              status: 'sent',
+              createdAt: new Date(),
+            },
+          })
+        }
+      }
+      // Upsert conversation so it appears in the conversation list
+      await db.conversation.upsert({
+        where: { chipId_remoteJid: { chipId: chip.id, remoteJid } },
+        create: {
+          chipId: chip.id,
+          remoteJid,
+          remotePhone: formattedPhone,
+          contactName: message.contact?.name || formattedPhone,
+          lastMessagePreview: (finalContent || '').substring(0, 200),
+          lastMessageAt: new Date(),
+          lastMessageType: message.mediatype || 'text',
+          lastMessageFromMe: true,
+          lastMessageStatus: 'sent',
+        },
+        update: {
+          lastMessagePreview: (finalContent || '').substring(0, 200),
+          lastMessageAt: new Date(),
+          lastMessageType: message.mediatype || 'text',
+          lastMessageFromMe: true,
+          lastMessageStatus: 'sent',
+        },
+      }).catch(() => { /* non-critical */ })
+
+      // SSE broadcast so inbox updates in real-time when campaign message is sent
+      try {
+        const { broadcastToChip } = await import('@/app/api/inbox/events/route')
+        broadcastToChip(chip.id, 'new_message', {
+          remoteJid,
+          fromMe: true,
+          messageType: message.mediatype || 'text',
+          messageContent: (finalContent || '').substring(0, 200),
+          pushName: chip.profileName || chip.name,
+          contactName: message.contact?.name || formattedPhone,
+          isGroup: false,
+          isCampaign: true,
+          timestamp: Date.now(),
+        })
+      } catch { /* SSE broadcast is non-critical */ }
+    } catch (inboxErr: any) {
+      console.debug(`[SendingEngine] InboxMessage creation skipped: ${inboxErr.message}`)
+    }
 
     // ============================================
     // ANTI-BAN: DELAYED OFFLINE with jitter

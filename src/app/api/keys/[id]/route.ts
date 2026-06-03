@@ -27,7 +27,7 @@ export async function PATCH(
   try {
     const { id } = await params
     const body = await request.json()
-    const { name, label, category, variations } = body
+    const { name, label, category, variations, resolutionType, timeSlots } = body
 
     const existing = await db.messageKey.findUnique({ where: { id } })
     if (!existing) {
@@ -63,6 +63,31 @@ export async function PATCH(
         )
       }
       updateData.variations = JSON.stringify(cleanVariations)
+    }
+    if (resolutionType !== undefined) {
+      updateData.resolutionType = resolutionType === 'time_based' ? 'time_based' : 'random'
+    }
+    if (timeSlots !== undefined) {
+      if (Array.isArray(timeSlots) && timeSlots.length > 0) {
+        for (const slot of timeSlots) {
+          if (!slot.key || !slot.start || !slot.end) {
+            return NextResponse.json(
+              { error: 'Cada período precisa de chave, horário de início e fim' },
+              { status: 400 }
+            )
+          }
+          const timeRegex = /^([01]?\d|2[0-3]):([0-5]\d)$/
+          if (!timeRegex.test(slot.start) || !timeRegex.test(slot.end)) {
+            return NextResponse.json(
+              { error: `Horário inválido: ${slot.start} - ${slot.end}. Use formato HH:MM` },
+              { status: 400 }
+            )
+          }
+        }
+        updateData.timeSlots = JSON.stringify(timeSlots)
+      } else {
+        updateData.timeSlots = null
+      }
     }
 
     const updated = await db.messageKey.update({

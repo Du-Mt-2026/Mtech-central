@@ -1,0 +1,30 @@
+name: Deploy to KVM8
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:  # Allow manual trigger from GitHub UI
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Trigger deploy webhook
+        run: |
+          echo "Triggering deploy webhook..."
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+            "${{ secrets.DEPLOY_WEBHOOK_URL }}" \
+            -H "X-Deploy-Secret: ${{ secrets.DEPLOY_SECRET }}" \
+            -H "Content-Type: application/json" \
+            -d '{"ref":"main","sha":"${{ github.sha }}"}')
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+          echo "HTTP Status: $HTTP_CODE"
+          echo "Response: $BODY"
+          if [ "$HTTP_CODE" -ge 400 ] || echo "$BODY" | grep -qi "not satisfied\|error\|hook not found"; then
+            echo "❌ Deploy webhook failed!"
+            exit 1
+          fi
+          echo "✅ Deploy webhook triggered! Build will happen on the server."

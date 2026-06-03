@@ -8,9 +8,20 @@ export async function GET() {
       orderBy: [{ category: 'asc' }, { label: 'asc' }],
     })
     return NextResponse.json(keys)
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error fetching keys:', error)
-    return NextResponse.json({ error: 'Erro ao buscar chaves' }, { status: 500 })
+    // Fallback: if Prisma query fails (e.g., missing columns), try raw SQL
+    try {
+      const rawKeys = await db.$queryRaw<Array<{
+        id: string; name: string; label: string; category: string;
+        variations: string; resolutionType?: string; timeSlots?: string;
+        isDefault: boolean; createdAt: Date; updatedAt: Date; userId: string | null;
+      }>>`SELECT id, name, label, category, variations, COALESCE("resolutionType", 'random') as "resolutionType", "timeSlots", "isDefault", "createdAt", "updatedAt", "userId" FROM "MessageKey" ORDER BY category ASC, label ASC`
+      return NextResponse.json(rawKeys)
+    } catch (rawError) {
+      console.error('Raw SQL fallback also failed:', rawError)
+      return NextResponse.json({ error: 'Erro ao buscar chaves' }, { status: 500 })
+    }
   }
 }
 
@@ -18,7 +29,7 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { name, label, category, variations } = body
+    const { name, label, category, variations, resolutionType, timeSlots } = body
 
     if (!name?.trim() || !label?.trim() || !variations?.length) {
       return NextResponse.json(
@@ -57,12 +68,45 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    // Validate resolutionType
+    const validResolutionType = resolutionType === 'time_based' ? 'time_based' : 'random'
+
+    // Validate timeSlots for time_based keys
+    let timeSlotsJson: string | null = null
+    if (validResolutionType === 'time_based' && timeSlots) {
+      if (!Array.isArray(timeSlots) || timeSlots.length === 0) {
+        return NextResponse.json(
+          { error: 'Chaves baseadas em horário precisam de pelo menos um período' },
+          { status: 400 }
+        )
+      }
+      for (const slot of timeSlots) {
+        if (!slot.key || !slot.start || !slot.end) {
+          return NextResponse.json(
+            { error: 'Cada período precisa de chave, horário de início e fim' },
+            { status: 400 }
+          )
+        }
+        // Validate time format HH:MM
+        const timeRegex = /^([01]?\d|2[0-3]):([0-5]\d)$/
+        if (!timeRegex.test(slot.start) || !timeRegex.test(slot.end)) {
+          return NextResponse.json(
+            { error: `Horário inválido: ${slot.start} - ${slot.end}. Use formato HH:MM` },
+            { status: 400 }
+          )
+        }
+      }
+      timeSlotsJson = JSON.stringify(timeSlots)
+    }
+
     const key = await db.messageKey.create({
       data: {
         name: nameClean,
         label: label.trim(),
         category: category?.trim() || 'geral',
         variations: JSON.stringify(cleanVariations),
+        resolutionType: validResolutionType,
+        timeSlots: timeSlotsJson,
       },
     })
 

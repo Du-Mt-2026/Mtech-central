@@ -66,7 +66,7 @@ export async function POST(request: Request) {
       }
 
       // Create a new chip for this instance
-      const chipName = inst.profileName || inst.name.replace(INSTANCE_PREFIX, '').replace(/_/g, ' ')
+      const chipName = inst.profileName || inst.name.replace(INSTANCE_PREFIX, '').replace(/_[a-z0-9]{8}$/, '').replace(/_/g, ' ')
       const newStatus = inst.connected || inst.connectionStatus === 'open' ? 'connected' : 'disconnected'
 
       try {
