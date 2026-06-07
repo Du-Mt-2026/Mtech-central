@@ -1352,10 +1352,8 @@ export function resolveChipProxy(chip: {
   }
 
   // 2) Auto-detect: chip has WireGuard IP → Every Proxy on the phone
-  //    Every Proxy on Android always runs on port 8084 for SOCKS5.
-  //    We ignore the socksPort from the database because Every Proxy
-  //    uses the same default port on every phone — there's no per-chip
-  //    port assignment needed for phone-based proxies.
+  //    Uses the socksPort field from the database (configurable per chip).
+  //    Defaults to 8084 if not set — which is the most common Every Proxy port.
   //    Evolution Go API requires a non-empty password for proxy config.
   //    If no socks5Pass is set, use 'none' as a placeholder (Every Proxy
   //    doesn't require authentication by default, but Evolution Go needs
@@ -1364,7 +1362,7 @@ export function resolveChipProxy(chip: {
     return {
       enabled: true,
       host: chip.wireguardIp,
-      port: '8084',
+      port: String(chip.socksPort || 8084),
       username: chip.socks5User || 'none',
       password: chip.socks5Pass || 'none',
     }
