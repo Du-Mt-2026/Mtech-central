@@ -97,10 +97,11 @@ export async function POST(request: Request) {
 
     for (const campaignId of campaignIds) {
       let consecutiveSkips = 0
+      const skipContactIds = new Set<string>()  // Contacts with unmet step delays — skip them to allow other chips to send
 
       // Inner loop: keep processing messages for this campaign while chips are ready
       while (Date.now() - startTime < FUNCTION_TIMEOUT_MS - minRemainingTimeMs && consecutiveSkips < MAX_CONSECUTIVE_SKIPS) {
-        const result = await processNextMessage(campaignId)
+        const result = await processNextMessage(campaignId, skipContactIds)
 
         if (result.processed) {
           totalProcessed++
@@ -108,6 +109,11 @@ export async function POST(request: Request) {
         } else {
           lastReason = result.reason || ''
           consecutiveSkips++
+          // If this contact has an unmet step delay, add to skip list so we can try other contacts/chips
+          if (result.skippedContactId) {
+            skipContactIds.add(result.skippedContactId)
+            consecutiveSkips = 0  // Don't count step_delay as a real skip — other contacts may be ready
+          }
         }
 
         // Collect events for frontend notifications
@@ -189,12 +195,14 @@ export async function POST(request: Request) {
               await new Promise(resolve => setTimeout(resolve, waitTime))
             }
           } else if (lastReason.startsWith('step_delay_') || lastReason === 'waiting_for_previous_step' || lastReason === 'waiting_for_sending_step') {
-            // Step delay is contact-specific — must wait it (or as much as we can)
+            // v5.0: Step delay — DON'T wait the full delay!
+            // The contact is already in skipContactIds, so the next query will skip it.
+            // Other chips/contacts may be ready NOW — just do a short stagger and continue.
+            const staggerMs = 500 + Math.floor(Math.random() * 1000)
             const remainingTime = FUNCTION_TIMEOUT_MS - (Date.now() - startTime)
             if (remainingTime < minRemainingTimeMs) break
-            const waitTime = Math.min(result.delayMs, remainingTime - minRemainingTimeMs)
+            const waitTime = Math.min(staggerMs, remainingTime - minRemainingTimeMs)
             if (waitTime > 0) {
-              console.log(`[Process] Waiting ${Math.round(waitTime/1000)}s (step delay, reason: ${lastReason})`)
               await new Promise(resolve => setTimeout(resolve, waitTime))
             }
           } else {

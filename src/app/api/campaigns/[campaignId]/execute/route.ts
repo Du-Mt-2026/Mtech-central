@@ -79,6 +79,7 @@ async function processMessagesInline(campaignId: string): Promise<{
   let failed = 0
   let remaining = 0
   let lastReason = ''
+  const skipContactIds = new Set<string>()  // Contacts with unmet step delays
 
   // Process up to maxMessagesPerInvocation per invocation (with anti-ban delays)
   for (let attempt = 0; attempt < maxMessagesPerInvocation; attempt++) {
@@ -88,12 +89,16 @@ async function processMessagesInline(campaignId: string): Promise<{
       break
     }
 
-    const result = await processNextMessage(campaignId)
+    const result = await processNextMessage(campaignId, skipContactIds)
 
     if (result.processed) {
       processed++
     } else {
       lastReason = result.reason || ''
+      // If this contact has an unmet step delay, skip it on next iteration
+      if (result.skippedContactId) {
+        skipContactIds.add(result.skippedContactId)
+      }
     }
 
     remaining = result.remaining

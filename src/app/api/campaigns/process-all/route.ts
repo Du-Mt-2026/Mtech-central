@@ -160,11 +160,12 @@ export async function POST(request: NextRequest) {
       let lastReason = ''
       let campaignError: string | undefined
       let consecutiveSkips = 0
+      const skipContactIds = new Set<string>()  // Contacts with unmet step delays — skip them to allow other chips to send
 
       // Inner loop: keep processing messages for this campaign while chips are ready
       while (Date.now() - startTime < FUNCTION_TIMEOUT_MS - 5000) {
         try {
-          const result = await processNextMessage(campaignId)
+          const result = await processNextMessage(campaignId, skipContactIds)
 
           if (result.processed) {
             campaignProcessed++
@@ -175,6 +176,12 @@ export async function POST(request: NextRequest) {
             totalSkipped++
             lastReason = result.reason || ''
             consecutiveSkips++
+
+            // If this contact has an unmet step delay, add to skip list so we can try other contacts/chips
+            if (result.skippedContactId) {
+              skipContactIds.add(result.skippedContactId)
+              consecutiveSkips = 0  // Don't count step_delay as a real skip
+            }
 
             // Campaign-level blocks: stop trying this campaign entirely
             if (result.completed) break

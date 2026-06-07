@@ -1764,13 +1764,14 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
  * Process the NEXT pending message for a campaign.
  * Returns the delay (ms) the caller should wait before processing the next one.
  */
-export async function processNextMessage(campaignId: string): Promise<{
+export async function processNextMessage(campaignId: string, skipContactIds?: Set<string>): Promise<{
   processed: boolean
   delayMs: number
   remaining: number
   completed: boolean
   reason?: string
   events?: Array<{ type: string; chipName?: string; campaignName?: string; reason?: string }>
+  skippedContactId?: string  // Contact ID that was skipped (step_delay) — caller should add to skip list
 }> {
   // Check if campaign is paused or completed
   const campaignStatus = await db.campaign.findUnique({
@@ -1896,6 +1897,8 @@ export async function processNextMessage(campaignId: string): Promise<{
       campaignId, 
       status: 'pending',
       chip: chipReadyFilter,
+      // Skip contacts whose step delay hasn't been met yet
+      ...(skipContactIds && skipContactIds.size > 0 ? { contactId: { notIn: Array.from(skipContactIds) } } : {}),
     },
     orderBy: { id: 'asc' },  // id preserves creation order (A1, A2, B1, B2, ...)
     select: { contactId: true },
@@ -2013,27 +2016,35 @@ export async function processNextMessage(campaignId: string): Promise<{
 
       if (previousStepFailed) {
         // Previous step failed — mark this step and all subsequent steps for this contact as failed
+        // IMPORTANT: The current message is in 'sending' status (claimed), so update it FIRST
+        await db.message.update({
+          where: { id: message.id },
+          data: { status: 'failed', error: 'Etapa anterior falhou — sequência interrompida' },
+        })
+        // Then fail any remaining pending steps for this contact
         const failedCount = await db.message.updateMany({
           where: {
             campaignId,
             contactId: message.contactId,
-            stepOrder: { gte: message.stepOrder },
+            stepOrder: { gt: message.stepOrder },
             status: 'pending',
           },
           data: { status: 'failed', error: 'Etapa anterior falhou — sequência interrompida' },
         })
-        console.debug(`[SendingEngine] Contact ${message.contactId}: previous step failed, skipping ${failedCount.count} remaining steps`)
+        console.debug(`[SendingEngine] Contact ${message.contactId}: previous step failed, skipping ${failedCount.count + 1} remaining steps (including current claimed message)`)
         const remaining = await db.message.count({ where: { campaignId, status: 'pending' } })
         return { processed: true, delayMs: 1000, remaining, completed: remaining === 0 }
       }
 
       if (previousStepSending) {
-        // Previous step is currently being sent — wait briefly and retry
+        // Previous step is currently being sent — release claim and wait briefly
+        await db.message.update({ where: { id: message.id }, data: { status: 'pending' } })
         const remaining = await db.message.count({ where: { campaignId, status: 'pending' } })
         return { processed: false, delayMs: 2000, remaining, completed: false, reason: 'waiting_for_sending_step' }
       }
 
-      // Previous step not found at all (shouldn't happen) — wait
+      // Previous step not found at all (shouldn't happen) — release claim and wait
+      await db.message.update({ where: { id: message.id }, data: { status: 'pending' } })
       const remaining = await db.message.count({ where: { campaignId, status: 'pending' } })
       return { processed: false, delayMs: 3000, remaining, completed: false, reason: 'waiting_for_previous_step' }
     }
@@ -2066,12 +2077,15 @@ export async function processNextMessage(campaignId: string): Promise<{
           const waitMs = requiredDelayMs - elapsedMs
           const delayUnitLabel = currentStepConfig.delayUnit === 'seconds' ? 'seg' : 'min'
           console.debug(`[SendingEngine] Step ${message.stepOrder} for contact ${message.contactId}: delay not met (${Math.round(elapsedMs/1000)}s/${currentStepConfig.delayMinutes}${delayUnitLabel}) — waiting ${Math.round(waitMs/1000)}s`)
+          // Release the claim so this message can be picked up later when the delay is met
+          await db.message.update({ where: { id: message.id }, data: { status: 'pending' } })
           return {
             processed: false,
             delayMs: waitMs, // Return actual remaining delay — callers MUST wait this
             remaining: -1,
             completed: false,
             reason: `step_delay_${message.stepOrder}`,
+            skippedContactId: message.contactId,  // Tell caller to skip this contact in next query
           }
         }
       }
@@ -2282,6 +2296,8 @@ export async function processNextMessage(campaignId: string): Promise<{
   if (antiBanEnabled && settings.stopOnWarning) {
     const hasWarning = await checkForWarnings(message.chip.id, settings)
     if (hasWarning) {
+      // Release the claimed message back to pending before pausing
+      await db.message.update({ where: { id: message.id }, data: { status: 'pending' } })
       // Pause the campaign — a warning was detected
       await db.campaign.update({
         where: { id: campaignId },
@@ -3206,7 +3222,7 @@ export async function processCampaign(campaignId: string): Promise<{
   failed: number
   skipped: number
 }> {
-  const result = await processNextMessage(campaignId)
+  const result = await processNextMessage(campaignId, undefined)
   return {
     processed: result.processed ? 1 : 0,
     succeeded: result.processed ? 1 : 0,
