@@ -51,6 +51,14 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ c
   }
 }
 
+// Fields that affect proxy resolution — changing any of these triggers a proxy update
+const PROXY_RELATED_FIELDS = [
+  'wireguardIp', 'wireguardPrivKey', 'wireguardPubKey',
+  'socksPort', 'proxyMode',
+  'socks5Host', 'socks5Port', 'socks5User', 'socks5Pass',
+  'evolutionInstance',
+]
+
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ chipId: string }> }) {
   const { chipId } = await params
   try {
@@ -68,15 +76,33 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ ch
         data[key] = body[key]
       }
     }
+
+    // Check if proxy-related fields changed BEFORE updating
+    // This prevents unnecessary disconnects when editing non-proxy fields (name, dailyLimit, etc.)
+    const oldChip = await db.chip.findUnique({ where: { id: chipId } })
+    const proxyFieldsChanged = PROXY_RELATED_FIELDS.some(field => {
+      if (!(field in body)) return false
+      const oldVal = String(oldChip?.[field as keyof typeof oldChip] ?? '')
+      const newVal = String(body[field] ?? '')
+      return oldVal !== newVal
+    })
+
+    // Also support explicit "applyProxy" flag to force proxy application
+    // (useful when you want to re-apply the same proxy config)
+    const forceApplyProxy = body.applyProxy === true
+
     const chip = await db.chip.update({
       where: { id: chipId },
       data,
     })
 
-    // Apply proxy to Evolution API instance — auto-detect from WireGuard IP or global proxy
+    // Only apply proxy to Evolution API instance when proxy-related fields changed
+    // or when explicitly requested via applyProxy flag.
     // CRITICAL: Setting proxy on Evolution Go DISCONNECTS the WhatsApp client.
+    // We must NOT call setProxy() on every PATCH — only when proxy config actually changes.
     // After applying proxy, we MUST reconnect the instance automatically.
-    if (chip.evolutionInstance) {
+    if (chip.evolutionInstance && (proxyFieldsChanged || forceApplyProxy)) {
+      console.log(`[Chip PATCH] Proxy-related fields changed (or applyProxy=true). Reconfiguring proxy...`)
       const globalProxy = await getGlobalProxy()
       const proxyConfig = resolveChipProxy(chip, globalProxy)
       if (proxyConfig) {

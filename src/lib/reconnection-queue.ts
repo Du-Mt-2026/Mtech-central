@@ -552,10 +552,14 @@ async function attemptReconnection(entry: ReconnectionEntry): Promise<void> {
     const existing = await findInstanceByName(instanceName)
 
     if (!existing) {
-      // Instance was deleted — need to recreate WITHOUT proxy
-      // (proxy blocks QR code generation; it's set after connection via POST /instance/proxy)
-      console.log(`[ReconnectQueue] Instance ${instanceName} no longer exists, recreating`)
-      const newInstance = await createInstance(instanceName, undefined)
+      // Instance was deleted — need to recreate WITH proxy if available.
+      // Previously we recreated WITHOUT proxy because we thought proxy blocked QR codes,
+      // but iptables rules now allow the Evolution Go container to reach WireGuard IPs.
+      // Creating WITH proxy means the first connection goes through the proxy from the start.
+      console.log(`[ReconnectQueue] Instance ${instanceName} no longer exists, recreating with proxy`)
+      const globalProxy = await getGlobalProxy()
+      const proxyConfig = resolveChipProxy(chip, globalProxy) || undefined
+      const newInstance = await createInstance(instanceName, proxyConfig)
       effectiveInstanceName = newInstance.name || instanceName
     }
 
