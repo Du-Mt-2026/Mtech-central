@@ -7,7 +7,7 @@ import {
   resolveChipProxy,
   getGlobalProxy,
 } from '@/lib/evolution-router'
-import { setProxy, getInstanceName as v3GetInstanceName } from '@/lib/evolution-api'
+import { setProxy, getConnectionState, getInstanceName as v3GetInstanceName } from '@/lib/evolution-api'
 import { removeWireGuardPeer } from '@/lib/wireguard-peer-api'
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ chipId: string }> }) {
@@ -59,6 +59,98 @@ const PROXY_RELATED_FIELDS = [
   'evolutionInstance',
 ]
 
+/**
+ * Safely apply proxy to an Evolution Go instance with automatic reconnection
+ * and fallback to no-proxy if reconnection through the proxy fails.
+ *
+ * Flow:
+ *   1. setProxy() → Evolution Go disconnects the WhatsApp client
+ *   2. routerConnectInstance() → reconnects through the proxy
+ *   3. Wait 5 seconds, verify connection state
+ *   4. If still disconnected → proxy is likely unreachable
+ *      → Remove proxy → Reconnect without proxy (fallback)
+ *      → This ensures the chip NEVER stays permanently disconnected
+ */
+async function applyProxyWithFallback(
+  instanceName: string,
+  proxyConfig: { host: string; port: string; username: string; password: string; protocol?: string }
+): Promise<{ success: boolean; withProxy: boolean; error?: string }> {
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || (process.env.VERCEL_URL ? 'https://' + process.env.VERCEL_URL : 'http://localhost:3000')
+  const webhookUrl = `${appUrl}/api/whatsapp/webhook`
+
+  // Step 1: Apply proxy (this DISCONNECTS the WhatsApp client)
+  try {
+    await setProxy(instanceName, proxyConfig)
+    console.log(`[Proxy Fallback] Proxy applied to ${instanceName}`)
+  } catch (proxyErr: any) {
+    console.error(`[Proxy Fallback] Failed to set proxy for ${instanceName}:`, proxyErr?.message)
+    return { success: false, withProxy: false, error: `setProxy failed: ${proxyErr?.message}` }
+  }
+
+  // Step 2: Reconnect through the proxy
+  try {
+    await routerConnectInstance(instanceName, webhookUrl)
+    console.log(`[Proxy Fallback] Reconnect call succeeded for ${instanceName}`)
+  } catch (reconnectErr: any) {
+    console.warn(`[Proxy Fallback] Reconnection after proxy failed for ${instanceName}:`, reconnectErr?.message)
+  }
+
+  // Step 3: Wait and verify connection
+  await new Promise(r => setTimeout(r, 5000))
+
+  try {
+    const stateResult = await getConnectionState(instanceName)
+    const state = stateResult?.state || 'close'
+
+    if (state === 'open') {
+      console.log(`[Proxy Fallback] ${instanceName} reconnected through proxy successfully!`)
+      return { success: true, withProxy: true }
+    }
+
+    console.warn(`[Proxy Fallback] ${instanceName} is ${state} after proxy reconnect. Proxy may be unreachable.`)
+
+    // Step 4: FALLBACK — remove proxy and reconnect without it
+    console.log(`[Proxy Fallback] Removing proxy from ${instanceName} and reconnecting without proxy...`)
+
+    try {
+      await setProxy(instanceName, {
+        enabled: false,
+        host: '',
+        port: '0',
+        username: '',
+        password: '',
+      })
+    } catch (removeErr) {
+      console.warn(`[Proxy Fallback] Failed to remove proxy from ${instanceName}:`, removeErr)
+    }
+
+    try {
+      await routerConnectInstance(instanceName, webhookUrl)
+      console.log(`[Proxy Fallback] Reconnected ${instanceName} WITHOUT proxy (fallback)`)
+    } catch (fallbackErr: any) {
+      console.error(`[Proxy Fallback] Fallback reconnection also failed for ${instanceName}:`, fallbackErr?.message)
+      return { success: false, withProxy: false, error: `Both proxy and fallback reconnect failed` }
+    }
+
+    // Verify fallback reconnection
+    await new Promise(r => setTimeout(r, 3000))
+    try {
+      const fallbackState = await getConnectionState(instanceName)
+      if (fallbackState?.state === 'open') {
+        console.log(`[Proxy Fallback] ${instanceName} reconnected without proxy (fallback successful)`)
+        return { success: true, withProxy: false }
+      }
+    } catch {
+      // Can't verify — hope for the best
+    }
+
+    return { success: false, withProxy: false, error: 'Proxy reconnect failed, fallback also not confirmed' }
+  } catch (verifyErr: any) {
+    console.error(`[Proxy Fallback] Verification error for ${instanceName}:`, verifyErr?.message)
+    return { success: false, withProxy: false, error: `Verification failed: ${verifyErr?.message}` }
+  }
+}
+
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ chipId: string }> }) {
   const { chipId } = await params
   try {
@@ -106,26 +198,19 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ ch
       const globalProxy = await getGlobalProxy()
       const proxyConfig = resolveChipProxy(chip, globalProxy)
       if (proxyConfig) {
-        try {
-          await setProxy(chip.evolutionInstance, proxyConfig)
-          console.log(`[Chip PATCH] Proxy applied to ${chip.evolutionInstance}, reconnecting...`)
-
-          // After setting proxy, Evolution Go disconnects the client.
-          // We must reconnect it through the proxy immediately.
-          try {
-            // Build webhook URL for reconnection
-            const appUrl = process.env.NEXT_PUBLIC_APP_URL || (process.env.VERCEL_URL ? 'https://' + process.env.VERCEL_URL : 'http://localhost:3000')
-            const webhookUrl = `${appUrl}/api/whatsapp/webhook`
-            await routerConnectInstance(chip.evolutionInstance, webhookUrl)
-            console.log(`[Chip PATCH] Reconnected ${chip.evolutionInstance} through proxy`)
-          } catch (reconnectErr) {
-            console.warn(`[Chip PATCH] Reconnection after proxy failed for ${chip.evolutionInstance}:`, reconnectErr)
-          }
-        } catch (proxyErr) {
-          console.error('Failed to apply proxy to Evolution instance:', proxyErr)
+        // Apply proxy with fallback safety — chip will NEVER stay permanently disconnected
+        const result = await applyProxyWithFallback(chip.evolutionInstance, proxyConfig)
+        if (result.success && result.withProxy) {
+          console.log(`[Chip PATCH] Proxy applied and ${chip.evolutionInstance} reconnected through proxy`)
+        } else if (result.success && !result.withProxy) {
+          console.warn(`[Chip PATCH] Proxy was unreachable — ${chip.evolutionInstance} reconnected WITHOUT proxy (fallback)`)
+        } else {
+          console.error(`[Chip PATCH] Proxy application failed for ${chip.evolutionInstance}: ${result.error}`)
         }
       } else {
         // No proxy detected — disable if previously set
+        const appUrl = process.env.NEXT_PUBLIC_APP_URL || (process.env.VERCEL_URL ? 'https://' + process.env.VERCEL_URL : 'http://localhost:3000')
+        const webhookUrl = `${appUrl}/api/whatsapp/webhook`
         try {
           await setProxy(chip.evolutionInstance, {
             enabled: false,
@@ -134,12 +219,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ ch
             username: '',
             password: '',
           })
-          console.log(`[Chip PATCH] Proxy removed from ${chip.evolutionInstance}, reconnecting...`)
+          console.log(`[Chip PATCH] Proxy removed from ${chip.evolutionInstance}`)
 
-          // Reconnect without proxy
           try {
-            const appUrl = process.env.NEXT_PUBLIC_APP_URL || (process.env.VERCEL_URL ? 'https://' + process.env.VERCEL_URL : 'http://localhost:3000')
-            const webhookUrl = `${appUrl}/api/whatsapp/webhook`
             await routerConnectInstance(chip.evolutionInstance, webhookUrl)
             console.log(`[Chip PATCH] Reconnected ${chip.evolutionInstance} without proxy`)
           } catch (reconnectErr) {
