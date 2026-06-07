@@ -1354,17 +1354,19 @@ export function resolveChipProxy(chip: {
   // 2) Auto-detect: chip has WireGuard IP → Every Proxy on the phone
   //    Uses the socksPort field from the database (configurable per chip).
   //    Defaults to 8084 if not set — which is the most common Every Proxy port.
-  //    Evolution Go API requires a non-empty password for proxy config.
-  //    If no socks5Pass is set, use 'none' as a placeholder (Every Proxy
-  //    doesn't require authentication by default, but Evolution Go needs
-  //    a non-empty password field).
+  //
+  //    CRITICAL: Evolution Go builds the proxy URL as socks5://user:pass@host:port.
+  //    If username/password are set to "none", Evolution Go tries SOCKS5 auth
+  //    which Every Proxy doesn't support → connection fails.
+  //    We must send EMPTY strings for username/password when there's no auth.
+  //    Evolution Go's hasAuth field will be false, and it won't attempt auth.
   if (chip.wireguardIp) {
     return {
       enabled: true,
       host: chip.wireguardIp,
       port: String(chip.socksPort || 8084),
-      username: chip.socks5User || 'none',
-      password: chip.socks5Pass || 'none',
+      username: chip.socks5User || '',
+      password: chip.socks5Pass || '',
     }
   }
 
@@ -1421,18 +1423,22 @@ export async function setProxy(
   // Uses the GLOBAL API key (not instance token) — confirmed working via API testing.
   // The protocol field defaults to "http" in Evolution Go — we MUST explicitly
   // pass "socks5" for WireGuard/Every Proxy configurations.
+  // CRITICAL: username/password must be EMPTY STRINGS when there's no auth.
+  // Sending "none" causes Evolution Go to build socks5://none:none@host:port
+  // which triggers SOCKS5 authentication that Every Proxy doesn't support.
+  // Empty strings result in hasAuth=false → no auth attempt → works.
   await evolutionFetch(`/instance/proxy/${instanceId}`, {
     method: 'POST',
     body: JSON.stringify({
       host: proxy.host,
       port: proxy.port,
-      username: proxy.username || 'none',
-      password: proxy.password || 'none',
+      username: proxy.username || '',
+      password: proxy.password || '',
       protocol: proxy.protocol || 'socks5',
     }),
   });
 
-  console.log(`[Evolution Go] Proxy set for ${instanceIdOrName}: ${proxy.protocol || 'socks5'}://${proxy.host}:${proxy.port}`);
+  console.log(`[Evolution Go] Proxy set for ${instanceIdOrName}: ${proxy.protocol || 'socks5'}://${proxy.host}:${proxy.port} (hasAuth=${!!(proxy.username && proxy.password)})`);
 }
 
 // ============ Webhook Configuration ============

@@ -116,16 +116,20 @@ export async function POST(request: Request) {
     }
 
     if (!existing) {
-      // Create new instance in Evolution Go — WITHOUT proxy!
+      // Create new instance in Evolution Go — WITH proxy if available!
       //
-      // CRITICAL BUG FIX: Proxy must NOT be set at instance creation time.
-      // The proxy (WireGuard/SOCKS5 at 10.0.0.x:8084) is on a private VPN network
-      // that the Evolution Go server cannot reach. Adding proxy at creation prevents
-      // the instance from connecting to WhatsApp, which blocks QR code generation.
+      // PREVIOUS BUG: We used to create WITHOUT proxy because we assumed the
+      // proxy (WireGuard/SOCKS5 at 10.0.0.x:8084) was unreachable from the
+      // Evolution Go container. This is NO LONGER TRUE — iptables NAT rules
+      // on KVM8 allow the Docker container to reach the WireGuard network.
       //
-      // Fix: Create the instance WITHOUT proxy → get QR code → connect → then
-      // add proxy via POST /instance/proxy/{instanceId} after connection.
-      const newInstance = await createInstance(instanceName, undefined)
+      // NEW STRATEGY: Create WITH proxy when the chip has a WireGuard IP.
+      // This way, the first connection goes through the proxy from the start,
+      // and we never need to disconnect to apply the proxy later.
+      //
+      // If proxy is unreachable, Evolution Go will fall back to direct connection
+      // for QR code generation, so this doesn't block QR scanning.
+      const newInstance = await createInstance(instanceName, proxyConfig || undefined)
       const effectiveInstanceName = newInstance.name || instanceName
 
       // Connect via router
@@ -324,8 +328,8 @@ export async function POST(request: Request) {
           // Clear instance ID cache — the old UUID/token is now invalid
           clearInstanceIdCache()
 
-          // Recreate instance from scratch — WITHOUT proxy!
-          const newInstance = await createInstance(instanceName, undefined)
+          // Recreate instance from scratch — WITH proxy if available!
+          const newInstance = await createInstance(instanceName, proxyConfig || undefined)
           const newEffectiveName = newInstance.name || instanceName
 
           const newConnectResult = await routerConnectInstance(newEffectiveName, webhookUrl)

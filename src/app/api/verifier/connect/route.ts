@@ -68,8 +68,10 @@ export async function POST(request: NextRequest) {
     }
 
     if (!existing) {
-      // Create instance WITHOUT proxy — proxy blocks QR code generation
-      const newInstance = await createInstance(instanceName, undefined)
+      // Create instance WITH proxy if available — the proxy is accessible
+      // from the Evolution Go container via iptables NAT rules on KVM8.
+      // Creating with proxy from the start avoids the disconnect/reconnect cycle.
+      const newInstance = await createInstance(instanceName, proxyConfig || undefined)
       existing = newInstance
     }
 
@@ -112,9 +114,17 @@ export async function POST(request: NextRequest) {
       },
     })
 
-    // Set proxy AFTER instance is connected (non-blocking)
+    // Set proxy AFTER instance is connected (non-blocking) — only if proxy
+    // wasn't already set at creation time. This handles the case where the
+    // instance already existed and was reconnected.
+    // CRITICAL: setProxy disconnects the client, so we reconnect after.
     if (isConnected && proxyConfig && proxyConfig.enabled) {
-      setProxy(effectiveInstanceName, proxyConfig).catch(err => {
+      setProxy(effectiveInstanceName, proxyConfig).then(() => {
+        // Reconnect through the proxy
+        connectInstance(effectiveInstanceName, webhookUrl).catch(err => {
+          console.warn(`[Verifier] Reconnection after proxy failed for ${effectiveInstanceName}:`, err)
+        })
+      }).catch(err => {
         console.warn(`[Verifier] Failed to set proxy for ${effectiveInstanceName}:`, err)
       })
     }

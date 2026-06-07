@@ -176,16 +176,10 @@ export async function POST(request: Request) {
             }).catch(() => {})
           }
 
-          // CRITICAL FIX: Do NOT call setProxy() after connection!
-          // In Evolution API Go, POST /instance/proxy/{instanceId} RESTARTS the
-          // WhatsApp connection by design (it disconnects the client and reconnects
-          // through the new proxy). If the proxy is unreachable (e.g., WireGuard
-          // VPN at 10.0.0.x), the reconnection fails and the instance stays
-          // permanently disconnected. This was the root cause of the bug where
-          // chips would disconnect shortly after a successful QR code scan.
-          //
-          // Proxy must be configured at instance creation time if the Evolution Go
-          // server can reach it, or not used at all if it's on a private network.
+          // CRITICAL: Do NOT call setProxy() after connection!
+          // POST /instance/proxy/{instanceId} DISCONNECTS the WhatsApp client.
+          // Proxy should be set at instance creation time (already handled in connect flow)
+          // or via PATCH /api/chips/[chipId] which also handles reconnection.
 
           // Enable rejectCall AFTER the connection is established (non-blocking).
           // rejectCall=true at creation time causes the "Reconnecting" loop bug.

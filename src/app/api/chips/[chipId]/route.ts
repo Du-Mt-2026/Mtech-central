@@ -3,6 +3,7 @@ import { db } from '@/lib/db'
 import {
   deleteInstance as routerDeleteInstance,
   disconnectInstance as routerDisconnectInstance,
+  connectInstance as routerConnectInstance,
   resolveChipProxy,
   getGlobalProxy,
 } from '@/lib/evolution-router'
@@ -73,12 +74,27 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ ch
     })
 
     // Apply proxy to Evolution API instance — auto-detect from WireGuard IP or global proxy
+    // CRITICAL: Setting proxy on Evolution Go DISCONNECTS the WhatsApp client.
+    // After applying proxy, we MUST reconnect the instance automatically.
     if (chip.evolutionInstance) {
       const globalProxy = await getGlobalProxy()
       const proxyConfig = resolveChipProxy(chip, globalProxy)
       if (proxyConfig) {
         try {
           await setProxy(chip.evolutionInstance, proxyConfig)
+          console.log(`[Chip PATCH] Proxy applied to ${chip.evolutionInstance}, reconnecting...`)
+
+          // After setting proxy, Evolution Go disconnects the client.
+          // We must reconnect it through the proxy immediately.
+          try {
+            // Build webhook URL for reconnection
+            const appUrl = process.env.NEXT_PUBLIC_APP_URL || (process.env.VERCEL_URL ? 'https://' + process.env.VERCEL_URL : 'http://localhost:3000')
+            const webhookUrl = `${appUrl}/api/whatsapp/webhook`
+            await routerConnectInstance(chip.evolutionInstance, webhookUrl)
+            console.log(`[Chip PATCH] Reconnected ${chip.evolutionInstance} through proxy`)
+          } catch (reconnectErr) {
+            console.warn(`[Chip PATCH] Reconnection after proxy failed for ${chip.evolutionInstance}:`, reconnectErr)
+          }
         } catch (proxyErr) {
           console.error('Failed to apply proxy to Evolution instance:', proxyErr)
         }
@@ -92,6 +108,17 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ ch
             username: '',
             password: '',
           })
+          console.log(`[Chip PATCH] Proxy removed from ${chip.evolutionInstance}, reconnecting...`)
+
+          // Reconnect without proxy
+          try {
+            const appUrl = process.env.NEXT_PUBLIC_APP_URL || (process.env.VERCEL_URL ? 'https://' + process.env.VERCEL_URL : 'http://localhost:3000')
+            const webhookUrl = `${appUrl}/api/whatsapp/webhook`
+            await routerConnectInstance(chip.evolutionInstance, webhookUrl)
+            console.log(`[Chip PATCH] Reconnected ${chip.evolutionInstance} without proxy`)
+          } catch (reconnectErr) {
+            console.warn(`[Chip PATCH] Reconnection after proxy removal failed:`, reconnectErr)
+          }
         } catch (proxyErr) {
           console.error('Failed to disable proxy on Evolution instance:', proxyErr)
         }
