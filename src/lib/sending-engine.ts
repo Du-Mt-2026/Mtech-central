@@ -695,6 +695,26 @@ function getDayRhythmMultiplier(settings: AntiBanConfig): number {
 }
 
 /**
+ * Release a claimed message back to 'pending' and clear the chip's temporary lock.
+ * This MUST be called whenever we release a message claim after the chip lock was set,
+ * to ensure the chip doesn't stay locked for the full 2-minute temporary period.
+ */
+async function releaseMessageAndChipLock(messageId: string, chipId: string, reason: string) {
+  await db.message.update({ where: { id: messageId }, data: { status: 'pending' } })
+  // Clear the temporary nextSendAt lock — only if it's still our temporary lock
+  // (i.e., nextSendAt is within the next 2 minutes from now, meaning it was set by us)
+  const twoMinutesFromNow = new Date(Date.now() + 120_000)
+  await db.chip.updateMany({
+    where: {
+      id: chipId,
+      nextSendAt: { lt: twoMinutesFromNow },
+    },
+    data: { nextSendAt: null },
+  })
+  console.debug(`[SendingEngine] Released claim for message ${messageId} and chip lock (${reason})`)
+}
+
+/**
  * Calculate the delay for the next message using cluster sending logic.
  * Returns the delay in seconds.
  *
@@ -1980,6 +2000,33 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
     return { processed: false, delayMs: 2000, remaining: -1, completed: false, reason: 'message_already_claimed' }
   }
 
+  // ============================================
+  // CHIP LOCK: Immediately mark chip as busy to prevent race conditions
+  // ============================================
+  // After claiming the message, immediately set a temporary nextSendAt on the chip.
+  // This prevents another concurrent invocation from selecting the SAME chip
+  // before we finish processing this message. The temporary value will be
+  // overwritten with the real interval after the message is sent.
+  // Use a conditional update — only succeed if the chip's nextSendAt is still
+  // null or in the past (i.e., the chip is still "ready").
+  const chipLockResult = await db.chip.updateMany({
+    where: {
+      id: message.chipId,
+      OR: [
+        { nextSendAt: null },
+        { nextSendAt: { lt: new Date() } },
+      ],
+    },
+    data: { nextSendAt: new Date(Date.now() + 120_000) }, // 2-minute temporary lock
+  })
+
+  if (chipLockResult.count === 0) {
+    // Another invocation already locked this chip — release our message claim and back off
+    console.debug(`[SendingEngine] Chip ${message.chip.name} already locked by another process — releasing message claim`)
+    await db.message.update({ where: { id: message.id }, data: { status: 'pending' } })
+    return { processed: false, delayMs: 2000, remaining: -1, completed: false, reason: 'chip_already_locked' }
+  }
+
   // For multi-step campaigns: check if this contact's previous step has been sent
   // CONTACT-BY-CONTACT: if previous step not sent yet, WAIT for it (don't skip to other contacts)
   if (message && message.stepOrder > 1) {
@@ -2038,13 +2085,13 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
 
       if (previousStepSending) {
         // Previous step is currently being sent — release claim and wait briefly
-        await db.message.update({ where: { id: message.id }, data: { status: 'pending' } })
+        await releaseMessageAndChipLock(message.id, message.chipId, 'waiting_for_sending_step')
         const remaining = await db.message.count({ where: { campaignId, status: 'pending' } })
         return { processed: false, delayMs: 2000, remaining, completed: false, reason: 'waiting_for_sending_step' }
       }
 
       // Previous step not found at all (shouldn't happen) — release claim and wait
-      await db.message.update({ where: { id: message.id }, data: { status: 'pending' } })
+      await releaseMessageAndChipLock(message.id, message.chipId, 'waiting_for_previous_step')
       const remaining = await db.message.count({ where: { campaignId, status: 'pending' } })
       return { processed: false, delayMs: 3000, remaining, completed: false, reason: 'waiting_for_previous_step' }
     }
@@ -2353,7 +2400,7 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
     if (hourlySent >= settings.hourlyLimit) {
       console.debug(`[SendingEngine] Chip ${currentChip.name} hit hourly limit (${hourlySent}/${settings.hourlyLimit}) — releasing claim, other chips may continue`)
       // Release the message claim so it can be picked up by another chip later
-      await db.message.update({ where: { id: message.id }, data: { status: 'pending' } })
+      await releaseMessageAndChipLock(message.id, message.chipId, 'hourly_limit')
       return {
         processed: false,
         delayMs: 1000, // Short delay — process-all loop will try other chips
@@ -2380,7 +2427,7 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
       const phase = currentChip.warmingPhase || 'nursery'
       console.debug(`[SendingEngine] Chip ${currentChip.name} (${phase}) nextSendAt not reached — releasing claim, other chips may continue (wait ${Math.round(waitMs/1000)}s)`)
       // Release the message claim so it can be picked up later when this chip is ready
-      await db.message.update({ where: { id: message.id }, data: { status: 'pending' } })
+      await releaseMessageAndChipLock(message.id, message.chipId, 'chip_interval_wait')
       return {
         processed: false,
         delayMs: 1000, // Short delay — process-all loop will try other chips
@@ -2424,7 +2471,7 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
       console.debug(`[SendingEngine] Reassigned ${pendingMessages.length} messages from ${currentChip.name} to other chips`)
 
       // v5.0: Release the message claim so it can be picked up by another chip
-      await db.message.update({ where: { id: message.id }, data: { status: 'pending' } })
+      await releaseMessageAndChipLock(message.id, message.chipId, 'daily_limit')
 
       // Return with short delay so we can try processing again with the reassigned messages
       const remaining = await db.message.count({ where: { campaignId, status: 'pending' } })
@@ -2433,7 +2480,7 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
 
     // No other chips available — release claim and return chip-specific reason
     // v5.0: Don't block campaign with nextSendAt; the process-all loop handles this
-    await db.message.update({ where: { id: message.id }, data: { status: 'pending' } })
+    await releaseMessageAndChipLock(message.id, message.chipId, 'disconnected_reassigned')
     return {
       processed: false,
       delayMs: 1000,
@@ -2481,7 +2528,7 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
       // Release the message claim so other chips can pick it up or the process-all
       // loop can try other chips. The chip's cooldownUntil already prevents this
       // chip from being selected by the message query.
-      await db.message.update({ where: { id: message.id }, data: { status: 'pending' } })
+      await releaseMessageAndChipLock(message.id, message.chipId, 'send_error_recovery')
       return {
         processed: false,
         delayMs: 1000, // Short delay — process-all loop will try other chips
@@ -2960,10 +3007,17 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
     // detection. The floor is 25-35% of messageIntervalMin (minimum 10s), which for a
     // 59s minimum gives a micro-pause floor of ~15s — fast enough to look like a burst
     // but slow enough to not look automated.
+    // SAFETY FLOOR: Never allow intervals below 30 seconds between messages
+    // on the same chip. WhatsApp detects rapid-fire sending as automated behavior.
+    // This floor applies to ALL delay types: cluster micro-pauses, normal intervals,
+    // and after-cluster pauses. Even "burst" patterns must respect 30s minimum.
+    const ABSOLUTE_MIN_INTERVAL_MS = 30_000 // 30 seconds — never send faster than this
+    nextDelay = Math.max(nextDelay, ABSOLUTE_MIN_INTERVAL_MS)
+
     if (isClusterMicroPause) {
-      // Cluster micro-pause: proportional floor (25-35% of intervalMin, min 10s)
-      // This creates a natural burst without triggering spam detection
-      const microPauseFloorMs = Math.max(10000, Math.round(settings.messageIntervalMin * 1000 * 0.3))
+      // Cluster micro-pause: apply proportional floor (50% of intervalMin, min 30s)
+      // This ensures bursts aren't too rapid even with the absolute floor above
+      const microPauseFloorMs = Math.max(ABSOLUTE_MIN_INTERVAL_MS, Math.round(settings.messageIntervalMin * 1000 * 0.5))
       nextDelay = Math.max(nextDelay, microPauseFloorMs)
     } else {
       // Normal interval or after-cluster pause: apply messageIntervalMin floor
@@ -3047,11 +3101,11 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
       const minIntervalMs = effectiveMinInterval * 1000
       const chipPhase = currentChip.warmingPhase || 'ready'
 
-      // Only enforce the phase floor for:
-      // 1. Non-micro-pause delays (normal gaussian, after-cluster)
-      // 2. Nursery/prewarm chips even with micro-pauses (safety first for new chips)
-      // For ready chips with micro-pauses: the burst pattern is safe and natural.
-      const shouldEnforcePhaseFloor = !isClusterMicroPause || chipPhase !== 'ready'
+      // SAFETY: Always enforce the phase floor, even for cluster micro-pauses.
+      // No chip should ever send faster than its minimum interval, regardless of phase.
+      // The 30s absolute floor above already prevents extremely fast sends,
+      // but this ensures warming chips (nursery/prewarm) get extra protection.
+      const shouldEnforcePhaseFloor = true
 
       if (shouldEnforcePhaseFloor && nextDelay < minIntervalMs) {
         console.debug(`[SendingEngine] Chip ${currentChip.name} (${chipPhase}): bumping delay from ${Math.round(nextDelay/1000)}s to minimum ${Math.round(minIntervalMs/1000)}s`)
