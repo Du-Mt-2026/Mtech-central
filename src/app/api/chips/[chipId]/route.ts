@@ -73,14 +73,14 @@ const PROXY_RELATED_FIELDS = [
  */
 async function applyProxyWithFallback(
   instanceName: string,
-  proxyConfig: { host: string; port: string; username: string; password: string; protocol?: string }
+  proxyConfig: { enabled: boolean; host: string; port: string; username: string; password: string }
 ): Promise<{ success: boolean; withProxy: boolean; error?: string }> {
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || (process.env.VERCEL_URL ? 'https://' + process.env.VERCEL_URL : 'http://localhost:3000')
   const webhookUrl = `${appUrl}/api/whatsapp/webhook`
 
   // Step 1: Apply proxy (this DISCONNECTS the WhatsApp client)
   try {
-    await setProxy(instanceName, { enabled: true, ...proxyConfig })
+    await setProxy(instanceName, proxyConfig)
     console.log(`[Proxy Fallback] Proxy applied to ${instanceName}`)
   } catch (proxyErr: any) {
     console.error(`[Proxy Fallback] Failed to set proxy for ${instanceName}:`, proxyErr?.message)
