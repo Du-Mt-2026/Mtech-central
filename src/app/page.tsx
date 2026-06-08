@@ -608,6 +608,13 @@ function ChipsTab() {
   const [disconnectConfirm, setDisconnectConfirm] = useState<Chip | null>(null)
   const [proxyForm, setProxyForm] = useState({ socks5Host: '', socks5Port: 1080, socks5User: '', socks5Pass: '' })
 
+  // Search, filters, and grouping state
+  const [searchQuery, setSearchQuery] = useState('')
+  const [statusFilter, setStatusFilter] = useState<'all' | 'connected' | 'disconnected' | 'error'>('all')
+  const [proxyFilter, setProxyFilter] = useState<'all' | 'with-proxy' | 'no-proxy'>('all')
+  const [warmingFilter, setWarmingFilter] = useState<'all' | 'nursery' | 'prewarm' | 'ready'>('all')
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
+
   // Proxy test state
   const [proxyTesting, setProxyTesting] = useState(false)
   const [proxyTestResult, setProxyTestResult] = useState<{ reachable: boolean; socks5Valid: boolean; message: string } | null>(null)
@@ -1237,6 +1244,39 @@ function ChipsTab() {
   const disconnected = chips.filter(c => c.status === 'disconnected').length
   const errorCount = chips.filter(c => c.status === 'error').length
 
+  // Apply search + filters
+  const filteredChips = chips.filter(chip => {
+    // Search
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase()
+      const match = chip.name.toLowerCase().includes(q) ||
+        chip.phoneNumber.toLowerCase().includes(q) ||
+        (chip.profileName?.toLowerCase().includes(q) ?? false) ||
+        (chip.evolutionInstance?.toLowerCase().includes(q) ?? false)
+      if (!match) return false
+    }
+    // Status filter
+    if (statusFilter !== 'all' && chip.status !== statusFilter) return false
+    // Proxy filter
+    if (proxyFilter === 'with-proxy' && !(chip.wireguardIp || (chip.proxyMode === 'socks5' && chip.socks5Host))) return false
+    if (proxyFilter === 'no-proxy' && (chip.wireguardIp || (chip.proxyMode === 'socks5' && chip.socks5Host))) return false
+    // Warming filter
+    if (warmingFilter !== 'all' && (chip.warmingPhase || 'nursery') !== warmingFilter) return false
+    return true
+  })
+
+  const connectedChips = filteredChips.filter(c => c.status === 'connected')
+  const disconnectedChips = filteredChips.filter(c => c.status !== 'connected')
+
+  const toggleGroup = (group: string) => {
+    setCollapsedGroups(prev => {
+      const next = new Set(prev)
+      if (next.has(group)) next.delete(group)
+      else next.add(group)
+      return next
+    })
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-3">
@@ -1311,308 +1351,688 @@ function ChipsTab() {
         ))}
       </div>
 
-      {/* Chip Cards */}
+      {/* Search & Filters */}
+      <div className="space-y-3">
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
+          <Input
+            placeholder="Buscar por nome, número, perfil ou instância..."
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            className="pl-9 h-10"
+          />
+          {searchQuery && (
+            <Button variant="ghost" size="sm" className="absolute right-1 top-1/2 -translate-y-1/2 h-7 px-2" onClick={() => setSearchQuery('')}>
+              <X className="size-3" />
+            </Button>
+          )}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {/* Status filters */}
+          <div className="flex items-center gap-1 bg-muted/50 rounded-lg p-1">
+            {[
+              { key: 'all', label: 'Todos', count: chips.length },
+              { key: 'connected', label: 'Conectados', count: connected },
+              { key: 'disconnected', label: 'Desconectados', count: disconnected },
+              { key: 'error', label: 'Erro', count: errorCount },
+            ].map(f => (
+              <Button key={f.key} variant={statusFilter === f.key ? 'default' : 'ghost'} size="sm" className="h-7 text-xs px-2.5 gap-1" onClick={() => setStatusFilter(f.key as typeof statusFilter)}>
+                {f.label} <span className="text-[10px] opacity-60">{f.count}</span>
+              </Button>
+            ))}
+          </div>
+          {/* Proxy filters */}
+          <div className="flex items-center gap-1 bg-muted/50 rounded-lg p-1">
+            {[
+              { key: 'all', label: 'Proxy' },
+              { key: 'with-proxy', label: 'Com Proxy' },
+              { key: 'no-proxy', label: 'Sem Proxy' },
+            ].map(f => (
+              <Button key={f.key} variant={proxyFilter === f.key ? 'default' : 'ghost'} size="sm" className="h-7 text-xs px-2.5" onClick={() => setProxyFilter(f.key as typeof proxyFilter)}>
+                {f.label}
+              </Button>
+            ))}
+          </div>
+          {/* Warming filters */}
+          <div className="flex items-center gap-1 bg-muted/50 rounded-lg p-1">
+            {[
+              { key: 'all', label: 'Aquecimento' },
+              { key: 'nursery', label: 'Berçário' },
+              { key: 'prewarm', label: 'Pré-aquecido' },
+              { key: 'ready', label: 'Aquecido' },
+            ].map(f => (
+              <Button key={f.key} variant={warmingFilter === f.key ? 'default' : 'ghost'} size="sm" className="h-7 text-xs px-2.5" onClick={() => setWarmingFilter(f.key as typeof warmingFilter)}>
+                {f.label}
+              </Button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Chip Cards - Grouped by Connection Status */}
       {loading ? (
         <div className="flex items-center justify-center py-20"><RefreshCw className="size-6 animate-spin text-muted-foreground" /></div>
-      ) : chips.length === 0 ? (
-        <Card className="shadow-lg border-0 hover:shadow-xl transition-all duration-200">
+      ) : filteredChips.length === 0 ? (
+        <Card className="shadow-lg border-0">
           <CardContent className="flex flex-col items-center justify-center py-16">
             <div className="flex size-16 items-center justify-center rounded-2xl bg-violet-100 dark:bg-violet-900/30 mb-4">
-              <Smartphone className="size-8 text-violet-500" />
+              <Search className="size-8 text-violet-500" />
             </div>
-            <p className="text-lg font-semibold">Nenhum chip cadastrado</p>
-            <p className="text-sm text-muted-foreground mt-1">Adicione um chip para começar a enviar mensagens</p>
+            <p className="text-lg font-semibold">Nenhum chip encontrado</p>
+            <p className="text-sm text-muted-foreground mt-1">{searchQuery ? 'Tente outro termo de busca' : 'Adicione um chip para começar'}</p>
           </CardContent>
         </Card>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          <AnimatePresence>
-            {chips.map((chip, i) => (
-              <motion.div key={chip.id} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}>
-                <Card className="shadow-lg hover:shadow-xl transition-all duration-200 border-0 relative overflow-hidden">
-                  <div className={`absolute top-0 left-0 right-0 h-1 ${chip.status === 'connected' ? 'bg-gradient-to-r from-emerald-400 to-teal-500' : chip.status === 'error' ? 'bg-gradient-to-r from-rose-400 to-pink-500' : chip.status === 'connecting' ? 'bg-gradient-to-r from-amber-400 to-orange-500' : 'bg-zinc-300'}`} />
-                  <CardHeader className="pb-3 min-w-0 overflow-hidden">
-                    <div className="flex items-center gap-2.5 overflow-hidden">
-                      <div className={`flex size-10 shrink-0 items-center justify-center rounded-lg ${chip.status === 'connected' ? 'bg-emerald-100 dark:bg-emerald-900/30' : 'bg-violet-100 dark:bg-violet-900/30'}`}>
-                        <Smartphone className={`size-5 ${chip.status === 'connected' ? 'text-emerald-600 dark:text-emerald-400' : 'text-violet-600 dark:text-violet-400'}`} />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-1.5 min-w-0">
-                          <CardTitle className="flex-1 min-w-0 truncate text-sm" title={chip.name}>{chip.name}</CardTitle>
-                          <Badge variant="outline" className="gap-0.5 text-[9px] px-1 py-0 shrink-0 leading-none">
-                            v3
-                          </Badge>
-                          {chip.disconnectionReasonCode && (
-                            <TooltipProvider>
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Badge variant="destructive" className="gap-0.5 text-[9px] px-1 py-0 shrink-0 leading-none">
-                                  <WifiOff className="size-2.5" />
-                                  {chip.disconnectionReasonCode === 401 ? 'Removido' :
-                                   chip.disconnectionReasonCode === 403 ? 'Banido' :
-                                   chip.disconnectionReasonCode === 428 ? 'Substituído' :
-                                   chip.disconnectionReasonCode === 440 ? 'Desconectado' :
-                                   `${chip.disconnectionReasonCode}`}
-                                </Badge>
-                              </TooltipTrigger>
-                              <TooltipContent side="bottom" className="text-xs">
-                                {chip.disconnectionReasonCode === 401 ? 'Dispositivo removido' :
-                                 chip.disconnectionReasonCode === 403 ? 'Banido pelo WhatsApp' :
-                                 chip.disconnectionReasonCode === 428 ? 'Dispositivo substituído' :
-                                 chip.disconnectionReasonCode === 440 ? 'Dispositivo desconectado' :
-                                 `Código ${chip.disconnectionReasonCode}`}
-                              </TooltipContent>
-                            </Tooltip>
-                            </TooltipProvider>
-                          )}
-                        </div>
-                        {chip.profileName && chip.profileName !== chip.name && (
-                          <p className="text-[10px] text-muted-foreground/60 truncate" title={`Perfil WhatsApp: ${chip.profileName}`}>{chip.profileName}</p>
-                        )}
-                        <div className="flex items-center gap-1.5 min-w-0">
-                          <CardDescription className="flex-1 min-w-0 truncate text-xs" title={chip.phoneNumber}>{chip.phoneNumber}</CardDescription>
-                          {chip.evolutionInstance && (
-                            <span className="text-[9px] font-mono text-muted-foreground/70 truncate max-w-20" title={chip.evolutionInstance}>{chip.evolutionInstance.replace(/^OctupusZap_/, '')}</span>
-                          )}
-                        </div>
-                      </div>
-                      <div className="flex flex-col items-end gap-1 shrink-0">
-                        <StatusBadge status={chip.status} />
-                        {chip.wireguardIp || (chip.proxyMode === 'socks5' && chip.socks5Host && chip.socks5Pass) ? (
-                          (() => {
-                            const ps = proxyStatuses[chip.id]
-                            const isOnline = ps?.checked && ps?.online
-                            const isChecking = ps && !ps.checked
-                            const isOffline = ps?.checked && !ps.online
-                            return (
-                              <Badge variant="outline" className={`gap-0.5 text-[9px] px-1.5 py-0 leading-none ${
-                                isOnline ? 'bg-emerald-600 text-white border-emerald-600 hover:bg-emerald-700' :
-                                isChecking ? 'bg-zinc-200 text-zinc-500 border-zinc-300 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700' :
-                                isOffline ? 'bg-rose-100 text-rose-600 border-rose-300 dark:bg-rose-900/30 dark:text-rose-400 dark:border-rose-800' :
-                                'bg-zinc-100 text-zinc-500 border-zinc-300 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700'
-                              }`}>
-                                {isOnline ? <><Lock className="size-2.5" /> Proxy Online</> :
-                                 isChecking ? <><RefreshCw className="size-2.5 animate-spin" /> Verificando</> :
-                                 isOffline ? <><WifiOff className="size-2.5" /> Proxy Offline</> :
-                                 <><Lock className="size-2.5" /> Proxy</>}
-                              </Badge>
-                            )
-                          })()
-                        ) : null}
-                      </div>
-                    </div>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div className="space-y-2 text-sm">
-                      <div className="flex justify-between items-center">
-                        <span className="text-muted-foreground">Modo de Conexão</span>
-                        <Badge variant="outline" className="gap-1 text-xs">
-                          {chip.proxyMode === 'socks5' ? <><Globe className="size-3" /> SOCKS5</> :
-                           chip.proxyMode === 'wireguard' ? <><Lock className="size-3" /> WireGuard</> :
-                           <><QrCode className="size-3" /> QR Code</>}
-                        </Badge>
-                      </div>
-                      {(() => {
-                        const info = getChipEffectiveInfo(chip)
-                        const phase = chip.warmingPhase || 'nursery'
-                        const isInCooldown = chip.cooldownUntil && new Date(chip.cooldownUntil) > new Date()
-                        const cooldownMin = isInCooldown ? Math.ceil((new Date(chip.cooldownUntil!).getTime() - Date.now()) / 60000) : 0
-                        const hitDailyLimit = chip.sentToday >= info.effectiveLimit
-                        const hitHourlyLimit = (chip.hourlySent ?? 0) >= (antiBanSettings?.hourlyLimit ?? 30)
-
-                        // Determine chip operational status
-                        let chipStatus: 'available' | 'cooldown' | 'daily_limit' | 'hourly_limit' | 'disconnected' = 'available'
-                        if (chip.status !== 'connected') chipStatus = 'disconnected'
-                        else if (isInCooldown) chipStatus = 'cooldown'
-                        else if (hitDailyLimit) chipStatus = 'daily_limit'
-                        else if (hitHourlyLimit) chipStatus = 'hourly_limit'
-
-                        const progressPct = info.effectiveLimit > 0 ? (chip.sentToday / info.effectiveLimit) * 100 : 0
-                        const progressColor = progressPct >= 90 ? 'bg-red-500' : progressPct >= 60 ? 'bg-amber-500' : 'bg-emerald-500'
-
-                        return (
-                          <>
-                            {/* Status badge — always visible, tells you WHY messages aren't going out */}
-                            {chipStatus !== 'available' && (
-                              <div className={`flex items-center gap-2 p-2 rounded-md border ${
-                                chipStatus === 'cooldown' ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800' :
-                                chipStatus === 'daily_limit' ? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800' :
-                                chipStatus === 'hourly_limit' ? 'bg-orange-50 dark:bg-orange-900/20 border-orange-200 dark:border-orange-800' :
-                                'bg-zinc-50 dark:bg-zinc-900/20 border-zinc-200 dark:border-zinc-800'
-                              }`}>
-                                {chipStatus === 'cooldown' && <Clock className="size-4 text-amber-600 shrink-0" />}
-                                {chipStatus === 'daily_limit' && <ShieldBan className="size-4 text-red-600 shrink-0" />}
-                                {chipStatus === 'hourly_limit' && <Clock className="size-4 text-orange-600 shrink-0" />}
-                                {chipStatus === 'disconnected' && <WifiOff className="size-4 text-zinc-600 shrink-0" />}
-                                <div className="flex-1 min-w-0">
-                                  {chipStatus === 'cooldown' && (
-                                    <>
-                                      <p className="text-xs font-semibold text-amber-700 dark:text-amber-400">Em cooldown</p>
-                                      <p className="text-[10px] text-amber-600 dark:text-amber-500">Retoma em {cooldownMin}min</p>
-                                    </>
-                                  )}
-                                  {chipStatus === 'daily_limit' && (
-                                    <>
-                                      <p className="text-xs font-semibold text-red-700 dark:text-red-400">Limite diário atingido</p>
-                                      <p className="text-[10px] text-red-600 dark:text-red-500">{chip.sentToday}/{info.effectiveLimit} — aguarde até amanhã</p>
-                                    </>
-                                  )}
-                                  {chipStatus === 'hourly_limit' && (
-                                    <>
-                                      <p className="text-xs font-semibold text-orange-700 dark:text-orange-400">Limite horário atingido</p>
-                                      <p className="text-[10px] text-orange-600 dark:text-orange-500">{chip.hourlySent ?? 0}/{antiBanSettings?.hourlyLimit ?? 30} por hora</p>
-                                    </>
-                                  )}
-                                  {chipStatus === 'disconnected' && (
-                                    <>
-                                      <p className="text-xs font-semibold text-zinc-700 dark:text-zinc-400">Chip desconectado</p>
-                                      <p className="text-[10px] text-zinc-600 dark:text-zinc-500">Conecte para enviar mensagens</p>
-                                    </>
-                                  )}
-                                </div>
-                                {chipStatus === 'cooldown' && (
-                                  <Badge variant="outline" className="text-amber-600 border-amber-300 bg-amber-50 text-xs shrink-0">{cooldownMin}min</Badge>
-                                )}
+        <div className="space-y-6">
+          {/* Connected Group */}
+          {connectedChips.length > 0 && (
+            <div>
+              <button onClick={() => toggleGroup('connected')} className="flex items-center gap-2 mb-3 group cursor-pointer">
+                <div className="flex items-center gap-2">
+                  <div className="size-2.5 rounded-full bg-emerald-500" />
+                  <h3 className="text-sm font-semibold">Conectados</h3>
+                  <Badge variant="secondary" className="text-[10px] h-5">{connectedChips.length}</Badge>
+                </div>
+                <ChevronDown className={`size-4 text-muted-foreground transition-transform ${collapsedGroups.has('connected') ? '-rotate-90' : ''}`} />
+              </button>
+              {!collapsedGroups.has('connected') && (
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                  <AnimatePresence>
+                    {connectedChips.map((chip, i) => (
+                      <motion.div key={chip.id} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}>
+                        <Card className="shadow-lg hover:shadow-xl transition-all duration-200 border-0 relative overflow-hidden">
+                          <div className={`absolute top-0 left-0 right-0 h-1 ${chip.status === 'connected' ? 'bg-gradient-to-r from-emerald-400 to-teal-500' : chip.status === 'error' ? 'bg-gradient-to-r from-rose-400 to-pink-500' : chip.status === 'connecting' ? 'bg-gradient-to-r from-amber-400 to-orange-500' : 'bg-zinc-300'}`} />
+                          <CardHeader className="pb-3 min-w-0 overflow-hidden">
+                            <div className="flex items-center gap-2.5 overflow-hidden">
+                              <div className={`flex size-10 shrink-0 items-center justify-center rounded-lg ${chip.status === 'connected' ? 'bg-emerald-100 dark:bg-emerald-900/30' : 'bg-violet-100 dark:bg-violet-900/30'}`}>
+                                <Smartphone className={`size-5 ${chip.status === 'connected' ? 'text-emerald-600 dark:text-emerald-400' : 'text-violet-600 dark:text-violet-400'}`} />
                               </div>
-                            )}
-
-                            {/* Envio hoje — shows effective limit, not raw dailyLimit */}
-                            <div className="flex justify-between items-center">
-                              <span className="text-muted-foreground">Envio hoje</span>
-                              <div className="flex items-center gap-1.5">
-                                <span className={`font-semibold ${hitDailyLimit ? 'text-red-600 dark:text-red-400' : ''}`}>
-                                  {chip.sentToday}/{info.effectiveLimit}
-                                </span>
-                                {info.effectiveLimit < (chip.dailyLimit || 200) && (
-                                  <span className="text-[10px] text-muted-foreground" title={`Limite total do chip: ${chip.dailyLimit || 200}/dia`}>
-                                    (de {chip.dailyLimit || 200})
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                            {/* Progress bar based on effective limit */}
-                            <div className="relative h-2 w-full overflow-hidden rounded-full bg-secondary">
-                              <div className={`h-full rounded-full transition-all duration-300 ${progressColor}`} style={{ width: `${Math.min(progressPct, 100)}%` }} />
-                            </div>
-
-                            {/* Aquecimento — shows phase + editable day */}
-                            {chip.warmingEnabled && (
-                              <div className="space-y-1.5">
-                                <div className="flex justify-between items-center">
-                                  <span className="text-muted-foreground">Aquecimento</span>
-                                  <div className="flex items-center gap-1">
-                                    <Badge variant="secondary" className="gap-1 text-xs">
-                                      {phase === 'ready' ? (
-                                        <><CheckCircle2 className="size-3" /> Aquecido</>
-                                      ) : phase === 'prewarm' ? (
-                                        <><Flame className="size-3" /> Pré-aquecido</>
-                                      ) : (
-                                        <><Baby className="size-3" /> Berçário</>
-                                      )}
-                                    </Badge>
-                                    <Select value={phase} onValueChange={async (v) => {
-                                      try {
-                                        await fetch(`/api/chips/${chip.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ warmingPhase: v }) })
-                                        toast.success('Fase atualizada!')
-                                        fetchChips()
-                                      } catch { toast.error('Erro ao atualizar fase') }
-                                    }}>
-                                      <SelectTrigger className="h-7 rounded-md border border-input bg-background px-2 text-xs gap-1 hover:bg-accent"><Pencil className="size-3" /><span className="sr-only">Alterar fase</span></SelectTrigger>
-                                      <SelectContent>
-                                        <SelectItem value="nursery">Berçário</SelectItem>
-                                        <SelectItem value="prewarm">Pré-aquecido</SelectItem>
-                                        <SelectItem value="ready">Aquecido</SelectItem>
-                                      </SelectContent>
-                                    </Select>
-                                  </div>
-                                </div>
-                                {/* Day info + edit button */}
-                                {phase !== 'ready' && (
-                                  <div className="flex items-center justify-between pl-2">
-                                    <div className="flex items-center gap-1.5">
-                                      {!chip.warmingStartedAt && (
-                                        <Badge variant="outline" className="text-[10px] px-1.5 py-0 text-blue-600 border-blue-300 bg-blue-50 dark:bg-blue-900/20 dark:border-blue-800 dark:text-blue-400 gap-1">
-                                          <Clock className="size-2.5" /> Nunca enviou
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-1.5 min-w-0">
+                                  <CardTitle className="flex-1 min-w-0 truncate text-sm" title={chip.name}>{chip.name}</CardTitle>
+                                  <Badge variant="outline" className="gap-0.5 text-[9px] px-1 py-0 shrink-0 leading-none">
+                                    v3
+                                  </Badge>
+                                  {chip.disconnectionReasonCode && (
+                                    <TooltipProvider>
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        <Badge variant="destructive" className="gap-0.5 text-[9px] px-1 py-0 shrink-0 leading-none">
+                                          <WifiOff className="size-2.5" />
+                                          {chip.disconnectionReasonCode === 401 ? 'Removido' :
+                                           chip.disconnectionReasonCode === 403 ? 'Banido' :
+                                           chip.disconnectionReasonCode === 428 ? 'Substituído' :
+                                           chip.disconnectionReasonCode === 440 ? 'Desconectado' :
+                                           `${chip.disconnectionReasonCode}`}
                                         </Badge>
-                                      )}
-                                      {chip.warmingStartedAt && info.phaseMaxDays > 0 && (
-                                        <span className="text-[11px] text-muted-foreground">
-                                          Dia {info.phaseDay} de {info.phaseMaxDays} — <span className="font-medium text-foreground">{info.effectiveLimit} msg/dia</span>
-                                        </span>
-                                      )}
-                                    </div>
-                                    <Button
-                                      variant="ghost"
-                                      size="sm"
-                                      className="h-6 px-2 text-[10px] text-muted-foreground hover:text-foreground gap-1"
-                                      onClick={() => {
-                                        const maxDay = info.phaseMaxDays || 20
-                                        const input = prompt(`Definir dia do aquecimento (1-${maxDay}):`, String(info.phaseDay))
-                                        if (input === null) return
-                                        const day = parseInt(input)
-                                        if (isNaN(day) || day < 1 || day > maxDay) {
-                                          toast.error(`Dia inválido. Use 1 a ${maxDay}`)
-                                          return
-                                        }
-                                        // Calculate the warmingStartedAt date that would result in this day
-                                        // warmingStartedAt = now - (day - 1) days
-                                        const newStartDate = new Date()
-                                        newStartDate.setDate(newStartDate.getDate() - (day - 1))
-                                        newStartDate.setHours(0, 0, 0, 0)
-                                        fetch(`/api/chips/${chip.id}`, {
-                                          method: 'PATCH',
-                                          headers: { 'Content-Type': 'application/json' },
-                                          body: JSON.stringify({ warmingStartedAt: newStartDate.toISOString() })
-                                        }).then(() => {
-                                          toast.success(`Dia ajustado para ${day} — limite: ${(() => {
-                                            const schedule = phase === 'nursery'
-                                              ? JSON.parse(antiBanSettings?.nurserySchedule || '[]')
-                                              : JSON.parse(antiBanSettings?.prewarmSchedule || '[]')
-                                            const entry = schedule.find((s: any) => day >= s.days[0] && day <= s.days[1])
-                                            return entry?.limit || 10
-                                          })()} msg/dia`)
-                                          fetchChips()
-                                        }).catch(() => toast.error('Erro ao ajustar dia'))
-                                      }}
-                                    >
-                                      <Pencil className="size-2.5" /> Ajustar dia
-                                    </Button>
-                                  </div>
+                                      </TooltipTrigger>
+                                      <TooltipContent side="bottom" className="text-xs">
+                                        {chip.disconnectionReasonCode === 401 ? 'Dispositivo removido' :
+                                         chip.disconnectionReasonCode === 403 ? 'Banido pelo WhatsApp' :
+                                         chip.disconnectionReasonCode === 428 ? 'Dispositivo substituído' :
+                                         chip.disconnectionReasonCode === 440 ? 'Dispositivo desconectado' :
+                                         `Código ${chip.disconnectionReasonCode}`}
+                                      </TooltipContent>
+                                    </Tooltip>
+                                    </TooltipProvider>
+                                  )}
+                                </div>
+                                {chip.profileName && chip.profileName !== chip.name && (
+                                  <p className="text-[10px] text-muted-foreground/60 truncate" title={`Perfil WhatsApp: ${chip.profileName}`}>{chip.profileName}</p>
                                 )}
+                                <div className="flex items-center gap-1.5 min-w-0">
+                                  <CardDescription className="flex-1 min-w-0 truncate text-xs" title={chip.phoneNumber}>{chip.phoneNumber}</CardDescription>
+                                  {chip.evolutionInstance && (
+                                    <span className="text-[9px] font-mono text-muted-foreground/70 truncate max-w-20" title={chip.evolutionInstance}>{chip.evolutionInstance.replace(/^OctupusZap_/, '')}</span>
+                                  )}
+                                </div>
                               </div>
-                            )}
-                          </>
-                        )
-                      })()}
-                      <div className="flex justify-between items-center">
-                        <span className="text-muted-foreground">Último visto</span>
-                        <span className="text-xs">{chip.lastSeen ? new Date(chip.lastSeen).toLocaleString('pt-BR') : 'Nunca'}</span>
-                      </div>
-                    </div>
-                    <Separator />
-                    <div className="flex gap-1.5">
-                      {chip.status === 'connected' ? (
-                        <Button variant="outline" size="sm" className="gap-1 text-[11px] h-7 px-2 text-rose-500 hover:text-rose-600 border-rose-200 hover:border-rose-300" onClick={() => setDisconnectConfirm(chip)}>
-                          <X className="size-3" /> Desconectar
-                        </Button>
-                      ) : (
-                        <Button size="sm" className="gap-1 text-[11px] h-7 px-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 shadow-md" onClick={() => connectWhatsApp(chip)}>
-                          <QrCode className="size-3" /> WhatsApp
-                        </Button>
-                      )}
-                      <Button variant="outline" size="sm" className="gap-1 text-[11px] h-7 px-2" onClick={() => openProxyDialog(chip)}>
-                        <Globe className="size-3" /> Proxy
-                      </Button>
-                      <div className="flex-1" />
-                      <Button variant="ghost" size="sm" className="size-7 p-0 text-rose-500 hover:text-rose-600" onClick={() => setDeleteConfirm(chip.id)}>
-                        <Trash2 className="size-3.5" />
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              </motion.div>
-            ))}
-          </AnimatePresence>
+                              <div className="flex flex-col items-end gap-1 shrink-0">
+                                <StatusBadge status={chip.status} />
+                                {chip.wireguardIp || (chip.proxyMode === 'socks5' && chip.socks5Host && chip.socks5Pass) ? (
+                                  (() => {
+                                    const ps = proxyStatuses[chip.id]
+                                    const isOnline = ps?.checked && ps?.online
+                                    const isChecking = ps && !ps.checked
+                                    const isOffline = ps?.checked && !ps.online
+                                    return (
+                                      <Badge variant="outline" className={`gap-0.5 text-[9px] px-1.5 py-0 leading-none ${
+                                        isOnline ? 'bg-emerald-600 text-white border-emerald-600 hover:bg-emerald-700' :
+                                        isChecking ? 'bg-zinc-200 text-zinc-500 border-zinc-300 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700' :
+                                        isOffline ? 'bg-rose-100 text-rose-600 border-rose-300 dark:bg-rose-900/30 dark:text-rose-400 dark:border-rose-800' :
+                                        'bg-zinc-100 text-zinc-500 border-zinc-300 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700'
+                                      }`}>
+                                        {isOnline ? <><Lock className="size-2.5" /> Proxy Online</> :
+                                         isChecking ? <><RefreshCw className="size-2.5 animate-spin" /> Verificando</> :
+                                         isOffline ? <><WifiOff className="size-2.5" /> Proxy Offline</> :
+                                         <><Lock className="size-2.5" /> Proxy</>}
+                                      </Badge>
+                                    )
+                                  })()
+                                ) : null}
+                              </div>
+                            </div>
+                          </CardHeader>
+                          <CardContent className="space-y-4">
+                            <div className="space-y-2 text-sm">
+                              <div className="flex justify-between items-center">
+                                <span className="text-muted-foreground">Modo de Conexão</span>
+                                <Badge variant="outline" className="gap-1 text-xs">
+                                  {chip.proxyMode === 'socks5' ? <><Globe className="size-3" /> SOCKS5</> :
+                                   chip.proxyMode === 'wireguard' ? <><Lock className="size-3" /> WireGuard</> :
+                                   <><QrCode className="size-3" /> QR Code</>}
+                                </Badge>
+                              </div>
+                              {(() => {
+                                const info = getChipEffectiveInfo(chip)
+                                const phase = chip.warmingPhase || 'nursery'
+                                const isInCooldown = chip.cooldownUntil && new Date(chip.cooldownUntil) > new Date()
+                                const cooldownMin = isInCooldown ? Math.ceil((new Date(chip.cooldownUntil!).getTime() - Date.now()) / 60000) : 0
+                                const hitDailyLimit = chip.sentToday >= info.effectiveLimit
+                                const hitHourlyLimit = (chip.hourlySent ?? 0) >= (antiBanSettings?.hourlyLimit ?? 30)
+
+                                // Determine chip operational status
+                                let chipStatus: 'available' | 'cooldown' | 'daily_limit' | 'hourly_limit' | 'disconnected' = 'available'
+                                if (chip.status !== 'connected') chipStatus = 'disconnected'
+                                else if (isInCooldown) chipStatus = 'cooldown'
+                                else if (hitDailyLimit) chipStatus = 'daily_limit'
+                                else if (hitHourlyLimit) chipStatus = 'hourly_limit'
+
+                                const progressPct = info.effectiveLimit > 0 ? (chip.sentToday / info.effectiveLimit) * 100 : 0
+                                const progressColor = progressPct >= 90 ? 'bg-red-500' : progressPct >= 60 ? 'bg-amber-500' : 'bg-emerald-500'
+
+                                return (
+                                  <>
+                                    {/* Status badge — always visible, tells you WHY messages aren't going out */}
+                                    {chipStatus !== 'available' && (
+                                      <div className={`flex items-center gap-2 p-2 rounded-md border ${
+                                        chipStatus === 'cooldown' ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800' :
+                                        chipStatus === 'daily_limit' ? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800' :
+                                        chipStatus === 'hourly_limit' ? 'bg-orange-50 dark:bg-orange-900/20 border-orange-200 dark:border-orange-800' :
+                                        'bg-zinc-50 dark:bg-zinc-900/20 border-zinc-200 dark:border-zinc-800'
+                                      }`}>
+                                        {chipStatus === 'cooldown' && <Clock className="size-4 text-amber-600 shrink-0" />}
+                                        {chipStatus === 'daily_limit' && <ShieldBan className="size-4 text-red-600 shrink-0" />}
+                                        {chipStatus === 'hourly_limit' && <Clock className="size-4 text-orange-600 shrink-0" />}
+                                        {chipStatus === 'disconnected' && <WifiOff className="size-4 text-zinc-600 shrink-0" />}
+                                        <div className="flex-1 min-w-0">
+                                          {chipStatus === 'cooldown' && (
+                                            <>
+                                              <p className="text-xs font-semibold text-amber-700 dark:text-amber-400">Em cooldown</p>
+                                              <p className="text-[10px] text-amber-600 dark:text-amber-500">Retoma em {cooldownMin}min</p>
+                                            </>
+                                          )}
+                                          {chipStatus === 'daily_limit' && (
+                                            <>
+                                              <p className="text-xs font-semibold text-red-700 dark:text-red-400">Limite diário atingido</p>
+                                              <p className="text-[10px] text-red-600 dark:text-red-500">{chip.sentToday}/{info.effectiveLimit} — aguarde até amanhã</p>
+                                            </>
+                                          )}
+                                          {chipStatus === 'hourly_limit' && (
+                                            <>
+                                              <p className="text-xs font-semibold text-orange-700 dark:text-orange-400">Limite horário atingido</p>
+                                              <p className="text-[10px] text-orange-600 dark:text-orange-500">{chip.hourlySent ?? 0}/{antiBanSettings?.hourlyLimit ?? 30} por hora</p>
+                                            </>
+                                          )}
+                                          {chipStatus === 'disconnected' && (
+                                            <>
+                                              <p className="text-xs font-semibold text-zinc-700 dark:text-zinc-400">Chip desconectado</p>
+                                              <p className="text-[10px] text-zinc-600 dark:text-zinc-500">Conecte para enviar mensagens</p>
+                                            </>
+                                          )}
+                                        </div>
+                                        {chipStatus === 'cooldown' && (
+                                          <Badge variant="outline" className="text-amber-600 border-amber-300 bg-amber-50 text-xs shrink-0">{cooldownMin}min</Badge>
+                                        )}
+                                      </div>
+                                    )}
+
+                                    {/* Envio hoje — shows effective limit, not raw dailyLimit */}
+                                    <div className="flex justify-between items-center">
+                                      <span className="text-muted-foreground">Envio hoje</span>
+                                      <div className="flex items-center gap-1.5">
+                                        <span className={`font-semibold ${hitDailyLimit ? 'text-red-600 dark:text-red-400' : ''}`}>
+                                          {chip.sentToday}/{info.effectiveLimit}
+                                        </span>
+                                        {info.effectiveLimit < (chip.dailyLimit || 200) && (
+                                          <span className="text-[10px] text-muted-foreground" title={`Limite total do chip: ${chip.dailyLimit || 200}/dia`}>
+                                            (de {chip.dailyLimit || 200})
+                                          </span>
+                                        )}
+                                      </div>
+                                    </div>
+                                    {/* Progress bar based on effective limit */}
+                                    <div className="relative h-2 w-full overflow-hidden rounded-full bg-secondary">
+                                      <div className={`h-full rounded-full transition-all duration-300 ${progressColor}`} style={{ width: `${Math.min(progressPct, 100)}%` }} />
+                                    </div>
+
+                                    {/* Aquecimento — shows phase + editable day */}
+                                    {chip.warmingEnabled && (
+                                      <div className="space-y-1.5">
+                                        <div className="flex justify-between items-center">
+                                          <span className="text-muted-foreground">Aquecimento</span>
+                                          <div className="flex items-center gap-1">
+                                            <Badge variant="secondary" className="gap-1 text-xs">
+                                              {phase === 'ready' ? (
+                                                <><CheckCircle2 className="size-3" /> Aquecido</>
+                                              ) : phase === 'prewarm' ? (
+                                                <><Flame className="size-3" /> Pré-aquecido</>
+                                              ) : (
+                                                <><Baby className="size-3" /> Berçário</>
+                                              )}
+                                            </Badge>
+                                            <Select value={phase} onValueChange={async (v) => {
+                                              try {
+                                                await fetch(`/api/chips/${chip.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ warmingPhase: v }) })
+                                                toast.success('Fase atualizada!')
+                                                fetchChips()
+                                              } catch { toast.error('Erro ao atualizar fase') }
+                                            }}>
+                                              <SelectTrigger className="h-7 rounded-md border border-input bg-background px-2 text-xs gap-1 hover:bg-accent"><Pencil className="size-3" /><span className="sr-only">Alterar fase</span></SelectTrigger>
+                                              <SelectContent>
+                                                <SelectItem value="nursery">Berçário</SelectItem>
+                                                <SelectItem value="prewarm">Pré-aquecido</SelectItem>
+                                                <SelectItem value="ready">Aquecido</SelectItem>
+                                              </SelectContent>
+                                            </Select>
+                                          </div>
+                                        </div>
+                                        {/* Day info + edit button */}
+                                        {phase !== 'ready' && (
+                                          <div className="flex items-center justify-between pl-2">
+                                            <div className="flex items-center gap-1.5">
+                                              {!chip.warmingStartedAt && (
+                                                <Badge variant="outline" className="text-[10px] px-1.5 py-0 text-blue-600 border-blue-300 bg-blue-50 dark:bg-blue-900/20 dark:border-blue-800 dark:text-blue-400 gap-1">
+                                                  <Clock className="size-2.5" /> Nunca enviou
+                                                </Badge>
+                                              )}
+                                              {chip.warmingStartedAt && info.phaseMaxDays > 0 && (
+                                                <span className="text-[11px] text-muted-foreground">
+                                                  Dia {info.phaseDay} de {info.phaseMaxDays} — <span className="font-medium text-foreground">{info.effectiveLimit} msg/dia</span>
+                                                </span>
+                                              )}
+                                            </div>
+                                            <Button
+                                              variant="ghost"
+                                              size="sm"
+                                              className="h-6 px-2 text-[10px] text-muted-foreground hover:text-foreground gap-1"
+                                              onClick={() => {
+                                                const maxDay = info.phaseMaxDays || 20
+                                                const input = prompt(`Definir dia do aquecimento (1-${maxDay}):`, String(info.phaseDay))
+                                                if (input === null) return
+                                                const day = parseInt(input)
+                                                if (isNaN(day) || day < 1 || day > maxDay) {
+                                                  toast.error(`Dia inválido. Use 1 a ${maxDay}`)
+                                                  return
+                                                }
+                                                // Calculate the warmingStartedAt date that would result in this day
+                                                // warmingStartedAt = now - (day - 1) days
+                                                const newStartDate = new Date()
+                                                newStartDate.setDate(newStartDate.getDate() - (day - 1))
+                                                newStartDate.setHours(0, 0, 0, 0)
+                                                fetch(`/api/chips/${chip.id}`, {
+                                                  method: 'PATCH',
+                                                  headers: { 'Content-Type': 'application/json' },
+                                                  body: JSON.stringify({ warmingStartedAt: newStartDate.toISOString() })
+                                                }).then(() => {
+                                                  toast.success(`Dia ajustado para ${day} — limite: ${(() => {
+                                                    const schedule = phase === 'nursery'
+                                                      ? JSON.parse(antiBanSettings?.nurserySchedule || '[]')
+                                                      : JSON.parse(antiBanSettings?.prewarmSchedule || '[]')
+                                                    const entry = schedule.find((s: any) => day >= s.days[0] && day <= s.days[1])
+                                                    return entry?.limit || 10
+                                                  })()} msg/dia`)
+                                                  fetchChips()
+                                                }).catch(() => toast.error('Erro ao ajustar dia'))
+                                              }}
+                                            >
+                                              <Pencil className="size-2.5" /> Ajustar dia
+                                            </Button>
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
+                                  </>
+                                )
+                              })()}
+                              <div className="flex justify-between items-center">
+                                <span className="text-muted-foreground">Último visto</span>
+                                <span className="text-xs">{chip.lastSeen ? new Date(chip.lastSeen).toLocaleString('pt-BR') : 'Nunca'}</span>
+                              </div>
+                            </div>
+                            <Separator />
+                            <div className="flex gap-1.5">
+                              {chip.status === 'connected' ? (
+                                <Button variant="outline" size="sm" className="gap-1 text-[11px] h-7 px-2 text-rose-500 hover:text-rose-600 border-rose-200 hover:border-rose-300" onClick={() => setDisconnectConfirm(chip)}>
+                                  <X className="size-3" /> Desconectar
+                                </Button>
+                              ) : (
+                                <Button size="sm" className="gap-1 text-[11px] h-7 px-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 shadow-md" onClick={() => connectWhatsApp(chip)}>
+                                  <QrCode className="size-3" /> WhatsApp
+                                </Button>
+                              )}
+                              <Button variant="outline" size="sm" className="gap-1 text-[11px] h-7 px-2" onClick={() => openProxyDialog(chip)}>
+                                <Globe className="size-3" /> Proxy
+                              </Button>
+                              <div className="flex-1" />
+                              <Button variant="ghost" size="sm" className="size-7 p-0 text-rose-500 hover:text-rose-600" onClick={() => setDeleteConfirm(chip.id)}>
+                                <Trash2 className="size-3.5" />
+                              </Button>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      </motion.div>
+                    ))}
+                  </AnimatePresence>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Disconnected Group */}
+          {disconnectedChips.length > 0 && (
+            <div>
+              <button onClick={() => toggleGroup('disconnected')} className="flex items-center gap-2 mb-3 group cursor-pointer">
+                <div className="flex items-center gap-2">
+                  <div className="size-2.5 rounded-full bg-zinc-400" />
+                  <h3 className="text-sm font-semibold">Desconectados</h3>
+                  <Badge variant="secondary" className="text-[10px] h-5">{disconnectedChips.length}</Badge>
+                </div>
+                <ChevronDown className={`size-4 text-muted-foreground transition-transform ${collapsedGroups.has('disconnected') ? '-rotate-90' : ''}`} />
+              </button>
+              {!collapsedGroups.has('disconnected') && (
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                  <AnimatePresence>
+                    {disconnectedChips.map((chip, i) => (
+                      <motion.div key={chip.id} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}>
+                        <Card className="shadow-lg hover:shadow-xl transition-all duration-200 border-0 relative overflow-hidden">
+                          <div className={`absolute top-0 left-0 right-0 h-1 ${chip.status === 'connected' ? 'bg-gradient-to-r from-emerald-400 to-teal-500' : chip.status === 'error' ? 'bg-gradient-to-r from-rose-400 to-pink-500' : chip.status === 'connecting' ? 'bg-gradient-to-r from-amber-400 to-orange-500' : 'bg-zinc-300'}`} />
+                          <CardHeader className="pb-3 min-w-0 overflow-hidden">
+                            <div className="flex items-center gap-2.5 overflow-hidden">
+                              <div className={`flex size-10 shrink-0 items-center justify-center rounded-lg ${chip.status === 'connected' ? 'bg-emerald-100 dark:bg-emerald-900/30' : 'bg-violet-100 dark:bg-violet-900/30'}`}>
+                                <Smartphone className={`size-5 ${chip.status === 'connected' ? 'text-emerald-600 dark:text-emerald-400' : 'text-violet-600 dark:text-violet-400'}`} />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-1.5 min-w-0">
+                                  <CardTitle className="flex-1 min-w-0 truncate text-sm" title={chip.name}>{chip.name}</CardTitle>
+                                  <Badge variant="outline" className="gap-0.5 text-[9px] px-1 py-0 shrink-0 leading-none">
+                                    v3
+                                  </Badge>
+                                  {chip.disconnectionReasonCode && (
+                                    <TooltipProvider>
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        <Badge variant="destructive" className="gap-0.5 text-[9px] px-1 py-0 shrink-0 leading-none">
+                                          <WifiOff className="size-2.5" />
+                                          {chip.disconnectionReasonCode === 401 ? 'Removido' :
+                                           chip.disconnectionReasonCode === 403 ? 'Banido' :
+                                           chip.disconnectionReasonCode === 428 ? 'Substituído' :
+                                           chip.disconnectionReasonCode === 440 ? 'Desconectado' :
+                                           `${chip.disconnectionReasonCode}`}
+                                        </Badge>
+                                      </TooltipTrigger>
+                                      <TooltipContent side="bottom" className="text-xs">
+                                        {chip.disconnectionReasonCode === 401 ? 'Dispositivo removido' :
+                                         chip.disconnectionReasonCode === 403 ? 'Banido pelo WhatsApp' :
+                                         chip.disconnectionReasonCode === 428 ? 'Dispositivo substituído' :
+                                         chip.disconnectionReasonCode === 440 ? 'Dispositivo desconectado' :
+                                         `Código ${chip.disconnectionReasonCode}`}
+                                      </TooltipContent>
+                                    </Tooltip>
+                                    </TooltipProvider>
+                                  )}
+                                </div>
+                                {chip.profileName && chip.profileName !== chip.name && (
+                                  <p className="text-[10px] text-muted-foreground/60 truncate" title={`Perfil WhatsApp: ${chip.profileName}`}>{chip.profileName}</p>
+                                )}
+                                <div className="flex items-center gap-1.5 min-w-0">
+                                  <CardDescription className="flex-1 min-w-0 truncate text-xs" title={chip.phoneNumber}>{chip.phoneNumber}</CardDescription>
+                                  {chip.evolutionInstance && (
+                                    <span className="text-[9px] font-mono text-muted-foreground/70 truncate max-w-20" title={chip.evolutionInstance}>{chip.evolutionInstance.replace(/^OctupusZap_/, '')}</span>
+                                  )}
+                                </div>
+                              </div>
+                              <div className="flex flex-col items-end gap-1 shrink-0">
+                                <StatusBadge status={chip.status} />
+                                {chip.wireguardIp || (chip.proxyMode === 'socks5' && chip.socks5Host && chip.socks5Pass) ? (
+                                  (() => {
+                                    const ps = proxyStatuses[chip.id]
+                                    const isOnline = ps?.checked && ps?.online
+                                    const isChecking = ps && !ps.checked
+                                    const isOffline = ps?.checked && !ps.online
+                                    return (
+                                      <Badge variant="outline" className={`gap-0.5 text-[9px] px-1.5 py-0 leading-none ${
+                                        isOnline ? 'bg-emerald-600 text-white border-emerald-600 hover:bg-emerald-700' :
+                                        isChecking ? 'bg-zinc-200 text-zinc-500 border-zinc-300 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700' :
+                                        isOffline ? 'bg-rose-100 text-rose-600 border-rose-300 dark:bg-rose-900/30 dark:text-rose-400 dark:border-rose-800' :
+                                        'bg-zinc-100 text-zinc-500 border-zinc-300 dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700'
+                                      }`}>
+                                        {isOnline ? <><Lock className="size-2.5" /> Proxy Online</> :
+                                         isChecking ? <><RefreshCw className="size-2.5 animate-spin" /> Verificando</> :
+                                         isOffline ? <><WifiOff className="size-2.5" /> Proxy Offline</> :
+                                         <><Lock className="size-2.5" /> Proxy</>}
+                                      </Badge>
+                                    )
+                                  })()
+                                ) : null}
+                              </div>
+                            </div>
+                          </CardHeader>
+                          <CardContent className="space-y-4">
+                            <div className="space-y-2 text-sm">
+                              <div className="flex justify-between items-center">
+                                <span className="text-muted-foreground">Modo de Conexão</span>
+                                <Badge variant="outline" className="gap-1 text-xs">
+                                  {chip.proxyMode === 'socks5' ? <><Globe className="size-3" /> SOCKS5</> :
+                                   chip.proxyMode === 'wireguard' ? <><Lock className="size-3" /> WireGuard</> :
+                                   <><QrCode className="size-3" /> QR Code</>}
+                                </Badge>
+                              </div>
+                              {(() => {
+                                const info = getChipEffectiveInfo(chip)
+                                const phase = chip.warmingPhase || 'nursery'
+                                const isInCooldown = chip.cooldownUntil && new Date(chip.cooldownUntil) > new Date()
+                                const cooldownMin = isInCooldown ? Math.ceil((new Date(chip.cooldownUntil!).getTime() - Date.now()) / 60000) : 0
+                                const hitDailyLimit = chip.sentToday >= info.effectiveLimit
+                                const hitHourlyLimit = (chip.hourlySent ?? 0) >= (antiBanSettings?.hourlyLimit ?? 30)
+
+                                // Determine chip operational status
+                                let chipStatus: 'available' | 'cooldown' | 'daily_limit' | 'hourly_limit' | 'disconnected' = 'available'
+                                if (chip.status !== 'connected') chipStatus = 'disconnected'
+                                else if (isInCooldown) chipStatus = 'cooldown'
+                                else if (hitDailyLimit) chipStatus = 'daily_limit'
+                                else if (hitHourlyLimit) chipStatus = 'hourly_limit'
+
+                                const progressPct = info.effectiveLimit > 0 ? (chip.sentToday / info.effectiveLimit) * 100 : 0
+                                const progressColor = progressPct >= 90 ? 'bg-red-500' : progressPct >= 60 ? 'bg-amber-500' : 'bg-emerald-500'
+
+                                return (
+                                  <>
+                                    {/* Status badge — always visible, tells you WHY messages aren't going out */}
+                                    {chipStatus !== 'available' && (
+                                      <div className={`flex items-center gap-2 p-2 rounded-md border ${
+                                        chipStatus === 'cooldown' ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800' :
+                                        chipStatus === 'daily_limit' ? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800' :
+                                        chipStatus === 'hourly_limit' ? 'bg-orange-50 dark:bg-orange-900/20 border-orange-200 dark:border-orange-800' :
+                                        'bg-zinc-50 dark:bg-zinc-900/20 border-zinc-200 dark:border-zinc-800'
+                                      }`}>
+                                        {chipStatus === 'cooldown' && <Clock className="size-4 text-amber-600 shrink-0" />}
+                                        {chipStatus === 'daily_limit' && <ShieldBan className="size-4 text-red-600 shrink-0" />}
+                                        {chipStatus === 'hourly_limit' && <Clock className="size-4 text-orange-600 shrink-0" />}
+                                        {chipStatus === 'disconnected' && <WifiOff className="size-4 text-zinc-600 shrink-0" />}
+                                        <div className="flex-1 min-w-0">
+                                          {chipStatus === 'cooldown' && (
+                                            <>
+                                              <p className="text-xs font-semibold text-amber-700 dark:text-amber-400">Em cooldown</p>
+                                              <p className="text-[10px] text-amber-600 dark:text-amber-500">Retoma em {cooldownMin}min</p>
+                                            </>
+                                          )}
+                                          {chipStatus === 'daily_limit' && (
+                                            <>
+                                              <p className="text-xs font-semibold text-red-700 dark:text-red-400">Limite diário atingido</p>
+                                              <p className="text-[10px] text-red-600 dark:text-red-500">{chip.sentToday}/{info.effectiveLimit} — aguarde até amanhã</p>
+                                            </>
+                                          )}
+                                          {chipStatus === 'hourly_limit' && (
+                                            <>
+                                              <p className="text-xs font-semibold text-orange-700 dark:text-orange-400">Limite horário atingido</p>
+                                              <p className="text-[10px] text-orange-600 dark:text-orange-500">{chip.hourlySent ?? 0}/{antiBanSettings?.hourlyLimit ?? 30} por hora</p>
+                                            </>
+                                          )}
+                                          {chipStatus === 'disconnected' && (
+                                            <>
+                                              <p className="text-xs font-semibold text-zinc-700 dark:text-zinc-400">Chip desconectado</p>
+                                              <p className="text-[10px] text-zinc-600 dark:text-zinc-500">Conecte para enviar mensagens</p>
+                                            </>
+                                          )}
+                                        </div>
+                                        {chipStatus === 'cooldown' && (
+                                          <Badge variant="outline" className="text-amber-600 border-amber-300 bg-amber-50 text-xs shrink-0">{cooldownMin}min</Badge>
+                                        )}
+                                      </div>
+                                    )}
+
+                                    {/* Envio hoje — shows effective limit, not raw dailyLimit */}
+                                    <div className="flex justify-between items-center">
+                                      <span className="text-muted-foreground">Envio hoje</span>
+                                      <div className="flex items-center gap-1.5">
+                                        <span className={`font-semibold ${hitDailyLimit ? 'text-red-600 dark:text-red-400' : ''}`}>
+                                          {chip.sentToday}/{info.effectiveLimit}
+                                        </span>
+                                        {info.effectiveLimit < (chip.dailyLimit || 200) && (
+                                          <span className="text-[10px] text-muted-foreground" title={`Limite total do chip: ${chip.dailyLimit || 200}/dia`}>
+                                            (de {chip.dailyLimit || 200})
+                                          </span>
+                                        )}
+                                      </div>
+                                    </div>
+                                    {/* Progress bar based on effective limit */}
+                                    <div className="relative h-2 w-full overflow-hidden rounded-full bg-secondary">
+                                      <div className={`h-full rounded-full transition-all duration-300 ${progressColor}`} style={{ width: `${Math.min(progressPct, 100)}%` }} />
+                                    </div>
+
+                                    {/* Aquecimento — shows phase + editable day */}
+                                    {chip.warmingEnabled && (
+                                      <div className="space-y-1.5">
+                                        <div className="flex justify-between items-center">
+                                          <span className="text-muted-foreground">Aquecimento</span>
+                                          <div className="flex items-center gap-1">
+                                            <Badge variant="secondary" className="gap-1 text-xs">
+                                              {phase === 'ready' ? (
+                                                <><CheckCircle2 className="size-3" /> Aquecido</>
+                                              ) : phase === 'prewarm' ? (
+                                                <><Flame className="size-3" /> Pré-aquecido</>
+                                              ) : (
+                                                <><Baby className="size-3" /> Berçário</>
+                                              )}
+                                            </Badge>
+                                            <Select value={phase} onValueChange={async (v) => {
+                                              try {
+                                                await fetch(`/api/chips/${chip.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ warmingPhase: v }) })
+                                                toast.success('Fase atualizada!')
+                                                fetchChips()
+                                              } catch { toast.error('Erro ao atualizar fase') }
+                                            }}>
+                                              <SelectTrigger className="h-7 rounded-md border border-input bg-background px-2 text-xs gap-1 hover:bg-accent"><Pencil className="size-3" /><span className="sr-only">Alterar fase</span></SelectTrigger>
+                                              <SelectContent>
+                                                <SelectItem value="nursery">Berçário</SelectItem>
+                                                <SelectItem value="prewarm">Pré-aquecido</SelectItem>
+                                                <SelectItem value="ready">Aquecido</SelectItem>
+                                              </SelectContent>
+                                            </Select>
+                                          </div>
+                                        </div>
+                                        {/* Day info + edit button */}
+                                        {phase !== 'ready' && (
+                                          <div className="flex items-center justify-between pl-2">
+                                            <div className="flex items-center gap-1.5">
+                                              {!chip.warmingStartedAt && (
+                                                <Badge variant="outline" className="text-[10px] px-1.5 py-0 text-blue-600 border-blue-300 bg-blue-50 dark:bg-blue-900/20 dark:border-blue-800 dark:text-blue-400 gap-1">
+                                                  <Clock className="size-2.5" /> Nunca enviou
+                                                </Badge>
+                                              )}
+                                              {chip.warmingStartedAt && info.phaseMaxDays > 0 && (
+                                                <span className="text-[11px] text-muted-foreground">
+                                                  Dia {info.phaseDay} de {info.phaseMaxDays} — <span className="font-medium text-foreground">{info.effectiveLimit} msg/dia</span>
+                                                </span>
+                                              )}
+                                            </div>
+                                            <Button
+                                              variant="ghost"
+                                              size="sm"
+                                              className="h-6 px-2 text-[10px] text-muted-foreground hover:text-foreground gap-1"
+                                              onClick={() => {
+                                                const maxDay = info.phaseMaxDays || 20
+                                                const input = prompt(`Definir dia do aquecimento (1-${maxDay}):`, String(info.phaseDay))
+                                                if (input === null) return
+                                                const day = parseInt(input)
+                                                if (isNaN(day) || day < 1 || day > maxDay) {
+                                                  toast.error(`Dia inválido. Use 1 a ${maxDay}`)
+                                                  return
+                                                }
+                                                // Calculate the warmingStartedAt date that would result in this day
+                                                // warmingStartedAt = now - (day - 1) days
+                                                const newStartDate = new Date()
+                                                newStartDate.setDate(newStartDate.getDate() - (day - 1))
+                                                newStartDate.setHours(0, 0, 0, 0)
+                                                fetch(`/api/chips/${chip.id}`, {
+                                                  method: 'PATCH',
+                                                  headers: { 'Content-Type': 'application/json' },
+                                                  body: JSON.stringify({ warmingStartedAt: newStartDate.toISOString() })
+                                                }).then(() => {
+                                                  toast.success(`Dia ajustado para ${day} — limite: ${(() => {
+                                                    const schedule = phase === 'nursery'
+                                                      ? JSON.parse(antiBanSettings?.nurserySchedule || '[]')
+                                                      : JSON.parse(antiBanSettings?.prewarmSchedule || '[]')
+                                                    const entry = schedule.find((s: any) => day >= s.days[0] && day <= s.days[1])
+                                                    return entry?.limit || 10
+                                                  })()} msg/dia`)
+                                                  fetchChips()
+                                                }).catch(() => toast.error('Erro ao ajustar dia'))
+                                              }}
+                                            >
+                                              <Pencil className="size-2.5" /> Ajustar dia
+                                            </Button>
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
+                                  </>
+                                )
+                              })()}
+                              <div className="flex justify-between items-center">
+                                <span className="text-muted-foreground">Último visto</span>
+                                <span className="text-xs">{chip.lastSeen ? new Date(chip.lastSeen).toLocaleString('pt-BR') : 'Nunca'}</span>
+                              </div>
+                            </div>
+                            <Separator />
+                            <div className="flex gap-1.5">
+                              {chip.status === 'connected' ? (
+                                <Button variant="outline" size="sm" className="gap-1 text-[11px] h-7 px-2 text-rose-500 hover:text-rose-600 border-rose-200 hover:border-rose-300" onClick={() => setDisconnectConfirm(chip)}>
+                                  <X className="size-3" /> Desconectar
+                                </Button>
+                              ) : (
+                                <Button size="sm" className="gap-1 text-[11px] h-7 px-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 shadow-md" onClick={() => connectWhatsApp(chip)}>
+                                  <QrCode className="size-3" /> WhatsApp
+                                </Button>
+                              )}
+                              <Button variant="outline" size="sm" className="gap-1 text-[11px] h-7 px-2" onClick={() => openProxyDialog(chip)}>
+                                <Globe className="size-3" /> Proxy
+                              </Button>
+                              <div className="flex-1" />
+                              <Button variant="ghost" size="sm" className="size-7 p-0 text-rose-500 hover:text-rose-600" onClick={() => setDeleteConfirm(chip.id)}>
+                                <Trash2 className="size-3.5" />
+                              </Button>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      </motion.div>
+                    ))}
+                  </AnimatePresence>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 

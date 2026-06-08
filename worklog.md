@@ -1,29 +1,47 @@
----
-Task ID: 1
-Agent: Main Agent
-Task: Fix parallel chip sending in campaigns — bugs in sending-engine.ts causing messages to get stuck and blocking multi-chip campaigns
+# Worklog: ChipsTab Search, Filters & Grouping
 
-Work Log:
-- Analyzed the full sending-engine.ts (3400+ lines), process/route.ts, process-all/route.ts, execute/route.ts
-- Discovered v5.0 parallel chip support was already implemented (per-chip nextSendAt, chipReadyFilter)
-- Found 5 critical bugs causing messages to get stuck in 'sending' status, blocking parallel chip operation
-- Fixed all bugs and added skipContactIds mechanism for step_delay handling
+## Date: 2026-03-04
 
-Bug Fixes:
-1. **step_delay doesn't release message claim** — Message stayed in 'sending' for 5 minutes, blocking that chip's messages. Fixed by releasing claim back to 'pending'.
-2. **waiting_for_sending_step doesn't release claim** — Same issue. Fixed.
-3. **waiting_for_previous_step doesn't release claim** — Same issue. Fixed.
-4. **previous step failed doesn't update current message** — updateMany targeted only 'pending' status but current message was 'sending'. Fixed by updating the current message first, then remaining pending ones.
-5. **whatsapp_warning_detected doesn't release claim** — Campaign paused but message left in 'sending'. Fixed by releasing claim before pausing.
+## Summary
+Modified the `ChipsTab` component in `/home/z/my-project/src/app/page.tsx` to add search functionality, filter system, and automatic grouping by connection status.
 
-New Feature:
-6. **skipContactIds mechanism** — When a step_delay is detected, the contact is added to a skip set. Subsequent processNextMessage calls exclude these contacts from the query, allowing OTHER chips/contacts to be processed instead of being blocked by the same delayed message repeatedly.
+## Changes Made
 
-7. **Step delay no longer blocks the loop** — Changed process/route.ts to use short stagger (0.5-1.5s) instead of waiting the full step delay. Other contacts/chips can send while waiting for step delays.
+### 1. Added State Variables (after line 609)
+- `searchQuery` (string) — tracks search input value
+- `statusFilter` ('all' | 'connected' | 'disconnected' | 'error') — status filter selection
+- `proxyFilter` ('all' | 'with-proxy' | 'no-proxy') — proxy filter selection
+- `warmingFilter` ('all' | 'nursery' | 'prewarm' | 'ready') — warming phase filter selection
+- `collapsedGroups` (Set<string>) — tracks which groups are collapsed
 
-Stage Summary:
-- All 5 claim-release bugs fixed in sending-engine.ts
-- skipContactIds parameter added to processNextMessage
-- All 3 callers updated (process/route.ts, process-all/route.ts, execute/route.ts)
-- TypeScript compiles without errors
-- Parallel chip sending should now work correctly: Chip A sends → goes to cooldown → Chip B sends immediately → both operate independently
+### 2. Added Filtering/Grouping Logic (after `errorCount` calculation)
+- `filteredChips` — applies search query + all three filters to the chips array
+  - Search: case-insensitive matching on `name`, `phoneNumber`, `profileName`, `evolutionInstance`
+  - Status filter: exact match on chip.status
+  - Proxy filter: checks for `wireguardIp` or socks5 config
+  - Warming filter: matches `warmingPhase` (defaults to 'nursery')
+- `connectedChips` — filtered chips where `status === 'connected'`
+- `disconnectedChips` — filtered chips where `status !== 'connected'`
+- `toggleGroup()` — toggles collapse state for a group name
+
+### 3. Added Search Bar & Filter UI (after Stats Row)
+- Search input with search icon, placeholder text, and clear button
+- Three filter button groups in pill/tab style with `bg-muted/50` backgrounds:
+  - Status: Todos, Conectados, Desconectados, Erro (with counts)
+  - Proxy: Proxy, Com Proxy, Sem Proxy
+  - Aquecimento: Aquecimento, Berçário, Pré-aquecido, Aquecido
+
+### 4. Replaced Flat Grid with Grouped Sections
+- Empty state now checks `filteredChips.length === 0` instead of `chips.length === 0`
+- Empty state shows Search icon and contextual message
+- Two collapsible groups with section headers:
+  - **Conectados** (green dot + count badge, open by default)
+  - **Desconectados** (grey dot + count badge, open by default)
+- Each group header has a ChevronDown icon that rotates when collapsed
+- Chip card JSX is identical to the original (duplicated for each group)
+- Both groups use `AnimatePresence` and `motion.div` for animation
+
+## Verification
+- TypeScript compilation: ✅ No errors (`npx tsc --noEmit`)
+- ESLint: ✅ Only pre-existing errors in unrelated scripts
+- All imports (Search, ChevronDown, X, Badge, Input, Button) were already present in the file
