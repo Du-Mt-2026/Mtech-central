@@ -80,7 +80,7 @@ async function applyProxyWithFallback(
 
   // Step 1: Apply proxy (this DISCONNECTS the WhatsApp client)
   try {
-    await setProxy(instanceName, proxyConfig)
+    await setProxy(instanceName, { enabled: true, ...proxyConfig })
     console.log(`[Proxy Fallback] Proxy applied to ${instanceName}`)
   } catch (proxyErr: any) {
     console.error(`[Proxy Fallback] Failed to set proxy for ${instanceName}:`, proxyErr?.message)

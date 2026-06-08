@@ -193,7 +193,7 @@ export async function POST(request: Request) {
     // Step 2: Apply proxy
     console.log(`[TestProxy] Applying proxy to ${chip.evolutionInstance}...`)
     try {
-      await setProxy(chip.evolutionInstance, proxyConfig)
+      await setProxy(chip.evolutionInstance, { enabled: true, ...proxyConfig })
     } catch (proxyErr: any) {
       return NextResponse.json({
         success: false,
