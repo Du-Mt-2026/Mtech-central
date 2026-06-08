@@ -3772,6 +3772,9 @@ function CampanhasTab() {
   const [exportingId, setExportingId] = useState<string | null>(null)
   const [exportingAll, setExportingAll] = useState(false)
   const [refreshingDetail, setRefreshingDetail] = useState(false)
+  const [detailSortBy, setDetailSortBy] = useState<'name' | 'sendOrder'>('name')
+  const [detailSearchQuery, setDetailSearchQuery] = useState('')
+  const [detailStatusFilter, setDetailStatusFilter] = useState('all')
   const [editForm, setEditForm] = useState({
     name: '', sendIntervalMin: 30, sendIntervalMax: 90,
     chipIds: [] as string[], contactListId: '', scheduledAt: '',
@@ -4291,6 +4294,7 @@ function CampanhasTab() {
 
   const openDetail = async (campaign: Campaign) => {
     setSelectedCampaign(campaign); setDetailDialogOpen(true); setEditing(false)
+    setDetailSortBy('name'); setDetailSearchQuery(''); setDetailStatusFilter('all')
     try { const res = await fetch(`/api/messages?campaignId=${campaign.id}`, { cache: 'no-store' }); const data = await res.json(); setDetailMessages(Array.isArray(data) ? data : []) }
     catch { setDetailMessages([]) }
   }
@@ -5448,10 +5452,77 @@ function CampanhasTab() {
               {/* Right panel - Messages & Details */}
               <div className="flex-1 min-w-0 space-y-3 overflow-y-auto max-h-[65vh]">
                 {detailMessages.length > 0 && (
-                  <div className="space-y-1.5">
-                    <Label className="text-xs font-semibold">Mensagens</Label>
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <Label className="text-xs font-semibold">Mensagens</Label>
+                      <span className="text-[10px] text-muted-foreground">
+                        {(() => {
+                          const filtered = detailMessages.filter(m => {
+                            const matchStatus = detailStatusFilter === 'all' || m.status === detailStatusFilter
+                            const q = detailSearchQuery.toLowerCase()
+                            const matchSearch = !q || m.contact?.name?.toLowerCase().includes(q) || m.contact?.phone?.includes(q)
+                            return matchStatus && matchSearch
+                          })
+                          return `${filtered.length} de ${detailMessages.length}`
+                        })()}
+                      </span>
+                    </div>
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <div className="relative flex-1">
+                          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
+                          <Input placeholder="Buscar por nome ou telefone..." className="pl-8 h-8 text-xs" value={detailSearchQuery} onChange={e => setDetailSearchQuery(e.target.value)} />
+                        </div>
+                        <Select value={detailSortBy} onValueChange={(v: string) => setDetailSortBy(v as 'name' | 'sendOrder')}>
+                          <SelectTrigger className="w-[140px] h-8 text-xs"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="name">Ordem alfabética</SelectItem>
+                            <SelectItem value="sendOrder">Ordem de envio</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="flex gap-1 overflow-x-auto pb-0.5">
+                        {[
+                          { value: 'all', label: 'Todas' },
+                          { value: 'pending', label: 'Pendentes' },
+                          { value: 'sent', label: 'Enviadas' },
+                          { value: 'delivered', label: 'Entregues' },
+                          { value: 'failed', label: 'Falharam' },
+                        ].map(tab => {
+                          const count = detailMessages.filter(m => tab.value === 'all' || m.status === tab.value).length
+                          const isActive = detailStatusFilter === tab.value
+                          return (
+                            <button key={tab.value} onClick={() => setDetailStatusFilter(tab.value)}
+                              className={`px-2.5 py-1 rounded-full text-[10px] font-medium whitespace-nowrap transition-colors ${isActive ? 'bg-primary text-primary-foreground' : 'bg-muted hover:bg-muted/80 text-muted-foreground'}`}>
+                              {tab.label} {count > 0 && `(${count})`}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
                     <div className="space-y-1">
-                      {detailMessages.map((m, i) => (
+                      {(() => {
+                        const filtered = detailMessages.filter(m => {
+                          const matchStatus = detailStatusFilter === 'all' || m.status === detailStatusFilter
+                          const q = detailSearchQuery.toLowerCase()
+                          const matchSearch = !q || m.contact?.name?.toLowerCase().includes(q) || m.contact?.phone?.includes(q)
+                          return matchStatus && matchSearch
+                        })
+                        const sorted = [...filtered].sort((a, b) => {
+                          if (detailSortBy === 'name') {
+                            const nameA = a.contact?.name || '—'
+                            const nameB = b.contact?.name || '—'
+                            return nameA.localeCompare(nameB, 'pt-BR')
+                          }
+                          const statusPriority: Record<string, number> = { sent: 0, delivered: 0, read: 0, pending: 1, failed: 2 }
+                          const prioA = statusPriority[a.status] ?? 3
+                          const prioB = statusPriority[b.status] ?? 3
+                          if (prioA !== prioB) return prioA - prioB
+                          const timeA = a.sentAt ? new Date(a.sentAt).getTime() : a.createdAt ? new Date(a.createdAt).getTime() : 0
+                          const timeB = b.sentAt ? new Date(b.sentAt).getTime() : b.createdAt ? new Date(b.createdAt).getTime() : 0
+                          return timeA - timeB
+                        })
+                        return sorted.map((m, i) => (
                         <div key={m.id} className={`p-2 rounded-lg text-xs flex items-center gap-2 ${m.status === 'failed' ? 'bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800' : m.status === 'pending' ? 'bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800' : 'bg-muted/50'}`}>
                           <span className="font-mono text-muted-foreground w-4 text-center">{i + 1}</span>
                           <div className="flex-1 min-w-0">
@@ -5471,7 +5542,8 @@ function CampanhasTab() {
                             {m.status === 'pending' && !m.sentAt && <p className="text-amber-600 font-medium">Aguardando</p>}
                           </div>
                         </div>
-                      ))}
+                        ))
+                      })()}
                     </div>
                   </div>
                 )}

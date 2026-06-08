@@ -692,6 +692,7 @@ export async function connectInstance(
   const DEFAULT_SUBSCRIBE_EVENTS = [
     'MESSAGE',
     'SEND_MESSAGE',
+    'SEND_MESSAGE_ACK',
     'READ_RECEIPT',
     'PRESENCE',
     'CHAT_PRESENCE',
@@ -701,6 +702,7 @@ export async function connectInstance(
     'LABEL',
     'CONTACT',
     'GROUP',
+    'MESSAGES_UPDATE',
   ];
 
   const body: any = {
@@ -1053,8 +1055,10 @@ export async function sendTextMessage(
 ): Promise<SendMessageResponse> {
   const { id: instanceId, token: instanceToken } = await resolveInstance(instanceIdOrName);
 
+  const formattedNumber = number.startsWith('+') ? number : `+${number}`;
+
   const body: any = {
-    number,
+    number: formattedNumber,
     text,
     delay: options?.delay || 0,
     linkPreview: options?.linkPreview ?? false,
@@ -1095,8 +1099,10 @@ export async function sendMediaMessage(
 ): Promise<SendMessageResponse> {
   const { id: instanceId, token: instanceToken } = await resolveInstance(instanceIdOrName);
 
+  const formattedNumber = number.startsWith('+') ? number : `+${number}`;
+
   const body: any = {
-    number,
+    number: formattedNumber,
     media,
     caption: options?.caption || '',
     fileName: options?.fileName || '',
@@ -1137,10 +1143,11 @@ export async function setPresence(
 
   // Best-effort — if it fails, the sending engine still works
   try {
+    const formattedNumber = number.startsWith('+') ? number : `+${number}`;
     await evolutionFetch('/message/presence', {
       method: 'POST',
       body: JSON.stringify({
-        number,
+        number: formattedNumber,
         presence,
         delay,
       }),
@@ -1455,18 +1462,18 @@ export async function setWebhook(
   events: string[] = [
     'MESSAGE',
     'SEND_MESSAGE',
+    'SEND_MESSAGE_ACK',
     'READ_RECEIPT',
     'PRESENCE',
-    'HISTORY_SYNC',
     'CHAT_PRESENCE',
     'CALL',
     'CONNECTION',
     'LABEL',
     'CONTACT',
     'GROUP',
-    'NEWSLETTER',
     'QRCODE',
-    'BUTTON_CLICK',
+    'MESSAGES_UPDATE',
+    'INSTANCE_DELETED',
   ]
 ): Promise<void> {
   // Webhook is set during connect.
@@ -1537,8 +1544,10 @@ export async function sendQuotedReply(
 ): Promise<SendMessageResponse> {
   const { id: instanceId, token: instanceToken } = await resolveInstance(instanceIdOrName);
 
+  const formattedNumber = number.startsWith('+') ? number : `+${number}`;
+
   const body: any = {
-    number,
+    number: formattedNumber,
     text,
     delay: options?.delay || 0,
     linkPreview: options?.linkPreview ?? false,
