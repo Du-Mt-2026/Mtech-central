@@ -69,7 +69,7 @@ export async function GET(request: Request) {
         resolved: true,
         host: proxyConfig.host,
         port: proxyConfig.port,
-        protocol: proxyConfig.protocol || 'socks5',
+        protocol: 'socks5',
         hasAuth: !!(proxyConfig.username && proxyConfig.password),
         source: chip.wireguardIp ? 'wireguard' : chip.proxyMode === 'socks5' ? 'explicit-socks5' : 'global',
       } : {
@@ -159,7 +159,7 @@ export async function POST(request: Request) {
         wouldApply: {
           host: proxyConfig.host,
           port: proxyConfig.port,
-          protocol: proxyConfig.protocol || 'socks5',
+          protocol: 'socks5',
           hasAuth: !!(proxyConfig.username && proxyConfig.password),
         },
         wouldDisconnect: chip.status === 'connected',
@@ -225,7 +225,7 @@ export async function POST(request: Request) {
         message: `Proxy aplicado com sucesso! Chip reconectou pelo proxy.`,
         stateBefore,
         stateAfter,
-        proxy: { host: proxyConfig.host, port: proxyConfig.port, protocol: proxyConfig.protocol || 'socks5' },
+        proxy: { host: proxyConfig.host, port: proxyConfig.port, protocol: 'socks5' },
       })
     }
 
