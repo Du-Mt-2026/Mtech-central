@@ -11,7 +11,7 @@ export async function GET(
       where: { id },
       include: {
         contacts: {
-          orderBy: { createdAt: 'desc' },
+          orderBy: [{ position: 'asc' }, { createdAt: 'asc' }],
         },
         _count: {
           select: { contacts: true, campaigns: true },

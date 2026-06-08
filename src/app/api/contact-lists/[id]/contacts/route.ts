@@ -24,7 +24,7 @@ export async function GET(
     const [contacts, total] = await Promise.all([
       db.contact.findMany({
         where,
-        orderBy: { createdAt: 'desc' },
+        orderBy: [{ position: 'asc' }, { createdAt: 'asc' }],
         skip: (page - 1) * limit,
         take: limit,
       }),
@@ -47,7 +47,7 @@ export async function GET(
     // Fetch first contact for preview data (real values from the spreadsheet)
     const firstContact = await db.contact.findFirst({
       where: { contactListId: id },
-      orderBy: { createdAt: 'asc' },
+      orderBy: [{ position: 'asc' }, { createdAt: 'asc' }],
     })
 
     return NextResponse.json({ contacts, total, page, limit, availableVariables, firstContact })
@@ -70,11 +70,13 @@ export async function POST(
       return NextResponse.json({ error: 'Nome e telefone são obrigatórios' }, { status: 400 })
     }
 
+    const existingCount = await db.contact.count({ where: { contactListId: id } })
     const contact = await db.contact.create({
       data: {
         name,
         phone: normalizePhone(phone),
         contactListId: id,
+        position: existingCount,
         customFields: customFields && Object.keys(customFields).length > 0 ? JSON.stringify(customFields) : null,
       },
     })

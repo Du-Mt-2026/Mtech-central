@@ -694,6 +694,7 @@ export async function connectInstance(
     'SEND_MESSAGE',
     'SEND_MESSAGE_ACK',
     'READ_RECEIPT',
+    'RECEIPT',
     'PRESENCE',
     'CHAT_PRESENCE',
     'CALL',
@@ -1055,6 +1056,7 @@ export async function sendTextMessage(
 ): Promise<SendMessageResponse> {
   const { id: instanceId, token: instanceToken } = await resolveInstance(instanceIdOrName);
 
+  // Ensure + prefix for Evolution API — some numbers fail with 403 without it
   const formattedNumber = number.startsWith('+') ? number : `+${number}`;
 
   const body: any = {
@@ -1099,6 +1101,7 @@ export async function sendMediaMessage(
 ): Promise<SendMessageResponse> {
   const { id: instanceId, token: instanceToken } = await resolveInstance(instanceIdOrName);
 
+  // Ensure + prefix for Evolution API — some numbers fail with 403 without it
   const formattedNumber = number.startsWith('+') ? number : `+${number}`;
 
   const body: any = {
@@ -1143,6 +1146,7 @@ export async function setPresence(
 
   // Best-effort — if it fails, the sending engine still works
   try {
+    // Ensure + prefix for Evolution API consistency
     const formattedNumber = number.startsWith('+') ? number : `+${number}`;
     await evolutionFetch('/message/presence', {
       method: 'POST',
@@ -1464,6 +1468,7 @@ export async function setWebhook(
     'SEND_MESSAGE',
     'SEND_MESSAGE_ACK',
     'READ_RECEIPT',
+    'RECEIPT',
     'PRESENCE',
     'CHAT_PRESENCE',
     'CALL',
@@ -1544,6 +1549,7 @@ export async function sendQuotedReply(
 ): Promise<SendMessageResponse> {
   const { id: instanceId, token: instanceToken } = await resolveInstance(instanceIdOrName);
 
+  // Ensure + prefix for Evolution API — some numbers fail with 403 without it
   const formattedNumber = number.startsWith('+') ? number : `+${number}`;
 
   const body: any = {
@@ -1590,9 +1596,10 @@ export async function fetchProfilePicture(
   const { id: instanceId, token: instanceToken } = await resolveInstance(instanceIdOrName);
 
   try {
+    const formattedNumber = number.startsWith('+') ? number : `+${number}`;
     const res = await evolutionFetch('/chat/fetchProfilePicture', {
       method: 'POST',
-      body: JSON.stringify({ number }),
+      body: JSON.stringify({ number: formattedNumber }),
     }, instanceId, instanceToken);
 
     if (!res.ok) return null;
@@ -1618,9 +1625,10 @@ export async function checkWhatsAppNumbers(
 ): Promise<Array<{ query: string; exists: boolean; jid: string }>> {
   const { id: instanceId, token: instanceToken } = await resolveInstance(instanceIdOrName);
 
+  const formattedNumbers = numbers.map(n => n.startsWith('+') ? n : `+${n}`);
   const response = await evolutionFetch('/user/check', {
     method: 'POST',
-    body: JSON.stringify({ number: numbers }),
+    body: JSON.stringify({ number: formattedNumbers }),
   }, instanceId, instanceToken);
 
   const data = await response.json();

@@ -243,6 +243,7 @@ model Contact {
   id            String      @id @default(cuid())
   name          String
   phone         String
+  position      Int         @default(0)
   chipId        String?
   chip          Chip?       @relation(fields: [chipId], references: [id], onDelete: Cascade)
   contactListId String?

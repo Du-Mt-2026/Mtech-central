@@ -786,6 +786,108 @@ export async function POST(request: Request) {
         break
       }
 
+      // ===== Receipt Event (Evolution Go format) =====
+      // Evolution Go (Go version) sends "Receipt" events instead of
+      // "SEND_MESSAGE_ACK" / "READ_RECEIPT" (which are Evolution API v3 Node.js format).
+      // The Receipt event contains the same ack-based status tracking:
+      //   ack 3 = DELIVERED (double tick ✓✓)
+      //   ack 4 = READ (blue ticks ✓✓)
+      // This is the PRIMARY delivery tracking mechanism for Evolution Go!
+      case 'Receipt': {
+        try {
+          // Evolution Go Receipt format:
+          // { event: "Receipt", data: { Info: { ID, Chat, Status, IsFromMe }, ... }, instanceName }
+          // Status/ack values: 0=PENDING, 1=SENT, 2=SERVER_ACK, 3=DELIVERED, 4=READ, 5=PLAYED
+          const msgId = data?.Info?.ID || data?.key?.id || data?.id || null
+          const ackValue = data?.Info?.Status ?? data?.Status ?? data?.ack ?? data?.info?.status ?? null
+          const isFromMe = data?.Info?.IsFromMe ?? data?.Info?.isFromMe ?? data?.key?.fromMe ?? true
+
+          if (!msgId) break
+
+          // Only process receipts for messages we sent (fromMe=true)
+          // Incoming message read receipts are handled differently
+          const ack = ackValue !== null && ackValue !== undefined ? Number(ackValue) : null
+          const STATUS_ORDER: Record<string, number> = { pending: 0, sent: 1, delivered: 2, read: 3, failed: -1 }
+          const ackToStatus = (a: number): string => a >= 4 ? 'read' : a >= 3 ? 'delivered' : a >= 1 ? 'sent' : 'pending'
+
+          if (ack !== null) {
+            const candidateStatus = ackToStatus(ack)
+
+            // === Update Campaign Message (Message table) ===
+            const message = await db.message.findFirst({
+              where: { evolutionMessageId: msgId },
+            })
+
+            if (message) {
+              let newStatus = message.status
+              let deliveredAt = message.deliveredAt
+              let readAt = message.readAt
+
+              if (ack >= 4 && message.status !== 'read') {
+                newStatus = 'read'
+                deliveredAt = deliveredAt || new Date()
+                readAt = new Date()
+              } else if (ack >= 3 && message.status !== 'read' && message.status !== 'delivered') {
+                newStatus = 'delivered'
+                deliveredAt = new Date()
+              }
+
+              if (newStatus !== message.status) {
+                await db.message.update({
+                  where: { id: message.id },
+                  data: { status: newStatus, deliveredAt, readAt },
+                })
+                console.log(`[Webhook] Receipt: Campaign Message ${msgId} → ${newStatus} (ack=${ack})`)
+              }
+
+              // SSE broadcast
+              try {
+                broadcastToChip(message.chipId, 'status_update', {
+                  messageId: msgId,
+                  status: newStatus,
+                  ack,
+                  timestamp: Date.now(),
+                })
+              } catch { /* non-critical */ }
+            }
+
+            // === Update InboxMessage ===
+            try {
+              const inboxMsg = await db.inboxMessage.findUnique({
+                where: { evolutionMsgId: msgId },
+              })
+              if (inboxMsg && (STATUS_ORDER[candidateStatus] ?? 0) > (STATUS_ORDER[inboxMsg.status] ?? 0)) {
+                await db.inboxMessage.update({
+                  where: { id: inboxMsg.id },
+                  data: {
+                    ack,
+                    status: candidateStatus,
+                    ...(candidateStatus === 'delivered' || candidateStatus === 'read' ? { deliveredAt: inboxMsg.deliveredAt || new Date() } : {}),
+                    ...(candidateStatus === 'read' ? { readAt: new Date() } : {}),
+                  },
+                })
+                console.log(`[Webhook] Receipt: InboxMessage ${msgId} → ${candidateStatus} (ack=${ack})`)
+
+                // SSE broadcast for inbox
+                try {
+                  broadcastToChip(inboxMsg.chipId || '', 'status_update', {
+                    messageId: msgId,
+                    status: candidateStatus,
+                    ack,
+                    timestamp: Date.now(),
+                  })
+                } catch { /* non-critical */ }
+              }
+            } catch (inboxErr: any) {
+              console.error('[Webhook] Receipt: Error updating inbox message:', inboxErr.message)
+            }
+          }
+        } catch (err: any) {
+          console.error('[Webhook] Error processing Receipt:', err.message)
+        }
+        break
+      }
+
       // ===== Incoming/Outgoing Messages =====
       case 'Message': {
         try {
@@ -1278,6 +1380,7 @@ export async function POST(request: Request) {
         }
 
         // Log unhandled events for debugging (but not too verbosely)
+        // ChatPresence = typing/composing indicators — not useful for our purposes
         if (!['PRESENCE', 'CHAT_PRESENCE', 'CONTACT', 'LABEL'].includes(event)) {
           console.log(`[Webhook] Unhandled event: ${event} for ${chipInstanceName}`)
         }

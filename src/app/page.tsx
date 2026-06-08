@@ -45,8 +45,8 @@ import { VerificarSection } from '@/components/verificar-section'
 import { KeysSection } from '@/components/keys-section'
 import { VendedoresSection } from '@/components/vendedores-section'
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core'
-import { SortableContext, useSortable, horizontalListSortingStrategy, arrayMove } from '@dnd-kit/sortable'
-import { restrictToHorizontalAxis } from '@dnd-kit/modifiers'
+import { SortableContext, useSortable, horizontalListSortingStrategy, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable'
+import { restrictToHorizontalAxis, restrictToVerticalAxis } from '@dnd-kit/modifiers'
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable'
 import { AntiBanTab } from '@/components/antiban-tab'
 import { WarmingTab } from '@/components/warming-tab'
@@ -220,6 +220,7 @@ interface ContactItem {
   id: string
   name: string
   phone: string
+  position: number
   contactListId: string | null
   chipId: string | null
   customFields: string | null
@@ -2464,6 +2465,63 @@ function ChipsTab() {
   )
 }
 
+// ===== Sortable Contact Row =====
+function SortableContactRow({ contact, isSelected, onToggleSelect, onEdit, onDelete, customData }: {
+  contact: ContactItem
+  isSelected: boolean
+  onToggleSelect: () => void
+  onEdit: () => void
+  onDelete: () => void
+  customData: Record<string, string>
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: contact.id })
+  const style = {
+    transform: transform ? `translate3d(0, ${transform.y}px, 0)` : undefined,
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+    zIndex: isDragging ? 50 : undefined,
+  }
+
+  return (
+    <tr ref={setNodeRef} style={style} className={`border-t hover:bg-muted/30 transition-colors ${isDragging ? 'bg-muted shadow-lg' : ''}`}>
+      <td className="p-3 w-[40px]">
+        <input
+          type="checkbox"
+          checked={isSelected}
+          onChange={onToggleSelect}
+          className="size-4 rounded border-gray-300"
+        />
+      </td>
+      <td className="p-3 w-[36px]" {...attributes} {...listeners}>
+        <GripVertical className="size-4 text-muted-foreground cursor-grab active:cursor-grabbing" />
+      </td>
+      {STANDARD_CONTACT_FIELDS.map(f => {
+        const value = f.core
+          ? (f.key === 'nome' ? contact.name : contact.phone)
+          : (customData[f.key] || '-')
+        return (
+          <td key={f.key} className={`p-3 truncate ${f.core ? 'font-medium' : 'text-muted-foreground text-xs'}`}>
+            {value}
+          </td>
+        )
+      })}
+      <td className="p-3 text-muted-foreground text-xs truncate">
+        {contact.createdAt ? new Date(contact.createdAt).toLocaleString('pt-BR') : '—'}
+      </td>
+      <td className="p-3">
+        <div className="flex gap-1">
+          <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-emerald-600" onClick={onEdit}>
+            <Pencil className="size-3.5" />
+          </Button>
+          <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-rose-600" onClick={onDelete}>
+            <Trash2 className="size-3.5" />
+          </Button>
+        </div>
+      </td>
+    </tr>
+  )
+}
+
 // ===== Contatos Tab =====
 function ContatosTab() {
   const [contactLists, setContactLists] = useState<ContactList[]>([])
@@ -2488,6 +2546,13 @@ function ContatosTab() {
   const [quickImportName, setQuickImportName] = useState('')
   const [quickImportFile, setQuickImportFile] = useState<File | null>(null)
   const [quickImporting, setQuickImporting] = useState(false)
+  const [selectedContactIds, setSelectedContactIds] = useState<Set<string>>(new Set())
+  const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false)
+
+  // DnD sensors for contact reorder
+  const contactDragSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
+  )
 
   const fetchLists = useCallback(async () => {
     try {
@@ -2523,6 +2588,68 @@ function ContatosTab() {
       setContactsPage(page)
     } catch { toast.error('Erro ao carregar contatos') }
   }, [searchQuery])
+
+  const handleContactDragEnd = async (event: DragEndEvent) => {
+    const { active, over } = event
+    if (!over || active.id === over.id || !selectedList) return
+
+    const oldIndex = contacts.findIndex(c => c.id === active.id)
+    const newIndex = contacts.findIndex(c => c.id === over.id)
+    if (oldIndex === -1 || newIndex === -1) return
+
+    // Optimistically update UI
+    const reordered = arrayMove(contacts, oldIndex, newIndex)
+    setContacts(reordered)
+
+    // Persist to server
+    try {
+      await fetch(`/api/contact-lists/${selectedList.id}/contacts/reorder`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contactIds: reordered.map(c => c.id) }),
+      })
+    } catch {
+      toast.error('Erro ao reordenar')
+      fetchContacts(selectedList.id, contactsPage) // Revert on error
+    }
+  }
+
+  const bulkDeleteContacts = async () => {
+    if (selectedContactIds.size === 0 || !selectedList) return
+    try {
+      const res = await fetch('/api/contacts/bulk-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contactIds: Array.from(selectedContactIds) }),
+      })
+      if (!res.ok) throw new Error()
+      const data = await res.json()
+      toast.success(`${data.deleted} contatos removidos!`)
+      setSelectedContactIds(new Set())
+      setBulkDeleteConfirm(false)
+      fetchContacts(selectedList.id, contactsPage)
+      refreshSelectedList(selectedList.id)
+    } catch {
+      toast.error('Erro ao excluir contatos')
+    }
+  }
+
+  const toggleContactSelection = (contactId: string) => {
+    setSelectedContactIds(prev => {
+      const next = new Set(prev)
+      if (next.has(contactId)) next.delete(contactId)
+      else next.add(contactId)
+      return next
+    })
+  }
+
+  const toggleSelectAll = () => {
+    if (selectedContactIds.size === contacts.length && contacts.length > 0) {
+      setSelectedContactIds(new Set())
+    } else {
+      setSelectedContactIds(new Set(contacts.map(c => c.id)))
+    }
+  }
 
   useEffect(() => {
     fetchLists()
@@ -2846,6 +2973,8 @@ function ContatosTab() {
                 <div className="overflow-hidden bg-muted/50 border-b shrink-0 pr-[17px]">
                   <table className="w-full text-sm table-fixed">
                     <colgroup>
+                      <col className="w-[40px]" />
+                      <col className="w-[36px]" />
                       {STANDARD_CONTACT_FIELDS.map(f => (
                         <col key={f.key} className={f.core ? 'w-[18%]' : 'w-[12%]'} />
                       ))}
@@ -2854,6 +2983,10 @@ function ContatosTab() {
                     </colgroup>
                     <thead>
                       <tr>
+                        <th className="p-3 w-[40px]">
+                          <input type="checkbox" checked={selectedContactIds.size === contacts.length && contacts.length > 0} onChange={toggleSelectAll} className="size-4 rounded border-gray-300" />
+                        </th>
+                        <th className="p-3 w-[36px]"></th>
                         {STANDARD_CONTACT_FIELDS.map(f => (
                           <th key={f.key} className="text-left p-3 font-medium truncate">{f.header}</th>
                         ))}
@@ -2863,52 +2996,54 @@ function ContatosTab() {
                     </thead>
                   </table>
                 </div>
-                {/* Scrollable body - native scrollbar at edge */}
+                {/* Bulk action toolbar */}
+                {selectedContactIds.size > 0 && (
+                  <div className="flex items-center gap-3 px-4 py-2 bg-primary/5 border-b shrink-0">
+                    <span className="text-sm font-medium">{selectedContactIds.size} selecionado(s)</span>
+                    <Button variant="outline" size="sm" onClick={() => setSelectedContactIds(new Set())}>
+                      Desmarcar todos
+                    </Button>
+                    <Button variant="destructive" size="sm" className="gap-1.5" onClick={() => setBulkDeleteConfirm(true)}>
+                      <Trash2 className="size-3.5" /> Excluir selecionados
+                    </Button>
+                  </div>
+                )}
+                {/* Scrollable body with DnD */}
                 <div className="flex-1 overflow-y-auto" style={{ minHeight: 0 }}>
-                  <table className="w-full text-sm table-fixed">
-                    <colgroup>
-                      {STANDARD_CONTACT_FIELDS.map(f => (
-                        <col key={f.key} className={f.core ? 'w-[18%]' : 'w-[12%]'} />
-                      ))}
-                      <col className="w-[16%]" />
-                      <col className="w-[8%]" />
-                    </colgroup>
-                    <tbody>
-                      {contacts.map(c => {
-                        let customData: Record<string, string> = {}
-                        if (c.customFields) {
-                          try { customData = JSON.parse(c.customFields) } catch {}
-                        }
-                        return (
-                          <tr key={c.id} className="border-t hover:bg-muted/30 transition-colors">
-                            {STANDARD_CONTACT_FIELDS.map(f => {
-                              const value = f.core
-                                ? (f.key === 'nome' ? c.name : c.phone)
-                                : (customData[f.key] || '-')
-                              return (
-                                <td key={f.key} className={`p-3 truncate ${f.core ? 'font-medium' : 'text-muted-foreground text-xs'}`}>
-                                  {value}
-                                </td>
-                              )
-                            })}
-                            <td className="p-3 text-muted-foreground text-xs truncate">
-                              {c.createdAt ? new Date(c.createdAt).toLocaleString('pt-BR') : '—'}
-                            </td>
-                            <td className="p-3">
-                              <div className="flex gap-1">
-                                <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-emerald-600" onClick={() => openEditContact(c)}>
-                                  <Pencil className="size-3.5" />
-                                </Button>
-                                <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-rose-600" onClick={() => setDeleteContactConfirm(c.id)}>
-                                  <Trash2 className="size-3.5" />
-                                </Button>
-                              </div>
-                            </td>
-                          </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
+                  <DndContext sensors={contactDragSensors} collisionDetection={closestCenter} modifiers={[restrictToVerticalAxis]} onDragEnd={handleContactDragEnd}>
+                    <SortableContext items={contacts.map(c => c.id)} strategy={verticalListSortingStrategy}>
+                      <table className="w-full text-sm table-fixed">
+                        <colgroup>
+                          <col className="w-[40px]" />
+                          <col className="w-[36px]" />
+                          {STANDARD_CONTACT_FIELDS.map(f => (
+                            <col key={f.key} className={f.core ? 'w-[18%]' : 'w-[12%]'} />
+                          ))}
+                          <col className="w-[16%]" />
+                          <col className="w-[8%]" />
+                        </colgroup>
+                        <tbody>
+                          {contacts.map(c => {
+                            let customData: Record<string, string> = {}
+                            if (c.customFields) {
+                              try { customData = JSON.parse(c.customFields) } catch {}
+                            }
+                            return (
+                              <SortableContactRow
+                                key={c.id}
+                                contact={c}
+                                isSelected={selectedContactIds.has(c.id)}
+                                onToggleSelect={() => toggleContactSelection(c.id)}
+                                onEdit={() => openEditContact(c)}
+                                onDelete={() => setDeleteContactConfirm(c.id)}
+                                customData={customData}
+                              />
+                            )
+                          })}
+                        </tbody>
+                      </table>
+                    </SortableContext>
+                  </DndContext>
                 </div>
                 {/* Pagination footer */}
                 {totalContacts > CONTACTS_PER_PAGE && (
@@ -2981,6 +3116,10 @@ function ContatosTab() {
       <ConfirmDialog open={!!deleteContactConfirm} onOpenChange={() => setDeleteContactConfirm(null)}
         title="Remover Contato" description="Tem certeza que deseja remover este contato?"
         onConfirm={() => { if (deleteContactConfirm) deleteContact(deleteContactConfirm) }} confirmLabel="Remover" variant="destructive" />
+
+      <ConfirmDialog open={bulkDeleteConfirm} onOpenChange={setBulkDeleteConfirm}
+        title="Excluir Contatos" description={`Tem certeza que deseja excluir ${selectedContactIds.size} contato(s)? Esta ação não pode ser desfeita.`}
+        onConfirm={bulkDeleteContacts} confirmLabel="Excluir" variant="destructive" />
 
       {/* Edit Contact Dialog */}
       <Dialog open={editContactDialog} onOpenChange={setEditContactDialog}>
@@ -5467,14 +5606,22 @@ function CampanhasTab() {
                         })()}
                       </span>
                     </div>
+                    {/* Search + Sort + Status Filter Bar */}
                     <div className="space-y-2">
                       <div className="flex items-center gap-2">
                         <div className="relative flex-1">
                           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-3.5 text-muted-foreground" />
-                          <Input placeholder="Buscar por nome ou telefone..." className="pl-8 h-8 text-xs" value={detailSearchQuery} onChange={e => setDetailSearchQuery(e.target.value)} />
+                          <Input
+                            placeholder="Buscar por nome ou telefone..."
+                            className="pl-8 h-8 text-xs"
+                            value={detailSearchQuery}
+                            onChange={e => setDetailSearchQuery(e.target.value)}
+                          />
                         </div>
                         <Select value={detailSortBy} onValueChange={(v: string) => setDetailSortBy(v as 'name' | 'sendOrder')}>
-                          <SelectTrigger className="w-[140px] h-8 text-xs"><SelectValue /></SelectTrigger>
+                          <SelectTrigger className="w-[140px] h-8 text-xs">
+                            <SelectValue />
+                          </SelectTrigger>
                           <SelectContent>
                             <SelectItem value="name">Ordem alfabética</SelectItem>
                             <SelectItem value="sendOrder">Ordem de envio</SelectItem>
@@ -5492,14 +5639,22 @@ function CampanhasTab() {
                           const count = detailMessages.filter(m => tab.value === 'all' || m.status === tab.value).length
                           const isActive = detailStatusFilter === tab.value
                           return (
-                            <button key={tab.value} onClick={() => setDetailStatusFilter(tab.value)}
-                              className={`px-2.5 py-1 rounded-full text-[10px] font-medium whitespace-nowrap transition-colors ${isActive ? 'bg-primary text-primary-foreground' : 'bg-muted hover:bg-muted/80 text-muted-foreground'}`}>
+                            <button
+                              key={tab.value}
+                              onClick={() => setDetailStatusFilter(tab.value)}
+                              className={`px-2.5 py-1 rounded-full text-[10px] font-medium whitespace-nowrap transition-colors ${
+                                isActive
+                                  ? 'bg-primary text-primary-foreground'
+                                  : 'bg-muted hover:bg-muted/80 text-muted-foreground'
+                              }`}
+                            >
                               {tab.label} {count > 0 && `(${count})`}
                             </button>
                           )
                         })}
                       </div>
                     </div>
+                    {/* Message List */}
                     <div className="space-y-1">
                       {(() => {
                         const filtered = detailMessages.filter(m => {
@@ -5514,6 +5669,7 @@ function CampanhasTab() {
                             const nameB = b.contact?.name || '—'
                             return nameA.localeCompare(nameB, 'pt-BR')
                           }
+                          // sendOrder: sort by sentAt (sent first), then pending by createdAt, then failed
                           const statusPriority: Record<string, number> = { sent: 0, delivered: 0, read: 0, pending: 1, failed: 2 }
                           const prioA = statusPriority[a.status] ?? 3
                           const prioB = statusPriority[b.status] ?? 3
@@ -5523,25 +5679,25 @@ function CampanhasTab() {
                           return timeA - timeB
                         })
                         return sorted.map((m, i) => (
-                        <div key={m.id} className={`p-2 rounded-lg text-xs flex items-center gap-2 ${m.status === 'failed' ? 'bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800' : m.status === 'pending' ? 'bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800' : 'bg-muted/50'}`}>
-                          <span className="font-mono text-muted-foreground w-4 text-center">{i + 1}</span>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
-                              <span className="font-medium truncate">{m.contact?.name || '—'}</span>
-                              <span className="text-muted-foreground truncate">{m.contact?.phone || ''}</span>
+                          <div key={m.id} className={`p-2 rounded-lg text-xs flex items-center gap-2 ${m.status === 'failed' ? 'bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800' : m.status === 'pending' ? 'bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800' : 'bg-muted/50'}`}>
+                            <span className="font-mono text-muted-foreground w-4 text-center">{i + 1}</span>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span className="font-medium truncate">{m.contact?.name || '—'}</span>
+                                <span className="text-muted-foreground truncate">{m.contact?.phone || ''}</span>
+                              </div>
+                              <div className="flex items-center gap-2 mt-0.5">
+                                <StatusBadge status={m.status} />
+                                {m.chip?.name && <span className="text-muted-foreground">via {m.chip.name}</span>}
+                              </div>
+                              {m.error && <p className="text-rose-600 mt-0.5 font-medium truncate">Erro: {m.error}</p>}
                             </div>
-                            <div className="flex items-center gap-2 mt-0.5">
-                              <StatusBadge status={m.status} />
-                              {m.chip?.name && <span className="text-muted-foreground">via {m.chip.name}</span>}
+                            <div className="text-right shrink-0 text-[10px]">
+                              {m.sentAt && <p className="text-muted-foreground">{new Date(m.sentAt).toLocaleString('pt-BR')}</p>}
+                              {m.deliveredAt && <p className="text-emerald-600">{new Date(m.deliveredAt).toLocaleString('pt-BR')}</p>}
+                              {m.status === 'pending' && !m.sentAt && <p className="text-amber-600 font-medium">Aguardando</p>}
                             </div>
-                            {m.error && <p className="text-rose-600 mt-0.5 font-medium truncate">Erro: {m.error}</p>}
                           </div>
-                          <div className="text-right shrink-0 text-[10px]">
-                            {m.sentAt && <p className="text-muted-foreground">{new Date(m.sentAt).toLocaleString('pt-BR')}</p>}
-                            {m.deliveredAt && <p className="text-emerald-600">{new Date(m.deliveredAt).toLocaleString('pt-BR')}</p>}
-                            {m.status === 'pending' && !m.sentAt && <p className="text-amber-600 font-medium">Aguardando</p>}
-                          </div>
-                        </div>
                         ))
                       })()}
                     </div>
