@@ -31,6 +31,7 @@ import { Slider } from '@/components/ui/slider'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -5245,14 +5246,47 @@ function CampanhasTab() {
       <Dialog open={detailDialogOpen} onOpenChange={(open) => { setDetailDialogOpen(open); if (!open) setEditing(false) }}>
         <DialogContent fullWidth className="max-h-[90vh] !p-0">
           <DialogHeader className="px-6 pt-5 pb-3 shrink-0 border-b">
-            <DialogTitle className="flex items-center gap-3">
-              {selectedCampaign?.name}
-              {selectedCampaign && ['draft', 'paused', 'scheduled'].includes(selectedCampaign.status) && (
-                <Button variant="outline" size="sm" className="gap-1.5 text-amber-500 border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/20 font-semibold" onClick={() => startEditing(selectedCampaign)}>
-                  <Pencil className="size-3.5" /> Editar
-                </Button>
-              )}
-              {selectedCampaign && (
+            <DialogTitle className="flex items-center justify-between gap-3">
+              <span className="truncate">{selectedCampaign?.name}</span>
+              <div className="flex items-center gap-1.5 shrink-0">
+                {selectedCampaign?.status === 'draft' && (
+                  <Button size="sm" className="gap-1.5 bg-emerald-600 hover:bg-emerald-700" disabled={startingCampaignIds.has(selectedCampaign.id)} onClick={() => startCampaignAction(selectedCampaign.id)}>
+                    {startingCampaignIds.has(selectedCampaign.id) ? <><Loader2 className="size-3.5 animate-spin" /> Iniciando...</> : <><Play className="size-3.5" /> Iniciar</>}
+                  </Button>
+                )}
+                {selectedCampaign?.status === 'running' && (
+                  <Button variant="outline" size="sm" className="gap-1.5" onClick={async () => { try { await fetch(`/api/campaigns/${selectedCampaign.id}/pause`, { method: 'POST' }); toast.success('Campanha pausada!'); fetchCampaigns(); if (selectedCampaign) { const res = await fetch(`/api/campaigns/${selectedCampaign.id}`, { cache: 'no-store' }); if (res.ok) setSelectedCampaign(await res.json()) } } catch { toast.error('Erro ao pausar') } }}>
+                    <Pause className="size-3.5" /> Pausar
+                  </Button>
+                )}
+                {selectedCampaign?.status === 'paused' && (
+                  <Button size="sm" className="gap-1.5 bg-emerald-600 hover:bg-emerald-700" onClick={async () => { try { await fetch(`/api/campaigns/${selectedCampaign.id}/resume`, { method: 'POST' }); toast.success('Campanha retomada!'); fetchCampaigns(); if (selectedCampaign) { const res = await fetch(`/api/campaigns/${selectedCampaign.id}`, { cache: 'no-store' }); if (res.ok) setSelectedCampaign(await res.json()) } } catch { toast.error('Erro ao retomar') } }}>
+                    <Play className="size-3.5" /> Retomar
+                  </Button>
+                )}
+                {selectedCampaign && (selectedCampaign.status === 'running' || selectedCampaign.status === 'paused') && (
+                  <Button variant="outline" size="sm" className="gap-1.5 text-amber-600 hover:text-amber-700 border-amber-200" onClick={async () => { await updateCampaignStatus(selectedCampaign.id, 'cancelled'); const res = await fetch(`/api/campaigns/${selectedCampaign.id}`, { cache: 'no-store' }); if (res.ok) setSelectedCampaign(await res.json()) }}>
+                    <X className="size-3.5" /> Cancelar
+                  </Button>
+                )}
+                {selectedCampaign && ['draft', 'paused', 'scheduled'].includes(selectedCampaign.status) && (
+                  <Button variant="outline" size="sm" className="gap-1.5 text-amber-500 border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/20" onClick={() => startEditing(selectedCampaign)}>
+                    <Pencil className="size-3.5" /> Editar
+                  </Button>
+                )}
+                {selectedCampaign && (selectedCampaign.messageStatusCounts?.failed || 0) > 0 && (
+                  <Button variant="outline" size="sm" className="gap-1.5" onClick={async () => {
+                    if (!selectedCampaign) return
+                    try {
+                      const res = await fetch('/api/messages/resend-all-failed', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ campaignId: selectedCampaign.id }) })
+                      const data = await res.json()
+                      if (res.ok) { toast.success(`${data.resetCount || 0} mensagens reenviadas`); const msgRes = await fetch(`/api/messages?campaignId=${selectedCampaign.id}`, { cache: 'no-store' }); setDetailMessages(Array.isArray(await msgRes.json()) ? await msgRes.clone().json() : []); fetchCampaigns() }
+                      else toast.error(data.error || 'Erro ao reenviar')
+                    } catch { toast.error('Erro ao reenviar mensagens') }
+                  }}>
+                    <RotateCcw className="size-3.5" /> Reenviar falhadas ({selectedCampaign.messageStatusCounts?.failed})
+                  </Button>
+                )}
                 <Button variant="outline" size="sm" className="gap-1.5" disabled={refreshingDetail} onClick={async () => {
                   if (!selectedCampaign) return
                   setRefreshingDetail(true)
@@ -5262,58 +5296,45 @@ function CampanhasTab() {
                     if (!res.ok) throw new Error('Erro ao buscar campanha')
                     const updated = await res.json()
                     setSelectedCampaign(updated)
-                    // Fetch messages for any campaign that has them (not just running/completed)
                     const msgRes = await fetch(`/api/messages?campaignId=${updated.id}`, { cache: 'no-store' })
                     const msgData = await msgRes.json()
                     setDetailMessages(Array.isArray(msgData) ? msgData : [])
-                    // Also refresh campaign list so cards update
                     fetchCampaigns()
-                    // Ensure loading animation is visible for at least 600ms
                     const elapsed = Date.now() - startTime
                     if (elapsed < 600) await new Promise(r => setTimeout(r, 600 - elapsed))
                     toast.success('Campanha atualizada!')
-                  } catch {
-                    toast.error('Erro ao atualizar campanha')
-                  } finally {
-                    setRefreshingDetail(false)
-                  }
+                  } catch { toast.error('Erro ao atualizar campanha') }
+                  finally { setRefreshingDetail(false) }
                 }}>
                   <RefreshCw className={`size-3.5 ${refreshingDetail ? 'animate-spin' : ''}`} /> Atualizar
                 </Button>
-              )}
-              {selectedCampaign && (selectedCampaign.messageStatusCounts?.failed || 0) > 0 && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="gap-1.5 text-xs"
-                  onClick={async () => {
-                    if (!selectedCampaign) return
-                    try {
-                      const res = await fetch('/api/messages/resend-all-failed', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ campaignId: selectedCampaign.id }),
-                      })
-                      const data = await res.json()
-                      if (res.ok) {
-                        toast.success(`${data.resetCount || 0} mensagens reenviadas`)
-                        // Refresh messages
-                        const msgRes = await fetch(`/api/messages?campaignId=${selectedCampaign.id}`, { cache: 'no-store' })
-                        const msgData = await msgRes.json()
-                        setDetailMessages(Array.isArray(msgData) ? msgData : [])
-                        fetchCampaigns()
-                      } else {
-                        toast.error(data.error || 'Erro ao reenviar')
-                      }
-                    } catch {
-                      toast.error('Erro ao reenviar mensagens')
-                    }
-                  }}
-                >
-                  <RotateCcw className="size-3" />
-                  Reenviar falhadas ({selectedCampaign.messageStatusCounts?.failed})
-                </Button>
-              )}
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" size="sm"><MoreVertical className="size-3.5" /></Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    {selectedCampaign && (
+                      <DropdownMenuItem onClick={() => exportCampaign(selectedCampaign.id, selectedCampaign.name)}>
+                        <Download className="size-3.5 mr-2" /> Exportar relatório
+                      </DropdownMenuItem>
+                    )}
+                    {selectedCampaign && (
+                      <DropdownMenuItem onClick={() => duplicateCampaign(selectedCampaign)}>
+                        <Copy className="size-3.5 mr-2" /> Duplicar
+                      </DropdownMenuItem>
+                    )}
+                    {selectedCampaign && (
+                      <DropdownMenuItem onClick={() => saveCampaignAsTemplate(selectedCampaign)}>
+                        <BookmarkPlus className="size-3.5 mr-2" /> Salvar como template
+                      </DropdownMenuItem>
+                    )}
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem className="text-rose-600 focus:text-rose-600" onClick={() => { setDeleteConfirm(selectedCampaign?.id || null); setDetailDialogOpen(false) }}>
+                      <Trash2 className="size-3.5 mr-2" /> Excluir campanha
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
             </DialogTitle>
             <DialogDescription>Detalhes da campanha</DialogDescription>
           </DialogHeader>
