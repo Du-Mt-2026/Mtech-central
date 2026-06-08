@@ -38,8 +38,8 @@ export async function GET(request: Request) {
     const proxyConfig = resolveChipProxy(chip, globalProxy)
 
     // Get current instance state from Evolution Go
-    let instanceState = null
-    let instanceInfo = null
+    let instanceState: any = null
+    let instanceInfo: any = null
     if (chip.evolutionInstance) {
       try {
         const stateResult = await getConnectionState(chip.evolutionInstance)
@@ -50,7 +50,7 @@ export async function GET(request: Request) {
 
       try {
         const instances = await fetchInstances()
-        instanceInfo = instances.find((i: any) => i.name === chip.evolutionInstance) || null
+        instanceInfo = instances.find((i: Record<string, any>) => i.name === chip.evolutionInstance) || null
       } catch {
         instanceInfo = null
       }
@@ -80,8 +80,8 @@ export async function GET(request: Request) {
       },
       instance: {
         state: instanceState?.state || 'unknown',
-        hasProxy: !!(instanceInfo as any)?.proxy,
-        currentProxy: (instanceInfo as any)?.proxy || null,
+        hasProxy: !!instanceInfo?.proxy,
+        currentProxy: instanceInfo?.proxy || null,
       },
       canApply: false,
       risks: [],
@@ -109,7 +109,7 @@ export async function GET(request: Request) {
       result.recommendations.push('Certifique-se de que o celular está com WireGuard e Every Proxy ativos')
     }
 
-    if (instanceState?.state === 'open' && (instanceInfo as any)?.proxy) {
+    if (instanceState?.state === 'open' && instanceInfo?.proxy) {
       result.recommendations.push('Instância já tem proxy configurado — não precisa aplicar novamente')
     }
 
