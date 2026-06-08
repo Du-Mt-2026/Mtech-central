@@ -1,0 +1,278 @@
+From a2b3952ebee6fe2dbc030c9164e1f6c0125fd423 Mon Sep 17 00:00:00 2001
+From: Z User <z@container>
+Date: Mon, 8 Jun 2026 17:35:40 +0000
+Subject: [PATCH] CRITICAL FIX: Anti-ban interval enforcement - 3 bugs fixed
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+1. SELF-LOCK LOOP BUG: Chip lock (nextSendAt+120s) was being detected
+   by the same process's nextSendAt check, causing infinite loop of
+   claim→lock→reject→release→claim. Fix: track lock timestamp and
+   skip check if nextSendAt matches our own lock.
+
+2. CLUSTER MICRO-PAUSE EXCEPTION: Micro-pauses allowed gaps as short
+   as 30s (or 2-7s with race conditions) between messages from the
+   same chip, despite messageIntervalMin=59s. Fix: messageIntervalMin
+   is now the absolute minimum for ALL delay types, no exceptions.
+   ABSOLUTE_MIN_INTERVAL raised from 30s to 60s.
+
+3. RELEASE MESSAGE CLEARING LEGITIMATE LOCKS: releaseMessageAndChipLock
+   was clearing ANY nextSendAt within 2 minutes, including legitimate
+   intervals set by successful sends. Fix: only clear nextSendAt if it
+   matches our temporary lock timestamp (±2s tolerance).
+
+4. IN-MEMORY SEND GUARD: Added per-chip last-send timestamp cache as
+   a last-resort protection against race conditions where concurrent
+   cron ticks both select the same chip.
+---
+ src/lib/sending-engine.ts | 158 ++++++++++++++++++++++++++------------
+ 1 file changed, 107 insertions(+), 51 deletions(-)
+
+diff --git a/src/lib/sending-engine.ts b/src/lib/sending-engine.ts
+index 457baf5..c18e3ab 100755
+--- a/src/lib/sending-engine.ts
++++ b/src/lib/sending-engine.ts
+@@ -644,6 +644,29 @@ interface ClusterState {
+ }
+ const clusterStateMap = new Map<string, ClusterState>()
+ 
++// ============================================================
++// IN-MEMORY PER-CHIP SEND GUARD — prevents race conditions
++// ============================================================
++// Even with DB-level nextSendAt, two concurrent cron ticks can both
++// select the same chip before either updates the DB. This in-memory
++// guard provides a last-resort check: if a chip sent a message less
++// than ABSOLUTE_MIN_INTERVAL_SEC ago, block it regardless of DB state.
++// This is especially important in serverless/container environments
++// where the process may handle multiple ticks sequentially.
++const ABSOLUTE_MIN_INTERVAL_SEC = 60 // matches ABSOLUTE_MIN_INTERVAL_MS / 1000
++const chipLastSendMap = new Map<string, number>() // chipId → timestamp of last send
++
++function isChipInMemoryCooling(chipId: string): boolean {
++  const lastSend = chipLastSendMap.get(chipId)
++  if (!lastSend) return false
++  const elapsed = (Date.now() - lastSend) / 1000
++  return elapsed < ABSOLUTE_MIN_INTERVAL_SEC
++}
++
++function markChipSent(chipId: string): void {
++  chipLastSendMap.set(chipId, Date.now())
++}
++
+ /**
+  * Clean up cluster state map if it grows too large.
+  * Evicts the oldest half of entries when over the limit.
+@@ -698,19 +721,38 @@ function getDayRhythmMultiplier(settings: AntiBanConfig): number {
+  * Release a claimed message back to 'pending' and clear the chip's temporary lock.
+  * This MUST be called whenever we release a message claim after the chip lock was set,
+  * to ensure the chip doesn't stay locked for the full 2-minute temporary period.
++ *
++ * BUGFIX: Only clear nextSendAt if it's within a few seconds of our temporary lock
++ * timestamp (now + 120s). Previously, this function cleared ANY nextSendAt within
++ * the next 2 minutes, which could erase a LEGITIMATE interval set by a previous
++ * successful send (e.g., nextSendAt = now + 59s). This caused the chip to be
++ * immediately available again, bypassing the anti-ban interval.
+  */
+-async function releaseMessageAndChipLock(messageId: string, chipId: string, reason: string) {
++async function releaseMessageAndChipLock(messageId: string, chipId: string, reason: string, lockTimestamp?: number) {
+   await db.message.update({ where: { id: messageId }, data: { status: 'pending' } })
+-  // Clear the temporary nextSendAt lock — only if it's still our temporary lock
+-  // (i.e., nextSendAt is within the next 2 minutes from now, meaning it was set by us)
+-  const twoMinutesFromNow = new Date(Date.now() + 120_000)
+-  await db.chip.updateMany({
+-    where: {
+-      id: chipId,
+-      nextSendAt: { lt: twoMinutesFromNow },
+-    },
+-    data: { nextSendAt: null },
+-  })
++  // Only clear nextSendAt if we can confirm it's our own temporary lock.
++  // If lockTimestamp is provided, only clear if the chip's nextSendAt matches it (±2s).
++  // If lockTimestamp is NOT provided (legacy callers), fall back to clearing if < 3 min.
++  if (lockTimestamp) {
++    // Precise: only clear if it's our lock (within ±2 seconds tolerance)
++    const chip = await db.chip.findUnique({ where: { id: chipId }, select: { nextSendAt: true } })
++    if (chip?.nextSendAt) {
++      const diff = Math.abs(new Date(chip.nextSendAt).getTime() - lockTimestamp)
++      if (diff < 2000) {
++        await db.chip.update({ where: { id: chipId }, data: { nextSendAt: null } })
++      }
++    }
++  } else {
++    // Legacy fallback: clear if within 3 minutes (more conservative than before)
++    const threeMinutesFromNow = new Date(Date.now() + 180_000)
++    await db.chip.updateMany({
++      where: {
++        id: chipId,
++        nextSendAt: { lt: threeMinutesFromNow },
++      },
++      data: { nextSendAt: null },
++    })
++  }
+   console.debug(`[SendingEngine] Released claim for message ${messageId} and chip lock (${reason})`)
+ }
+ 
+@@ -2009,6 +2051,11 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
+   // overwritten with the real interval after the message is sent.
+   // Use a conditional update — only succeed if the chip's nextSendAt is still
+   // null or in the past (i.e., the chip is still "ready").
++  // BUGFIX: Track the lock timestamp so the nextSendAt check doesn't reject
++  // our own lock. Previously, the code set a 120s lock, then re-fetched the
++  // chip from DB and found nextSendAt in the future, causing an infinite loop
++  // of claim → lock → check → release → claim again.
++  const chipLockTimestamp = Date.now() + 120_000
+   const chipLockResult = await db.chip.updateMany({
+     where: {
+       id: message.chipId,
+@@ -2017,7 +2064,7 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
+         { nextSendAt: { lt: new Date() } },
+       ],
+     },
+-    data: { nextSendAt: new Date(Date.now() + 120_000) }, // 2-minute temporary lock
++    data: { nextSendAt: new Date(chipLockTimestamp) }, // 2-minute temporary lock
+   })
+ 
+   if (chipLockResult.count === 0) {
+@@ -2419,15 +2466,23 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
+   // the chip's nextSendAt changed between the query and this check).
+   // When it does trigger, we release the message claim and return a
+   // chip-specific reason — DON'T block the campaign.
++  //
++  // BUGFIX: Skip this check if the nextSendAt is our own temporary lock
++  // (set at line ~2012). Previously, the code would set a 120s lock,
++  // then re-fetch the chip from DB, find nextSendAt in the future,
++  // and release the claim — creating an infinite loop.
++  // Now we check if the nextSendAt matches our lock timestamp.
+   if (antiBanEnabled && currentChip.nextSendAt) {
+     const now = Date.now()
+     const nextSendTime = new Date(currentChip.nextSendAt).getTime()
+-    if (nextSendTime > now) {
++    // Skip check if this is our own temporary lock (within 1s tolerance)
++    const isOurOwnLock = Math.abs(nextSendTime - chipLockTimestamp) < 1000
++    if (nextSendTime > now && !isOurOwnLock) {
+       const waitMs = nextSendTime - now
+       const phase = currentChip.warmingPhase || 'nursery'
+       console.debug(`[SendingEngine] Chip ${currentChip.name} (${phase}) nextSendAt not reached — releasing claim, other chips may continue (wait ${Math.round(waitMs/1000)}s)`)
+       // Release the message claim so it can be picked up later when this chip is ready
+-      await releaseMessageAndChipLock(message.id, message.chipId, 'chip_interval_wait')
++      await releaseMessageAndChipLock(message.id, message.chipId, 'chip_interval_wait', chipLockTimestamp)
+       return {
+         processed: false,
+         delayMs: 1000, // Short delay — process-all loop will try other chips
+@@ -2438,6 +2493,23 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
+     }
+   }
+ 
++  // IN-MEMORY SEND GUARD: Even with DB nextSendAt, a race condition could allow
++  // two concurrent ticks to both pass the DB check. This in-memory guard is the
++  // last resort — if this chip sent a message less than 60s ago, block it.
++  if (antiBanEnabled && isChipInMemoryCooling(message.chipId)) {
++    const lastSend = chipLastSendMap.get(message.chipId) || 0
++    const elapsed = Math.round((Date.now() - lastSend) / 1000)
++    console.debug(`[SendingEngine] Chip ${currentChip.name} in-memory cooling (${elapsed}s since last send, minimum ${ABSOLUTE_MIN_INTERVAL_SEC}s) — releasing claim`)
++    await releaseMessageAndChipLock(message.id, message.chipId, 'in_memory_cooling', chipLockTimestamp)
++    return {
++      processed: false,
++      delayMs: 1000,
++      remaining: -1,
++      completed: false,
++      reason: `chip_interval_wait_${currentChip.name}`,
++    }
++  }
++
+   // Check daily limit (with warming mode multiplier)
+   const effectiveLimit = getEffectiveDailyLimit(currentChip, settings, warmingMode)
+   if (antiBanEnabled && currentChip.sentToday >= effectiveLimit) {
+@@ -2770,6 +2842,11 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
+       },
+     })
+ 
++    // IN-MEMORY SEND GUARD: Mark this chip as having sent a message just now.
++    // This prevents race conditions where concurrent ticks could send two messages
++    // from the same chip within seconds of each other.
++    markChipSent(message.chipId)
++
+     // ============================================
+     // INBOX: Create InboxMessage so campaign messages appear in inbox
+     // ============================================
+@@ -2996,33 +3073,20 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
+     }
+ 
+     // ============================================
+-    // INTERVAL FLOOR — with cluster micro-pause exception
++    // INTERVAL FLOOR — messageIntervalMin is the absolute minimum
+     // ============================================
+-    // The messageIntervalMin floor prevents sending too fast.
+-    //
+-    // For after-cluster pauses and normal gaussian intervals, the floor applies normally.
+-    // For cluster micro-pauses, we apply a PROPORTIONAL floor instead of the full
+-    // messageIntervalMin. The micro-pause should be a fraction of the normal interval
+-    // to create a natural burst pattern, but NOT so short that it triggers WhatsApp spam
+-    // detection. The floor is 25-35% of messageIntervalMin (minimum 10s), which for a
+-    // 59s minimum gives a micro-pause floor of ~15s — fast enough to look like a burst
+-    // but slow enough to not look automated.
+-    // SAFETY FLOOR: Never allow intervals below 30 seconds between messages
+-    // on the same chip. WhatsApp detects rapid-fire sending as automated behavior.
+-    // This floor applies to ALL delay types: cluster micro-pauses, normal intervals,
+-    // and after-cluster pauses. Even "burst" patterns must respect 30s minimum.
+-    const ABSOLUTE_MIN_INTERVAL_MS = 30_000 // 30 seconds — never send faster than this
++    // BUGFIX: Previously, cluster micro-pauses had a lower floor (50% of intervalMin,
++    // minimum 30s), which allowed gaps as short as 2-7 seconds between messages from
++    // the same chip. WhatsApp detects rapid-fire sending as automated behavior.
++    // Now, messageIntervalMin (default 59s) is the ABSOLUTE minimum for ALL delay types.
++    // Cluster "burst" patterns still work — the variation comes from the gaussian
++    // distribution within [intervalMin, intervalMax], not from sub-minimum delays.
++    // The after-cluster pause naturally provides longer pauses that balance the pattern.
++    const ABSOLUTE_MIN_INTERVAL_MS = 60_000 // 60 seconds — never send faster than this
+     nextDelay = Math.max(nextDelay, ABSOLUTE_MIN_INTERVAL_MS)
+ 
+-    if (isClusterMicroPause) {
+-      // Cluster micro-pause: apply proportional floor (50% of intervalMin, min 30s)
+-      // This ensures bursts aren't too rapid even with the absolute floor above
+-      const microPauseFloorMs = Math.max(ABSOLUTE_MIN_INTERVAL_MS, Math.round(settings.messageIntervalMin * 1000 * 0.5))
+-      nextDelay = Math.max(nextDelay, microPauseFloorMs)
+-    } else {
+-      // Normal interval or after-cluster pause: apply messageIntervalMin floor
+-      nextDelay = Math.max(nextDelay, settings.messageIntervalMin * 1000)
+-    }
++    // ALWAYS enforce messageIntervalMin as the floor — no exceptions for cluster micro-pauses
++    nextDelay = Math.max(nextDelay, settings.messageIntervalMin * 1000)
+ 
+     const modeMultiplier = WARMING_MODE_MULTIPLIERS[warmingMode]
+     if (modeMultiplier && antiBanEnabled) {
+@@ -3092,26 +3156,18 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
+     // This safety floor applies even to cluster micro-pauses for warming chips —
+     // new chips should NEVER send too fast, even in bursts.
+     //
+-    // For READY chips with cluster micro-pauses: SKIP the phase floor.
+-    // Ready chips are trusted to use human-like burst patterns safely.
+-    // The cluster micro-pause (3-8s) + after-cluster pause (30-90s) averages
+-    // out to a safe rate over time, and the burst pattern looks natural.
++    // BUGFIX: Always enforce the phase floor for ALL chips and ALL delay types.
++    // No chip should ever send faster than its minimum interval, regardless of phase.
++    // Previously, ready chips with cluster micro-pauses could skip this floor,
++    // resulting in gaps as short as 2-7 seconds between messages.
+     if (antiBanEnabled) {
+       const effectiveMinInterval = getMinimumIntervalForChip(currentChip, settings)
+       const minIntervalMs = effectiveMinInterval * 1000
+       const chipPhase = currentChip.warmingPhase || 'ready'
+ 
+-      // SAFETY: Always enforce the phase floor, even for cluster micro-pauses.
+-      // No chip should ever send faster than its minimum interval, regardless of phase.
+-      // The 30s absolute floor above already prevents extremely fast sends,
+-      // but this ensures warming chips (nursery/prewarm) get extra protection.
+-      const shouldEnforcePhaseFloor = true
+-
+-      if (shouldEnforcePhaseFloor && nextDelay < minIntervalMs) {
++      if (nextDelay < minIntervalMs) {
+         console.debug(`[SendingEngine] Chip ${currentChip.name} (${chipPhase}): bumping delay from ${Math.round(nextDelay/1000)}s to minimum ${Math.round(minIntervalMs/1000)}s`)
+         nextDelay = minIntervalMs
+-      } else if (isClusterMicroPause && chipPhase === 'ready') {
+-        console.debug(`[SendingEngine] Chip ${currentChip.name} (ready): cluster micro-pause ${Math.round(nextDelay/1000)}s — skipping phase floor for natural burst pattern`)
+       }
+     }
+ 
+-- 
+2.47.3
+
