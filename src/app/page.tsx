@@ -1329,25 +1329,19 @@ function ChipsTab() {
         </div>
       </div>
 
-      {/* Stats Row */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      {/* Stats Row - Compact */}
+      <div className="flex items-center gap-1 bg-muted/50 rounded-lg p-1">
         {[
-          { label: 'Total', value: chips.length, icon: Smartphone, color: 'text-violet-600 bg-violet-100 dark:bg-violet-900/30' },
-          { label: 'Conectados', value: connected, icon: Check, color: 'text-emerald-600 bg-emerald-100 dark:bg-emerald-900/30' },
-          { label: 'Desconectados', value: disconnected, icon: X, color: 'text-zinc-600 bg-zinc-100 dark:bg-zinc-900/30' },
-          { label: 'Erro', value: errorCount, icon: AlertCircle, color: 'text-rose-600 bg-rose-100 dark:bg-rose-900/30' },
+          { label: 'Total', value: chips.length, icon: Smartphone, color: 'text-violet-600' },
+          { label: 'Conectados', value: connected, icon: Check, color: 'text-emerald-600' },
+          { label: 'Desconectados', value: disconnected, icon: X, color: 'text-zinc-500' },
+          { label: 'Erro', value: errorCount, icon: AlertCircle, color: 'text-rose-600' },
         ].map(s => (
-          <Card key={s.label} className="shadow-lg">
-            <CardContent className="p-4 flex items-center gap-3">
-              <div className={`flex size-10 items-center justify-center rounded-xl ${s.color}`}>
-                <s.icon className="size-5" />
-              </div>
-              <div>
-                <p className="text-2xl font-bold">{s.value}</p>
-                <p className="text-xs text-muted-foreground">{s.label}</p>
-              </div>
-            </CardContent>
-          </Card>
+          <div key={s.label} className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md">
+            <s.icon className={`size-3.5 ${s.color}`} />
+            <span className="text-sm font-bold">{s.value}</span>
+            <span className="text-[10px] text-muted-foreground">{s.label}</span>
+          </div>
         ))}
       </div>
 
