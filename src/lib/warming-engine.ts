@@ -1107,8 +1107,31 @@ export async function processNextWarmingMessage(
   }
 
   // Pick message type and content
-  const messageType = pickMessageType(distribution)
+  // FIX: If image/audio is selected but no media is available, fallback to text.
+  // The default templates have image/audio entries with empty mediaUrl,
+  // which causes "message body is required" errors when sent as text fallback.
+  let messageType = pickMessageType(distribution)
+  if ((messageType === 'image' || messageType === 'audio')) {
+    // Check if any template for this type has a valid mediaUrl
+    const hasMedia = templates.some(t => t.type === messageType && t.mediaUrl)
+    if (!hasMedia) {
+      // No media available — fallback to text
+      messageType = 'text'
+    }
+  }
   const messageContent = generateWarmingMessage(templates, messageType, sender.name || '', recipient.name || '')
+
+  // Safety net: if content is empty, use a fallback message
+  if (!messageContent.content || messageContent.content.trim() === '') {
+    if (messageType === 'text') {
+      messageContent.content = 'Oi, tudo bem?'
+    } else if (!messageContent.mediaUrl) {
+      // Media type with no content AND no mediaUrl — definitely fallback to text
+      messageType = 'text'
+      messageContent.content = 'Oi, tudo bem?'
+      messageContent.mediaUrl = undefined
+    }
+  }
 
   // ============================================================
   // SEND THE MESSAGE WITH FULL ANTI-BAN PRESENCE
