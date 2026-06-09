@@ -14,7 +14,7 @@ import {
   Sparkles, Heart, Star, AlertTriangle, Info, ChevronDown,
   Pencil, LayoutList, Database, WifiOff, ArrowDownToLine, Save, XCircle, ShieldBan,
   Inbox, LogOut, RotateCcw, Film, Music, File as FileIcon, ImageIcon, Key, Paperclip, MapPin, Link2,
-  Baby, CheckCircle2, Video, MoreVertical, Mic, User, Smile, BookmarkPlus, GripVertical, Loader2, Eraser, Megaphone
+  Baby, CheckCircle2, Video, MoreVertical, Mic, User, Smile, BookmarkPlus, GripVertical, Loader2, Eraser, Megaphone, ArrowRightLeft
 } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardAction } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -3926,6 +3926,7 @@ function CampanhasTab() {
     chipIds: [] as string[], contactListId: '', scheduledAt: '',
     steps: [{ content: '', delayMinutes: 0, delayUnit: 'minutes' as const, mediaFile: null as File | null, mediaUrl: '', mediatype: '', audioMode: 'whatsapp' as const, caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '', variations: [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '', audioMode: 'whatsapp' as const, caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '' }] }] as StepForm[],
     antiBanEnabled: true, warmingMode: 'normal',
+    chipDistribution: {} as Record<string, number>, // chipId → contactLimit (0 = auto)
   })
 
   const resetNewCampaign = () => setNewCampaign({
@@ -3933,6 +3934,7 @@ function CampanhasTab() {
     chipIds: [], contactListId: '', scheduledAt: '',
     steps: [{ content: '', delayMinutes: 0, delayUnit: 'minutes' as const, mediaFile: null, mediaUrl: '', mediatype: '', audioMode: 'whatsapp' as const, caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '', variations: [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '', audioMode: 'whatsapp' as const, caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '' }] }] as StepForm[],
     antiBanEnabled: true, warmingMode: 'normal',
+    chipDistribution: {} as Record<string, number>,
   })
 
   const fetchCampaigns = useCallback(async () => {
@@ -4117,6 +4119,7 @@ function CampanhasTab() {
       const payload = {
         name: newCampaign.name, sendIntervalMin: newCampaign.sendIntervalMin, sendIntervalMax: newCampaign.sendIntervalMax,
         chipIds: newCampaign.chipIds, contactListId: newCampaign.contactListId || null,
+        chipDistribution: newCampaign.chipDistribution,
         scheduledAt: newCampaign.scheduledAt ? (() => {
           // datetime-local value is in Brasília time (UTC-3)
           // Append timezone offset so Date() converts correctly to UTC for the database
@@ -4439,10 +4442,16 @@ function CampanhasTab() {
   }
 
   const toggleChip = (chipId: string) => {
-    setNewCampaign(prev => ({
-      ...prev,
-      chipIds: prev.chipIds.includes(chipId) ? prev.chipIds.filter(id => id !== chipId) : [...prev.chipIds, chipId],
-    }))
+    setNewCampaign(prev => {
+      const isRemoving = prev.chipIds.includes(chipId)
+      const newChipIds = isRemoving ? prev.chipIds.filter(id => id !== chipId) : [...prev.chipIds, chipId]
+      // If removing a chip, also remove its distribution entry
+      const newDistribution = { ...prev.chipDistribution }
+      if (isRemoving) {
+        delete newDistribution[chipId]
+      }
+      return { ...prev, chipIds: newChipIds, chipDistribution: newDistribution }
+    })
   }
 
   const addStep = () => {
@@ -4551,6 +4560,10 @@ function CampanhasTab() {
       steps,
       antiBanEnabled: campaign.antiBanEnabled ?? true,
       warmingMode: campaign.warmingMode || 'normal',
+      chipDistribution: (campaign.chips || []).reduce((acc: Record<string, number>, cc: any) => {
+        if (cc.contactLimit && cc.contactLimit > 0) acc[cc.chipId] = cc.contactLimit
+        return acc
+      }, {}),
     })
     setDetailDialogOpen(false)
     setCreateDialogOpen(true)
@@ -4762,19 +4775,105 @@ function CampanhasTab() {
                 {/* Chips for Sending */}
                 <div className="space-y-1">
                   <Label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1"><Smartphone className="size-3" /> Chips para envio</Label>
-                  <div className="space-y-1 max-h-[200px] overflow-y-auto">
-                    {availableChips.map(chip => (
-                      <div key={chip.id} onClick={() => toggleChip(chip.id)} className={`flex items-center gap-2 p-1.5 rounded-md border cursor-pointer transition-all text-sm ${newCampaign.chipIds.includes(chip.id) ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20' : 'hover:bg-muted/50'}`}>
-                        <div className={`size-4 rounded border-2 flex items-center justify-center shrink-0 ${newCampaign.chipIds.includes(chip.id) ? 'bg-emerald-500 border-emerald-500' : 'border-muted-foreground'}`}>
-                          {newCampaign.chipIds.includes(chip.id) && <Check className="size-3 text-white" />}
+                  <div className="space-y-1 max-h-[350px] overflow-y-auto">
+                    {availableChips.map(chip => {
+                      const isSelected = newCampaign.chipIds.includes(chip.id)
+                      // Calculate chip capacity: daily limit minus already sent today
+                      const chipCapacity = Math.max(0, (chip.dailyLimit || 200) - (chip.sentToday || 0))
+                      // Get total contacts in selected list
+                      const totalContacts = (() => {
+                        const list = availableLists.find((l: any) => l.id === newCampaign.contactListId)
+                        return list?._count?.contacts || list?.contactsCount || 0
+                      })()
+                      // Current distribution value for this chip
+                      const distValue = newCampaign.chipDistribution[chip.id] || 0
+                      // Max for this chip = min(chipCapacity, totalContacts)
+                      const maxForChip = totalContacts > 0 ? Math.min(chipCapacity, totalContacts) : chipCapacity
+
+                      return (
+                        <div key={chip.id}>
+                          <div onClick={() => toggleChip(chip.id)} className={`flex items-center gap-2 p-1.5 rounded-md border cursor-pointer transition-all text-sm ${isSelected ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20' : 'hover:bg-muted/50'}`}>
+                            <div className={`size-4 rounded border-2 flex items-center justify-center shrink-0 ${isSelected ? 'bg-emerald-500 border-emerald-500' : 'border-muted-foreground'}`}>
+                              {isSelected && <Check className="size-3 text-white" />}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-xs font-medium truncate">{chip.name}</p>
+                              <p className="text-[10px] text-muted-foreground">{chip.phoneNumber} · Capacidade: {chipCapacity}/dia</p>
+                            </div>
+                            {isSelected && chip.warmingPhase && chip.warmingPhase !== 'ready' && (
+                              <span className="text-[9px] px-1 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+                                {chip.warmingPhase === 'nursery' ? 'Berçário' : 'Pré-aquec.'}
+                              </span>
+                            )}
+                          </div>
+                          {/* Distribution slider — only shown when chip is selected AND there are other chips selected */}
+                          {isSelected && newCampaign.chipIds.length > 1 && (
+                            <div className="ml-6 mt-1 mb-1 px-2 py-1.5 bg-muted/30 rounded-md space-y-1" onClick={e => e.stopPropagation()}>
+                              <div className="flex items-center justify-between">
+                                <span className="text-[10px] text-muted-foreground">Contatos para este chip</span>
+                                <span className="text-[10px] font-medium text-emerald-600">
+                                  {distValue > 0 ? distValue : 'Auto'}
+                                  {distValue > 0 && totalContacts > 0 ? ` (${Math.round(distValue / totalContacts * 100)}%)` : ''}
+                                </span>
+                              </div>
+                              <input
+                                type="range"
+                                min={0}
+                                max={maxForChip}
+                                value={distValue}
+                                onChange={e => {
+                                  const val = parseInt(e.target.value, 10)
+                                  setNewCampaign(prev => ({
+                                    ...prev,
+                                    chipDistribution: { ...prev.chipDistribution, [chip.id]: val },
+                                  }))
+                                }}
+                                className="w-full h-1.5 bg-muted rounded-lg appearance-none cursor-pointer accent-emerald-500"
+                              />
+                              <div className="flex justify-between text-[9px] text-muted-foreground">
+                                <span>Auto</span>
+                                <span>{maxForChip}</span>
+                              </div>
+                            </div>
+                          )}
                         </div>
-                        <div className="min-w-0">
-                          <p className="text-xs font-medium truncate">{chip.name}</p>
-                          <p className="text-[10px] text-muted-foreground">{chip.phoneNumber}</p>
-                        </div>
-                      </div>
-                    ))}
+                      )
+                    })}
                   </div>
+                  {/* Distribution summary */}
+                  {newCampaign.chipIds.length > 1 && (() => {
+                    const totalContacts = (() => {
+                      const list = availableLists.find((l: any) => l.id === newCampaign.contactListId)
+                      return list?._count?.contacts || list?.contactsCount || 0
+                    })()
+                    if (totalContacts === 0) return null
+                    const manualTotal = Object.values(newCampaign.chipDistribution).reduce((sum: number, v: any) => sum + (v || 0), 0)
+                    const autoChips = newCampaign.chipIds.filter(id => !newCampaign.chipDistribution[id] || newCampaign.chipDistribution[id] === 0)
+                    const remaining = totalContacts - manualTotal
+                    return (
+                      <div className="mt-1 p-1.5 bg-muted/30 rounded text-[10px] text-muted-foreground space-y-0.5">
+                        <div className="flex justify-between">
+                          <span>Total de contatos:</span>
+                          <span className="font-medium">{totalContacts}</span>
+                        </div>
+                        {manualTotal > 0 && (
+                          <div className="flex justify-between">
+                            <span>Alocados manualmente:</span>
+                            <span className="font-medium">{manualTotal}</span>
+                          </div>
+                        )}
+                        {autoChips.length > 0 && remaining > 0 && (
+                          <div className="flex justify-between">
+                            <span>Auto ({autoChips.length} chip{autoChips.length > 1 ? 's' : ''}, ~{Math.ceil(remaining / autoChips.length)} cada):</span>
+                            <span className="font-medium">{remaining}</span>
+                          </div>
+                        )}
+                        {manualTotal > totalContacts && (
+                          <p className="text-red-500 font-medium">⚠️ Total alocado excede contatos!</p>
+                        )}
+                      </div>
+                    )
+                  })()}
                 </div>
 
                 <Separator />
@@ -5428,6 +5527,49 @@ function CampanhasTab() {
                     } catch { toast.error('Erro ao reenviar mensagens') }
                   }}>
                     <RotateCcw className="size-3.5" /> Reenviar falhadas ({selectedCampaign.messageStatusCounts?.failed})
+                  </Button>
+                )}
+                {selectedCampaign?.status === 'paused' && (selectedCampaign.messageStatusCounts?.pending || 0) > 0 && (
+                  <Button variant="outline" size="sm" className="gap-1.5 text-blue-600 border-blue-200 hover:bg-blue-50" onClick={async () => {
+                    if (!selectedCampaign) return
+                    // Build distribution from current campaign chips
+                    const currentDist: Record<string, number> = {}
+                    for (const cc of (selectedCampaign.chips || [])) {
+                      currentDist[cc.chipId] = cc.contactLimit || 0
+                    }
+                    const input = prompt(`Redistribuir ${selectedCampaign.messageStatusCounts?.pending || 0} mensagens pendentes.\n\nDigite a distribuição no formato: chipId:quantidade,chipId:quantidade\n\nExemplo: ${selectedCampaign.chips?.map((cc: any) => `${cc.chipId?.substring(0,8)}...:${cc.contactLimit || 'auto'}`).join(',')}\n\nDeixe vazio para redistribuição igualitária (auto).`)
+                    if (input === null) return
+                    try {
+                      let distribution = currentDist
+                      if (input.trim()) {
+                        distribution = {}
+                        for (const pair of input.split(',')) {
+                          const [chipId, count] = pair.split(':')
+                          // Find full chipId from partial match
+                          const fullChipId = selectedCampaign.chips?.find((cc: any) => cc.chipId?.startsWith(chipId.trim()))?.chipId
+                          if (fullChipId) {
+                            distribution[fullChipId] = parseInt(count.trim(), 10) || 0
+                          }
+                        }
+                      }
+                      const res = await fetch(`/api/campaigns/${selectedCampaign.id}/redistribute`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ chipDistribution: distribution }),
+                      })
+                      const data = await res.json()
+                      if (res.ok) {
+                        toast.success(data.message || 'Mensagens redistribuídas!')
+                        // Refresh campaign data
+                        const campRes = await fetch(`/api/campaigns/${selectedCampaign.id}`, { cache: 'no-store' })
+                        if (campRes.ok) setSelectedCampaign(await campRes.json())
+                        fetchCampaigns()
+                      } else {
+                        toast.error(data.error || 'Erro ao redistribuir')
+                      }
+                    } catch { toast.error('Erro ao redistribuir mensagens') }
+                  }}>
+                    <ArrowRightLeft className="size-3.5" /> Redistribuir
                   </Button>
                 )}
                 <Button variant="outline" size="sm" className="gap-1.5" disabled={refreshingDetail} onClick={async () => {

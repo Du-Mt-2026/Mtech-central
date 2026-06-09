@@ -110,7 +110,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const body = await request.json()
-    const { name, sendIntervalMin, sendIntervalMax, chipIds, contactListId, steps, antiBanEnabled, warmingMode, scheduledAt, vendedorId } = body
+    const { name, sendIntervalMin, sendIntervalMax, chipIds, contactListId, steps, antiBanEnabled, warmingMode, scheduledAt, vendedorId, chipDistribution } = body
 
     if (!name) {
       return NextResponse.json({ error: 'Name is required' }, { status: 400 })
@@ -140,6 +140,7 @@ export async function POST(request: Request) {
         chips: {
           create: (chipIds || []).map((chipId: string) => ({
             chipId,
+            contactLimit: chipDistribution?.[chipId] ?? null,
           })),
         },
         sequenceSteps: {

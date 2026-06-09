@@ -84,10 +84,15 @@ export async function PATCH(
       await db.campaignChip.deleteMany({ where: { campaignId } })
       if (body.chipIds.length > 0) {
         await db.campaignChip.createMany({
-          data: body.chipIds.map((chipId: string) => ({ campaignId, chipId })),
+          data: body.chipIds.map((chipId: string) => ({
+            campaignId,
+            chipId,
+            contactLimit: body.chipDistribution?.[chipId] ?? null,
+          })),
         })
       }
       delete body.chipIds
+      delete body.chipDistribution
     }
 
     // Handle status transitions

@@ -1655,6 +1655,62 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
   const contacts = campaign.contactList.contacts
   const chips = campaign.chips.map(cc => cc.chip).filter(c => c.evolutionInstance)
 
+  // Build chip assignment list respecting contactLimit from CampaignChip
+  // If a chip has contactLimit set (>0), it will be assigned exactly that many contacts.
+  // If contactLimit is null/0, it gets an equal share of the remaining contacts.
+  const chipLimits = new Map<string, number>() // chipId → max contacts
+  let fixedTotal = 0 // total contacts already allocated by explicit limits
+  const chipsWithAutoLimit: string[] = [] // chips without explicit limit
+
+  for (const cc of campaign.chips) {
+    const chipId = cc.chipId
+    const limit = cc.contactLimit
+    if (limit && limit > 0) {
+      chipLimits.set(chipId, limit)
+      fixedTotal += limit
+    } else {
+      chipsWithAutoLimit.push(chipId)
+    }
+  }
+
+  // For auto chips: distribute remaining contacts equally
+  const remainingContacts = Math.max(0, contacts.length - fixedTotal)
+  const autoLimitPerChip = chipsWithAutoLimit.length > 0 ? Math.ceil(remainingContacts / chipsWithAutoLimit.length) : 0
+  for (const chipId of chipsWithAutoLimit) {
+    chipLimits.set(chipId, autoLimitPerChip)
+  }
+
+  // Build assignment plan: list of { chipId, count } in order
+  const assignmentPlan: { chipId: string; count: number }[] = []
+  // First: chips with explicit limits (in the order they appear in campaign.chips)
+  for (const cc of campaign.chips) {
+    const chip = cc.chip
+    if (!chip.evolutionInstance) continue // skip disconnected
+    const limit = chipLimits.get(chip.id) || 0
+    if (limit > 0) {
+      assignmentPlan.push({ chipId: chip.id, count: limit })
+    }
+  }
+
+  // Build a contact-to-chip mapping based on assignment plan
+  const contactChipAssignments: string[] = [] // index = contact index, value = chipId
+  let contactIdx = 0
+  for (const plan of assignmentPlan) {
+    const assignCount = Math.min(plan.count, contacts.length - contactIdx)
+    for (let j = 0; j < assignCount; j++) {
+      contactChipAssignments.push(plan.chipId)
+      contactIdx++
+    }
+  }
+  // If there are remaining contacts (due to rounding), assign via round-robin
+  while (contactIdx < contacts.length) {
+    const chip = chips[contactIdx % chips.length]
+    contactChipAssignments.push(chip.id)
+    contactIdx++
+  }
+
+  console.log(`[SendingEngine] Campaign ${campaignId}: distribution plan = ${assignmentPlan.map(p => `${p.chipId.substring(0,8)}:${p.count}`).join(', ')}, total contacts = ${contacts.length}`)
+
   if (chips.length === 0) {
     await db.campaign.update({ where: { id: campaignId }, data: { status: 'draft', startedAt: null } })
     throw new Error('Nenhum chip com instância WhatsApp conectada')
@@ -1715,7 +1771,11 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
   const messagesToCreate: { campaignId: string; chipId: string; contactId: string; content: string; status: "pending"; stepOrder: number; mediaUrl: string | null; mediatype: string | null }[] = []
   for (let i = 0; i < filteredContacts.length; i++) {
     const contact = filteredContacts[i]
-    const chip = chips[i % chips.length]
+    // Use contactLimit-based assignment if available, fall back to round-robin
+    const assignedChipId = contactChipAssignments[i]
+    const chip = assignedChipId
+      ? chips.find(c => c.id === assignedChipId) || chips[i % chips.length]
+      : chips[i % chips.length]
 
     for (const step of parsedSteps) {
       // Build the items pool for this step (main content + variations)

@@ -313,12 +313,16 @@ model SequenceStep {
 }
 
 model CampaignChip {
-  id         String   @id @default(cuid())
-  campaignId String
-  chipId     String
-  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  chip       Chip     @relation(fields: [chipId], references: [id], onDelete: Cascade)
-  assignedAt DateTime @default(now())
+  id           String   @id @default(cuid())
+  campaignId   String
+  chipId       String
+  campaign     Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  chip         Chip     @relation(fields: [chipId], references: [id], onDelete: Cascade)
+  assignedAt   DateTime @default(now())
+
+  // Distribution control — how many contacts this chip should handle in the campaign
+  // 0 or null = auto (round-robin equal split), >0 = exact number of contacts assigned
+  contactLimit Int?
 
   @@unique([campaignId, chipId])
 }
