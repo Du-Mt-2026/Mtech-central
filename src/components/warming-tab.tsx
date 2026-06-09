@@ -165,6 +165,7 @@ export function WarmingTab() {
   const [createOpen, setCreateOpen] = useState(false)
   const [detailOpen, setDetailOpen] = useState(false)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
+  const [editingSession, setEditingSession] = useState<WarmingSession | null>(null)
 
   // New session form state
   const [formName, setFormName] = useState('')
@@ -244,51 +245,103 @@ export function WarmingTab() {
     return () => clearInterval(interval)
   }, [fetchSessions, fetchStats, detailOpen, selectedSession?.id, selectedSession?.status])
 
-  // Create session
-  const handleCreate = async () => {
+  // Start editing a session
+  const startEditing = (session: WarmingSession) => {
+    setEditingSession(session)
+    setFormName(session.name)
+    setFormStrategy(session.strategy)
+    setFormChipIds(JSON.parse(session.chipIds || '[]'))
+    setFormMessagesPerChip(session.messagesPerChip)
+    setFormIntervalMin(session.intervalMin)
+    setFormIntervalMax(session.intervalMax)
+    setFormActiveStart(session.activeHoursStart)
+    setFormActiveEnd(session.activeHoursEnd)
+    setCreateOpen(true)
+  }
+
+  // Create or update session
+  const handleSave = async () => {
     if (!formName.trim()) {
       toast.error('Nome é obrigatório')
       return
     }
-    if (formChipIds.length < 3) {
+    if (formChipIds.length < 3 && !editingSession) {
       toast.error('Selecione pelo menos 3 chips — 2 chips trocando msgs só entre si é detectável pelo Meta (grafo social artificial)')
       return
     }
-
-    // Validar que todos os chips selecionados estão conectados
-    const disconnectedChips = formChipIds
-      .map(id => chips.find(c => c.id === id))
-      .filter((c): c is Chip => !!c && c.status !== 'connected')
-    if (disconnectedChips.length > 0) {
-      const names = disconnectedChips.map(c => c.name).join(', ')
-      toast.error(`Chips desconectados: ${names}. Conecte-os na aba Chips antes de criar a sessão.`)
+    if (formChipIds.length < 3 && editingSession?.status !== 'running') {
+      toast.error('Selecione pelo menos 3 chips')
       return
     }
 
+    // Validate connected chips (only for new sessions or non-running edits)
+    if (!editingSession || editingSession.status !== 'running') {
+      const disconnectedChips = formChipIds
+        .map(id => chips.find(c => c.id === id))
+        .filter((c): c is Chip => !!c && c.status !== 'connected')
+      if (disconnectedChips.length > 0) {
+        const names = disconnectedChips.map(c => c.name).join(', ')
+        toast.error(`Chips desconectados: ${names}. Conecte-os na aba Chips antes de usar.`)
+        return
+      }
+    }
+
     try {
-      const res = await fetch('/api/warming', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      if (editingSession) {
+        // UPDATE existing session
+        const payload: Record<string, any> = {
           name: formName,
-          strategy: formStrategy,
-          chipIds: formChipIds,
-          messagesPerChip: formMessagesPerChip,
           intervalMin: formIntervalMin,
           intervalMax: formIntervalMax,
           activeHoursStart: formActiveStart,
           activeHoursEnd: formActiveEnd,
-        }),
-      })
-
-      if (res.ok) {
-        toast.success(`Sessão criada! "${formName}" pronta para aquecimento`)
-        setCreateOpen(false)
-        resetForm()
-        fetchSessions()
+        }
+        // Only send these fields if session is not running
+        if (editingSession.status !== 'running') {
+          payload.strategy = formStrategy
+          payload.chipIds = formChipIds
+          payload.messagesPerChip = formMessagesPerChip
+        }
+        const res = await fetch(`/api/warming/${editingSession.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+        if (res.ok) {
+          toast.success(`Sessão "${formName}" atualizada!`)
+          setCreateOpen(false)
+          setEditingSession(null)
+          resetForm()
+          fetchSessions()
+        } else {
+          const data = await res.json()
+          toast.error(data.error || 'Erro ao atualizar sessão')
+        }
       } else {
-        const data = await res.json()
-        toast.error(data.error || 'Erro ao criar sessão')
+        // CREATE new session
+        const res = await fetch('/api/warming', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: formName,
+            strategy: formStrategy,
+            chipIds: formChipIds,
+            messagesPerChip: formMessagesPerChip,
+            intervalMin: formIntervalMin,
+            intervalMax: formIntervalMax,
+            activeHoursStart: formActiveStart,
+            activeHoursEnd: formActiveEnd,
+          }),
+        })
+        if (res.ok) {
+          toast.success(`Sessão criada! "${formName}" pronta para aquecimento`)
+          setCreateOpen(false)
+          resetForm()
+          fetchSessions()
+        } else {
+          const data = await res.json()
+          toast.error(data.error || 'Erro ao criar sessão')
+        }
       }
     } catch (error: any) {
       toast.error(error.message)
@@ -305,6 +358,7 @@ export function WarmingTab() {
     setFormIntervalMax(120)
     setFormActiveStart(480)
     setFormActiveEnd(1260)
+    setEditingSession(null)
   }
 
   // Session actions
@@ -400,7 +454,10 @@ export function WarmingTab() {
           </p>
         </div>
 
-        <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <Dialog open={createOpen} onOpenChange={(open) => {
+          setCreateOpen(open)
+          if (!open) { resetForm() }
+        }}>
           <DialogTrigger asChild>
             <Button className="bg-green-600 hover:bg-green-700">
               + Nova Sessão
@@ -408,8 +465,13 @@ export function WarmingTab() {
           </DialogTrigger>
           <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>Criar Sessão de Aquecimento</DialogTitle>
+              <DialogTitle>{editingSession ? 'Editar Sessão de Aquecimento' : 'Criar Sessão de Aquecimento'}</DialogTitle>
             </DialogHeader>
+            {editingSession?.status === 'running' && (
+              <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-3 text-xs text-amber-700 dark:text-amber-400">
+                ⚠️ Sessão em execução — apenas nome, intervalos e janela de envio podem ser alterados.
+              </div>
+            )}
 
             <div className="space-y-6 mt-4">
               {/* Nome */}
@@ -422,10 +484,10 @@ export function WarmingTab() {
                 />
               </div>
 
-              {/* Estratégia */}
+              {/* Estratégia — disabled when editing running session */}
               <div className="space-y-2">
                 <Label>Estratégia de Conversação</Label>
-                <Select value={formStrategy} onValueChange={setFormStrategy}>
+                <Select value={formStrategy} onValueChange={setFormStrategy} disabled={editingSession?.status === 'running'}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
@@ -444,65 +506,81 @@ export function WarmingTab() {
                 </p>
               </div>
 
-              {/* Chips */}
+              {/* Chips — disabled when editing running session */}
               <div className="space-y-2">
                 <Label>Chips Participantes * (mín. 3)</Label>
-                {chips.some(c => c.warmingPhase === 'nursery' || !c.warmingPhase) && (
-                  <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-3 text-xs text-amber-700 dark:text-amber-400">
-                    ⚠️ Chips no <strong>Berçário</strong> têm limites diários menores (10-80 msgs/dia conforme o dia).
-                    O aquecimento respeita automaticamente esses limites — a sessão pausa quando todos os chips atingem o limite do dia e retoma no dia seguinte.
+                {editingSession?.status === 'running' ? (
+                  <div className="border rounded-lg p-3 bg-muted/50">
+                    <p className="text-sm text-muted-foreground">Chips não podem ser alterados com sessão em execução. Pause a sessão para alterar.</p>
+                    <div className="flex flex-wrap gap-2 mt-2">
+                      {formChipIds.map(id => {
+                        const chip = chips.find(c => c.id === id)
+                        return chip ? (
+                          <Badge key={id} variant="outline">{chip.name}</Badge>
+                        ) : null
+                      })}
+                    </div>
                   </div>
-                )}
-                <div className="border rounded-lg p-3 max-h-60 overflow-y-auto space-y-2">
-                  {chips.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">Nenhum chip disponível encontrado. Conecte chips na aba Chips primeiro.</p>
-                  ) : (
-                    chips.map(chip => {
-                      const isConnected = chip.status === 'connected'
-                      return (
-                        <label key={chip.id} className={`flex items-center gap-3 p-2 rounded ${isConnected ? 'hover:bg-muted cursor-pointer' : 'opacity-50 cursor-not-allowed'}`}>
-                          <Checkbox
-                            checked={formChipIds.includes(chip.id)}
-                            onCheckedChange={() => toggleChip(chip.id)}
-                            disabled={!isConnected}
-                          />
-                          <div className="flex-1">
-                            <span className="text-sm font-medium">{chip.name}</span>
-                            <span className="text-xs text-muted-foreground ml-2">{chip.phoneNumber}</span>
-                          </div>
-                          <Badge
-                            variant="outline"
-                            className={`text-xs ${
-                              chip.warmingPhase === 'nursery' || !chip.warmingPhase
-                                ? 'border-amber-500 text-amber-600'
-                                : chip.warmingPhase === 'prewarm'
-                                ? 'border-blue-500 text-blue-600'
-                                : 'border-green-500 text-green-600'
-                            }`}
-                          >
-                            {WARMING_PHASE_LABELS[chip.warmingPhase] || 'Berçário'}
-                          </Badge>
-                          {!isConnected ? (
-                            <Badge variant="outline" className="text-xs border-red-500 text-red-600">
-                              Desconectado
-                            </Badge>
-                          ) : (
-                            <span className="text-xs text-muted-foreground">🟢</span>
-                          )}
-                        </label>
-                      )
-                    })
-                  )}
-                </div>
-                {formChipIds.length > 0 && formChipIds.length < 3 && (
-                  <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3 text-xs text-red-700 dark:text-red-400">
-                    ⛔ <strong>Risco de ban!</strong> Apenas {formChipIds.length} chip(s) selecionado(s). O Meta detecta quando 2 números só conversam entre si — é um padrão de bot network. Use pelo menos 3 chips para criar um grafo social natural (cada chip fala com múltiplos contatos).
-                  </div>
-                )}
-                {formChipIds.length >= 3 && (
-                  <p className="text-xs text-green-600 dark:text-green-400">
-                    ✓ {formChipIds.length} chips selecionados — grafo social natural ✓
-                  </p>
+                ) : (
+                  <>
+                    {chips.some(c => c.warmingPhase === 'nursery' || !c.warmingPhase) && (
+                      <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-3 text-xs text-amber-700 dark:text-amber-400">
+                        ⚠️ Chips no <strong>Berçário</strong> têm limites diários menores (10-80 msgs/dia conforme o dia).
+                        O aquecimento respeita automaticamente esses limites — a sessão pausa quando todos os chips atingem o limite do dia e retoma no dia seguinte.
+                      </div>
+                    )}
+                    <div className="border rounded-lg p-3 max-h-60 overflow-y-auto space-y-2">
+                      {chips.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">Nenhum chip disponível encontrado. Conecte chips na aba Chips primeiro.</p>
+                      ) : (
+                        chips.map(chip => {
+                          const isConnected = chip.status === 'connected'
+                          return (
+                            <label key={chip.id} className={`flex items-center gap-3 p-2 rounded ${isConnected ? 'hover:bg-muted cursor-pointer' : 'opacity-50 cursor-not-allowed'}`}>
+                              <Checkbox
+                                checked={formChipIds.includes(chip.id)}
+                                onCheckedChange={() => toggleChip(chip.id)}
+                                disabled={!isConnected}
+                              />
+                              <div className="flex-1">
+                                <span className="text-sm font-medium">{chip.name}</span>
+                                <span className="text-xs text-muted-foreground ml-2">{chip.phoneNumber}</span>
+                              </div>
+                              <Badge
+                                variant="outline"
+                                className={`text-xs ${
+                                  chip.warmingPhase === 'nursery' || !chip.warmingPhase
+                                    ? 'border-amber-500 text-amber-600'
+                                    : chip.warmingPhase === 'prewarm'
+                                    ? 'border-blue-500 text-blue-600'
+                                    : 'border-green-500 text-green-600'
+                                }`}
+                              >
+                                {WARMING_PHASE_LABELS[chip.warmingPhase] || 'Berçário'}
+                              </Badge>
+                              {!isConnected ? (
+                                <Badge variant="outline" className="text-xs border-red-500 text-red-600">
+                                  Desconectado
+                                </Badge>
+                              ) : (
+                                <span className="text-xs text-muted-foreground">🟢</span>
+                              )}
+                            </label>
+                          )
+                        })
+                      )}
+                    </div>
+                    {formChipIds.length > 0 && formChipIds.length < 3 && (
+                      <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3 text-xs text-red-700 dark:text-red-400">
+                        ⛔ <strong>Risco de ban!</strong> Apenas {formChipIds.length} chip(s) selecionado(s). O Meta detecta quando 2 números só conversam entre si — é um padrão de bot network. Use pelo menos 3 chips para criar um grafo social natural.
+                      </div>
+                    )}
+                    {formChipIds.length >= 3 && (
+                      <p className="text-xs text-green-600 dark:text-green-400">
+                        ✓ {formChipIds.length} chips selecionados — grafo social natural ✓
+                      </p>
+                    )}
+                  </>
                 )}
               </div>
 
@@ -518,6 +596,7 @@ export function WarmingTab() {
                     max={500}
                     value={formMessagesPerChip}
                     onChange={e => setFormMessagesPerChip(Number(e.target.value))}
+                    disabled={editingSession?.status === 'running'}
                   />
                   <p className="text-xs text-muted-foreground">Meta: envio + recebimento</p>
                 </div>
@@ -593,15 +672,15 @@ export function WarmingTab() {
               </div>
 
               <div className="flex justify-end gap-3">
-                <Button variant="outline" onClick={() => setCreateOpen(false)}>
+                <Button variant="outline" onClick={() => { setCreateOpen(false); resetForm() }}>
                   Cancelar
                 </Button>
                 <Button
                   className="bg-green-600 hover:bg-green-700"
-                  onClick={handleCreate}
-                  disabled={!formName.trim() || formChipIds.length < 3}
+                  onClick={handleSave}
+                  disabled={!formName.trim() || (!editingSession && formChipIds.length < 3)}
                 >
-                  Criar Sessão
+                  {editingSession ? 'Salvar Alterações' : 'Criar Sessão'}
                 </Button>
               </div>
             </div>
@@ -706,6 +785,15 @@ export function WarmingTab() {
                       >
                         Detalhes
                       </Button>
+                      {['draft', 'paused', 'running'].includes(session.status) && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => startEditing(session)}
+                        >
+                          ✏️ Editar
+                        </Button>
+                      )}
                       {session.status === 'draft' && (
                         <Button
                           size="sm"

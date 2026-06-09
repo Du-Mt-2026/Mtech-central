@@ -42,16 +42,21 @@ export async function PATCH(
       return NextResponse.json({ error: 'Sessão não encontrada' }, { status: 404 })
     }
 
-    // Only allow updates on draft or paused sessions
-    if (session.status === 'running') {
-      return NextResponse.json({ error: 'Não é possível editar sessão em execução. Pause primeiro.' }, { status: 400 })
-    }
-
-    const allowedFields = [
+    // Define which fields can be edited based on session status
+    const safeFields = ['name', 'intervalMin', 'intervalMax', 'activeHoursStart', 'activeHoursEnd']
+    const allFields = [
       'name', 'strategy', 'intervalMin', 'intervalMax',
       'activeHoursStart', 'activeHoursEnd', 'timezone',
       'messagesPerChip', 'messageTypeDistribution',
     ]
+
+    // Running sessions: only allow safe fields (no strategy/chip changes)
+    // Completed/cancelled: no edits
+    if (session.status === 'completed' || session.status === 'cancelled') {
+      return NextResponse.json({ error: 'Não é possível editar sessão concluída ou cancelada.' }, { status: 400 })
+    }
+
+    const allowedFields = session.status === 'running' ? safeFields : allFields
 
     const data: Record<string, any> = {}
     for (const field of allowedFields) {
@@ -64,8 +69,8 @@ export async function PATCH(
       }
     }
 
-    // Handle JSON fields separately
-    if (body.chipIds !== undefined) {
+    // Handle JSON fields separately (only for non-running sessions)
+    if (body.chipIds !== undefined && session.status !== 'running') {
       data.chipIds = JSON.stringify(body.chipIds)
     }
     if (body.messageTemplates !== undefined) {
