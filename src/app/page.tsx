@@ -3908,6 +3908,9 @@ function CampanhasTab() {
   const [continuousStats, setContinuousStats] = useState({ processed: 0, remaining: 0, elapsed: 0 })
   const [editing, setEditing] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [distMode, setDistMode] = useState<'absolute' | 'percentage'>('absolute')
+  const [redistributeDialogOpen, setRedistributeDialogOpen] = useState(false)
+  const [redistributeDistribution, setRedistributeDistribution] = useState<Record<string, number>>({})
   const [exportingId, setExportingId] = useState<string | null>(null)
   const [exportingAll, setExportingAll] = useState(false)
   const [refreshingDetail, setRefreshingDetail] = useState(false)
@@ -4136,7 +4139,26 @@ function CampanhasTab() {
         // Edit mode: PATCH the existing campaign
         const res = await fetch(`/api/campaigns/${selectedCampaign.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
         if (!res.ok) { const data = await res.json().catch(() => ({})); throw new Error(data.error || `Erro ${res.status} ao atualizar campanha`) }
-        toast.success('Campanha atualizada com sucesso!')
+        // Auto-redistribute if campaign is paused/draft and has chipDistribution changes
+        if (['paused', 'draft'].includes(selectedCampaign.status) && Object.values(newCampaign.chipDistribution).some(v => (v || 0) > 0)) {
+          try {
+            const redistRes = await fetch(`/api/campaigns/${selectedCampaign.id}/redistribute`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ chipDistribution: newCampaign.chipDistribution }),
+            })
+            const redistData = await redistRes.json()
+            if (redistRes.ok && redistData.redistributed > 0) {
+              toast.success(`Campanha atualizada! ${redistData.redistributed} mensagens redistribuídas.`)
+            } else {
+              toast.success('Campanha atualizada com sucesso!')
+            }
+          } catch {
+            toast.success('Campanha atualizada com sucesso! (redistribuição automática falhou)')
+          }
+        } else {
+          toast.success('Campanha atualizada com sucesso!')
+        }
       } else {
         // Create mode: POST new campaign
         const res = await fetch('/api/campaigns', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
@@ -4775,6 +4797,23 @@ function CampanhasTab() {
                 {/* Chips for Sending */}
                 <div className="space-y-1">
                   <Label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1"><Smartphone className="size-3" /> Chips para envio</Label>
+                  {/* Distribution mode toggle — only when multiple chips selected */}
+                  {newCampaign.chipIds.length > 1 && (() => {
+                    const totalContacts = (() => {
+                      const list = availableLists.find((l: any) => l.id === newCampaign.contactListId)
+                      return list?._count?.contacts || list?.contactsCount || 0
+                    })()
+                    return totalContacts > 0 ? (
+                      <div className="flex items-center gap-1 p-1 bg-muted/40 rounded-md">
+                        <button type="button" onClick={() => setDistMode('absolute')} className={`flex-1 text-[10px] py-0.5 rounded transition-all ${distMode === 'absolute' ? 'bg-emerald-500 text-white font-medium' : 'text-muted-foreground hover:text-foreground'}`}>
+                          Número
+                        </button>
+                        <button type="button" onClick={() => setDistMode('percentage')} className={`flex-1 text-[10px] py-0.5 rounded transition-all ${distMode === 'percentage' ? 'bg-emerald-500 text-white font-medium' : 'text-muted-foreground hover:text-foreground'}`}>
+                          Porcentagem %
+                        </button>
+                      </div>
+                    ) : null
+                  })()}
                   <div className="space-y-1 max-h-[350px] overflow-y-auto">
                     {availableChips.map(chip => {
                       const isSelected = newCampaign.chipIds.includes(chip.id)
@@ -4785,10 +4824,16 @@ function CampanhasTab() {
                         const list = availableLists.find((l: any) => l.id === newCampaign.contactListId)
                         return list?._count?.contacts || list?.contactsCount || 0
                       })()
-                      // Current distribution value for this chip
+                      // Current distribution value for this chip (absolute number)
                       const distValue = newCampaign.chipDistribution[chip.id] || 0
                       // Max for this chip = min(chipCapacity, totalContacts)
                       const maxForChip = totalContacts > 0 ? Math.min(chipCapacity, totalContacts) : chipCapacity
+                      // Percentage representation
+                      const distPct = totalContacts > 0 && distValue > 0 ? Math.round(distValue / totalContacts * 100) : 0
+                      const maxPct = totalContacts > 0 ? Math.round(maxForChip / totalContacts * 100) : 100
+                      // Slider value and max depend on mode
+                      const sliderValue = distMode === 'percentage' ? distPct : distValue
+                      const sliderMax = distMode === 'percentage' ? maxPct : maxForChip
 
                       return (
                         <div key={chip.id}>
@@ -4812,27 +4857,34 @@ function CampanhasTab() {
                               <div className="flex items-center justify-between">
                                 <span className="text-[10px] text-muted-foreground">Contatos para este chip</span>
                                 <span className="text-[10px] font-medium text-emerald-600">
-                                  {distValue > 0 ? distValue : 'Auto'}
-                                  {distValue > 0 && totalContacts > 0 ? ` (${Math.round(distValue / totalContacts * 100)}%)` : ''}
+                                  {distValue > 0
+                                    ? (distMode === 'percentage'
+                                        ? `${distPct}% (${distValue} contatos)`
+                                        : `${distValue} (${distPct}%)`)
+                                    : 'Auto'}
                                 </span>
                               </div>
                               <input
                                 type="range"
                                 min={0}
-                                max={maxForChip}
-                                value={distValue}
+                                max={sliderMax}
+                                value={sliderValue}
                                 onChange={e => {
-                                  const val = parseInt(e.target.value, 10)
+                                  const rawVal = parseInt(e.target.value, 10)
+                                  // Convert back to absolute number if in percentage mode
+                                  const absVal = distMode === 'percentage'
+                                    ? Math.round(rawVal / 100 * totalContacts)
+                                    : rawVal
                                   setNewCampaign(prev => ({
                                     ...prev,
-                                    chipDistribution: { ...prev.chipDistribution, [chip.id]: val },
+                                    chipDistribution: { ...prev.chipDistribution, [chip.id]: absVal },
                                   }))
                                 }}
                                 className="w-full h-1.5 bg-muted rounded-lg appearance-none cursor-pointer accent-emerald-500"
                               />
                               <div className="flex justify-between text-[9px] text-muted-foreground">
                                 <span>Auto</span>
-                                <span>{maxForChip}</span>
+                                <span>{distMode === 'percentage' ? `${maxPct}%` : maxForChip}</span>
                               </div>
                             </div>
                           )}
@@ -4859,7 +4911,7 @@ function CampanhasTab() {
                         {manualTotal > 0 && (
                           <div className="flex justify-between">
                             <span>Alocados manualmente:</span>
-                            <span className="font-medium">{manualTotal}</span>
+                            <span className="font-medium">{manualTotal} ({Math.round(manualTotal / totalContacts * 100)}%)</span>
                           </div>
                         )}
                         {autoChips.length > 0 && remaining > 0 && (
@@ -5530,44 +5582,16 @@ function CampanhasTab() {
                   </Button>
                 )}
                 {selectedCampaign?.status === 'paused' && (selectedCampaign.messageStatusCounts?.pending || 0) > 0 && (
-                  <Button variant="outline" size="sm" className="gap-1.5 text-blue-600 border-blue-200 hover:bg-blue-50" onClick={async () => {
+                  <Button variant="outline" size="sm" className="gap-1.5 text-blue-600 border-blue-200 hover:bg-blue-50" onClick={() => {
                     if (!selectedCampaign) return
-                    // Build distribution from current campaign chips
+                    // Initialize redistribution state from current campaign chips
                     const currentDist: Record<string, number> = {}
                     for (const cc of (selectedCampaign.chips || [])) {
                       currentDist[cc.chipId] = cc.contactLimit || 0
                     }
-                    const input = prompt(`Redistribuir ${selectedCampaign.messageStatusCounts?.pending || 0} mensagens pendentes.\n\nDigite a distribuição no formato: chipId:quantidade,chipId:quantidade\n\nExemplo: ${selectedCampaign.chips?.map((cc: any) => `${cc.chipId?.substring(0,8)}...:${cc.contactLimit || 'auto'}`).join(',')}\n\nDeixe vazio para redistribuição igualitária (auto).`)
-                    if (input === null) return
-                    try {
-                      let distribution = currentDist
-                      if (input.trim()) {
-                        distribution = {}
-                        for (const pair of input.split(',')) {
-                          const [chipId, count] = pair.split(':')
-                          // Find full chipId from partial match
-                          const fullChipId = selectedCampaign.chips?.find((cc: any) => cc.chipId?.startsWith(chipId.trim()))?.chipId
-                          if (fullChipId) {
-                            distribution[fullChipId] = parseInt(count.trim(), 10) || 0
-                          }
-                        }
-                      }
-                      const res = await fetch(`/api/campaigns/${selectedCampaign.id}/redistribute`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ chipDistribution: distribution }),
-                      })
-                      const data = await res.json()
-                      if (res.ok) {
-                        toast.success(data.message || 'Mensagens redistribuídas!')
-                        // Refresh campaign data
-                        const campRes = await fetch(`/api/campaigns/${selectedCampaign.id}`, { cache: 'no-store' })
-                        if (campRes.ok) setSelectedCampaign(await campRes.json())
-                        fetchCampaigns()
-                      } else {
-                        toast.error(data.error || 'Erro ao redistribuir')
-                      }
-                    } catch { toast.error('Erro ao redistribuir mensagens') }
+                    setRedistributeDistribution(currentDist)
+                    setDistMode('absolute')
+                    setRedistributeDialogOpen(true)
                   }}>
                     <ArrowRightLeft className="size-3.5" /> Redistribuir
                   </Button>
@@ -6231,6 +6255,163 @@ function TemplatesTab() {
           <DialogFooter className="px-6 pb-6 pt-2 shrink-0 border-t">
             <DialogClose asChild><Button variant="outline">Cancelar</Button></DialogClose>
             <Button onClick={saveEditTemplate} disabled={!editForm.name || !editForm.content} className="bg-emerald-600 hover:bg-emerald-700">Salvar</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Redistribute Dialog — visual slider-based redistribution */}
+      <Dialog open={redistributeDialogOpen} onOpenChange={setRedistributeDialogOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ArrowRightLeft className="size-5 text-blue-600" />
+              Redistribuir Contatos
+            </DialogTitle>
+            <DialogDescription>
+              Ajuste a distribuição de {selectedCampaign?.messageStatusCounts?.pending || 0} mensagens pendentes entre os chips
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            {/* Mode toggle */}
+            <div className="flex items-center gap-1 p-1 bg-muted/40 rounded-md">
+              <button type="button" onClick={() => setDistMode('absolute')} className={`flex-1 text-xs py-1 rounded transition-all ${distMode === 'absolute' ? 'bg-emerald-500 text-white font-medium' : 'text-muted-foreground hover:text-foreground'}`}>
+                Número absoluto
+              </button>
+              <button type="button" onClick={() => setDistMode('percentage')} className={`flex-1 text-xs py-1 rounded transition-all ${distMode === 'percentage' ? 'bg-emerald-500 text-white font-medium' : 'text-muted-foreground hover:text-foreground'}`}>
+                Porcentagem %
+              </button>
+            </div>
+
+            {/* Chip sliders */}
+            <div className="space-y-3 max-h-[400px] overflow-y-auto">
+              {(selectedCampaign?.chips || []).map((cc: any) => {
+                const chip = cc.chip
+                if (!chip) return null
+                const pendingCount = selectedCampaign?.messageStatusCounts?.pending || 0
+                const chipCapacity = Math.max(0, (chip.dailyLimit || 200) - (chip.sentToday || 0))
+                const maxForChip = pendingCount > 0 ? Math.min(chipCapacity, pendingCount) : chipCapacity
+                const distValue = redistributeDistribution[cc.chipId] || 0
+                const distPct = pendingCount > 0 && distValue > 0 ? Math.round(distValue / pendingCount * 100) : 0
+                const maxPct = pendingCount > 0 ? Math.round(maxForChip / pendingCount * 100) : 100
+                const sliderValue = distMode === 'percentage' ? distPct : distValue
+                const sliderMax = distMode === 'percentage' ? maxPct : maxForChip
+
+                return (
+                  <div key={cc.chipId} className="space-y-1.5 p-3 bg-muted/30 rounded-lg">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Smartphone className="size-3.5 text-muted-foreground" />
+                        <div>
+                          <p className="text-sm font-medium">{chip.name}</p>
+                          <p className="text-[10px] text-muted-foreground">{chip.phoneNumber} · Capacidade: {chipCapacity}/dia</p>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-sm font-semibold text-emerald-600">
+                          {distValue > 0
+                            ? (distMode === 'percentage'
+                                ? `${distPct}%`
+                                : `${distValue}`)
+                            : 'Auto'}
+                        </span>
+                        {distValue > 0 && distMode === 'absolute' && pendingCount > 0 && (
+                          <p className="text-[10px] text-muted-foreground">{distPct}%</p>
+                        )}
+                        {distValue > 0 && distMode === 'percentage' && (
+                          <p className="text-[10px] text-muted-foreground">{distValue} contatos</p>
+                        )}
+                      </div>
+                    </div>
+                    <input
+                      type="range"
+                      min={0}
+                      max={sliderMax}
+                      value={sliderValue}
+                      onChange={e => {
+                        const rawVal = parseInt(e.target.value, 10)
+                        const absVal = distMode === 'percentage'
+                          ? Math.round(rawVal / 100 * pendingCount)
+                          : rawVal
+                        setRedistributeDistribution(prev => ({ ...prev, [cc.chipId]: absVal }))
+                      }}
+                      className="w-full h-2 bg-muted rounded-lg appearance-none cursor-pointer accent-emerald-500"
+                    />
+                    <div className="flex justify-between text-[10px] text-muted-foreground">
+                      <span>Auto (igualitário)</span>
+                      <span>{distMode === 'percentage' ? `${maxPct}%` : `${maxForChip} contatos`}</span>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+
+            {/* Summary */}
+            {(() => {
+              const pendingCount = selectedCampaign?.messageStatusCounts?.pending || 0
+              const manualTotal = Object.values(redistributeDistribution).reduce((sum, v) => sum + (v || 0), 0)
+              const autoChips = (selectedCampaign?.chips || []).filter((cc: any) => !redistributeDistribution[cc.chipId] || redistributeDistribution[cc.chipId] === 0)
+              const remaining = pendingCount - manualTotal
+              const exceedsTotal = manualTotal > pendingCount
+              return (
+                <div className="p-2.5 bg-muted/30 rounded-lg text-xs space-y-1">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Mensagens pendentes:</span>
+                    <span className="font-medium">{pendingCount}</span>
+                  </div>
+                  {manualTotal > 0 && (
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Alocados manualmente:</span>
+                      <span className={`font-medium ${exceedsTotal ? 'text-red-500' : ''}`}>{manualTotal} ({Math.round(manualTotal / pendingCount * 100)}%)</span>
+                    </div>
+                  )}
+                  {autoChips.length > 0 && remaining > 0 && !exceedsTotal && (
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Auto ({autoChips.length} chip{autoChips.length > 1 ? 's' : ''}, ~{Math.ceil(remaining / autoChips.length)} cada):</span>
+                      <span className="font-medium">{remaining}</span>
+                    </div>
+                  )}
+                  {exceedsTotal && (
+                    <p className="text-red-500 font-medium flex items-center gap-1"><AlertTriangle className="size-3" /> Total alocado excede mensagens pendentes!</p>
+                  )}
+                </div>
+              )
+            })()}
+          </div>
+          <DialogFooter className="gap-2">
+            <DialogClose asChild>
+              <Button variant="outline">Cancelar</Button>
+            </DialogClose>
+            <Button
+              className="bg-blue-600 hover:bg-blue-700 gap-1.5"
+              disabled={!!(() => {
+                const pendingCount = selectedCampaign?.messageStatusCounts?.pending || 0
+                const manualTotal = Object.values(redistributeDistribution).reduce((sum, v) => sum + (v || 0), 0)
+                return manualTotal > pendingCount
+              })()}
+              onClick={async () => {
+                if (!selectedCampaign) return
+                try {
+                  const res = await fetch(`/api/campaigns/${selectedCampaign.id}/redistribute`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ chipDistribution: redistributeDistribution }),
+                  })
+                  const data = await res.json()
+                  if (res.ok) {
+                    toast.success(data.message || 'Mensagens redistribuídas!')
+                    setRedistributeDialogOpen(false)
+                    // Refresh campaign data
+                    const campRes = await fetch(`/api/campaigns/${selectedCampaign.id}`, { cache: 'no-store' })
+                    if (campRes.ok) setSelectedCampaign(await campRes.json())
+                    fetchCampaigns()
+                  } else {
+                    toast.error(data.error || 'Erro ao redistribuir')
+                  }
+                } catch { toast.error('Erro ao redistribuir mensagens') }
+              }}
+            >
+              <ArrowRightLeft className="size-3.5" /> Redistribuir
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
