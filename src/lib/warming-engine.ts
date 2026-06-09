@@ -920,47 +920,98 @@ export async function processNextWarmingMessage(
     return { processed: false, delayMs: 0, completed: true, reason: 'all_chips_warmed' }
   }
 
-  // Select sender and recipient
-  const [senderIdx, recipientIdx] = selectPair(session.strategy, chipIds, lastPair, chipProgress)
-  const senderChipId = chipIds[senderIdx]
-  const recipientChipId = chipIds[recipientIdx]
+  // ============================================================
+  // Load ALL chips upfront to validate and filter out invalid ones.
+  // This prevents selecting a pair with an invalid recipient and
+  // then failing silently — we skip invalid chips and try another pair.
+  // ============================================================
+  const allChips = await db.chip.findMany({
+    where: { id: { in: chipIds } },
+  })
+  const chipMap = new Map(allChips.map(c => [c.id, c]))
 
-  // Check if sender has reached target
-  const senderProgress = chipProgress[senderChipId] || { sent: 0, received: 0, lastSentAt: null, lastReceivedAt: null }
-  if (senderProgress.sent >= session.messagesPerChip / 2) {
-    // This chip has sent enough — try another sender
-    // For now, just skip this tick
-    console.log(`[WarmingEngine] Session "${session.name}" sender ${senderChipId} reached target (sent=${senderProgress.sent}, target=${session.messagesPerChip / 2})`)
-    return { processed: false, delayMs: 3000, completed: false, reason: 'sender_target_reached' }
-  }
+  // Identify valid chips: connected + has valid phone number
+  const validChipIds = chipIds.filter(chipId => {
+    const chip = chipMap.get(chipId)
+    return chip && chip.status === 'connected' && chip.evolutionInstance && chip.phoneNumber && isValidPhoneNumber(chip.phoneNumber)
+  })
 
-  // Load chips from DB
-  const [senderChip, recipientChip] = await Promise.all([
-    db.chip.findUnique({ where: { id: senderChipId } }),
-    db.chip.findUnique({ where: { id: recipientChipId } }),
-  ])
-
-  if (!senderChip?.evolutionInstance || senderChip.status !== 'connected') {
-    // Sender is not connected — update progress and try next tick
-    console.log(`[WarmingEngine] Session "${session.name}" sender ${senderChip?.name || senderChipId} not connected (status=${senderChip?.status}, instance=${senderChip?.evolutionInstance || 'none'})`)
+  if (validChipIds.length < MIN_CHIPS_FOR_WARMING) {
+    const invalidChips = chipIds.filter(id => !validChipIds.includes(id)).map(id => {
+      const c = chipMap.get(id)
+      if (!c) return `${id}: not found`
+      if (c.status !== 'connected') return `${c.name}: disconnected`
+      if (!c.evolutionInstance) return `${c.name}: no instance`
+      if (!c.phoneNumber) return `${c.name}: no phone`
+      if (!isValidPhoneNumber(c.phoneNumber)) return `${c.name}: invalid phone (${c.phoneNumber})`
+      return `${c.name}: unknown`
+    })
+    const errorMsg = `Chips válidos insuficientes (${validChipIds.length}/${chipIds.length}). Inválidos: ${invalidChips.join('; ')}`
+    console.warn(`[WarmingEngine] Session "${session.name}" ${errorMsg}`)
     await db.warmingSession.update({
       where: { id: sessionId },
-      data: { lastError: `Chip remetente ${senderChip?.name || senderChipId} desconectado` },
+      data: { lastError: errorMsg.substring(0, 500) },
     })
-    return { processed: false, delayMs: 5000, completed: false, reason: 'sender_disconnected' }
+    return { processed: false, delayMs: 60000, completed: false, reason: 'insufficient_valid_chips' }
   }
 
-  // ============================================================
-  // ANTI-BAN: Respect chip's warming phase daily limit
-  // Chips in berçário (nursery) have much lower daily limits!
-  // A chip on Day 1-2 in nursery can only send 10 msgs/day.
-  // This is CRITICAL — sending 150 msgs to a Day 1 chip = instant ban.
-  // ============================================================
-  const antiBanSettings = await loadAntiBanSettings()
-  const senderLimitInfo = await getChipEffectiveDailyLimit(senderChip, antiBanSettings)
+  // Try to select a valid sender→recipient pair.
+  // We try up to chipIds.length attempts, skipping invalid chips.
+  let senderChip: Awaited<ReturnType<typeof db.chip.findUnique>> = null
+  let recipientChip: Awaited<ReturnType<typeof db.chip.findUnique>> = null
+  let senderChipId = ''
+  let recipientChipId = ''
+  let senderIdx = -1
+  let recipientIdx = -1
+  let senderProgress: WarmingChipProgress = { sent: 0, received: 0, lastSentAt: null, lastReceivedAt: null }
 
-  if (senderLimitInfo.remaining <= 0) {
-    // Sender hit its daily limit for its phase — skip this tick
+  // Load anti-ban settings once for all attempts
+  const antiBanSettings = await loadAntiBanSettings()
+
+  for (let pairAttempt = 0; pairAttempt < chipIds.length; pairAttempt++) {
+    const [trySenderIdx, tryRecipientIdx] = selectPair(session.strategy, chipIds, {
+      lastSenderIdx: lastPair.lastSenderIdx + pairAttempt,
+      lastRecipientIdx: lastPair.lastRecipientIdx + pairAttempt,
+    }, chipProgress)
+    const trySenderChipId = chipIds[trySenderIdx]
+    const tryRecipientChipId = chipIds[tryRecipientIdx]
+
+    // Must be different chips
+    if (trySenderChipId === tryRecipientChipId) continue
+
+    const trySenderChip = chipMap.get(trySenderChipId) || null
+    const tryRecipientChip = chipMap.get(tryRecipientChipId) || null
+
+    // Sender must be connected with instance
+    if (!trySenderChip?.evolutionInstance || trySenderChip.status !== 'connected') continue
+
+    // Sender must not have reached target
+    const trySenderProgress = chipProgress[trySenderChipId] || { sent: 0, received: 0, lastSentAt: null, lastReceivedAt: null }
+    if (trySenderProgress.sent >= session.messagesPerChip / 2) continue
+
+    // Sender must not have hit daily limit
+    const senderLimitInfo = await getChipEffectiveDailyLimit(trySenderChip, antiBanSettings)
+    if (senderLimitInfo.remaining <= 0) continue
+
+    // Recipient must have valid phone number
+    if (!tryRecipientChip?.phoneNumber || !isValidPhoneNumber(tryRecipientChip.phoneNumber)) {
+      console.log(`[WarmingEngine] Session "${session.name}" skipping recipient ${tryRecipientChip?.name || tryRecipientChipId}: invalid phone (${tryRecipientChip?.phoneNumber || 'none'})`)
+      continue
+    }
+
+    // Found a valid pair!
+    senderChip = trySenderChip
+    recipientChip = tryRecipientChip
+    senderChipId = trySenderChipId
+    recipientChipId = tryRecipientChipId
+    senderIdx = trySenderIdx
+    recipientIdx = tryRecipientIdx
+    senderProgress = trySenderProgress
+    break
+  }
+
+  // If no valid pair found, check why
+  if (!senderChip || !recipientChip) {
     // Check if ALL chips have hit their limits (session should pause for today)
     const allChipsAtLimit = await checkAllChipsAtDailyLimit(chipIds, antiBanSettings)
     if (allChipsAtLimit) {
@@ -972,28 +1023,40 @@ export async function processNextWarmingMessage(
       return { processed: false, delayMs: 60000, completed: false, reason: 'all_chips_daily_limit_reached' }
     }
 
-    return {
-      processed: false,
-      delayMs: 30000,
-      completed: false,
-      reason: `sender_daily_limit_${senderChip.name}_phase_${senderLimitInfo.phase}_day${senderLimitInfo.dayInPhase}`,
-    }
-  }
-
-  if (!recipientChip?.phoneNumber) {
-    console.log(`[WarmingEngine] Session "${session.name}" recipient ${recipientChip?.name || recipientChipId} has no phone number`)
-    return { processed: false, delayMs: 3000, completed: false, reason: 'recipient_no_phone' }
-  }
-
-  // Validate phone number format — skip chips with invalid/auto-generated numbers
-  if (!isValidPhoneNumber(recipientChip.phoneNumber)) {
-    console.log(`[WarmingEngine] Session "${session.name}" recipient ${recipientChip.name} has invalid phone number: "${recipientChip.phoneNumber}" — skipping`)
-    await db.warmingSession.update({
-      where: { id: sessionId },
-      data: { lastError: `Chip ${recipientChip.name} com telefone inválido: ${recipientChip.phoneNumber}` },
+    // Check if any senders are just in cooldown
+    const anySenderInCooldown = chipIds.some(id => {
+      const chip = chipMap.get(id)
+      const progress = chipProgress[id]
+      if (!chip || chip.status !== 'connected' || !chip.evolutionInstance) return false
+      if (!progress?.lastSentAt) return false
+      const elapsed = (Date.now() - new Date(progress.lastSentAt).getTime()) / 1000
+      const minInterval = session.intervalMin || antiBanSettings?.messageIntervalMin || WARMING_INTERVAL_MIN
+      return elapsed < minInterval
     })
-    return { processed: false, delayMs: 3000, completed: false, reason: `recipient_invalid_phone_${recipientChip.name}` }
+
+    if (anySenderInCooldown) {
+      return { processed: false, delayMs: 5000, completed: false, reason: 'all_senders_in_cooldown' }
+    }
+
+    // All valid senders reached target
+    const anySenderBelowTarget = validChipIds.some(id => {
+      const progress = chipProgress[id]
+      return !progress || progress.sent < session.messagesPerChip / 2
+    })
+
+    if (!anySenderBelowTarget) {
+      return { processed: false, delayMs: 5000, completed: false, reason: 'all_senders_target_reached' }
+    }
+
+    // Generic — no valid pair available right now
+    console.log(`[WarmingEngine] Session "${session.name}" no valid sender→recipient pair found this tick (validChips=${validChipIds.length}/${chipIds.length})`)
+    return { processed: false, delayMs: 15000, completed: false, reason: 'no_valid_pair' }
   }
+
+  // TypeScript: after the null check above, senderChip and recipientChip are guaranteed non-null
+  // Re-assign with non-null assertion for cleaner downstream access
+  const sender = senderChip!
+  const recipient = recipientChip!
 
   // Check minimum interval for this sender
   // Use session interval if set, otherwise fall back to anti-ban settings,
@@ -1005,25 +1068,25 @@ export async function processNextWarmingMessage(
 
     if (elapsed < minInterval) {
       const waitSeconds = Math.ceil(minInterval - elapsed)
-      console.log(`[WarmingEngine] Session "${session.name}" sender ${senderChip.name} min interval not reached (elapsed=${Math.round(elapsed)}s, need=${minInterval}s, wait=${waitSeconds}s)`)
+      console.log(`[WarmingEngine] Session "${session.name}" sender ${sender.name} min interval not reached (elapsed=${Math.round(elapsed)}s, need=${minInterval}s, wait=${waitSeconds}s)`)
       return {
         processed: false,
         delayMs: waitSeconds * 1000,
         completed: false,
-        reason: `min_interval_sender_${senderChip.name}`,
+        reason: `min_interval_sender_${sender.name}`,
       }
     }
   }
 
   // Pick message type and content
   const messageType = pickMessageType(distribution)
-  const messageContent = generateWarmingMessage(templates, messageType, senderChip.name || '', recipientChip.name || '')
+  const messageContent = generateWarmingMessage(templates, messageType, sender.name || '', recipient.name || '')
 
   // ============================================================
   // SEND THE MESSAGE WITH FULL ANTI-BAN PRESENCE
   // ============================================================
-  const instanceName = senderChip.evolutionInstance
-  const formattedPhone = formatPhoneNumber(recipientChip.phoneNumber)
+  const instanceName = sender.evolutionInstance!
+  const formattedPhone = formatPhoneNumber(recipient.phoneNumber!)
   const jid = `${formattedPhone}@s.whatsapp.net`
 
   try {
@@ -1072,7 +1135,7 @@ export async function processNextWarmingMessage(
       },
     })
 
-    console.debug(`[WarmingEngine] ${senderChip.name} → ${recipientChip.name}: [${messageType}] "${messageContent.content.substring(0, 50)}..." (sent: ${senderProgress.sent}, received: ${recipientProgress.received})`)
+    console.debug(`[WarmingEngine] ${sender.name} → ${recipient.name}: [${messageType}] "${messageContent.content.substring(0, 50)}..." (sent: ${senderProgress.sent}, received: ${recipientProgress.received})`)
 
     // Calculate next delay (gaussian)
     // Use session interval if set, otherwise fall back to anti-ban settings,
@@ -1099,14 +1162,14 @@ export async function processNextWarmingMessage(
 
   } catch (error: any) {
     const errorMsg = error?.message || String(error)
-    console.error(`[WarmingEngine] Session "${session.name}" error sending message from ${senderChip?.name || senderChipId} to ${recipientChip?.name || recipientChipId}: ${errorMsg}`)
+    console.error(`[WarmingEngine] Session "${session.name}" error sending message from ${sender?.name || senderChipId} to ${recipient?.name || recipientChipId}: ${errorMsg}`)
 
     await db.warmingSession.update({
       where: { id: sessionId },
       data: {
         errorCount: { increment: 1 },
         messagesFailed: { increment: 1 },
-        lastError: `Erro ao enviar de ${senderChip?.name || senderChipId} para ${recipientChip?.name || recipientChipId}: ${errorMsg}`.substring(0, 500),
+        lastError: `Erro ao enviar de ${sender?.name || senderChipId} para ${recipient?.name || recipientChipId}: ${errorMsg}`.substring(0, 500),
       },
     })
 

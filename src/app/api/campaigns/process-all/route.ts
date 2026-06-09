@@ -119,6 +119,9 @@ export async function POST(request: NextRequest) {
           console.debug(`[ProcessAll] Auto-started ${autoStarted.length} warming sessions`)
         }
         const warmingResult = await processAllWarmingSessions()
+        if (warmingResult.errors > 0) {
+          console.warn(`[ProcessAll] Warming had ${warmingResult.errors} errors across ${warmingResult.sessions} sessions (messagesSent=${warmingResult.messagesSent})`)
+        }
         if (warmingResult.sessions > 0 || warmingResult.messagesSent > 0) {
           return NextResponse.json({
             message: 'No campaigns, but warming sessions processed',
