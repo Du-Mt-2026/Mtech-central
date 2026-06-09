@@ -36,6 +36,10 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
+# Install Docker CLI + git for self-deploy capability
+# The Docker socket is mounted from the host in docker-compose.yml
+RUN apk add --no-cache docker-cli docker-compose git
+
 # Create non-root user
 RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 nextjs

@@ -43,6 +43,12 @@ services:
     container_name: octupuszap-app
     restart: unless-stopped
     env_file: .env
+    # Mount Docker socket + project dir for self-deploy capability
+    # Docker socket allows the /api/deploy endpoint to trigger rebuilds
+    # Project dir (rw) allows git pull from inside the container
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /opt/octupuszap:/opt/octupuszap
     environment:
       - DATABASE_URL=postgresql://octupuszap:${DB_PASSWORD:-octupuszap123}@db:5432/octupuszap?schema=public
       # Evolution Go local (mesma VPS, rede Traefik)
@@ -51,6 +57,7 @@ services:
       # A URL pública do app (para webhooks)
       - NEXT_PUBLIC_APP_URL=${APP_PUBLIC_URL:-https://octupuszap.seudominio.com}
       - NODE_ENV=production
+      - DEPLOY_SCRIPT=/opt/octupuszap/deploy-hook.sh
     depends_on:
       migrate:
         condition: service_completed_successfully
