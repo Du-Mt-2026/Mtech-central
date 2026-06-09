@@ -14,6 +14,7 @@ const PUBLIC_API_ROUTES = [
   '/api/sync/',                 // Linvix sync endpoint (protected by CRON_SECRET in code)
   '/api/upload/serve',         // Serves uploaded media files (needs to be public so Evolution API can fetch media URLs)
   '/api/inbox/normalize-phones', // Data cleanup (protected by CRON_SECRET in code)
+  '/api/deploy',                  // Deploy webhook (protected by X-Deploy-Secret header)
 ]
 
 // Role hierarchy: master > admin > operador
