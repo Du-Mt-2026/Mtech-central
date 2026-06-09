@@ -273,7 +273,11 @@ function calculateTypingDuration(text: string, antiBanSettings: AntiBanSettings 
 }
 
 /**
- * Check if current time is within the sending window
+ * Check if current time is within the sending window.
+ * Handles overnight windows where start > end (e.g., 18:00 to 05:00).
+ *
+ * Normal window (start <= end): current >= start AND current <= end
+ * Overnight window (start > end): current >= start OR current <= end
  */
 function isWithinSendingWindow(
   activeHoursStart: number,
@@ -285,9 +289,12 @@ function isWithinSendingWindow(
   const end = toMins(activeHoursEnd)
 
   if (start <= end) {
-    return currentMins >= start && currentMins < end
+    // Normal window: e.g., 08:00 to 18:00
+    return currentMins >= start && currentMins <= end
   } else {
-    return currentMins >= start || currentMins < end
+    // Overnight window: e.g., 18:00 to 05:00
+    // Current is within if it's after start OR before/at end (wraps past midnight)
+    return currentMins >= start || currentMins <= end
   }
 }
 
@@ -307,6 +314,21 @@ function getActiveBreakWindow(
     }
   }
   return null
+}
+
+/**
+ * Validate that a phone number looks like a real phone number.
+ * Rejects auto-generated placeholder values like "auto-1780251167130".
+ * A valid phone number must start with a digit and be at least 8 characters long.
+ */
+function isValidPhoneNumber(phone: string): boolean {
+  if (!phone || typeof phone !== 'string') return false
+  const trimmed = phone.trim()
+  // Must start with a digit (after optional + prefix)
+  if (!/^\+?\d/.test(trimmed)) return false
+  // Must have at least 8 digit characters
+  const digitCount = trimmed.replace(/\D/g, '').length
+  return digitCount >= 8
 }
 
 /**
@@ -863,12 +885,14 @@ export async function processNextWarmingMessage(
 
   // Check sending window
   if (!isWithinSendingWindow(session.activeHoursStart, session.activeHoursEnd, session.timezone)) {
+    console.log(`[WarmingEngine] Session "${session.name}" outside sending window (start=${session.activeHoursStart}, end=${session.activeHoursEnd}, tz=${session.timezone})`)
     return { processed: false, delayMs: 60000, completed: false, reason: 'outside_sending_window' }
   }
 
   // Check break windows
   const activeBreak = getActiveBreakWindow(breakWindows, session.timezone)
   if (activeBreak) {
+    console.log(`[WarmingEngine] Session "${session.name}" in break window: ${activeBreak.label}`)
     return {
       processed: false,
       delayMs: 60000,
@@ -906,6 +930,7 @@ export async function processNextWarmingMessage(
   if (senderProgress.sent >= session.messagesPerChip / 2) {
     // This chip has sent enough — try another sender
     // For now, just skip this tick
+    console.log(`[WarmingEngine] Session "${session.name}" sender ${senderChipId} reached target (sent=${senderProgress.sent}, target=${session.messagesPerChip / 2})`)
     return { processed: false, delayMs: 3000, completed: false, reason: 'sender_target_reached' }
   }
 
@@ -917,6 +942,7 @@ export async function processNextWarmingMessage(
 
   if (!senderChip?.evolutionInstance || senderChip.status !== 'connected') {
     // Sender is not connected — update progress and try next tick
+    console.log(`[WarmingEngine] Session "${session.name}" sender ${senderChip?.name || senderChipId} not connected (status=${senderChip?.status}, instance=${senderChip?.evolutionInstance || 'none'})`)
     await db.warmingSession.update({
       where: { id: sessionId },
       data: { lastError: `Chip remetente ${senderChip?.name || senderChipId} desconectado` },
@@ -955,7 +981,18 @@ export async function processNextWarmingMessage(
   }
 
   if (!recipientChip?.phoneNumber) {
+    console.log(`[WarmingEngine] Session "${session.name}" recipient ${recipientChip?.name || recipientChipId} has no phone number`)
     return { processed: false, delayMs: 3000, completed: false, reason: 'recipient_no_phone' }
+  }
+
+  // Validate phone number format — skip chips with invalid/auto-generated numbers
+  if (!isValidPhoneNumber(recipientChip.phoneNumber)) {
+    console.log(`[WarmingEngine] Session "${session.name}" recipient ${recipientChip.name} has invalid phone number: "${recipientChip.phoneNumber}" — skipping`)
+    await db.warmingSession.update({
+      where: { id: sessionId },
+      data: { lastError: `Chip ${recipientChip.name} com telefone inválido: ${recipientChip.phoneNumber}` },
+    })
+    return { processed: false, delayMs: 3000, completed: false, reason: `recipient_invalid_phone_${recipientChip.name}` }
   }
 
   // Check minimum interval for this sender
@@ -968,6 +1005,7 @@ export async function processNextWarmingMessage(
 
     if (elapsed < minInterval) {
       const waitSeconds = Math.ceil(minInterval - elapsed)
+      console.log(`[WarmingEngine] Session "${session.name}" sender ${senderChip.name} min interval not reached (elapsed=${Math.round(elapsed)}s, need=${minInterval}s, wait=${waitSeconds}s)`)
       return {
         processed: false,
         delayMs: waitSeconds * 1000,
@@ -1031,7 +1069,6 @@ export async function processNextWarmingMessage(
         lastMessageAt: new Date(),
         chipProgress: JSON.stringify(chipProgress),
         lastPair: JSON.stringify({ lastSenderIdx: senderIdx, lastRecipientIdx: recipientIdx }),
-        lastError: null,
       },
     })
 
@@ -1061,14 +1098,15 @@ export async function processNextWarmingMessage(
     }
 
   } catch (error: any) {
-    console.error(`[WarmingEngine] Error sending message: ${error.message}`)
+    const errorMsg = error?.message || String(error)
+    console.error(`[WarmingEngine] Session "${session.name}" error sending message from ${senderChip?.name || senderChipId} to ${recipientChip?.name || recipientChipId}: ${errorMsg}`)
 
     await db.warmingSession.update({
       where: { id: sessionId },
       data: {
         errorCount: { increment: 1 },
         messagesFailed: { increment: 1 },
-        lastError: error.message?.substring(0, 500),
+        lastError: `Erro ao enviar de ${senderChip?.name || senderChipId} para ${recipientChip?.name || recipientChipId}: ${errorMsg}`.substring(0, 500),
       },
     })
 
