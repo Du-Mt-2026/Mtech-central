@@ -956,7 +956,12 @@ export async function processNextWarmingMessage(
   }
 
   // Try to select a valid sender→recipient pair.
-  // We try up to chipIds.length attempts, skipping invalid chips.
+  // CRITICAL FIX: Use validChipIds (not chipIds) for selectPair so invalid chips
+  // (disconnected, invalid phone) are NEVER in the selection pool. The old code
+  // used chipIds which included Artur (invalid phone), causing selectPair to
+  // repeatedly pick Artur as recipient, resulting in 0 messages sent.
+  //
+  // We map lastPair indices from chipIds space → validChipIds space for continuity.
   let senderChip: Awaited<ReturnType<typeof db.chip.findUnique>> = null
   let recipientChip: Awaited<ReturnType<typeof db.chip.findUnique>> = null
   let senderChipId = ''
@@ -968,34 +973,55 @@ export async function processNextWarmingMessage(
   // Load anti-ban settings once for all attempts
   const antiBanSettings = await loadAntiBanSettings()
 
-  for (let pairAttempt = 0; pairAttempt < chipIds.length; pairAttempt++) {
-    const [trySenderIdx, tryRecipientIdx] = selectPair(session.strategy, chipIds, {
-      lastSenderIdx: lastPair.lastSenderIdx + pairAttempt,
-      lastRecipientIdx: lastPair.lastRecipientIdx + pairAttempt,
+  // Map lastPair from chipIds indices to validChipIds indices
+  const validChipIdToIdx = new Map(validChipIds.map((id, i) => [id, i]))
+  const lastSenderChipId = lastPair.lastSenderIdx >= 0 && lastPair.lastSenderIdx < chipIds.length ? chipIds[lastPair.lastSenderIdx] : ''
+  const lastRecipientChipId = lastPair.lastRecipientIdx >= 0 && lastPair.lastRecipientIdx < chipIds.length ? chipIds[lastPair.lastRecipientIdx] : ''
+  const mappedLastSenderIdx = validChipIdToIdx.has(lastSenderChipId) ? validChipIdToIdx.get(lastSenderChipId)! : -1
+  const mappedLastRecipientIdx = validChipIdToIdx.has(lastRecipientChipId) ? validChipIdToIdx.get(lastRecipientChipId)! : -1
+
+  console.log(`[WarmingEngine] Session "${session.name}" pair selection: validChips=${validChipIds.length}, strategy=${session.strategy}, lastPair=(${lastPair.lastSenderIdx},${lastPair.lastRecipientIdx})→mapped(${mappedLastSenderIdx},${mappedLastRecipientIdx}), chipIds=[${chipIds.map((id, i) => { const c = chipMap.get(id); return `${i}:${c?.name || '?'}` }).join(',')}]`)
+
+  for (let pairAttempt = 0; pairAttempt < validChipIds.length; pairAttempt++) {
+    const [trySenderIdx, tryRecipientIdx] = selectPair(session.strategy, validChipIds, {
+      lastSenderIdx: mappedLastSenderIdx + pairAttempt,
+      lastRecipientIdx: mappedLastRecipientIdx + pairAttempt,
     }, chipProgress)
-    const trySenderChipId = chipIds[trySenderIdx]
-    const tryRecipientChipId = chipIds[tryRecipientIdx]
+    const trySenderChipId = validChipIds[trySenderIdx]
+    const tryRecipientChipId = validChipIds[tryRecipientIdx]
 
     // Must be different chips
-    if (trySenderChipId === tryRecipientChipId) continue
+    if (trySenderChipId === tryRecipientChipId) {
+      console.log(`[WarmingEngine] Session "${session.name}" attempt ${pairAttempt}: sender===recipient (${trySenderChipId}), skipping`)
+      continue
+    }
 
     const trySenderChip = chipMap.get(trySenderChipId) || null
     const tryRecipientChip = chipMap.get(tryRecipientChipId) || null
 
-    // Sender must be connected with instance
-    if (!trySenderChip?.evolutionInstance || trySenderChip.status !== 'connected') continue
+    // Sender must be connected with instance (should always pass since validChipIds filters this, but double-check)
+    if (!trySenderChip?.evolutionInstance || trySenderChip.status !== 'connected') {
+      console.log(`[WarmingEngine] Session "${session.name}" attempt ${pairAttempt}: sender ${trySenderChip?.name || trySenderChipId} not connected (status=${trySenderChip?.status}, instance=${trySenderChip?.evolutionInstance || 'none'}), skipping`)
+      continue
+    }
 
     // Sender must not have reached target
     const trySenderProgress = chipProgress[trySenderChipId] || { sent: 0, received: 0, lastSentAt: null, lastReceivedAt: null }
-    if (trySenderProgress.sent >= session.messagesPerChip / 2) continue
+    if (trySenderProgress.sent >= session.messagesPerChip / 2) {
+      console.log(`[WarmingEngine] Session "${session.name}" attempt ${pairAttempt}: sender ${trySenderChip.name} reached target (${trySenderProgress.sent}/${session.messagesPerChip / 2}), skipping`)
+      continue
+    }
 
     // Sender must not have hit daily limit
     const senderLimitInfo = await getChipEffectiveDailyLimit(trySenderChip, antiBanSettings)
-    if (senderLimitInfo.remaining <= 0) continue
+    if (senderLimitInfo.remaining <= 0) {
+      console.log(`[WarmingEngine] Session "${session.name}" attempt ${pairAttempt}: sender ${trySenderChip.name} hit daily limit (sent=${trySenderChip.sentToday}, limit=${senderLimitInfo.limit}, remaining=${senderLimitInfo.remaining}, phase=${senderLimitInfo.phase}, day=${senderLimitInfo.dayInPhase}), skipping`)
+      continue
+    }
 
-    // Recipient must have valid phone number
+    // Recipient phone validation (should always pass since validChipIds filters this, but double-check)
     if (!tryRecipientChip?.phoneNumber || !isValidPhoneNumber(tryRecipientChip.phoneNumber)) {
-      console.log(`[WarmingEngine] Session "${session.name}" skipping recipient ${tryRecipientChip?.name || tryRecipientChipId}: invalid phone (${tryRecipientChip?.phoneNumber || 'none'})`)
+      console.log(`[WarmingEngine] Session "${session.name}" attempt ${pairAttempt}: recipient ${tryRecipientChip?.name || tryRecipientChipId} invalid phone (${tryRecipientChip?.phoneNumber || 'none'}), skipping`)
       continue
     }
 
@@ -1004,9 +1030,11 @@ export async function processNextWarmingMessage(
     recipientChip = tryRecipientChip
     senderChipId = trySenderChipId
     recipientChipId = tryRecipientChipId
-    senderIdx = trySenderIdx
-    recipientIdx = tryRecipientIdx
+    // Map back to chipIds indices for lastPair storage in DB
+    senderIdx = chipIds.indexOf(trySenderChipId)
+    recipientIdx = chipIds.indexOf(tryRecipientChipId)
     senderProgress = trySenderProgress
+    console.log(`[WarmingEngine] Session "${session.name}" found valid pair: ${trySenderChip.name} → ${tryRecipientChip.name} (attempt ${pairAttempt})`)
     break
   }
 
