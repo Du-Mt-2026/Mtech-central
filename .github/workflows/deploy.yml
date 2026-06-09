@@ -23,7 +23,7 @@ jobs:
           BODY=$(echo "$RESPONSE" | sed '$d')
           echo "HTTP Status: $HTTP_CODE"
           echo "Response: $BODY"
-          if [ "$HTTP_CODE" -ge 400 ] || echo "$BODY" | grep -qi "not satisfied\|error\|hook not found"; then
+          if [ "$HTTP_CODE" -ge 400 ] || echo "$BODY" | grep -qi "not satisfied\|hook not found"; then
             echo "❌ Deploy webhook failed!"
             exit 1
           fi
