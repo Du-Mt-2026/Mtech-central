@@ -1,46 +1,38 @@
 #!/bin/bash
-# Deploy Hook Script — runs inside the app container
-# Uses Docker socket to run the rebuild in a SEPARATE container
-# so the rebuild survives when this app container is killed.
-set -e
+# Deploy Hook - downloads code from GitHub and rebuilds
+# Does NOT depend on git authentication
 
 LOG_FILE="/opt/octupuszap/deploy-log.txt"
 PROJECT_DIR="/opt/octupuszap"
+GITHUB_REPO="Du-Mt-26/Mtech-central"
 
 log() {
   echo "$(date '+%Y-%m-%d %H:%M:%S') $1" | tee -a "$LOG_FILE"
 }
 
 log "=== Deploy Hook Started ==="
-
-# Step 1: Pull latest code
-log "Pulling latest code..."
 cd "$PROJECT_DIR"
 
-# Try git first
+# Try git first (fast path)
+log "Trying git pull..."
 if git fetch origin main 2>/dev/null && git reset --hard origin/main 2>/dev/null; then
   log "Git pull succeeded"
 else
-  log "Git pull failed, trying GitHub tarball..."
-  # Try downloading from GitHub using the token from env
-  if [ -n "$GITHUB_TOKEN" ]; then
-    curl -sL -H "Authorization: token $GITHUB_TOKEN" \
-      "https://api.github.com/repos/Du-Mt-26/Mtech-central/tarball/main" \
-      | tar xz --strip-components=1
+  log "Git pull failed, downloading from GitHub..."
+  # Download latest code as tarball (public repo, no auth needed)
+  curl -sL "https://github.com/${GITHUB_REPO}/archive/refs/heads/main.tar.gz" | tar xz --strip-components=1
+  if [ $? -eq 0 ]; then
     log "GitHub tarball download succeeded"
   else
-    log "ERROR: Git pull failed and no GITHUB_TOKEN env var set"
+    log "ERROR: Failed to download code"
     exit 1
   fi
 fi
 
-# Step 2: Run the rebuild in a separate Docker container
-# This is the KEY: we use `docker run` to start a completely independent
-# container that runs the rebuild. When `docker compose up -d app` 
-# restarts this app container, the rebuild container is unaffected.
+# Run rebuild in a separate container so it survives app restart
 log "Starting rebuild in separate container..."
 
-# Write the rebuild script
+# Write rebuild script
 cat > "$PROJECT_DIR/.rebuild.sh" << 'REBUILD'
 #!/bin/sh
 set -e
@@ -48,25 +40,23 @@ echo "=== Rebuild Started at $(date) ===" >> /opt/octupuszap/deploy-log.txt
 cd /opt/octupuszap
 echo "Building Docker image..." >> /opt/octupuszap/deploy-log.txt
 docker compose build app 2>&1 >> /opt/octupuszap/deploy-log.txt
+echo "Running migrations..." >> /opt/octupuszap/deploy-log.txt
+docker compose run --rm migrate 2>/dev/null >> /opt/octupuszap/deploy-log.txt || true
 echo "Restarting app container..." >> /opt/octupuszap/deploy-log.txt
 docker compose up -d app 2>&1 >> /opt/octupuszap/deploy-log.txt
 echo "=== Rebuild Completed at $(date) ===" >> /opt/octupuszap/deploy-log.txt
 REBUILD
 chmod +x "$PROJECT_DIR/.rebuild.sh"
 
-# Run rebuild in a separate container using the docker:cli image
-# --pid=host: process runs in host PID namespace (not affected by container restart)
-# -v mounts: same access to project dir and docker socket
+# Run in separate Docker container (survives app container restart)
 docker run --rm -d \
   --name deploy-rebuild \
-  --pid=host \
   -v /opt/octupuszap:/opt/octupuszap \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -w /opt/octupuszap \
-  docker:cli \
-  sh /opt/octupuszap/.rebuild.sh 2>/dev/null || {
-  # Fallback: try nohup if docker run fails
-  log "Docker run failed, trying nohup fallback..."
+  docker:cli sh /opt/octupuszap/.rebuild.sh 2>/dev/null || {
+  # Fallback to nohup
+  log "Separate container failed, using nohup fallback..."
   nohup sh "$PROJECT_DIR/.rebuild.sh" >> "$LOG_FILE" 2>&1 < /dev/null &
 }
 
