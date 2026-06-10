@@ -78,6 +78,9 @@ export async function POST(
     // Build assignment plan based on contactLimit
     const chips = campaign.chips.map(cc => cc.chip).filter(c => c.evolutionInstance)
 
+    // Build chipMap early — used for capacity-based sorting
+    const chipMap = new Map(chips.map(c => [c.id, c]))
+
     // Re-read the updated CampaignChip records (no include needed — we only need chipId + contactLimit)
     const updatedCampaignChips = await db.campaignChip.findMany({
       where: { campaignId },
@@ -98,18 +101,53 @@ export async function POST(
       }
     }
 
-    // Auto chips get equal share of remaining
-    const remainingContacts = Math.max(0, pendingMessages.length - fixedTotal)
-    const autoLimitPerChip = chipsWithAutoLimit.length > 0
-      ? Math.ceil(remainingContacts / chipsWithAutoLimit.length)
-      : 0
-    for (const chipId of chipsWithAutoLimit) {
-      chipLimits.set(chipId, autoLimitPerChip)
+    // If fixedTotal exceeds pending messages, scale down proportionally
+    // prioritizing chips with more remaining daily capacity
+    if (fixedTotal > pendingMessages.length && fixedTotal > 0) {
+      const scaleFactor = pendingMessages.length / fixedTotal
+      let distributed = 0
+      const sortedChipIdsWithLimits = [...chipLimits.keys()].sort((a, b) => {
+        const chipA = chipMap.get(a)
+        const chipB = chipMap.get(b)
+        const capA = chipA ? (chipA.dailyLimit || 200) - (chipA.sentToday || 0) : 0
+        const capB = chipB ? (chipB.dailyLimit || 200) - (chipB.sentToday || 0) : 0
+        if (capA !== capB) return capB - capA
+        return Math.random() > 0.5 ? 1 : -1
+      })
+      for (const chipId of sortedChipIdsWithLimits) {
+        const scaledLimit = Math.floor((chipLimits.get(chipId) || 0) * scaleFactor)
+        chipLimits.set(chipId, scaledLimit)
+        distributed += scaledLimit
+      }
+      const remainder = pendingMessages.length - distributed
+      for (let i = 0; i < remainder; i++) {
+        const chipId = sortedChipIdsWithLimits[i % sortedChipIdsWithLimits.length]
+        chipLimits.set(chipId, (chipLimits.get(chipId) || 0) + 1)
+      }
+      fixedTotal = pendingMessages.length
     }
 
-    // Build assignment plan — use chipMap from the earlier campaign fetch
-    // (avoids Turbopack type inference issue with Prisma include on findMany)
-    const chipMap = new Map(chips.map(c => [c.id, c]))
+    // Auto chips get equal share of remaining, with extra going to higher-capacity chips
+    const remainingContacts = Math.max(0, pendingMessages.length - fixedTotal)
+    if (chipsWithAutoLimit.length > 0 && remainingContacts > 0) {
+      const basePerChip = Math.floor(remainingContacts / chipsWithAutoLimit.length)
+      let extra = remainingContacts - basePerChip * chipsWithAutoLimit.length
+      const sortedAutoChips = [...chipsWithAutoLimit].sort((a, b) => {
+        const chipA = chipMap.get(a)
+        const chipB = chipMap.get(b)
+        const capA = chipA ? (chipA.dailyLimit || 200) - (chipA.sentToday || 0) : 0
+        const capB = chipB ? (chipB.dailyLimit || 200) - (chipB.sentToday || 0) : 0
+        if (capA !== capB) return capB - capA
+        return Math.random() > 0.5 ? 1 : -1
+      })
+      for (const chipId of sortedAutoChips) {
+        const limit = basePerChip + (extra > 0 ? 1 : 0)
+        chipLimits.set(chipId, limit)
+        if (extra > 0) extra--
+      }
+    }
+
+    // Build assignment plan — use chipMap for evolution instance check
     const assignmentPlan: { chipId: string; count: number }[] = []
     for (const cc of updatedCampaignChips) {
       const chip = chipMap.get(cc.chipId)
@@ -130,11 +168,18 @@ export async function POST(
         contactIdx++
       }
     }
-    // Remaining contacts via round-robin
-    while (contactIdx < pendingMessages.length) {
-      const chip = chips[contactIdx % chips.length]
-      contactChipAssignments.push(chip.id)
-      contactIdx++
+    // Remaining contacts: assign to chips with most remaining capacity
+    if (contactIdx < pendingMessages.length) {
+      const chipsByCapacity = [...chips].sort((a, b) => {
+        const capA = (a.dailyLimit || 200) - (a.sentToday || 0)
+        const capB = (b.dailyLimit || 200) - (b.sentToday || 0)
+        if (capA !== capB) return capB - capA
+        return Math.random() > 0.5 ? 1 : -1
+      })
+      while (contactIdx < pendingMessages.length) {
+        contactChipAssignments.push(chipsByCapacity[contactIdx % chipsByCapacity.length].id)
+        contactIdx++
+      }
     }
 
     // Group pending messages by contactId to reassign ALL steps for a contact together

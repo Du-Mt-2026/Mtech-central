@@ -1658,6 +1658,9 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
   // Build chip assignment list respecting contactLimit from CampaignChip
   // If a chip has contactLimit set (>0), it will be assigned exactly that many contacts.
   // If contactLimit is null/0, it gets an equal share of the remaining contacts.
+  // When the total exceeds the number of contacts, we scale down proportionally,
+  // and when there's a remainder from rounding, we prioritize chips with more
+  // remaining daily capacity (and random tie-breaking).
   const chipLimits = new Map<string, number>() // chipId → max contacts
   let fixedTotal = 0 // total contacts already allocated by explicit limits
   const chipsWithAutoLimit: string[] = [] // chips without explicit limit
@@ -1673,11 +1676,52 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
     }
   }
 
+  // If fixedTotal exceeds total contacts, scale down proportionally
+  if (fixedTotal > contacts.length && fixedTotal > 0) {
+    const scaleFactor = contacts.length / fixedTotal
+    let distributed = 0
+    // Sort chip IDs with explicit limits: chips with more remaining capacity get priority
+    const sortedChipIdsWithLimits = [...chipLimits.keys()].sort((a, b) => {
+      const chipA = chips.find(c => c.id === a)
+      const chipB = chips.find(c => c.id === b)
+      const capA = chipA ? (chipA.dailyLimit || 200) - (chipA.sentToday || 0) : 0
+      const capB = chipB ? (chipB.dailyLimit || 200) - (chipB.sentToday || 0) : 0
+      if (capA !== capB) return capB - capA // higher capacity first
+      return Math.random() > 0.5 ? 1 : -1 // random tie-breaker
+    })
+    for (const chipId of sortedChipIdsWithLimits) {
+      const scaledLimit = Math.floor((chipLimits.get(chipId) || 0) * scaleFactor)
+      chipLimits.set(chipId, scaledLimit)
+      distributed += scaledLimit
+    }
+    // Distribute remaining contacts (from rounding) to chips with most capacity
+    const remainder = contacts.length - distributed
+    for (let i = 0; i < remainder; i++) {
+      const chipId = sortedChipIdsWithLimits[i % sortedChipIdsWithLimits.length]
+      chipLimits.set(chipId, (chipLimits.get(chipId) || 0) + 1)
+    }
+    fixedTotal = contacts.length
+  }
+
   // For auto chips: distribute remaining contacts equally
   const remainingContacts = Math.max(0, contacts.length - fixedTotal)
-  const autoLimitPerChip = chipsWithAutoLimit.length > 0 ? Math.ceil(remainingContacts / chipsWithAutoLimit.length) : 0
-  for (const chipId of chipsWithAutoLimit) {
-    chipLimits.set(chipId, autoLimitPerChip)
+  if (chipsWithAutoLimit.length > 0 && remainingContacts > 0) {
+    const basePerChip = Math.floor(remainingContacts / chipsWithAutoLimit.length)
+    let extra = remainingContacts - basePerChip * chipsWithAutoLimit.length
+    // Sort auto chips by remaining capacity (higher capacity gets extra contacts)
+    const sortedAutoChips = [...chipsWithAutoLimit].sort((a, b) => {
+      const chipA = chips.find(c => c.id === a)
+      const chipB = chips.find(c => c.id === b)
+      const capA = chipA ? (chipA.dailyLimit || 200) - (chipA.sentToday || 0) : 0
+      const capB = chipB ? (chipB.dailyLimit || 200) - (chipB.sentToday || 0) : 0
+      if (capA !== capB) return capB - capA
+      return Math.random() > 0.5 ? 1 : -1
+    })
+    for (const chipId of sortedAutoChips) {
+      const limit = basePerChip + (extra > 0 ? 1 : 0)
+      chipLimits.set(chipId, limit)
+      if (extra > 0) extra--
+    }
   }
 
   // Build assignment plan: list of { chipId, count } in order
@@ -1702,11 +1746,18 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
       contactIdx++
     }
   }
-  // If there are remaining contacts (due to rounding), assign via round-robin
-  while (contactIdx < contacts.length) {
-    const chip = chips[contactIdx % chips.length]
-    contactChipAssignments.push(chip.id)
-    contactIdx++
+  // If there are remaining contacts (due to rounding), assign to chips with most capacity
+  if (contactIdx < contacts.length) {
+    const chipsByCapacity = [...chips].sort((a, b) => {
+      const capA = (a.dailyLimit || 200) - (a.sentToday || 0)
+      const capB = (b.dailyLimit || 200) - (b.sentToday || 0)
+      if (capA !== capB) return capB - capA
+      return Math.random() > 0.5 ? 1 : -1
+    })
+    while (contactIdx < contacts.length) {
+      contactChipAssignments.push(chipsByCapacity[contactIdx % chipsByCapacity.length].id)
+      contactIdx++
+    }
   }
 
   console.log(`[SendingEngine] Campaign ${campaignId}: distribution plan = ${assignmentPlan.map(p => `${p.chipId.substring(0,8)}:${p.count}`).join(', ')}, total contacts = ${contacts.length}`)

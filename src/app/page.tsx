@@ -4848,12 +4848,18 @@ function CampanhasTab() {
                       const distValue = newCampaign.chipDistribution[chip.id] || 0
                       // Max for this chip = min(chipCapacity, totalContacts or chipCapacity)
                       const maxForChip = totalContacts > 0 ? Math.min(chipCapacity, totalContacts) : chipCapacity
+                      // Calculate what other chips have already allocated
+                      const otherChipsTotal = Object.entries(newCampaign.chipDistribution)
+                        .filter(([id]) => id !== chip.id && newCampaign.chipIds.includes(id))
+                        .reduce((sum, [, v]) => sum + (v || 0), 0)
+                      // Effective max for this chip: can't exceed totalContacts minus what others already have
+                      const effectiveMaxForChip = totalContacts > 0 ? Math.min(maxForChip, Math.max(0, totalContacts - otherChipsTotal)) : maxForChip
                       // Percentage representation
                       const distPct = totalContacts > 0 && distValue > 0 ? Math.round(distValue / totalContacts * 100) : 0
-                      const maxPct = totalContacts > 0 ? Math.round(maxForChip / totalContacts * 100) : 100
+                      const maxPct = totalContacts > 0 ? Math.round(effectiveMaxForChip / totalContacts * 100) : 100
                       // Slider value and max depend on mode
                       const sliderValue = distMode === 'percentage' ? distPct : distValue
-                      const sliderMax = distMode === 'percentage' ? maxPct : maxForChip
+                      const sliderMax = distMode === 'percentage' ? maxPct : effectiveMaxForChip
 
                       return (
                         <div key={chip.id}>
@@ -4880,14 +4886,15 @@ function CampanhasTab() {
                                   <input
                                     type="number"
                                     min={0}
-                                    max={distMode === 'percentage' ? maxPct : maxForChip}
+                                    max={distMode === 'percentage' ? maxPct : effectiveMaxForChip}
                                     value={distMode === 'percentage' ? distPct || '' : distValue || ''}
                                     onChange={e => {
                                       const rawVal = parseInt(e.target.value, 10) || 0
                                       // Convert back to absolute number if in percentage mode
+                                      // Clamp to effectiveMaxForChip to prevent exceeding total contacts
                                       const absVal = distMode === 'percentage'
-                                        ? Math.min(Math.round(rawVal / 100 * totalContacts), maxForChip)
-                                        : Math.min(rawVal, maxForChip)
+                                        ? Math.min(Math.round(rawVal / 100 * totalContacts), effectiveMaxForChip)
+                                        : Math.min(rawVal, effectiveMaxForChip)
                                       setNewCampaign(prev => ({
                                         ...prev,
                                         chipDistribution: { ...prev.chipDistribution, [chip.id]: absVal },
@@ -4907,9 +4914,10 @@ function CampanhasTab() {
                                 onChange={e => {
                                   const rawVal = parseInt(e.target.value, 10)
                                   // Convert back to absolute number if in percentage mode
+                                  // Clamp to effectiveMaxForChip to prevent exceeding total contacts
                                   const absVal = distMode === 'percentage'
-                                    ? Math.round(rawVal / 100 * totalContacts)
-                                    : rawVal
+                                    ? Math.min(Math.round(rawVal / 100 * totalContacts), effectiveMaxForChip)
+                                    : Math.min(rawVal, effectiveMaxForChip)
                                   setNewCampaign(prev => ({
                                     ...prev,
                                     chipDistribution: { ...prev.chipDistribution, [chip.id]: absVal },
@@ -4919,7 +4927,7 @@ function CampanhasTab() {
                               />
                               <div className="flex justify-between text-[9px] text-muted-foreground">
                                 <span>Auto (igualitário)</span>
-                                <span>Máx: {distMode === 'percentage' ? `${maxPct}%` : maxForChip}</span>
+                                <span>Máx: {distMode === 'percentage' ? `${maxPct}%` : effectiveMaxForChip}</span>
                               </div>
                             </div>
                           )}
@@ -5990,11 +5998,16 @@ function CampanhasTab() {
                 const pendingCount = selectedCampaign?.messageStatusCounts?.pending || 0
                 const chipCapacity = Math.max(0, (chip.dailyLimit || 200) - (chip.sentToday || 0))
                 const maxForChip = pendingCount > 0 ? Math.min(chipCapacity, pendingCount) : chipCapacity
+                // Calculate what other chips have already allocated
+                const otherChipsTotal = Object.entries(redistributeDistribution)
+                  .filter(([id]) => id !== cc.chipId)
+                  .reduce((sum, [, v]) => sum + (v || 0), 0)
+                const effectiveMaxForChip = pendingCount > 0 ? Math.min(maxForChip, Math.max(0, pendingCount - otherChipsTotal)) : maxForChip
                 const distValue = redistributeDistribution[cc.chipId] || 0
                 const distPct = pendingCount > 0 && distValue > 0 ? Math.round(distValue / pendingCount * 100) : 0
-                const maxPct = pendingCount > 0 ? Math.round(maxForChip / pendingCount * 100) : 100
+                const maxPct = pendingCount > 0 ? Math.round(effectiveMaxForChip / pendingCount * 100) : 100
                 const sliderValue = distMode === 'percentage' ? distPct : distValue
-                const sliderMax = distMode === 'percentage' ? maxPct : maxForChip
+                const sliderMax = distMode === 'percentage' ? maxPct : effectiveMaxForChip
 
                 return (
                   <div key={cc.chipId} className="space-y-1.5 p-3 bg-muted/30 rounded-lg">
@@ -6030,15 +6043,15 @@ function CampanhasTab() {
                       onChange={e => {
                         const rawVal = parseInt(e.target.value, 10)
                         const absVal = distMode === 'percentage'
-                          ? Math.round(rawVal / 100 * pendingCount)
-                          : rawVal
+                          ? Math.min(Math.round(rawVal / 100 * pendingCount), effectiveMaxForChip)
+                          : Math.min(rawVal, effectiveMaxForChip)
                         setRedistributeDistribution(prev => ({ ...prev, [cc.chipId]: absVal }))
                       }}
                       className="w-full h-2 bg-muted rounded-lg appearance-none cursor-pointer accent-emerald-500"
                     />
                     <div className="flex justify-between text-[10px] text-muted-foreground">
                       <span>Auto (igualitário)</span>
-                      <span>{distMode === 'percentage' ? `${maxPct}%` : `${maxForChip} contatos`}</span>
+                      <span>{distMode === 'percentage' ? `${maxPct}%` : `${effectiveMaxForChip} contatos`}</span>
                     </div>
                   </div>
                 )
