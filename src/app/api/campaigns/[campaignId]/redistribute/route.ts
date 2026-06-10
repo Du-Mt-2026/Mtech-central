@@ -81,6 +81,7 @@ export async function POST(
     // Re-read the updated CampaignChip records
     const updatedCampaignChips = await db.campaignChip.findMany({
       where: { campaignId },
+      include: { chip: true },
     })
 
     const chipLimits = new Map<string, number>()

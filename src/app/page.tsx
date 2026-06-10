@@ -209,7 +209,7 @@ interface Campaign {
   warmingMode: string
   statusReason?: string | null
   pausedAt?: string | null
-  chips: { id: string; chipId: string; chip: Chip }[]
+  chips: { id: string; chipId: string; contactLimit?: number | null; chip: Chip }[]
   sequenceSteps: SequenceStep[]
   contactList: { id: string; name: string } | null
   _count?: { messages: number }
@@ -3922,6 +3922,7 @@ function CampanhasTab() {
     chipIds: [] as string[], contactListId: '', scheduledAt: '',
     steps: [{ content: '', delayMinutes: 0, delayUnit: 'minutes' as const, mediaFile: null as File | null, mediaUrl: '', mediatype: '', audioMode: 'whatsapp' as const, caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '', variations: [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '', audioMode: 'whatsapp' as const, caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '' }] }] as StepForm[],
     antiBanEnabled: true, warmingMode: 'normal',
+    chipDistribution: {} as Record<string, number>, // chipId → contactLimit (0 = auto)
   })
 
   const [newCampaign, setNewCampaign] = useState({
@@ -4655,6 +4656,7 @@ function CampanhasTab() {
         steps: stepsPayload,
         antiBanEnabled: editForm.antiBanEnabled,
         warmingMode: editForm.warmingMode,
+        chipDistribution: editForm.chipDistribution,
       }
       console.log('[saveEdit] Saving campaign:', { name: payload.name, stepsCount: stepsPayload.length, campaignId: selectedCampaign.id })
       const res = await fetch(`/api/campaigns/${selectedCampaign.id}`, {
@@ -4663,7 +4665,26 @@ function CampanhasTab() {
         body: JSON.stringify(payload),
       })
       if (!res.ok) { const data = await res.json(); throw new Error(data.error || 'Erro ao atualizar campanha') }
-      toast.success('Campanha atualizada com sucesso!')
+      // Auto-redistribute if campaign is paused/draft and has chipDistribution changes
+      if (['paused', 'draft'].includes(selectedCampaign.status) && Object.values(editForm.chipDistribution).some(v => (v || 0) > 0)) {
+        try {
+          const redistRes = await fetch(`/api/campaigns/${selectedCampaign.id}/redistribute`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chipDistribution: editForm.chipDistribution }),
+          })
+          const redistData = await redistRes.json()
+          if (redistRes.ok && redistData.redistributed > 0) {
+            toast.success(`Campanha atualizada! ${redistData.redistributed} mensagens redistribuídas.`)
+          } else {
+            toast.success('Campanha atualizada com sucesso!')
+          }
+        } catch {
+          toast.success('Campanha atualizada com sucesso! (redistribuição automática falhou)')
+        }
+      } else {
+        toast.success('Campanha atualizada com sucesso!')
+      }
       setEditing(false)
       fetchCampaigns()
       // Refresh selected campaign
@@ -4679,10 +4700,15 @@ function CampanhasTab() {
   }
 
   const editToggleChip = (chipId: string) => {
-    setEditForm(prev => ({
-      ...prev,
-      chipIds: prev.chipIds.includes(chipId) ? prev.chipIds.filter(id => id !== chipId) : [...prev.chipIds, chipId],
-    }))
+    setEditForm(prev => {
+      const isRemoving = prev.chipIds.includes(chipId)
+      const newChipIds = isRemoving ? prev.chipIds.filter(id => id !== chipId) : [...prev.chipIds, chipId]
+      const newDistribution = { ...prev.chipDistribution }
+      if (isRemoving) {
+        delete newDistribution[chipId]
+      }
+      return { ...prev, chipIds: newChipIds, chipDistribution: newDistribution }
+    })
   }
   const editAddStep = () => setEditForm(prev => ({ ...prev, steps: [...prev.steps, { content: '', delayMinutes: 60, delayUnit: 'minutes' as const, mediaFile: null, mediaUrl: '', mediatype: '', audioMode: 'whatsapp' as const, caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '', variations: [{ content: '', mediaFile: null as File | null, mediaUrl: '', mediatype: '', audioMode: 'whatsapp' as const, caption: '', linkUrl: '', linkPreview: true, contactName: '', contactPhone: '', locationLat: '', locationLng: '', locationName: '' }] }] }))
   const editRemoveStep = (idx: number) => setEditForm(prev => ({ ...prev, steps: prev.steps.filter((_, i) => i !== idx) }))
@@ -4795,26 +4821,20 @@ function CampanhasTab() {
                 </div>
 
                 {/* Chips for Sending */}
-                <div className="space-y-1">
+                <div className="space-y-2">
                   <Label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1"><Smartphone className="size-3" /> Chips para envio</Label>
-                  {/* Distribution mode toggle — only when multiple chips selected */}
-                  {newCampaign.chipIds.length > 1 && (() => {
-                    const totalContacts = (() => {
-                      const list = availableLists.find((l: any) => l.id === newCampaign.contactListId)
-                      return list?._count?.contacts || list?.contactsCount || 0
-                    })()
-                    return totalContacts > 0 ? (
-                      <div className="flex items-center gap-1 p-1 bg-muted/40 rounded-md">
-                        <button type="button" onClick={() => setDistMode('absolute')} className={`flex-1 text-[10px] py-0.5 rounded transition-all ${distMode === 'absolute' ? 'bg-emerald-500 text-white font-medium' : 'text-muted-foreground hover:text-foreground'}`}>
-                          Número
-                        </button>
-                        <button type="button" onClick={() => setDistMode('percentage')} className={`flex-1 text-[10px] py-0.5 rounded transition-all ${distMode === 'percentage' ? 'bg-emerald-500 text-white font-medium' : 'text-muted-foreground hover:text-foreground'}`}>
-                          Porcentagem %
-                        </button>
-                      </div>
-                    ) : null
-                  })()}
-                  <div className="space-y-1 max-h-[350px] overflow-y-auto">
+                  {/* Distribution mode toggle — show when multiple chips selected */}
+                  {newCampaign.chipIds.length > 1 && (
+                    <div className="flex items-center gap-1 p-1 bg-muted/40 rounded-md">
+                      <button type="button" onClick={() => setDistMode('absolute')} className={`flex-1 text-[10px] py-0.5 rounded transition-all ${distMode === 'absolute' ? 'bg-emerald-500 text-white font-medium' : 'text-muted-foreground hover:text-foreground'}`}>
+                        Número
+                      </button>
+                      <button type="button" onClick={() => setDistMode('percentage')} className={`flex-1 text-[10px] py-0.5 rounded transition-all ${distMode === 'percentage' ? 'bg-emerald-500 text-white font-medium' : 'text-muted-foreground hover:text-foreground'}`}>
+                        Porcentagem %
+                      </button>
+                    </div>
+                  )}
+                  <div className="space-y-1.5 max-h-[400px] overflow-y-auto pr-1">
                     {availableChips.map(chip => {
                       const isSelected = newCampaign.chipIds.includes(chip.id)
                       // Calculate chip capacity: daily limit minus already sent today
@@ -4822,11 +4842,11 @@ function CampanhasTab() {
                       // Get total contacts in selected list
                       const totalContacts = (() => {
                         const list = availableLists.find((l: any) => l.id === newCampaign.contactListId)
-                        return list?._count?.contacts || list?.contactsCount || 0
+                        return list?._count?.contacts || 0
                       })()
                       // Current distribution value for this chip (absolute number)
                       const distValue = newCampaign.chipDistribution[chip.id] || 0
-                      // Max for this chip = min(chipCapacity, totalContacts)
+                      // Max for this chip = min(chipCapacity, totalContacts or chipCapacity)
                       const maxForChip = totalContacts > 0 ? Math.min(chipCapacity, totalContacts) : chipCapacity
                       // Percentage representation
                       const distPct = totalContacts > 0 && distValue > 0 ? Math.round(distValue / totalContacts * 100) : 0
@@ -4837,32 +4857,47 @@ function CampanhasTab() {
 
                       return (
                         <div key={chip.id}>
-                          <div onClick={() => toggleChip(chip.id)} className={`flex items-center gap-2 p-1.5 rounded-md border cursor-pointer transition-all text-sm ${isSelected ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20' : 'hover:bg-muted/50'}`}>
-                            <div className={`size-4 rounded border-2 flex items-center justify-center shrink-0 ${isSelected ? 'bg-emerald-500 border-emerald-500' : 'border-muted-foreground'}`}>
-                              {isSelected && <Check className="size-3 text-white" />}
+                          <div onClick={() => toggleChip(chip.id)} className={`flex items-center gap-2 p-2 rounded-lg border cursor-pointer transition-all text-sm ${isSelected ? 'border-emerald-500/60 bg-emerald-50 dark:bg-emerald-900/20 shadow-sm' : 'hover:bg-muted/50 border-transparent'}`}>
+                            <div className={`size-5 rounded border-2 flex items-center justify-center shrink-0 transition-all ${isSelected ? 'bg-emerald-500 border-emerald-500' : 'border-muted-foreground/40'}`}>
+                              {isSelected && <Check className="size-3.5 text-white" />}
                             </div>
                             <div className="min-w-0 flex-1">
-                              <p className="text-xs font-medium truncate">{chip.name}</p>
-                              <p className="text-[10px] text-muted-foreground">{chip.phoneNumber} · Capacidade: {chipCapacity}/dia</p>
+                              <p className={`text-xs font-medium truncate ${isSelected ? 'text-emerald-700 dark:text-emerald-300' : ''}`}>{chip.name}</p>
+                              <p className="text-[10px] text-muted-foreground">{chip.phoneNumber} · <span className="text-emerald-600 font-medium">{chipCapacity}</span> restantes/dia</p>
                             </div>
                             {isSelected && chip.warmingPhase && chip.warmingPhase !== 'ready' && (
-                              <span className="text-[9px] px-1 py-0.5 rounded bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
+                              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 whitespace-nowrap">
                                 {chip.warmingPhase === 'nursery' ? 'Berçário' : 'Pré-aquec.'}
                               </span>
                             )}
                           </div>
-                          {/* Distribution slider — only shown when chip is selected AND there are other chips selected */}
+                          {/* Distribution slider — shown when chip is selected AND there are multiple chips selected */}
                           {isSelected && newCampaign.chipIds.length > 1 && (
-                            <div className="ml-6 mt-1 mb-1 px-2 py-1.5 bg-muted/30 rounded-md space-y-1" onClick={e => e.stopPropagation()}>
+                            <div className="ml-7 mt-1 mb-2 px-3 py-2 bg-muted/30 rounded-lg space-y-1.5 border border-muted/50" onClick={e => e.stopPropagation()}>
                               <div className="flex items-center justify-between">
-                                <span className="text-[10px] text-muted-foreground">Contatos para este chip</span>
-                                <span className="text-[10px] font-medium text-emerald-600">
-                                  {distValue > 0
-                                    ? (distMode === 'percentage'
-                                        ? `${distPct}% (${distValue} contatos)`
-                                        : `${distValue} (${distPct}%)`)
-                                    : 'Auto'}
-                                </span>
+                                <span className="text-[10px] text-muted-foreground font-medium">Distribuição</span>
+                                <div className="flex items-center gap-1.5">
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    max={distMode === 'percentage' ? maxPct : maxForChip}
+                                    value={distMode === 'percentage' ? distPct || '' : distValue || ''}
+                                    onChange={e => {
+                                      const rawVal = parseInt(e.target.value, 10) || 0
+                                      // Convert back to absolute number if in percentage mode
+                                      const absVal = distMode === 'percentage'
+                                        ? Math.min(Math.round(rawVal / 100 * totalContacts), maxForChip)
+                                        : Math.min(rawVal, maxForChip)
+                                      setNewCampaign(prev => ({
+                                        ...prev,
+                                        chipDistribution: { ...prev.chipDistribution, [chip.id]: absVal },
+                                      }))
+                                    }}
+                                    className="w-14 h-5 text-[10px] text-center bg-background border border-muted rounded px-1 focus:border-emerald-500 focus:outline-none"
+                                    placeholder="0"
+                                  />
+                                  <span className="text-[10px] text-muted-foreground">{distMode === 'percentage' ? '%' : 'contatos'}</span>
+                                </div>
                               </div>
                               <input
                                 type="range"
@@ -4883,8 +4918,8 @@ function CampanhasTab() {
                                 className="w-full h-1.5 bg-muted rounded-lg appearance-none cursor-pointer accent-emerald-500"
                               />
                               <div className="flex justify-between text-[9px] text-muted-foreground">
-                                <span>Auto</span>
-                                <span>{distMode === 'percentage' ? `${maxPct}%` : maxForChip}</span>
+                                <span>Auto (igualitário)</span>
+                                <span>Máx: {distMode === 'percentage' ? `${maxPct}%` : maxForChip}</span>
                               </div>
                             </div>
                           )}
@@ -4896,32 +4931,51 @@ function CampanhasTab() {
                   {newCampaign.chipIds.length > 1 && (() => {
                     const totalContacts = (() => {
                       const list = availableLists.find((l: any) => l.id === newCampaign.contactListId)
-                      return list?._count?.contacts || list?.contactsCount || 0
+                      return list?._count?.contacts || 0
                     })()
-                    if (totalContacts === 0) return null
                     const manualTotal = Object.values(newCampaign.chipDistribution).reduce((sum: number, v: any) => sum + (v || 0), 0)
                     const autoChips = newCampaign.chipIds.filter(id => !newCampaign.chipDistribution[id] || newCampaign.chipDistribution[id] === 0)
                     const remaining = totalContacts - manualTotal
+                    const exceedsTotal = totalContacts > 0 && manualTotal > totalContacts
+                    // Also check if any chip's distribution exceeds its capacity
+                    const exceedsCapacity = newCampaign.chipIds.some(chipId => {
+                      const chip = availableChips.find((c: any) => c.id === chipId)
+                      if (!chip) return false
+                      const chipCap = Math.max(0, (chip.dailyLimit || 200) - (chip.sentToday || 0))
+                      const dist = newCampaign.chipDistribution[chipId] || 0
+                      return dist > chipCap
+                    })
                     return (
-                      <div className="mt-1 p-1.5 bg-muted/30 rounded text-[10px] text-muted-foreground space-y-0.5">
-                        <div className="flex justify-between">
-                          <span>Total de contatos:</span>
-                          <span className="font-medium">{totalContacts}</span>
-                        </div>
-                        {manualTotal > 0 && (
-                          <div className="flex justify-between">
+                      <div className={`p-2 rounded-lg text-[10px] space-y-1 border ${exceedsTotal || exceedsCapacity ? 'bg-red-500/10 border-red-500/30' : 'bg-muted/30 border-muted/50'}`}>
+                        {totalContacts > 0 && (
+                          <div className="flex justify-between text-muted-foreground">
+                            <span>Total de contatos:</span>
+                            <span className="font-medium text-foreground">{totalContacts}</span>
+                          </div>
+                        )}
+                        {manualTotal > 0 && totalContacts > 0 && (
+                          <div className="flex justify-between text-muted-foreground">
                             <span>Alocados manualmente:</span>
-                            <span className="font-medium">{manualTotal} ({Math.round(manualTotal / totalContacts * 100)}%)</span>
+                            <span className={`font-medium ${exceedsTotal ? 'text-red-500' : 'text-emerald-600'}`}>{manualTotal} ({Math.round(manualTotal / totalContacts * 100)}%)</span>
                           </div>
                         )}
-                        {autoChips.length > 0 && remaining > 0 && (
-                          <div className="flex justify-between">
+                        {manualTotal > 0 && totalContacts === 0 && (
+                          <div className="flex justify-between text-muted-foreground">
+                            <span>Alocados manualmente:</span>
+                            <span className="font-medium text-emerald-600">{manualTotal}</span>
+                          </div>
+                        )}
+                        {autoChips.length > 0 && remaining > 0 && totalContacts > 0 && !exceedsTotal && (
+                          <div className="flex justify-between text-muted-foreground">
                             <span>Auto ({autoChips.length} chip{autoChips.length > 1 ? 's' : ''}, ~{Math.ceil(remaining / autoChips.length)} cada):</span>
-                            <span className="font-medium">{remaining}</span>
+                            <span className="font-medium text-foreground">{remaining}</span>
                           </div>
                         )}
-                        {manualTotal > totalContacts && (
-                          <p className="text-red-500 font-medium">⚠️ Total alocado excede contatos!</p>
+                        {exceedsTotal && (
+                          <p className="text-red-500 font-medium flex items-center gap-1"><AlertTriangle className="size-3" /> Total alocado excede contatos!</p>
+                        )}
+                        {exceedsCapacity && (
+                          <p className="text-red-500 font-medium flex items-center gap-1"><AlertTriangle className="size-3" /> Um ou mais chips excedem a capacidade!</p>
                         )}
                       </div>
                     )
@@ -5904,6 +5958,163 @@ function CampanhasTab() {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Redistribute Dialog — visual slider-based redistribution */}
+      <Dialog open={redistributeDialogOpen} onOpenChange={setRedistributeDialogOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ArrowRightLeft className="size-5 text-blue-600" />
+              Redistribuir Contatos
+            </DialogTitle>
+            <DialogDescription>
+              Ajuste a distribuição de {selectedCampaign?.messageStatusCounts?.pending || 0} mensagens pendentes entre os chips
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            {/* Mode toggle */}
+            <div className="flex items-center gap-1 p-1 bg-muted/40 rounded-md">
+              <button type="button" onClick={() => setDistMode('absolute')} className={`flex-1 text-xs py-1 rounded transition-all ${distMode === 'absolute' ? 'bg-emerald-500 text-white font-medium' : 'text-muted-foreground hover:text-foreground'}`}>
+                Número absoluto
+              </button>
+              <button type="button" onClick={() => setDistMode('percentage')} className={`flex-1 text-xs py-1 rounded transition-all ${distMode === 'percentage' ? 'bg-emerald-500 text-white font-medium' : 'text-muted-foreground hover:text-foreground'}`}>
+                Porcentagem %
+              </button>
+            </div>
+
+            {/* Chip sliders */}
+            <div className="space-y-3 max-h-[400px] overflow-y-auto">
+              {(selectedCampaign?.chips || []).map((cc: any) => {
+                const chip = cc.chip
+                if (!chip) return null
+                const pendingCount = selectedCampaign?.messageStatusCounts?.pending || 0
+                const chipCapacity = Math.max(0, (chip.dailyLimit || 200) - (chip.sentToday || 0))
+                const maxForChip = pendingCount > 0 ? Math.min(chipCapacity, pendingCount) : chipCapacity
+                const distValue = redistributeDistribution[cc.chipId] || 0
+                const distPct = pendingCount > 0 && distValue > 0 ? Math.round(distValue / pendingCount * 100) : 0
+                const maxPct = pendingCount > 0 ? Math.round(maxForChip / pendingCount * 100) : 100
+                const sliderValue = distMode === 'percentage' ? distPct : distValue
+                const sliderMax = distMode === 'percentage' ? maxPct : maxForChip
+
+                return (
+                  <div key={cc.chipId} className="space-y-1.5 p-3 bg-muted/30 rounded-lg">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Smartphone className="size-3.5 text-muted-foreground" />
+                        <div>
+                          <p className="text-sm font-medium">{chip.name}</p>
+                          <p className="text-[10px] text-muted-foreground">{chip.phoneNumber} · Capacidade: {chipCapacity}/dia</p>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-sm font-semibold text-emerald-600">
+                          {distValue > 0
+                            ? (distMode === 'percentage'
+                                ? `${distPct}%`
+                                : `${distValue}`)
+                            : 'Auto'}
+                        </span>
+                        {distValue > 0 && distMode === 'absolute' && pendingCount > 0 && (
+                          <p className="text-[10px] text-muted-foreground">{distPct}%</p>
+                        )}
+                        {distValue > 0 && distMode === 'percentage' && (
+                          <p className="text-[10px] text-muted-foreground">{distValue} contatos</p>
+                        )}
+                      </div>
+                    </div>
+                    <input
+                      type="range"
+                      min={0}
+                      max={sliderMax}
+                      value={sliderValue}
+                      onChange={e => {
+                        const rawVal = parseInt(e.target.value, 10)
+                        const absVal = distMode === 'percentage'
+                          ? Math.round(rawVal / 100 * pendingCount)
+                          : rawVal
+                        setRedistributeDistribution(prev => ({ ...prev, [cc.chipId]: absVal }))
+                      }}
+                      className="w-full h-2 bg-muted rounded-lg appearance-none cursor-pointer accent-emerald-500"
+                    />
+                    <div className="flex justify-between text-[10px] text-muted-foreground">
+                      <span>Auto (igualitário)</span>
+                      <span>{distMode === 'percentage' ? `${maxPct}%` : `${maxForChip} contatos`}</span>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+
+            {/* Summary */}
+            {(() => {
+              const pendingCount = selectedCampaign?.messageStatusCounts?.pending || 0
+              const manualTotal = Object.values(redistributeDistribution).reduce((sum: number, v: number) => sum + (v || 0), 0)
+              const autoChips = (selectedCampaign?.chips || []).filter((cc: any) => !redistributeDistribution[cc.chipId] || redistributeDistribution[cc.chipId] === 0)
+              const remaining = pendingCount - manualTotal
+              const exceedsTotal = manualTotal > pendingCount
+              return (
+                <div className="p-2.5 bg-muted/30 rounded-lg text-xs space-y-1">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Mensagens pendentes:</span>
+                    <span className="font-medium">{pendingCount}</span>
+                  </div>
+                  {manualTotal > 0 && (
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Alocados manualmente:</span>
+                      <span className={`font-medium ${exceedsTotal ? 'text-red-500' : ''}`}>{manualTotal} ({Math.round(manualTotal / pendingCount * 100)}%)</span>
+                    </div>
+                  )}
+                  {autoChips.length > 0 && remaining > 0 && !exceedsTotal && (
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Auto ({autoChips.length} chip{autoChips.length > 1 ? 's' : ''}, ~{Math.ceil(remaining / autoChips.length)} cada):</span>
+                      <span className="font-medium">{remaining}</span>
+                    </div>
+                  )}
+                  {exceedsTotal && (
+                    <p className="text-red-500 font-medium flex items-center gap-1"><AlertTriangle className="size-3" /> Total alocado excede mensagens pendentes!</p>
+                  )}
+                </div>
+              )
+            })()}
+          </div>
+          <DialogFooter className="gap-2">
+            <DialogClose asChild>
+              <Button variant="outline">Cancelar</Button>
+            </DialogClose>
+            <Button
+              className="bg-blue-600 hover:bg-blue-700 gap-1.5"
+              disabled={!!(() => {
+                const pendingCount = selectedCampaign?.messageStatusCounts?.pending || 0
+                const manualTotal = Object.values(redistributeDistribution).reduce((sum: number, v: number) => sum + (v || 0), 0)
+                return manualTotal > pendingCount
+              })()}
+              onClick={async () => {
+                if (!selectedCampaign) return
+                try {
+                  const res = await fetch(`/api/campaigns/${selectedCampaign.id}/redistribute`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ chipDistribution: redistributeDistribution }),
+                  })
+                  const data = await res.json()
+                  if (res.ok) {
+                    toast.success(data.message || 'Mensagens redistribuídas!')
+                    setRedistributeDialogOpen(false)
+                    // Refresh campaign data
+                    const campRes = await fetch(`/api/campaigns/${selectedCampaign.id}`, { cache: 'no-store' })
+                    if (campRes.ok) setSelectedCampaign(await campRes.json())
+                    fetchCampaigns()
+                  } else {
+                    toast.error(data.error || 'Erro ao redistribuir')
+                  }
+                } catch { toast.error('Erro ao redistribuir mensagens') }
+              }}
+            >
+              <ArrowRightLeft className="size-3.5" /> Redistribuir
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
@@ -6255,163 +6466,6 @@ function TemplatesTab() {
           <DialogFooter className="px-6 pb-6 pt-2 shrink-0 border-t">
             <DialogClose asChild><Button variant="outline">Cancelar</Button></DialogClose>
             <Button onClick={saveEditTemplate} disabled={!editForm.name || !editForm.content} className="bg-emerald-600 hover:bg-emerald-700">Salvar</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Redistribute Dialog — visual slider-based redistribution */}
-      <Dialog open={redistributeDialogOpen} onOpenChange={setRedistributeDialogOpen}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <ArrowRightLeft className="size-5 text-blue-600" />
-              Redistribuir Contatos
-            </DialogTitle>
-            <DialogDescription>
-              Ajuste a distribuição de {selectedCampaign?.messageStatusCounts?.pending || 0} mensagens pendentes entre os chips
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-2">
-            {/* Mode toggle */}
-            <div className="flex items-center gap-1 p-1 bg-muted/40 rounded-md">
-              <button type="button" onClick={() => setDistMode('absolute')} className={`flex-1 text-xs py-1 rounded transition-all ${distMode === 'absolute' ? 'bg-emerald-500 text-white font-medium' : 'text-muted-foreground hover:text-foreground'}`}>
-                Número absoluto
-              </button>
-              <button type="button" onClick={() => setDistMode('percentage')} className={`flex-1 text-xs py-1 rounded transition-all ${distMode === 'percentage' ? 'bg-emerald-500 text-white font-medium' : 'text-muted-foreground hover:text-foreground'}`}>
-                Porcentagem %
-              </button>
-            </div>
-
-            {/* Chip sliders */}
-            <div className="space-y-3 max-h-[400px] overflow-y-auto">
-              {(selectedCampaign?.chips || []).map((cc: any) => {
-                const chip = cc.chip
-                if (!chip) return null
-                const pendingCount = selectedCampaign?.messageStatusCounts?.pending || 0
-                const chipCapacity = Math.max(0, (chip.dailyLimit || 200) - (chip.sentToday || 0))
-                const maxForChip = pendingCount > 0 ? Math.min(chipCapacity, pendingCount) : chipCapacity
-                const distValue = redistributeDistribution[cc.chipId] || 0
-                const distPct = pendingCount > 0 && distValue > 0 ? Math.round(distValue / pendingCount * 100) : 0
-                const maxPct = pendingCount > 0 ? Math.round(maxForChip / pendingCount * 100) : 100
-                const sliderValue = distMode === 'percentage' ? distPct : distValue
-                const sliderMax = distMode === 'percentage' ? maxPct : maxForChip
-
-                return (
-                  <div key={cc.chipId} className="space-y-1.5 p-3 bg-muted/30 rounded-lg">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <Smartphone className="size-3.5 text-muted-foreground" />
-                        <div>
-                          <p className="text-sm font-medium">{chip.name}</p>
-                          <p className="text-[10px] text-muted-foreground">{chip.phoneNumber} · Capacidade: {chipCapacity}/dia</p>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <span className="text-sm font-semibold text-emerald-600">
-                          {distValue > 0
-                            ? (distMode === 'percentage'
-                                ? `${distPct}%`
-                                : `${distValue}`)
-                            : 'Auto'}
-                        </span>
-                        {distValue > 0 && distMode === 'absolute' && pendingCount > 0 && (
-                          <p className="text-[10px] text-muted-foreground">{distPct}%</p>
-                        )}
-                        {distValue > 0 && distMode === 'percentage' && (
-                          <p className="text-[10px] text-muted-foreground">{distValue} contatos</p>
-                        )}
-                      </div>
-                    </div>
-                    <input
-                      type="range"
-                      min={0}
-                      max={sliderMax}
-                      value={sliderValue}
-                      onChange={e => {
-                        const rawVal = parseInt(e.target.value, 10)
-                        const absVal = distMode === 'percentage'
-                          ? Math.round(rawVal / 100 * pendingCount)
-                          : rawVal
-                        setRedistributeDistribution(prev => ({ ...prev, [cc.chipId]: absVal }))
-                      }}
-                      className="w-full h-2 bg-muted rounded-lg appearance-none cursor-pointer accent-emerald-500"
-                    />
-                    <div className="flex justify-between text-[10px] text-muted-foreground">
-                      <span>Auto (igualitário)</span>
-                      <span>{distMode === 'percentage' ? `${maxPct}%` : `${maxForChip} contatos`}</span>
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-
-            {/* Summary */}
-            {(() => {
-              const pendingCount = selectedCampaign?.messageStatusCounts?.pending || 0
-              const manualTotal = Object.values(redistributeDistribution).reduce((sum, v) => sum + (v || 0), 0)
-              const autoChips = (selectedCampaign?.chips || []).filter((cc: any) => !redistributeDistribution[cc.chipId] || redistributeDistribution[cc.chipId] === 0)
-              const remaining = pendingCount - manualTotal
-              const exceedsTotal = manualTotal > pendingCount
-              return (
-                <div className="p-2.5 bg-muted/30 rounded-lg text-xs space-y-1">
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Mensagens pendentes:</span>
-                    <span className="font-medium">{pendingCount}</span>
-                  </div>
-                  {manualTotal > 0 && (
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Alocados manualmente:</span>
-                      <span className={`font-medium ${exceedsTotal ? 'text-red-500' : ''}`}>{manualTotal} ({Math.round(manualTotal / pendingCount * 100)}%)</span>
-                    </div>
-                  )}
-                  {autoChips.length > 0 && remaining > 0 && !exceedsTotal && (
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Auto ({autoChips.length} chip{autoChips.length > 1 ? 's' : ''}, ~{Math.ceil(remaining / autoChips.length)} cada):</span>
-                      <span className="font-medium">{remaining}</span>
-                    </div>
-                  )}
-                  {exceedsTotal && (
-                    <p className="text-red-500 font-medium flex items-center gap-1"><AlertTriangle className="size-3" /> Total alocado excede mensagens pendentes!</p>
-                  )}
-                </div>
-              )
-            })()}
-          </div>
-          <DialogFooter className="gap-2">
-            <DialogClose asChild>
-              <Button variant="outline">Cancelar</Button>
-            </DialogClose>
-            <Button
-              className="bg-blue-600 hover:bg-blue-700 gap-1.5"
-              disabled={!!(() => {
-                const pendingCount = selectedCampaign?.messageStatusCounts?.pending || 0
-                const manualTotal = Object.values(redistributeDistribution).reduce((sum, v) => sum + (v || 0), 0)
-                return manualTotal > pendingCount
-              })()}
-              onClick={async () => {
-                if (!selectedCampaign) return
-                try {
-                  const res = await fetch(`/api/campaigns/${selectedCampaign.id}/redistribute`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ chipDistribution: redistributeDistribution }),
-                  })
-                  const data = await res.json()
-                  if (res.ok) {
-                    toast.success(data.message || 'Mensagens redistribuídas!')
-                    setRedistributeDialogOpen(false)
-                    // Refresh campaign data
-                    const campRes = await fetch(`/api/campaigns/${selectedCampaign.id}`, { cache: 'no-store' })
-                    if (campRes.ok) setSelectedCampaign(await campRes.json())
-                    fetchCampaigns()
-                  } else {
-                    toast.error(data.error || 'Erro ao redistribuir')
-                  }
-                } catch { toast.error('Erro ao redistribuir mensagens') }
-              }}
-            >
-              <ArrowRightLeft className="size-3.5" /> Redistribuir
-            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
