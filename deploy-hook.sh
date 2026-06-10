@@ -16,3 +16,4 @@ echo "🚀 Restarting app container..."
 docker compose up -d app
 
 echo "✅ Deploy completed!"
+
