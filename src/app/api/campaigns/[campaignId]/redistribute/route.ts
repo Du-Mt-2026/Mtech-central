@@ -78,10 +78,9 @@ export async function POST(
     // Build assignment plan based on contactLimit
     const chips = campaign.chips.map(cc => cc.chip).filter(c => c.evolutionInstance)
 
-    // Re-read the updated CampaignChip records
+    // Re-read the updated CampaignChip records (no include needed — we only need chipId + contactLimit)
     const updatedCampaignChips = await db.campaignChip.findMany({
       where: { campaignId },
-      include: { chip: true },
     })
 
     const chipLimits = new Map<string, number>()
@@ -108,14 +107,16 @@ export async function POST(
       chipLimits.set(chipId, autoLimitPerChip)
     }
 
-    // Build assignment plan
+    // Build assignment plan — use chipMap from the earlier campaign fetch
+    // (avoids Turbopack type inference issue with Prisma include on findMany)
+    const chipMap = new Map(chips.map(c => [c.id, c]))
     const assignmentPlan: { chipId: string; count: number }[] = []
     for (const cc of updatedCampaignChips) {
-      const chip = cc.chip
-      if (!chip.evolutionInstance) continue
-      const limit = chipLimits.get(chip.id) || 0
+      const chip = chipMap.get(cc.chipId)
+      if (!chip?.evolutionInstance) continue
+      const limit = chipLimits.get(cc.chipId) || 0
       if (limit > 0) {
-        assignmentPlan.push({ chipId: chip.id, count: limit })
+        assignmentPlan.push({ chipId: cc.chipId, count: limit })
       }
     }
 
