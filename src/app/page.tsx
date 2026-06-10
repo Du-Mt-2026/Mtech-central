@@ -322,6 +322,69 @@ const CONTACT_VARIABLES = [
 // Note: Custom variables from spreadsheet columns (empresa, vendedora, etc.) are loaded dynamically
 // from the selected contact list via the API — see fetchContactVariables()
 
+// ===== Chip Effective Info Utility =====
+// Shared function to calculate effective daily limit considering warming phase
+function calcChipEffectiveInfo(chip: Chip, antiBanSettings: AntiBanSettings | null): { effectiveLimit: number; phaseDay: number; phaseMaxDays: number } {
+  if (!antiBanSettings || !chip.warmingEnabled || !antiBanSettings.warmingEnabled) {
+    return { effectiveLimit: chip.dailyLimit || 200, phaseDay: 0, phaseMaxDays: 0 }
+  }
+
+  const phase = chip.warmingPhase || 'nursery'
+  const now = new Date()
+
+  // Parse schedules
+  let schedule: { dayRange: string; days: [number, number]; limit: number }[] = []
+  try {
+    if (phase === 'nursery') {
+      schedule = JSON.parse(antiBanSettings.nurserySchedule || '[]')
+    } else if (phase === 'prewarm') {
+      schedule = JSON.parse(antiBanSettings.prewarmSchedule || '[]')
+    }
+  } catch { /* ignore parse errors */ }
+
+  if (phase === 'ready') {
+    return { effectiveLimit: antiBanSettings.readyDailyLimit || chip.dailyLimit || 200, phaseDay: 0, phaseMaxDays: 0 }
+  }
+
+  // Calculate day within phase
+  let dayInPhase = 1
+  const warmingStart = chip.warmingStartedAt ? new Date(chip.warmingStartedAt) : null
+
+  if (!warmingStart) {
+    dayInPhase = 1
+  } else {
+    // Calculate days since warming started (using Brasília timezone)
+    const spFormatter = new Intl.DateTimeFormat('en-US', { year: 'numeric', month: 'numeric', day: 'numeric', timeZone: 'America/Sao_Paulo' })
+    const nowStr = spFormatter.format(now)
+    const startStr = spFormatter.format(warmingStart)
+    const [nm, nd, ny] = nowStr.split('/').map(Number)
+    const [sm, sd, sy] = startStr.split('/').map(Number)
+    const nowDate = new Date(ny, nm - 1, nd)
+    const startDate = new Date(sy, sm - 1, sd)
+    dayInPhase = Math.max(1, Math.floor((nowDate.getTime() - startDate.getTime()) / (86400000)) + 1)
+  }
+
+  // Find limit for current day
+  let limit = 10 // fallback
+  for (const entry of schedule) {
+    if (dayInPhase >= entry.days[0] && dayInPhase <= entry.days[1]) {
+      limit = entry.limit
+      break
+    }
+  }
+  // If beyond schedule, use last entry's limit
+  if (schedule.length > 0 && dayInPhase > schedule[schedule.length - 1].days[1]) {
+    limit = schedule[schedule.length - 1].limit
+  }
+
+  // Cap at chip's dailyLimit
+  limit = Math.min(limit, chip.dailyLimit || antiBanSettings.dailyLimitPerChip)
+
+  const phaseMaxDays = schedule.length > 0 ? schedule[schedule.length - 1].days[1] : 0
+
+  return { effectiveLimit: limit, phaseDay: dayInPhase, phaseMaxDays }
+}
+
 // ===== Status Helpers =====
 function statusColor(status: string) {
   const map: Record<string, string> = {
@@ -729,68 +792,7 @@ function ChipsTab() {
   }, [chips, checkAllProxies])
 
   // === Calculate effective daily limit and phase day for a chip ===
-  const getChipEffectiveInfo = useCallback((chip: Chip): { effectiveLimit: number; phaseDay: number; phaseMaxDays: number } => {
-    if (!antiBanSettings || !chip.warmingEnabled || !antiBanSettings.warmingEnabled) {
-      return { effectiveLimit: chip.dailyLimit || 200, phaseDay: 0, phaseMaxDays: 0 }
-    }
-
-    const phase = chip.warmingPhase || 'nursery'
-    const now = new Date()
-
-    // Parse schedules
-    let schedule: { dayRange: string; days: [number, number]; limit: number }[] = []
-    try {
-      if (phase === 'nursery') {
-        schedule = JSON.parse(antiBanSettings.nurserySchedule || '[]')
-      } else if (phase === 'prewarm') {
-        schedule = JSON.parse(antiBanSettings.prewarmSchedule || '[]')
-      }
-    } catch { /* ignore parse errors */ }
-
-    if (phase === 'ready') {
-      return { effectiveLimit: antiBanSettings.readyDailyLimit || chip.dailyLimit || 200, phaseDay: 0, phaseMaxDays: 0 }
-    }
-
-    // Calculate day within phase
-    // KEY: If warmingStartedAt is null (chip never sent), always Day 1
-    let dayInPhase = 1
-    const warmingStart = chip.warmingStartedAt ? new Date(chip.warmingStartedAt) : null
-
-    if (!warmingStart) {
-      // Chip never sent a message — always Day 1 regardless of age
-      dayInPhase = 1
-    } else {
-      // Calculate days since warming started (using Brasília timezone)
-      const spFormatter = new Intl.DateTimeFormat('en-US', { year: 'numeric', month: 'numeric', day: 'numeric', timeZone: 'America/Sao_Paulo' })
-      const nowStr = spFormatter.format(now)
-      const startStr = spFormatter.format(warmingStart)
-      const [nm, nd, ny] = nowStr.split('/').map(Number)
-      const [sm, sd, sy] = startStr.split('/').map(Number)
-      const nowDate = new Date(ny, nm - 1, nd)
-      const startDate = new Date(sy, sm - 1, sd)
-      dayInPhase = Math.max(1, Math.floor((nowDate.getTime() - startDate.getTime()) / (86400000)) + 1)
-    }
-
-    // Find limit for current day
-    let limit = 10 // fallback
-    for (const entry of schedule) {
-      if (dayInPhase >= entry.days[0] && dayInPhase <= entry.days[1]) {
-        limit = entry.limit
-        break
-      }
-    }
-    // If beyond schedule, use last entry's limit
-    if (schedule.length > 0 && dayInPhase > schedule[schedule.length - 1].days[1]) {
-      limit = schedule[schedule.length - 1].limit
-    }
-
-    // Cap at chip's dailyLimit
-    limit = Math.min(limit, chip.dailyLimit || antiBanSettings.dailyLimitPerChip)
-
-    const phaseMaxDays = schedule.length > 0 ? schedule[schedule.length - 1].days[1] : 0
-
-    return { effectiveLimit: limit, phaseDay: dayInPhase, phaseMaxDays }
-  }, [antiBanSettings])
+  const getChipEffectiveInfo = useCallback((chip: Chip) => calcChipEffectiveInfo(chip, antiBanSettings), [antiBanSettings])
 
   // Sync WhatsApp status on load + every 5 seconds
   useEffect(() => {
@@ -3917,6 +3919,7 @@ function CampanhasTab() {
   const [detailSortBy, setDetailSortBy] = useState<'name' | 'sendOrder'>('name')
   const [detailSearchQuery, setDetailSearchQuery] = useState('')
   const [detailStatusFilter, setDetailStatusFilter] = useState('all')
+  const [antiBanSettings, setAntiBanSettings] = useState<AntiBanSettings | null>(null)
   const [editForm, setEditForm] = useState({
     name: '', sendIntervalMin: 30, sendIntervalMax: 90,
     chipIds: [] as string[], contactListId: '', scheduledAt: '',
@@ -3961,6 +3964,12 @@ function CampanhasTab() {
   const fetchTemplates = useCallback(async () => {
     try { const res = await fetch('/api/templates'); setTemplates(await res.json()) } catch { /* empty */ }
   }, [])
+  const fetchAntiBanSettings = useCallback(async () => {
+    try { const res = await fetch('/api/antiban'); if (res.ok) setAntiBanSettings(await res.json()) } catch { /* empty */ }
+  }, [])
+
+  // Wrapper for calcChipEffectiveInfo using local antiBanSettings
+  const getChipEffectiveInfo = useCallback((chip: Chip) => calcChipEffectiveInfo(chip, antiBanSettings), [antiBanSettings])
 
   // Fetch available variables from the selected contact list
   const fetchContactVariables = useCallback(async (listId: string) => {
@@ -3984,7 +3993,7 @@ function CampanhasTab() {
     }
   }, [])
 
-  useEffect(() => { fetchCampaigns(); fetchChips(); fetchLists(); fetchKeys(); fetchTemplates() }, [fetchCampaigns, fetchChips, fetchLists, fetchKeys, fetchTemplates])
+  useEffect(() => { fetchCampaigns(); fetchChips(); fetchLists(); fetchKeys(); fetchTemplates(); fetchAntiBanSettings() }, [fetchCampaigns, fetchChips, fetchLists, fetchKeys, fetchTemplates, fetchAntiBanSettings])
 
   // Auto-refresh campaigns every 5 seconds when any campaign is running (for live progress)
   useEffect(() => {
@@ -4835,10 +4844,20 @@ function CampanhasTab() {
                     </div>
                   )}
                   <div className="space-y-1.5 max-h-[400px] overflow-y-auto pr-1">
-                    {availableChips.map(chip => {
+                    {/* Disconnected chips warning */}
+                    {availableChips.filter(c => c.status !== 'connected').length > 0 && newCampaign.chipIds.some(id => availableChips.find(c => c.id === id && c.status !== 'connected')) && (
+                      <div className="flex items-center gap-2 p-2 rounded-lg bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800 text-[10px] text-rose-600 dark:text-rose-400">
+                        <AlertTriangle className="size-3.5 shrink-0" />
+                        <span>Chips desconectados selecionados não enviarão mensagens!</span>
+                      </div>
+                    )}
+                    {/* Connected chips first, then disconnected */}
+                    {[...availableChips.filter(c => c.status === 'connected'), ...availableChips.filter(c => c.status !== 'connected')].map(chip => {
                       const isSelected = newCampaign.chipIds.includes(chip.id)
-                      // Calculate chip capacity: daily limit minus already sent today
-                      const chipCapacity = Math.max(0, (chip.dailyLimit || 200) - (chip.sentToday || 0))
+                      const isDisconnected = chip.status !== 'connected'
+                      // Calculate chip capacity: use effective warming limit instead of raw dailyLimit
+                      const effectiveInfo = getChipEffectiveInfo(chip)
+                      const chipCapacity = Math.max(0, effectiveInfo.effectiveLimit - (chip.sentToday || 0))
                       // Get total contacts in selected list
                       const totalContacts = (() => {
                         const list = availableLists.find((l: any) => l.id === newCampaign.contactListId)
@@ -4863,15 +4882,18 @@ function CampanhasTab() {
 
                       return (
                         <div key={chip.id}>
-                          <div onClick={() => toggleChip(chip.id)} className={`flex items-center gap-2 p-2 rounded-lg border cursor-pointer transition-all text-sm ${isSelected ? 'border-emerald-500/60 bg-emerald-50 dark:bg-emerald-900/20 shadow-sm' : 'hover:bg-muted/50 border-transparent'}`}>
-                            <div className={`size-5 rounded border-2 flex items-center justify-center shrink-0 transition-all ${isSelected ? 'bg-emerald-500 border-emerald-500' : 'border-muted-foreground/40'}`}>
+                          <div onClick={() => toggleChip(chip.id)} className={`flex items-center gap-2 p-2 rounded-lg border cursor-pointer transition-all text-sm ${isDisconnected ? 'opacity-60' : ''} ${isSelected ? (isDisconnected ? 'border-rose-400/60 bg-rose-50 dark:bg-rose-900/20' : 'border-emerald-500/60 bg-emerald-50 dark:bg-emerald-900/20 shadow-sm') : 'hover:bg-muted/50 border-transparent'}`}>
+                            <div className={`size-5 rounded border-2 flex items-center justify-center shrink-0 transition-all ${isSelected ? (isDisconnected ? 'bg-rose-400 border-rose-400' : 'bg-emerald-500 border-emerald-500') : 'border-muted-foreground/40'}`}>
                               {isSelected && <Check className="size-3.5 text-white" />}
                             </div>
                             <div className="min-w-0 flex-1">
-                              <p className={`text-xs font-medium truncate ${isSelected ? 'text-emerald-700 dark:text-emerald-300' : ''}`}>{chip.name}</p>
-                              <p className="text-[10px] text-muted-foreground">{chip.phoneNumber} · <span className="text-emerald-600 font-medium">{chipCapacity}</span> restantes/dia</p>
+                              <div className="flex items-center gap-1.5">
+                                <p className={`text-xs font-medium truncate ${isSelected ? (isDisconnected ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-700 dark:text-emerald-300') : ''}`}>{chip.name}</p>
+                                {isDisconnected && <span className="text-[9px] px-1 py-0.5 rounded-full bg-rose-100 text-rose-600 dark:bg-rose-900/30 dark:text-rose-400 whitespace-nowrap shrink-0">Desconectado</span>}
+                              </div>
+                              <p className="text-[10px] text-muted-foreground">{chip.phoneNumber} · <span className={`${isDisconnected ? 'text-rose-500' : 'text-emerald-600'} font-medium`}>{chipCapacity}</span> restantes/dia{effectiveInfo.effectiveLimit < (chip.dailyLimit || 200) ? ` (de ${chip.dailyLimit || 200})` : ''}</p>
                             </div>
-                            {isSelected && chip.warmingPhase && chip.warmingPhase !== 'ready' && (
+                            {!isDisconnected && isSelected && chip.warmingPhase && chip.warmingPhase !== 'ready' && (
                               <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 whitespace-nowrap">
                                 {chip.warmingPhase === 'nursery' ? 'Berçário' : 'Pré-aquec.'}
                               </span>
@@ -4945,13 +4967,19 @@ function CampanhasTab() {
                     const autoChips = newCampaign.chipIds.filter(id => !newCampaign.chipDistribution[id] || newCampaign.chipDistribution[id] === 0)
                     const remaining = totalContacts - manualTotal
                     const exceedsTotal = totalContacts > 0 && manualTotal > totalContacts
-                    // Also check if any chip's distribution exceeds its capacity
+                    // Also check if any chip's distribution exceeds its effective capacity (warming-aware)
                     const exceedsCapacity = newCampaign.chipIds.some(chipId => {
                       const chip = availableChips.find((c: any) => c.id === chipId)
                       if (!chip) return false
-                      const chipCap = Math.max(0, (chip.dailyLimit || 200) - (chip.sentToday || 0))
+                      const effectiveInfo = getChipEffectiveInfo(chip)
+                      const chipCap = Math.max(0, effectiveInfo.effectiveLimit - (chip.sentToday || 0))
                       const dist = newCampaign.chipDistribution[chipId] || 0
                       return dist > chipCap
+                    })
+                    // Check if any selected chip is disconnected
+                    const hasDisconnectedChip = newCampaign.chipIds.some(chipId => {
+                      const chip = availableChips.find((c: any) => c.id === chipId)
+                      return chip && chip.status !== 'connected'
                     })
                     return (
                       <div className={`p-2 rounded-lg text-[10px] space-y-1 border ${exceedsTotal || exceedsCapacity ? 'bg-red-500/10 border-red-500/30' : 'bg-muted/30 border-muted/50'}`}>
@@ -4983,7 +5011,10 @@ function CampanhasTab() {
                           <p className="text-red-500 font-medium flex items-center gap-1"><AlertTriangle className="size-3" /> Total alocado excede contatos!</p>
                         )}
                         {exceedsCapacity && (
-                          <p className="text-red-500 font-medium flex items-center gap-1"><AlertTriangle className="size-3" /> Um ou mais chips excedem a capacidade!</p>
+                          <p className="text-red-500 font-medium flex items-center gap-1"><AlertTriangle className="size-3" /> Um ou mais chips excedem a capacidade real (limite de aquecimento)!</p>
+                        )}
+                        {hasDisconnectedChip && !exceedsTotal && !exceedsCapacity && (
+                          <p className="text-amber-600 font-medium flex items-center gap-1"><AlertTriangle className="size-3" /> Chips desconectados não enviarão mensagens</p>
                         )}
                       </div>
                     )
@@ -5996,7 +6027,8 @@ function CampanhasTab() {
                 const chip = cc.chip
                 if (!chip) return null
                 const pendingCount = selectedCampaign?.messageStatusCounts?.pending || 0
-                const chipCapacity = Math.max(0, (chip.dailyLimit || 200) - (chip.sentToday || 0))
+                const chipEffectiveInfo = getChipEffectiveInfo(chip)
+                const chipCapacity = Math.max(0, chipEffectiveInfo.effectiveLimit - (chip.sentToday || 0))
                 const maxForChip = pendingCount > 0 ? Math.min(chipCapacity, pendingCount) : chipCapacity
                 // Calculate what other chips have already allocated
                 const otherChipsTotal = Object.entries(redistributeDistribution)
@@ -6016,7 +6048,7 @@ function CampanhasTab() {
                         <Smartphone className="size-3.5 text-muted-foreground" />
                         <div>
                           <p className="text-sm font-medium">{chip.name}</p>
-                          <p className="text-[10px] text-muted-foreground">{chip.phoneNumber} · Capacidade: {chipCapacity}/dia</p>
+                          <p className="text-[10px] text-muted-foreground">{chip.phoneNumber} · Capacidade: {chipCapacity}/dia{chipEffectiveInfo.effectiveLimit < (chip.dailyLimit || 200) ? ` (de ${chip.dailyLimit || 200})` : ''}</p>
                         </div>
                       </div>
                       <div className="text-right">
