@@ -408,7 +408,7 @@ export async function POST(request: Request) {
       // ===== Message Send Confirmation & Delivery Tracking =====
       case 'SEND_MESSAGE':
       case 'SEND_MESSAGE_ACK': {
-        const messageId = data?.Info?.ID
+        const messageId = data?.Info?.ID || data?.key?.id || data?.id || null
 
         // Evolution API v3 ack values (from whatsmeow protocol):
         //   0 = PENDING  — message queued, not yet sent

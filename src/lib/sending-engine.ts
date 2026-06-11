@@ -1937,6 +1937,23 @@ export async function startCampaign(campaignId: string): Promise<{ messageCount:
  * Process the NEXT pending message for a campaign.
  * Returns the delay (ms) the caller should wait before processing the next one.
  */
+
+// FIX: ContactLimit-aware chip filter for reassignment
+async function getAvailableChipsForReassignment(campaignId: string, chips: { id: string }[]): Promise<{ id: string }[]> {
+  const campaignChips = await db.campaignChip.findMany({
+    where: { campaignId, chipId: { in: chips.map(c => c.id) } },
+    select: { chipId: true, contactLimit: true },
+  })
+  const limitMap = new Map(campaignChips.map(cc => [cc.chipId, cc.contactLimit]))
+  const available: { id: string }[] = []
+  for (const chip of chips) {
+    const limit = limitMap.get(chip.id)
+    const count = await db.message.count({ where: { campaignId, chipId: chip.id } })
+    if (limit != null && count < limit) available.push(chip)
+  }
+  return available.length > 0 ? available : chips  // fallback to all chips if all full
+}
+
 export async function processNextMessage(campaignId: string, skipContactIds?: Set<string>): Promise<{
   processed: boolean
   delayMs: number
@@ -2359,8 +2376,9 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
           take: 50,
         })
 
-        for (let i = 0; i < pendingMessages.length; i++) {
-          const targetChip = otherChips[i % otherChips.length]
+        const availableChips = await getAvailableChipsForReassignment(campaignId, otherChips)
+          for (let i = 0; i < pendingMessages.length; i++) {
+          const targetChip = availableChips[i % availableChips.length]
           await db.message.update({
             where: { id: pendingMessages[i].id },
             data: { chipId: targetChip.id },
@@ -2448,8 +2466,9 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
           take: 50,
         })
 
-        for (let i = 0; i < pendingMessages.length; i++) {
-          const targetChip = otherChips[i % otherChips.length]
+        const availableChips = await getAvailableChipsForReassignment(campaignId, otherChips)
+          for (let i = 0; i < pendingMessages.length; i++) {
+          const targetChip = availableChips[i % availableChips.length]
           await db.message.update({
             where: { id: pendingMessages[i].id },
             data: { chipId: targetChip.id },
@@ -2689,8 +2708,9 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
         take: 50,
       })
 
-      for (let i = 0; i < pendingMessages.length; i++) {
-        const targetChip = otherChips[i % otherChips.length]
+      const availableChips = await getAvailableChipsForReassignment(campaignId, otherChips)
+          for (let i = 0; i < pendingMessages.length; i++) {
+        const targetChip = availableChips[i % availableChips.length]
         await db.message.update({
           where: { id: pendingMessages[i].id },
           data: { chipId: targetChip.id },
@@ -2795,12 +2815,12 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
   // Here we just verify it hasn't been reset by another process.
   // If count=0, the message was recovered/reset — skip it.
   // ============================================================
-  const claimed = await db.message.updateMany({
+  const claimCheck = await db.message.findFirst({
     where: { id: message.id, status: 'sending' },
-    data: { status: 'sending' },  // No-op update to verify claim is still valid
+    select: { id: true },
   })
 
-  if (claimed.count === 0) {
+  if (!claimCheck) {
     // Message was recovered/reset by another process — skip it
     console.debug(`[SendingEngine] Message ${message.id} claim lost (no longer in 'sending'), skipping`)
     return { processed: false, delayMs: 500, remaining: -1, completed: false, reason: 'message_claim_lost' }
@@ -3480,8 +3500,9 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
           where: { campaignId, chipId: message.chipId, status: 'pending' },
           take: 50,
         })
-        for (let i = 0; i < pendingMessages.length; i++) {
-          const targetChip = otherChips[i % otherChips.length]
+        const availableChips = await getAvailableChipsForReassignment(campaignId, otherChips)
+          for (let i = 0; i < pendingMessages.length; i++) {
+          const targetChip = availableChips[i % availableChips.length]
           await db.message.update({
             where: { id: pendingMessages[i].id },
             data: { chipId: targetChip.id },

@@ -17,7 +17,7 @@ export async function POST(
 
     if (message.status !== 'failed') {
       return NextResponse.json(
-        { error: 'Apenas mensagens com status "failed" podem ser reenviadas' },
+        { error: 'Apenas mensagens com status "failed" ou "sending" podem ser reenviadas' },
         { status: 400 }
       )
     }

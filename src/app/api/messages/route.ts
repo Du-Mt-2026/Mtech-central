@@ -55,10 +55,10 @@ export async function GET(request: Request) {
         campaign: { select: { name: true } },
         contact: { select: { name: true, phone: true } },
       },
-      take: 200,
+      take: 5000,
     })
 
-    return NextResponse.json(messages)
+    return NextResponse.json({ data: messages, total: await db.message.count({ where }) })
   } catch (error) {
     console.error('Messages GET error:', error)
     return NextResponse.json({ error: 'Erro ao buscar mensagens' }, { status: 500 })

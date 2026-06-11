@@ -456,7 +456,7 @@ function DashboardTab({ stats, onRefresh, setActiveTab }: { stats: Stats | null;
   const s = {
     totalChips: stats.totalChips ?? 0, connectedChips: stats.connectedChips ?? 0,
     totalCampaigns: stats.totalCampaigns ?? 0, activeCampaigns: stats.activeCampaigns ?? 0,
-    totalMessages: stats.totalMessages ?? 0, sentMessages: stats.sentMessages ?? 0,
+    totalMessages: stats.totalMessages ?? 0, sentMessages: stats.sentMessages, totalSent: stats.totalSent ?? 0,
     deliveredMessages: stats.deliveredMessages ?? 0, failedMessages: stats.failedMessages ?? 0,
     deliveryRate: stats.deliveryRate ?? 0, totalContacts: stats.totalContacts ?? 0,
     pendingMessages: stats.pendingMessages ?? 0, readMessages: stats.readMessages ?? 0,
@@ -465,7 +465,7 @@ function DashboardTab({ stats, onRefresh, setActiveTab }: { stats: Stats | null;
   const statCards = [
     { title: 'Chips', value: s.totalChips, sub: `${s.connectedChips} conectados`, icon: Smartphone, gradient: 'from-emerald-500 to-teal-600', trend: s.connectedChips > 0 ? `${s.connectedChips} online` : 'nenhum online', trendUp: s.connectedChips > 0 },
     { title: 'Campanhas', value: s.totalCampaigns, sub: `${s.activeCampaigns} ativas`, icon: Send, gradient: 'from-amber-500 to-orange-600', trend: s.activeCampaigns > 0 ? `${s.activeCampaigns} rodando` : 'nenhuma ativa', trendUp: s.activeCampaigns > 0 },
-    { title: 'Mensagens', value: s.totalMessages, sub: `${s.sentMessages} enviadas`, icon: MessageSquare, gradient: 'from-cyan-500 to-sky-600', trend: s.pendingMessages > 0 ? `${s.pendingMessages} pendentes` : 'todas processadas', trendUp: s.totalMessages > 0 },
+    { title: 'Mensagens', value: s.totalMessages, sub: `${s.totalSent ?? s.sentMessages} enviadas`, icon: MessageSquare, gradient: 'from-cyan-500 to-sky-600', trend: s.pendingMessages > 0 ? `${s.pendingMessages} pendentes` : 'todas processadas', trendUp: s.totalMessages > 0 },
     { title: 'Taxa de Entrega', value: s.deliveryRate > 0 ? `${s.deliveryRate}%` : '—', sub: `${s.failedMessages} falharam`, icon: Activity, gradient: 'from-rose-500 to-pink-600', trend: s.deliveryRate > 80 ? 'boa' : s.deliveryRate > 0 ? 'atenção' : 'sem dados', trendUp: s.deliveryRate > 80 },
   ]
 
@@ -4104,9 +4104,9 @@ function CampanhasTab() {
         const updated = await res.json()
         setSelectedCampaign(updated)
         // Refresh messages
-        const msgRes = await fetch(`/api/messages?campaignId=${campaignId}`, { cache: 'no-store' })
+        const msgRes = await fetch(`/api/messages?campaignId=${campaignId}&limit=5000`, { cache: 'no-store' })
         const msgData = await msgRes.json()
-        const messages = Array.isArray(msgData) ? msgData : []
+        const messages = Array.isArray(msgData?.data) ? msgData.data : Array.isArray(msgData) ? msgData : []
         setDetailMessages(messages)
         // Also refresh the campaign list so cards stay in sync
         fetchCampaigns()
@@ -4535,7 +4535,7 @@ function CampanhasTab() {
   const openDetail = async (campaign: Campaign) => {
     setSelectedCampaign(campaign); setDetailDialogOpen(true); setEditing(false)
     setDetailSortBy('name'); setDetailSearchQuery(''); setDetailStatusFilter('all')
-    try { const res = await fetch(`/api/messages?campaignId=${campaign.id}`, { cache: 'no-store' }); const data = await res.json(); setDetailMessages(Array.isArray(data) ? data : []) }
+    try { const res = await fetch(`/api/messages?campaignId=${campaign.id}&limit=5000`, { cache: 'no-store' }); const data = await res.json(); setDetailMessages(Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : []) }
     catch { setDetailMessages([]) }
   }
 
@@ -5752,7 +5752,7 @@ function CampanhasTab() {
                     try {
                       const res = await fetch('/api/messages/resend-all-failed', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ campaignId: selectedCampaign.id }) })
                       const data = await res.json()
-                      if (res.ok) { toast.success(`${data.resetCount || 0} mensagens reenviadas`); const msgRes = await fetch(`/api/messages?campaignId=${selectedCampaign.id}`, { cache: 'no-store' }); setDetailMessages(Array.isArray(await msgRes.json()) ? await msgRes.clone().json() : []); fetchCampaigns() }
+                      if (res.ok) { toast.success(`${data.resetCount || 0} mensagens reenviadas`); const msgRes = await fetch(`/api/messages?campaignId=${selectedCampaign.id}&limit=5000`, { cache: 'no-store' }); const _r = await msgRes.json(); setDetailMessages(Array.isArray(_r?.data) ? _r.data : Array.isArray(_r) ? _r : []); fetchCampaigns() }
                       else toast.error(data.error || 'Erro ao reenviar')
                     } catch { toast.error('Erro ao reenviar mensagens') }
                   }}>
@@ -5785,7 +5785,7 @@ function CampanhasTab() {
                     setSelectedCampaign(updated)
                     const msgRes = await fetch(`/api/messages?campaignId=${updated.id}`, { cache: 'no-store' })
                     const msgData = await msgRes.json()
-                    setDetailMessages(Array.isArray(msgData) ? msgData : [])
+                    setDetailMessages(Array.isArray(msgData?.data) ? msgData.data : Array.isArray(msgData) ? msgData : [])
                     fetchCampaigns()
                     const elapsed = Date.now() - startTime
                     if (elapsed < 600) await new Promise(r => setTimeout(r, 600 - elapsed))
@@ -6689,7 +6689,7 @@ function MensagensTab() {
       const res = await fetch('/api/messages', { cache: 'no-store' })
       if (!res.ok) throw new Error(`Erro ${res.status}`)
       const data = await res.json()
-      setMessages(Array.isArray(data) ? data : [])
+      setMessages(Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : [])
       if (showLoading) {
         // Ensure loading animation is visible for at least 500ms
         const elapsed = Date.now() - startTime
