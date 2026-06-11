@@ -3033,6 +3033,36 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
     }
 
     // ============================================
+    // STEP FOLLOW-UP PRE-CHECK (before anti-ban behaviors)
+    // ============================================
+    // Check if this message has a follow-up step with a short delay.
+    // If so, skip anti-ban behaviors (delayed offline, idle reading, cooldown)
+    // that would add extra delay between step 1 and step 2.
+    // This is checked BEFORE the anti-ban behaviors so we can skip them.
+    // The result is also used later for the step follow-up override.
+    let stepFollowUpDelayMs: number | null = null
+    let hasShortStepFollowUp = false
+    try {
+      const nextStep = await db.message.findFirst({
+        where: { campaignId, contactId: message.contactId, stepOrder: message.stepOrder + 1, status: 'pending' },
+        select: { id: true, stepOrder: true },
+      })
+      if (nextStep) {
+        const stepConfig = await db.sequenceStep.findFirst({
+          where: { campaignId, stepOrder: nextStep.stepOrder },
+          select: { delayMinutes: true, delayUnit: true },
+        })
+        if (stepConfig && stepConfig.delayMinutes > 0) {
+          stepFollowUpDelayMs = (stepConfig.delayUnit === 'seconds' ? stepConfig.delayMinutes : stepConfig.delayMinutes * 60) * 1000
+          if (stepFollowUpDelayMs <= 30_000) {
+            hasShortStepFollowUp = true
+            console.debug(`[SendingEngine] Step follow-up detected: ${Math.round(stepFollowUpDelayMs/1000)}s delay before step ${nextStep.stepOrder} for contact ${message.contactId} — skipping anti-ban delays between steps`)
+          }
+        }
+      }
+    } catch (stepErr: any) { console.error(`[SendingEngine] Step follow-up pre-check failed: ${stepErr.message}`) }
+
+    // ============================================
     // ANTI-BAN: DELAYED OFFLINE with jitter
     // ============================================
     // After the message is sent, the human doesn't go offline instantly.
@@ -3041,8 +3071,11 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
     //
     // OLD: setPresence('unavailable', 0) — instant offline (bot signature)
     // NEW: stay online 3-15s (gaussian) → then go offline
+    //
+    // SKIP for step follow-ups with short delay — the "human-like" offline
+    // delay between step 1 and step 2 would violate the configured step delay.
     let offlineDelayMs = 0
-    if (antiBanEnabled) {
+    if (antiBanEnabled && !hasShortStepFollowUp) {
       const jid = `${formattedPhone}@s.whatsapp.net`
       offlineDelayMs = await delayedOfflineWithJitter(instanceName, jid, settings)
       console.debug(`[SendingEngine] Delayed offline: stayed online ${offlineDelayMs}ms after send — human-like`)
@@ -3057,8 +3090,12 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
     // and with configured probability (25%).
     // The reading time is SUBTRACTED from the next delay so the total
     // interval stays consistent with the configured settings.
+    //
+    // SKIP for step follow-ups with short delay — reading presence between
+    // step 1 and step 2 adds unnecessary delay and is not human-like
+    // (a human sending a follow-up doesn't stop to read other chats first).
     let readingTimeMs = 0
-    if (antiBanEnabled) {
+    if (antiBanEnabled && !hasShortStepFollowUp) {
       // ANTI-BAN SAFETY: UI settings are the minimum safety floor.
       // Campaign can go SLOWER (higher) but never FASTER (lower) than UI settings.
       const intervalMin = Math.max(campaignIntervalMin ?? 0, settings.messageIntervalMin)
@@ -3111,7 +3148,9 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
     // Variable threshold: random between cooldownAfterMessages and cooldownAfterMessagesMax
     // ANTI-BAN: Use gaussian distribution for cooldown durations — humans don't have
     // uniformly random rest periods; moderate durations are more natural.
-    if (antiBanEnabled && settings.cooldownAfterMessages > 0 && settings.cooldownMinutes > 0) {
+    // SKIP cooldown for step follow-ups with short delay — don't enter cooldown
+    // between step 1 and step 2. The cooldown will be checked again after step 2.
+    if (antiBanEnabled && !hasShortStepFollowUp && settings.cooldownAfterMessages > 0 && settings.cooldownMinutes > 0) {
       const chipAfterSend = await db.chip.findUnique({ where: { id: message.chipId } })
       if (chipAfterSend && chipAfterSend.sentToday > 0) {
         // Variable threshold: gaussian-distributed around midpoint
@@ -3196,28 +3235,6 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
     } else {
       nextDelay = gaussianDelaySeconds(intervalMin, intervalMax) * 1000
     }
-
-    // ============================================
-    // STEP FOLLOW-UP CHECK: Query next pending step for same contact
-    // If the next step has a configured delay shorter than anti-ban delay,
-    // we should respect the step delay so follow-up messages arrive on time.
-    // ============================================
-    let stepFollowUpDelayMs: number | null = null
-    try {
-      const nextStep = await db.message.findFirst({
-        where: { campaignId, contactId: message.contactId, stepOrder: message.stepOrder + 1, status: 'pending' },
-        select: { id: true, stepOrder: true },
-      })
-      if (nextStep) {
-        const stepConfig = await db.sequenceStep.findFirst({
-          where: { campaignId, stepOrder: nextStep.stepOrder },
-          select: { delayMinutes: true, delayUnit: true },
-        })
-        if (stepConfig && stepConfig.delayMinutes > 0) {
-          stepFollowUpDelayMs = (stepConfig.delayUnit === 'seconds' ? stepConfig.delayMinutes : stepConfig.delayMinutes * 60) * 1000
-        }
-      }
-    } catch (stepErr: any) { console.error(`[SendingEngine] Step follow-up check failed: ${stepErr.message}`) }
 
     // ============================================
     // INTERVAL FLOOR — messageIntervalMin is the absolute minimum
@@ -3323,10 +3340,18 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
     // If this message has a follow-up step with a configured delay shorter
     // than the anti-ban calculated nextDelay, override to respect the step delay.
     // This ensures "4 seconds after step 1" actually means 4 seconds, not 60s.
+    //
+    // CRITICAL: When this override is active, we also:
+    // 1. Clear the in-memory send guard so step 2 can be sent after the short delay
+    // 2. Set chip.nextSendAt relative to when the message was actually SENT (not now),
+    //    so anti-ban processing time doesn't add to the step delay
     // ============================================
     if (stepFollowUpDelayMs !== null && stepFollowUpDelayMs < nextDelay) {
       console.debug(`[SendingEngine] Step follow-up override: reducing delay from ${Math.round(nextDelay/1000)}s to ${Math.round(stepFollowUpDelayMs/1000)}s for next step of contact ${message.contactId}`)
       nextDelay = stepFollowUpDelayMs
+      // Clear in-memory guard so step 2 can be sent after the short delay
+      // Without this, isChipInMemoryCooling() blocks the chip for 60 seconds
+      chipLastSendMap.delete(message.chipId)
     }
 
     // ============================================

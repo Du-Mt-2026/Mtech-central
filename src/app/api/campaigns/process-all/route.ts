@@ -174,6 +174,18 @@ export async function POST(request: NextRequest) {
             campaignProcessed++
             totalProcessed++
             consecutiveSkips = 0 // Reset on successful send
+
+            // STEP FOLLOW-UP: When a message is sent with a short delay (≤ 30s),
+            // sleep for that delay so the chip becomes ready and step 2 can be
+            // picked up within the same cron tick. Without this, the loop would
+            // immediately try again, find "no_ready_chip" (chip.nextSendAt is in
+            // the future), and break — forcing step 2 to wait for the next cron
+            // tick (up to 60 seconds later).
+            if (result.delayMs > 0 && result.delayMs <= 30_000) {
+              const sleepMs = Math.max(result.delayMs, 1000) // At least 1 second
+              console.debug(`[ProcessAll] Step follow-up: sleeping ${Math.round(sleepMs/1000)}s for chip to become ready`)
+              await new Promise(resolve => setTimeout(resolve, sleepMs))
+            }
           } else {
             campaignSkipped++
             totalSkipped++
