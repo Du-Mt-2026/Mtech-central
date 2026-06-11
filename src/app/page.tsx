@@ -3927,30 +3927,31 @@ function SortableTab({ id, idx, isActive, canClose, onClick, onClose, isFollowUp
             : 'text-muted-foreground hover:text-foreground bg-muted/30 hover:bg-muted/50'
         }`}
       >
-      {/* Drag handle */}
-      <span
-        className="cursor-grab active:cursor-grabbing text-muted-foreground/40 hover:text-muted-foreground mr-0.5"
-        {...attributes}
-        {...listeners}
-      >
-        <GripVertical className="size-3" />
-      </span>
-      {/* Tab label - clicking switches tab */}
-      <button type="button" className="flex items-center gap-1.5" onClick={onClick}>
-        <span className="flex items-center justify-center size-5 rounded-full bg-emerald-600 text-white text-[10px] font-bold">{idx + 1}</span>
-        <span className="whitespace-nowrap">Mensagem {idx + 1}</span>
-      </button>
-      {/* Close X button - like browser tabs */}
-      {canClose && (
-        <button
-          type="button"
-          className="ml-0.5 flex items-center justify-center size-4 rounded-sm text-muted-foreground/50 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/20 transition-colors opacity-0 group-hover:opacity-100"
-          onClick={(e) => { e.stopPropagation(); onClose() }}
-          title="Fechar mensagem"
+        {/* Drag handle */}
+        <span
+          className="cursor-grab active:cursor-grabbing text-muted-foreground/40 hover:text-muted-foreground mr-0.5"
+          {...attributes}
+          {...listeners}
         >
-          <X className="size-3" />
+          <GripVertical className="size-3" />
+        </span>
+        {/* Tab label - clicking switches tab */}
+        <button type="button" className="flex items-center gap-1.5" onClick={onClick}>
+          <span className="flex items-center justify-center size-5 rounded-full bg-emerald-600 text-white text-[10px] font-bold">{idx + 1}</span>
+          <span className="whitespace-nowrap">Mensagem {idx + 1}</span>
         </button>
-      )}
+        {/* Close X button */}
+        {canClose && (
+          <button
+            type="button"
+            className="ml-0.5 flex items-center justify-center size-4 rounded-sm text-muted-foreground/50 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/20 transition-colors opacity-0 group-hover:opacity-100"
+            onClick={(e) => { e.stopPropagation(); onClose() }}
+            title="Fechar mensagem"
+          >
+            <X className="size-3" />
+          </button>
+        )}
+      </div>
     </div>
   )
 }
@@ -5124,42 +5125,23 @@ function CampanhasTab() {
                 {/* Editor Panel */}
                 <div className="flex-1 flex flex-col min-h-0 border-r">
                   {/* Message Tabs with Drag & Drop */}
-                  <DndContext sensors={dndSensors} collisionDetection={closestCenter} modifiers={[restrictToVerticalAxis]} onDragEnd={handleDragEnd}>
-                    <SortableContext items={newCampaign.steps.map((_, i) => String(i))} strategy={verticalListSortingStrategy}>
-                      <div className="flex flex-col px-3 pt-3 pb-2 border-b shrink-0 bg-muted/20">
-                        {newCampaign.steps.map((step, idx) => {
-                          const delayLabel = idx > 0 && step.delayMinutes > 0
-                            ? `+${step.delayMinutes}${step.delayUnit === 'seconds' ? 'seg' : 'min'}`
-                            : undefined
-                          return (
-                            <SortableTab
-                              key={idx}
-                              id={String(idx)}
-                              idx={idx}
-                              isActive={activeStep === idx}
-                              canClose={newCampaign.steps.length > 1}
-                              onClick={() => setActiveStep(idx)}
-                              onClose={() => { removeStep(idx); setActiveStep(Math.max(0, idx > 0 ? idx - 1 : 0)) }}
-                              isFollowUp={idx > 0}
-                              delayLabel={delayLabel}
-                              hasChildren={idx === 0}
-                            />
-                          )
-                        })}
-                        <div className="flex">
-                          <div className="w-6 shrink-0 flex flex-col items-center">
-                            {newCampaign.steps.length > 0 && (
-                              <>
-                                <div className="w-px flex-1 bg-emerald-300 dark:bg-emerald-700" />
-                                <div className="w-3 h-px bg-emerald-300 dark:bg-emerald-700 self-start ml-auto" />
-                              </>
-                            )}
-                          </div>
-                          <Button variant="ghost" size="sm" className="gap-1 text-emerald-600 h-7 px-2 ml-1" onClick={addStep}>
-                            <Plus className="size-3.5" />
-                            <span className="text-xs">Adicionar mensagem</span>
-                          </Button>
-                        </div>
+                  <DndContext sensors={dndSensors} collisionDetection={closestCenter} modifiers={[restrictToHorizontalAxis]} onDragEnd={handleDragEnd}>
+                    <SortableContext items={newCampaign.steps.map((_, i) => String(i))} strategy={horizontalListSortingStrategy}>
+                      <div className="flex items-center gap-0.5 px-4 pt-2 pb-0 border-b shrink-0 bg-muted/20 overflow-x-auto">
+                        {newCampaign.steps.map((step, idx) => (
+                          <SortableTab
+                            key={idx}
+                            id={String(idx)}
+                            idx={idx}
+                            isActive={activeStep === idx}
+                            canClose={newCampaign.steps.length > 1}
+                            onClick={() => setActiveStep(idx)}
+                            onClose={() => { removeStep(idx); setActiveStep(Math.max(0, idx > 0 ? idx - 1 : 0)) }}
+                          />
+                        ))}
+                        <Button variant="ghost" size="sm" className="gap-1 text-emerald-600 h-8 px-2 shrink-0" onClick={addStep}>
+                          <Plus className="size-3.5" />
+                        </Button>
                       </div>
                     </SortableContext>
                   </DndContext>
@@ -6112,60 +6094,30 @@ function CampanhasTab() {
                   </div>
                 )}
                 {selectedCampaign.sequenceSteps?.length > 0 && (
-                  <div className="space-y-0">
-                    <Label className="text-xs font-semibold mb-1.5 block">Mensagens & Variações</Label>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-semibold">Mensagens & Variações</Label>
                     {selectedCampaign.sequenceSteps.sort((a, b) => a.stepOrder - b.stepOrder).map((step, idx) => {
                       let parsedVars: Array<{content: string; mediaUrl?: string; mediatype?: string}> = []
                       try { parsedVars = JSON.parse(step.variations || '[]') } catch { /* ignore */ }
-                      const isFollowUp = idx > 0
-                      const isLast = idx === selectedCampaign.sequenceSteps.length - 1
-                      const hasChildren = idx === 0 && selectedCampaign.sequenceSteps.length > 1
                       return (
-                        <div key={step.id} className="flex">
-                          <div className="w-6 shrink-0 flex flex-col items-center">
-                            {isFollowUp ? (
-                              <>
-                                <div className="w-px flex-1 bg-emerald-300 dark:bg-emerald-700" />
-                                <div className="w-3 h-px bg-emerald-300 dark:bg-emerald-700 self-start ml-auto" />
-                                {isLast ? (
-                                  <div className="flex-1" />
-                                ) : (
-                                  <div className="w-px flex-1 bg-emerald-300 dark:bg-emerald-700" />
-                                )}
-                              </>
-                            ) : (
-                              <>
-                                <div className="flex-1" />
-                                {hasChildren && (
-                                  <div className="w-px flex-1 bg-emerald-300 dark:bg-emerald-700" />
-                                )}
-                              </>
-                            )}
+                        <div key={step.id} className="p-2.5 rounded-lg bg-muted/50 space-y-1.5">
+                          <div className="flex items-center gap-2">
+                            <span className="flex items-center justify-center size-6 rounded-full bg-emerald-600 text-white text-xs font-bold shrink-0">{step.stepOrder}</span>
+                            <p className="flex-1 text-xs whitespace-pre-wrap break-words min-w-0">{step.content}</p>
+                            {step.delayMinutes > 0 && <Badge variant="secondary" className="text-[10px] gap-1 shrink-0"><Clock className="size-2.5" />{step.delayMinutes}{step.delayUnit === 'seconds' ? 'seg' : 'min'}</Badge>}
                           </div>
-                          <div className="flex-1 p-2.5 rounded-lg bg-muted/50 space-y-1.5 mb-1.5">
-                            <div className="flex items-center gap-2">
-                              <span className={`flex items-center justify-center size-6 rounded-full text-white text-xs font-bold shrink-0 ${isFollowUp ? 'bg-slate-400 dark:bg-slate-500' : 'bg-emerald-600'}`}>{step.stepOrder}</span>
-                              <p className="flex-1 text-xs whitespace-pre-wrap break-words min-w-0">{step.content}</p>
-                              {isFollowUp && step.delayMinutes > 0 && (
-                                <span className="flex items-center gap-1 text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold bg-emerald-50 dark:bg-emerald-900/30 px-2 py-0.5 rounded-full shrink-0">
-                                  <Clock className="size-2.5" />+{step.delayMinutes}{step.delayUnit === 'seconds' ? 'seg' : 'min'}
-                                </span>
-                              )}
-                              {!isFollowUp && step.delayMinutes > 0 && <Badge variant="secondary" className="text-[10px] gap-1 shrink-0"><Clock className="size-2.5" />{step.delayMinutes}{step.delayUnit === 'seconds' ? 'seg' : 'min'}</Badge>}
+                          {parsedVars.length > 0 && (
+                            <div className="ml-8 space-y-0.5">
+                              <p className="text-[10px] text-muted-foreground font-medium">Variações ({parsedVars.length}):</p>
+                              {parsedVars.map((v, vi) => (
+                                <div key={vi} className="flex items-start gap-1.5 text-[11px]">
+                                  <Shuffle className="size-3 text-emerald-500 shrink-0 mt-0.5" />
+                                  <span className="whitespace-pre-wrap break-words min-w-0">{v.content}</span>
+                                  {v.mediatype && <Badge variant="outline" className="text-[9px] px-1 py-0 shrink-0">{v.mediatype}</Badge>}
+                                </div>
+                              ))}
                             </div>
-                            {parsedVars.length > 0 && (
-                              <div className="ml-8 space-y-0.5">
-                                <p className="text-[10px] text-muted-foreground font-medium">Variações ({parsedVars.length}):</p>
-                                {parsedVars.map((v, vi) => (
-                                  <div key={vi} className="flex items-start gap-1.5 text-[11px]">
-                                    <Shuffle className="size-3 text-emerald-500 shrink-0 mt-0.5" />
-                                    <span className="whitespace-pre-wrap break-words min-w-0">{v.content}</span>
-                                    {v.mediatype && <Badge variant="outline" className="text-[9px] px-1 py-0 shrink-0">{v.mediatype}</Badge>}
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
+                          )}
                         </div>
                       )
                     })}
