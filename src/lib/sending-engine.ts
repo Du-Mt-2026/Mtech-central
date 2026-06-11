@@ -3074,14 +3074,28 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
     }
 
     // Increment chip counter (daily + hourly)
+    // CONDITIONAL ATOMIC INCREMENT: Only increment sentToday if still under effectiveLimit.
+    // This prevents race conditions where concurrent processes both pass the pre-check
+    // and increment past the daily limit (e.g. 41/40).
+    const effectiveLimitForIncrement = getEffectiveDailyLimit(currentChip, settings, warmingMode)
+    const conditionalIncrement = antiBanEnabled
+      ? await db.$executeRaw`UPDATE "Chip" SET "sentToday" = "sentToday" + 1 WHERE "id" = ${message.chipId} AND "sentToday" < ${effectiveLimitForIncrement}`
+      : await db.$executeRaw`UPDATE "Chip" SET "sentToday" = "sentToday" + 1 WHERE "id" = ${message.chipId}`
+
+    if (conditionalIncrement === 0 && antiBanEnabled) {
+      console.warn(`[SendingEngine] Conditional increment skipped for chip ${currentChip.name} — already at limit (${currentChip.sentToday}/${effectiveLimitForIncrement})`)
+      // Release the message so it can be reassigned
+      await releaseMessageAndChipLock(message.id, message.chipId, 'conditional_increment_limit')
+      const remaining = await db.message.count({ where: { campaignId, status: 'pending' } })
+      return { processed: false, delayMs: 1000, remaining, completed: remaining === 0, reason: `conditional_increment_limit_${currentChip.name}` }
+    }
+
     // Also set warmingStartedAt on first-ever send (if not already set)
     await db.chip.update({
       where: { id: message.chipId },
       data: {
-        sentToday: { increment: 1 },
         hourlySent: { increment: 1 },
         lastSeen: new Date(),
-        // Set warmingStartedAt on first send — warming clock starts from here, not from registration
         ...(currentChip.warmingStartedAt ? {} : { warmingStartedAt: new Date() }),
       },
     })
@@ -3184,6 +3198,28 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
     }
 
     // ============================================
+    // STEP FOLLOW-UP CHECK: Query next pending step for same contact
+    // If the next step has a configured delay shorter than anti-ban delay,
+    // we should respect the step delay so follow-up messages arrive on time.
+    // ============================================
+    let stepFollowUpDelayMs: number | null = null
+    try {
+      const nextStep = await db.message.findFirst({
+        where: { campaignId, contactId: message.contactId, stepOrder: message.stepOrder + 1, status: 'pending' },
+        select: { id: true, stepOrder: true },
+      })
+      if (nextStep) {
+        const stepConfig = await db.sequenceStep.findFirst({
+          where: { campaignId, stepOrder: nextStep.stepOrder },
+          select: { delayMinutes: true, delayUnit: true },
+        })
+        if (stepConfig && stepConfig.delayMinutes > 0) {
+          stepFollowUpDelayMs = (stepConfig.delayUnit === 'seconds' ? stepConfig.delayMinutes : stepConfig.delayMinutes * 60) * 1000
+        }
+      }
+    } catch (stepErr: any) { console.error(`[SendingEngine] Step follow-up check failed: ${stepErr.message}`) }
+
+    // ============================================
     // INTERVAL FLOOR — messageIntervalMin is the absolute minimum
     // ============================================
     // BUGFIX: Previously, cluster micro-pauses had a lower floor (50% of intervalMin,
@@ -3280,6 +3316,17 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
         console.debug(`[SendingEngine] Chip ${currentChip.name} (${chipPhase}): bumping delay from ${Math.round(nextDelay/1000)}s to minimum ${Math.round(minIntervalMs/1000)}s`)
         nextDelay = minIntervalMs
       }
+    }
+
+    // ============================================
+    // STEP FOLLOW-UP OVERRIDE
+    // If this message has a follow-up step with a configured delay shorter
+    // than the anti-ban calculated nextDelay, override to respect the step delay.
+    // This ensures "4 seconds after step 1" actually means 4 seconds, not 60s.
+    // ============================================
+    if (stepFollowUpDelayMs !== null && stepFollowUpDelayMs < nextDelay) {
+      console.debug(`[SendingEngine] Step follow-up override: reducing delay from ${Math.round(nextDelay/1000)}s to ${Math.round(stepFollowUpDelayMs/1000)}s for next step of contact ${message.contactId}`)
+      nextDelay = stepFollowUpDelayMs
     }
 
     // ============================================

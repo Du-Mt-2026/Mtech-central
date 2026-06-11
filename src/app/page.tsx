@@ -5913,8 +5913,8 @@ function CampanhasTab() {
                         })}
                       </div>
                     </div>
-                    {/* Message List */}
-                    <div className="space-y-1">
+                    {/* Message List — Tree-style grouped by contact */}
+                    <div className="space-y-0.5">
                       {(() => {
                         const filtered = detailMessages.filter(m => {
                           const matchStatus = detailStatusFilter === 'all' || m.status === detailStatusFilter
@@ -5928,7 +5928,6 @@ function CampanhasTab() {
                             const nameB = b.contact?.name || '—'
                             return nameA.localeCompare(nameB, 'pt-BR')
                           }
-                          // sendOrder: sort by sentAt (sent first), then pending by createdAt, then failed
                           const statusPriority: Record<string, number> = { sent: 0, delivered: 0, read: 0, pending: 1, failed: 2 }
                           const prioA = statusPriority[a.status] ?? 3
                           const prioB = statusPriority[b.status] ?? 3
@@ -5937,27 +5936,93 @@ function CampanhasTab() {
                           const timeB = b.sentAt ? new Date(b.sentAt).getTime() : b.createdAt ? new Date(b.createdAt).getTime() : 0
                           return timeA - timeB
                         })
-                        return sorted.map((m, i) => (
-                          <div key={m.id} className={`p-2 rounded-lg text-xs flex items-center gap-2 ${m.status === 'failed' ? 'bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800' : m.status === 'pending' ? 'bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800' : 'bg-muted/50'}`}>
-                            <span className="font-mono text-muted-foreground w-4 text-center">{i + 1}</span>
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2">
-                                <span className="font-medium truncate">{m.contact?.name || '—'}</span>
-                                <span className="text-muted-foreground truncate">{m.contact?.phone || ''}</span>
+
+                        // Group messages by contactId, keeping stepOrder order within each group
+                        const contactGroups: Map<string, typeof sorted> = new Map()
+                        for (const m of sorted) {
+                          const key = m.contactId
+                          if (!contactGroups.has(key)) contactGroups.set(key, [])
+                          contactGroups.get(key)!.push(m)
+                        }
+                        // Sort each group by stepOrder
+                        for (const msgs of contactGroups.values()) {
+                          msgs.sort((a, b) => a.stepOrder - b.stepOrder)
+                        }
+
+                        let globalIdx = 0
+                        const groups = Array.from(contactGroups.entries())
+                        return groups.map(([contactId, messages]) => {
+                          return messages.map((m, stepIdx) => {
+                            globalIdx++
+                            const isFollowUp = stepIdx > 0
+                            const isLastInGroup = stepIdx === messages.length - 1
+                            const cardBg = m.status === 'failed' ? 'bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800' : m.status === 'pending' ? 'bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800' : 'bg-muted/50'
+
+                            if (isFollowUp) {
+                              return (
+                                <div key={m.id} className="flex">
+                                  {/* Tree connector column */}
+                                  <div className="w-8 shrink-0 flex flex-col items-center">
+                                    {stepIdx === 1 && (
+                                      <div className="w-px flex-1 bg-emerald-300 dark:bg-emerald-700" />
+                                    )}
+                                    {stepIdx > 1 && (
+                                      <div className="w-px flex-1 bg-emerald-300 dark:bg-emerald-700" />
+                                    )}
+                                    <div className="w-3 h-px bg-emerald-300 dark:bg-emerald-700 self-end mr-auto ml-1" />
+                                    {!isLastInGroup && (
+                                      <div className="w-px flex-1 bg-emerald-300 dark:bg-emerald-700" />
+                                    )}
+                                    {isLastInGroup && <div className="flex-1" />}
+                                  </div>
+                                  {/* Follow-up card */}
+                                  <div className={`flex-1 flex items-center gap-2 p-2 rounded-lg text-xs ${cardBg} ml-0.5`}>
+                                    <span className="flex items-center justify-center size-4 rounded-full bg-emerald-100 dark:bg-emerald-900/40 text-emerald-600 dark:text-emerald-400 text-[8px] font-bold shrink-0">{m.stepOrder}</span>
+                                    <div className="flex-1 min-w-0">
+                                      <div className="flex items-center gap-2">
+                                        <span className="font-medium truncate text-emerald-700 dark:text-emerald-400">Segunda mensagem</span>
+                                        <span className="text-muted-foreground truncate">{m.contact?.phone || ''}</span>
+                                      </div>
+                                      <div className="flex items-center gap-2 mt-0.5">
+                                        <StatusBadge status={m.status} />
+                                        {m.chip?.name && <span className="text-muted-foreground">via {m.chip.name}</span>}
+                                      </div>
+                                      {m.error && <p className="text-rose-600 mt-0.5 font-medium truncate">Erro: {m.error}</p>}
+                                    </div>
+                                    <div className="text-right shrink-0 text-[10px]">
+                                      {m.sentAt && <p className="text-muted-foreground">{new Date(m.sentAt).toLocaleString('pt-BR')}</p>}
+                                      {m.deliveredAt && <p className="text-emerald-600">{new Date(m.deliveredAt).toLocaleString('pt-BR')}</p>}
+                                      {m.status === 'pending' && !m.sentAt && <p className="text-amber-600 font-medium">Aguardando</p>}
+                                    </div>
+                                  </div>
+                                </div>
+                              )
+                            }
+
+                            // First step (stepOrder === 1) — normal card
+                            return (
+                              <div key={m.id} className={`p-2 rounded-lg text-xs flex items-center gap-2 ${cardBg}`}>
+                                <span className="font-mono text-muted-foreground w-4 text-center">{globalIdx}</span>
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-medium truncate">{m.contact?.name || '—'}</span>
+                                    <span className="text-muted-foreground truncate">{m.contact?.phone || ''}</span>
+                                  </div>
+                                  <div className="flex items-center gap-2 mt-0.5">
+                                    <StatusBadge status={m.status} />
+                                    {m.chip?.name && <span className="text-muted-foreground">via {m.chip.name}</span>}
+                                  </div>
+                                  {m.error && <p className="text-rose-600 mt-0.5 font-medium truncate">Erro: {m.error}</p>}
+                                </div>
+                                <div className="text-right shrink-0 text-[10px]">
+                                  {m.sentAt && <p className="text-muted-foreground">{new Date(m.sentAt).toLocaleString('pt-BR')}</p>}
+                                  {m.deliveredAt && <p className="text-emerald-600">{new Date(m.deliveredAt).toLocaleString('pt-BR')}</p>}
+                                  {m.status === 'pending' && !m.sentAt && <p className="text-amber-600 font-medium">Aguardando</p>}
+                                </div>
                               </div>
-                              <div className="flex items-center gap-2 mt-0.5">
-                                <StatusBadge status={m.status} />
-                                {m.chip?.name && <span className="text-muted-foreground">via {m.chip.name}</span>}
-                              </div>
-                              {m.error && <p className="text-rose-600 mt-0.5 font-medium truncate">Erro: {m.error}</p>}
-                            </div>
-                            <div className="text-right shrink-0 text-[10px]">
-                              {m.sentAt && <p className="text-muted-foreground">{new Date(m.sentAt).toLocaleString('pt-BR')}</p>}
-                              {m.deliveredAt && <p className="text-emerald-600">{new Date(m.deliveredAt).toLocaleString('pt-BR')}</p>}
-                              {m.status === 'pending' && !m.sentAt && <p className="text-amber-600 font-medium">Aguardando</p>}
-                            </div>
-                          </div>
-                        ))
+                            )
+                          })
+                        })
                       })()}
                     </div>
                   </div>
