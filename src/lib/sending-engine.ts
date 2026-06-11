@@ -2623,7 +2623,54 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
 
   // Check daily limit (with warming mode multiplier)
   const effectiveLimit = getEffectiveDailyLimit(currentChip, settings, warmingMode)
-  if (antiBanEnabled && currentChip.sentToday >= effectiveLimit) {
+  let atomicSentToday = currentChip.sentToday
+  let dailyLimitExceeded = false
+
+  if (antiBanEnabled) {
+    // CONDITIONAL ATOMIC INCREMENT: Only increment if sentToday < effectiveLimit.
+    // This prevents the race condition where two concurrent processes both pass
+    // the "sentToday >= effectiveLimit" check before either increments.
+    try {
+      const conditionalIncrement = await db.$executeRaw`
+        UPDATE "Chip"
+        SET "sentToday" = "sentToday" + 1, "hourlySent" = "hourlySent" + 1, "updatedAt" = NOW()
+        WHERE id = ${currentChip.id} AND "sentToday" < ${effectiveLimit}
+      `
+      if (conditionalIncrement === 0) {
+        dailyLimitExceeded = true
+        console.debug(`[SendingEngine] Chip ${currentChip.name} hit daily limit CONDITIONALLY (${currentChip.sentToday}/${effectiveLimit}) — increment blocked`)
+      } else {
+        const chipAfterIncrement = await db.chip.findUnique({
+          where: { id: currentChip.id },
+          select: { sentToday: true },
+        })
+        atomicSentToday = chipAfterIncrement?.sentToday ?? currentChip.sentToday + 1
+      }
+    } catch (atomicErr: any) {
+      console.warn(`[SendingEngine] Conditional atomic increment failed (${atomicErr.message}), falling back to increment-then-check`)
+      const chipAfterAtomicIncrement = await db.chip.update({
+        where: { id: currentChip.id },
+        data: {
+          sentToday: { increment: 1 },
+          hourlySent: { increment: 1 },
+        },
+      })
+      atomicSentToday = chipAfterAtomicIncrement.sentToday
+      if (atomicSentToday > effectiveLimit) {
+        dailyLimitExceeded = true
+        await db.chip.update({
+          where: { id: currentChip.id },
+          data: {
+            sentToday: { decrement: 1 },
+            hourlySent: { decrement: 1 },
+          },
+        })
+        console.debug(`[SendingEngine] Chip ${currentChip.name} hit daily limit ATOMICALLY (${atomicSentToday - 1}/${effectiveLimit}) — reverting increment and reassigning`)
+      }
+    }
+  }
+
+  if (dailyLimitExceeded) {
     console.debug(`[SendingEngine] Chip ${currentChip.name} hit daily limit (${currentChip.sentToday}/${effectiveLimit}) — reassigning messages to other chips`)
 
     // Find other connected chips that BELONG to this campaign (via CampaignChip)
@@ -2637,7 +2684,6 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
     })
 
     if (otherChips.length > 0) {
-      // Reassign up to 50 pending messages from this chip to other chips (round-robin)
       const pendingMessages = await db.message.findMany({
         where: { campaignId, chipId: currentChip.id, status: 'pending' },
         take: 50,
@@ -2650,20 +2696,11 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
           data: { chipId: targetChip.id },
         })
       }
-
-      console.debug(`[SendingEngine] Reassigned ${pendingMessages.length} messages from ${currentChip.name} to other chips`)
-
-      // v5.0: Release the message claim so it can be picked up by another chip
-      await releaseMessageAndChipLock(message.id, message.chipId, 'daily_limit')
-
-      // Return with short delay so we can try processing again with the reassigned messages
-      const remaining = await db.message.count({ where: { campaignId, status: 'pending' } })
-      return { processed: false, delayMs: 1000, remaining, completed: remaining === 0, reason: `daily_limit_reassigned_${currentChip.name}` }
+      console.debug(`[SendingEngine] Reassigned ${pendingMessages.length} messages from ${currentChip.name} to ${otherChips.length} other chips`)
     }
 
-    // No other chips available — release claim and return chip-specific reason
-    // v5.0: Don't block campaign with nextSendAt; the process-all loop handles this
-    await releaseMessageAndChipLock(message.id, message.chipId, 'disconnected_reassigned')
+    // Release the claim on this message so it can be picked up by another chip
+    await releaseMessageAndChipLock(message.id, message.chipId, 'daily_limit')
     return {
       processed: false,
       delayMs: 1000,

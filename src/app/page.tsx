@@ -5125,23 +5125,42 @@ function CampanhasTab() {
                 {/* Editor Panel */}
                 <div className="flex-1 flex flex-col min-h-0 border-r">
                   {/* Message Tabs with Drag & Drop */}
-                  <DndContext sensors={dndSensors} collisionDetection={closestCenter} modifiers={[restrictToHorizontalAxis]} onDragEnd={handleDragEnd}>
-                    <SortableContext items={newCampaign.steps.map((_, i) => String(i))} strategy={horizontalListSortingStrategy}>
-                      <div className="flex items-center gap-0.5 px-4 pt-2 pb-0 border-b shrink-0 bg-muted/20 overflow-x-auto">
-                        {newCampaign.steps.map((step, idx) => (
-                          <SortableTab
-                            key={idx}
-                            id={String(idx)}
-                            idx={idx}
-                            isActive={activeStep === idx}
-                            canClose={newCampaign.steps.length > 1}
-                            onClick={() => setActiveStep(idx)}
-                            onClose={() => { removeStep(idx); setActiveStep(Math.max(0, idx > 0 ? idx - 1 : 0)) }}
-                          />
-                        ))}
-                        <Button variant="ghost" size="sm" className="gap-1 text-emerald-600 h-8 px-2 shrink-0" onClick={addStep}>
-                          <Plus className="size-3.5" />
-                        </Button>
+                  <DndContext sensors={dndSensors} collisionDetection={closestCenter} modifiers={[restrictToVerticalAxis]} onDragEnd={handleDragEnd}>
+                    <SortableContext items={newCampaign.steps.map((_, i) => String(i))} strategy={verticalListSortingStrategy}>
+                      <div className="flex flex-col px-3 pt-3 pb-2 border-b shrink-0 bg-muted/20">
+                        {newCampaign.steps.map((step, idx) => {
+                          const delayLabel = idx > 0 && step.delayMinutes > 0
+                            ? `+${step.delayMinutes}${step.delayUnit === 'seconds' ? 'seg' : 'min'}`
+                            : undefined
+                          return (
+                            <SortableTab
+                              key={idx}
+                              id={String(idx)}
+                              idx={idx}
+                              isActive={activeStep === idx}
+                              canClose={newCampaign.steps.length > 1}
+                              onClick={() => setActiveStep(idx)}
+                              onClose={() => { removeStep(idx); setActiveStep(Math.max(0, idx > 0 ? idx - 1 : 0)) }}
+                              isFollowUp={idx > 0}
+                              delayLabel={delayLabel}
+                              hasChildren={idx === 0}
+                            />
+                          )
+                        })}
+                        <div className="flex">
+                          <div className="w-6 shrink-0 flex flex-col items-center">
+                            {newCampaign.steps.length > 0 && (
+                              <>
+                                <div className="w-px flex-1 bg-emerald-300 dark:bg-emerald-700" />
+                                <div className="w-3 h-px bg-emerald-300 dark:bg-emerald-700 self-start ml-auto" />
+                              </>
+                            )}
+                          </div>
+                          <Button variant="ghost" size="sm" className="gap-1 text-emerald-600 h-7 px-2 ml-1" onClick={addStep}>
+                            <Plus className="size-3.5" />
+                            <span className="text-xs">Adicionar mensagem</span>
+                          </Button>
+                        </div>
                       </div>
                     </SortableContext>
                   </DndContext>
