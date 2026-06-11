@@ -69,3 +69,6 @@ worklog.md
 # Examples
 /examples/
 .env*.local
+
+# Backup files
+*.bak
