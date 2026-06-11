@@ -71,7 +71,7 @@ export async function POST(request: NextRequest) {
       // Create instance WITH proxy if available — the proxy is accessible
       // from the Evolution Go container via iptables NAT rules on KVM8.
       // Creating with proxy from the start avoids the disconnect/reconnect cycle.
-      const newInstance = await createInstance(instanceName, proxyConfig || undefined)
+      const newInstance = await createInstance(instanceName)
       existing = newInstance
     }
 

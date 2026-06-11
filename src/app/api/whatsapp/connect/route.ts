@@ -129,7 +129,7 @@ export async function POST(request: Request) {
       //
       // If proxy is unreachable, Evolution Go will fall back to direct connection
       // for QR code generation, so this doesn't block QR scanning.
-      const newInstance = await createInstance(instanceName, proxyConfig || undefined)
+      const newInstance = await createInstance(instanceName)
       const effectiveInstanceName = newInstance.name || instanceName
 
       // Connect via router
@@ -329,7 +329,7 @@ export async function POST(request: Request) {
           clearInstanceIdCache()
 
           // Recreate instance from scratch — WITH proxy if available!
-          const newInstance = await createInstance(instanceName, proxyConfig || undefined)
+          const newInstance = await createInstance(instanceName)
           const newEffectiveName = newInstance.name || instanceName
 
           const newConnectResult = await routerConnectInstance(newEffectiveName, webhookUrl)

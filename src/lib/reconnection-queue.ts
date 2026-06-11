@@ -559,7 +559,7 @@ async function attemptReconnection(entry: ReconnectionEntry): Promise<void> {
       console.log(`[ReconnectQueue] Instance ${instanceName} no longer exists, recreating with proxy`)
       const globalProxy = await getGlobalProxy()
       const proxyConfig = resolveChipProxy(chip, globalProxy) || undefined
-      const newInstance = await createInstance(instanceName, proxyConfig)
+      const newInstance = await createInstance(instanceName)
       effectiveInstanceName = newInstance.name || instanceName
     }
 

@@ -1377,7 +1377,7 @@ export function resolveChipProxy(chip: {
       host: chip.wireguardIp,
       port: String(chip.socksPort || 8084),
       username: chip.socks5User || '',
-      password: chip.socks5Pass || '',
+      password: chip.socks5Pass || '' // BUG FIX: empty password OK for setProxy(), NOT for createInstance(),
     }
   }
 
