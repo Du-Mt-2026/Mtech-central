@@ -3013,7 +3013,7 @@ function ContatosTab() {
                 {/* Scrollable body with DnD */}
                 <div className="flex-1 overflow-y-auto" style={{ minHeight: 0 }}>
                   <DndContext sensors={contactDragSensors} collisionDetection={closestCenter} modifiers={[restrictToVerticalAxis]} onDragEnd={handleContactDragEnd}>
-                    <SortableContext items={contacts.map(c => c.id)} strategy={verticalListSortingStrategy}>
+                    <SortableContext items={contacts.map(c => c.id)} strategy={horizontalListSortingStrategy}>
                       <table className="w-full text-sm table-fixed">
                         <colgroup>
                           <col className="w-[40px]" />
@@ -3842,10 +3842,10 @@ function MessageBuilder({ value, onChange, messageKeys, templates, contactVariab
   )
 }
 
-// ===== Sortable Tab Component for Drag & Drop =====
-function SortableTab({ id, idx, isActive, canClose, onClick, onClose, isFollowUp, delayLabel, hasChildren }: {
+// ===== Sortable Tab Component for Drag & Drop (Browser Tab Style) =====
+function SortableTab({ id, idx, isActive, canClose, onClick, onClose, isFollowUp, delayLabel }: {
   id: string; idx: number; isActive: boolean; canClose: boolean; onClick: () => void; onClose: () => void;
-  isFollowUp?: boolean; delayLabel?: string; hasChildren?: boolean;
+  isFollowUp?: boolean; delayLabel?: string;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
   const style: CSSProperties = {
@@ -3855,71 +3855,13 @@ function SortableTab({ id, idx, isActive, canClose, onClick, onClose, isFollowUp
     opacity: isDragging ? 0.8 : 1,
   }
 
-  // Follow-up step (idx > 0): indented with tree connector
-  if (isFollowUp) {
-    return (
-      <div
-        ref={setNodeRef}
-        style={style}
-        className="flex shrink-0 group"
-      >
-        {/* Tree gutter */}
-        <div className="w-6 shrink-0 flex flex-col items-center">
-          <div className="w-px flex-1 bg-emerald-300 dark:bg-emerald-700" />
-          <div className="w-3 h-px bg-emerald-300 dark:bg-emerald-700 self-start ml-auto" />
-          <div className="w-px flex-1 bg-emerald-300 dark:bg-emerald-700" />
-        </div>
-        <div
-          className={`flex items-center gap-1 pl-2 pr-1 py-1 text-xs font-medium rounded-md transition-colors group ${
-            isActive
-              ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300 ring-1 ring-emerald-200 dark:ring-emerald-800'
-              : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
-          }`}
-        >
-          <span
-            className="cursor-grab active:cursor-grabbing text-muted-foreground/40 hover:text-muted-foreground"
-            {...attributes}
-            {...listeners}
-          >
-            <GripVertical className="size-3" />
-          </span>
-          <button type="button" className="flex items-center gap-1.5" onClick={onClick}>
-            <span className="flex items-center justify-center size-4 rounded-full bg-slate-400 dark:bg-slate-500 text-white text-[9px] font-bold">{idx + 1}</span>
-            <span className="whitespace-nowrap">Mensagem {idx + 1}</span>
-            {delayLabel && (
-              <span className="flex items-center gap-0.5 text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold bg-emerald-50 dark:bg-emerald-900/30 px-1.5 py-0.5 rounded-full">
-                <Clock className="size-2.5" />{delayLabel}
-              </span>
-            )}
-          </button>
-          {canClose && (
-            <button
-              type="button"
-              className="ml-0.5 flex items-center justify-center size-4 rounded-sm text-muted-foreground/50 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/20 transition-colors opacity-0 group-hover:opacity-100"
-              onClick={(e) => { e.stopPropagation(); onClose() }}
-              title="Fechar mensagem"
-            >
-              <X className="size-3" />
-            </button>
-          )}
-        </div>
-      </div>
-    )
-  }
-
-  // First step (idx === 0): Normal full-width tab with downward connector
+  // All steps use the same browser-tab style
   return (
     <div
       ref={setNodeRef}
       style={style}
-      className="flex shrink-0 group"
+      className="shrink-0 group"
     >
-      <div className="w-6 shrink-0 flex flex-col items-center">
-        <div className="flex-1" />
-        {hasChildren && (
-          <div className="w-px flex-1 bg-emerald-300 dark:bg-emerald-700" />
-        )}
-      </div>
       <div
         className={`flex items-center gap-0.5 pl-2 pr-0.5 py-1.5 text-sm font-medium rounded-md transition-colors ${
           isActive
@@ -3939,6 +3881,11 @@ function SortableTab({ id, idx, isActive, canClose, onClick, onClose, isFollowUp
         <button type="button" className="flex items-center gap-1.5" onClick={onClick}>
           <span className="flex items-center justify-center size-5 rounded-full bg-emerald-600 text-white text-[10px] font-bold">{idx + 1}</span>
           <span className="whitespace-nowrap">Mensagem {idx + 1}</span>
+          {delayLabel && (
+            <span className="flex items-center gap-0.5 text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold bg-emerald-50 dark:bg-emerald-900/30 px-1.5 py-0.5 rounded-full">
+              <Clock className="size-2.5" />{delayLabel}
+            </span>
+          )}
         </button>
         {/* Close X button */}
         {canClose && (
@@ -4535,7 +4482,16 @@ function CampanhasTab() {
   const openDetail = async (campaign: Campaign) => {
     setSelectedCampaign(campaign); setDetailDialogOpen(true); setEditing(false)
     setDetailSortBy('name'); setDetailSearchQuery(''); setDetailStatusFilter('all')
-    try { const res = await fetch(`/api/messages?campaignId=${campaign.id}&limit=5000`, { cache: 'no-store' }); const data = await res.json(); setDetailMessages(Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : []) }
+    try {
+      // Fetch fresh campaign data with latest chip info
+      const [campRes, msgRes] = await Promise.all([
+        fetch(`/api/campaigns/${campaign.id}`, { cache: 'no-store' }),
+        fetch(`/api/messages?campaignId=${campaign.id}&limit=5000`, { cache: 'no-store' })
+      ])
+      if (campRes.ok) setSelectedCampaign(await campRes.json())
+      const msgData = await msgRes.json()
+      setDetailMessages(Array.isArray(msgData?.data) ? msgData.data : Array.isArray(msgData) ? msgData : [])
+    }
     catch { setDetailMessages([]) }
   }
 
@@ -5125,9 +5081,9 @@ function CampanhasTab() {
                 {/* Editor Panel */}
                 <div className="flex-1 flex flex-col min-h-0 border-r">
                   {/* Message Tabs with Drag & Drop */}
-                  <DndContext sensors={dndSensors} collisionDetection={closestCenter} modifiers={[restrictToVerticalAxis]} onDragEnd={handleDragEnd}>
+                  <DndContext sensors={dndSensors} collisionDetection={closestCenter} modifiers={[restrictToHorizontalAxis]} onDragEnd={handleDragEnd}>
                     <SortableContext items={newCampaign.steps.map((_, i) => String(i))} strategy={verticalListSortingStrategy}>
-                      <div className="flex flex-col px-3 pt-3 pb-2 border-b shrink-0 bg-muted/20">
+                      <div className="flex items-center gap-1 px-3 pt-3 pb-2 border-b shrink-0 bg-muted/20 overflow-x-auto">
                         {newCampaign.steps.map((step, idx) => {
                           const delayLabel = idx > 0 && step.delayMinutes > 0
                             ? `+${step.delayMinutes}${step.delayUnit === 'seconds' ? 'seg' : 'min'}`
@@ -5143,24 +5099,14 @@ function CampanhasTab() {
                               onClose={() => { removeStep(idx); setActiveStep(Math.max(0, idx > 0 ? idx - 1 : 0)) }}
                               isFollowUp={idx > 0}
                               delayLabel={delayLabel}
-                              hasChildren={idx === 0}
+                              
                             />
                           )
                         })}
-                        <div className="flex">
-                          <div className="w-6 shrink-0 flex flex-col items-center">
-                            {newCampaign.steps.length > 0 && (
-                              <>
-                                <div className="w-px flex-1 bg-emerald-300 dark:bg-emerald-700" />
-                                <div className="w-3 h-px bg-emerald-300 dark:bg-emerald-700 self-start ml-auto" />
-                              </>
-                            )}
-                          </div>
-                          <Button variant="ghost" size="sm" className="gap-1 text-emerald-600 h-7 px-2 ml-1" onClick={addStep}>
-                            <Plus className="size-3.5" />
-                            <span className="text-xs">Adicionar mensagem</span>
-                          </Button>
-                        </div>
+                        <Button variant="ghost" size="sm" className="gap-1 text-emerald-600 h-7 px-2 shrink-0" onClick={addStep}>
+                          <Plus className="size-3.5" />
+                          <span className="text-xs">Adicionar mensagem</span>
+                        </Button>
                       </div>
                     </SortableContext>
                   </DndContext>
@@ -5891,6 +5837,7 @@ function CampanhasTab() {
                       if (!chip) return null
                       const inCooldown = chip.cooldownUntil && new Date(chip.cooldownUntil) > new Date()
                       const cooldownMin = inCooldown ? Math.ceil((new Date(chip.cooldownUntil).getTime() - Date.now()) / 60000) : 0
+                      const chipInfo = getChipEffectiveInfo(chip)
                       return (
                         <div key={chip.id} className={`p-2 rounded-lg text-xs flex items-center gap-2 ${inCooldown ? 'bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800' : chip.status === 'connected' ? 'bg-emerald-50 dark:bg-emerald-900/10 border border-emerald-200 dark:border-emerald-800' : 'bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800'}`}>
                           <div className={`size-2.5 rounded-full shrink-0 ${chip.status === 'connected' ? 'bg-emerald-500' : chip.status === 'disconnected' ? 'bg-zinc-400' : 'bg-rose-500'}`} />
@@ -5901,7 +5848,10 @@ function CampanhasTab() {
                               {chip.status !== 'connected' && <Badge variant="destructive" className="text-[9px] px-1 py-0 h-4">Desconectado</Badge>}
                             </div>
                             <div className="flex items-center gap-2 mt-0.5">
-                              <span className="text-muted-foreground">{chip.sentToday || 0}/{chip.dailyLimit || 200} enviadas hoje</span>
+                              <span className="text-muted-foreground">{chip.sentToday || 0}/{chipInfo.effectiveLimit} enviadas hoje</span>
+                              {chipInfo.effectiveLimit < (chip.dailyLimit ?? 200) && (
+                                <span className="text-[10px] text-muted-foreground">(de {chip.dailyLimit ?? 200})</span>
+                              )}
                               {inCooldown && (
                                 <Badge variant="outline" className="gap-1 text-amber-600 border-amber-300 bg-amber-50 text-[9px] px-1.5 py-0 h-4">
                                   <Clock className="size-2.5" /> Cooldown {cooldownMin}min
@@ -6046,17 +5996,15 @@ function CampanhasTab() {
                             if (isFollowUp) {
                               return (
                                 <div key={m.id} className="flex">
-                                  {/* Tree connector column */}
-                                  <div className="w-8 shrink-0 flex flex-col items-center">
-                                    {stepIdx === 1 && (
-                                      <div className="w-px flex-1 bg-emerald-300 dark:bg-emerald-700" />
-                                    )}
-                                    {stepIdx > 1 && (
-                                      <div className="w-px flex-1 bg-emerald-300 dark:bg-emerald-700" />
-                                    )}
-                                    <div className="w-3 h-px bg-emerald-300 dark:bg-emerald-700 self-end mr-auto ml-1" />
+                                  {/* Tree connector column — horizontal line points right toward the message card */}
+                                  <div className="w-8 shrink-0 flex flex-col">
+                                    <div className="w-px flex-1 bg-emerald-300 dark:bg-emerald-700 mx-auto" />
+                                    <div className="flex h-px">
+                                      <div className="w-1/2" />
+                                      <div className="w-1/2 h-px bg-emerald-300 dark:bg-emerald-700" />
+                                    </div>
                                     {!isLastInGroup && (
-                                      <div className="w-px flex-1 bg-emerald-300 dark:bg-emerald-700" />
+                                      <div className="w-px flex-1 bg-emerald-300 dark:bg-emerald-700 mx-auto" />
                                     )}
                                     {isLastInGroup && <div className="flex-1" />}
                                   </div>
