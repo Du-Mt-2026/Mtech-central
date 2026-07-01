@@ -2644,6 +2644,10 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
   const effectiveLimit = getEffectiveDailyLimit(currentChip, settings, warmingMode)
   let atomicSentToday = currentChip.sentToday
   let dailyLimitExceeded = false
+  // BUGFIX: Track whether we've incremented sentToday/hourlySent so we can rollback
+  // if the send fails or we exit early. Previously, the increment happened twice
+  // (once here as a "reservation", once after the send) — causing double counting.
+  let sentTodayIncremented = false
 
   if (antiBanEnabled) {
     // CONDITIONAL ATOMIC INCREMENT: Only increment if sentToday < effectiveLimit.
@@ -2664,6 +2668,7 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
           select: { sentToday: true },
         })
         atomicSentToday = chipAfterIncrement?.sentToday ?? currentChip.sentToday + 1
+        sentTodayIncremented = true
       }
     } catch (atomicErr: any) {
       console.warn(`[SendingEngine] Conditional atomic increment failed (${atomicErr.message}), falling back to increment-then-check`)
@@ -2675,8 +2680,10 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
         },
       })
       atomicSentToday = chipAfterAtomicIncrement.sentToday
+      sentTodayIncremented = true
       if (atomicSentToday > effectiveLimit) {
         dailyLimitExceeded = true
+        sentTodayIncremented = false
         await db.chip.update({
           where: { id: currentChip.id },
           data: {
@@ -2687,6 +2694,11 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
         console.debug(`[SendingEngine] Chip ${currentChip.name} hit daily limit ATOMICALLY (${atomicSentToday - 1}/${effectiveLimit}) — reverting increment and reassigning`)
       }
     }
+  } else {
+    // BUGFIX: antiBan disabled — simple increment (previously this case was handled
+    // by the second increment at line ~3175, which we removed to fix double counting)
+    await db.$executeRaw`UPDATE "Chip" SET "sentToday" = "sentToday" + 1, "hourlySent" = "hourlySent" + 1, "updatedAt" = NOW() WHERE "id" = ${message.chipId}`
+    sentTodayIncremented = true
   }
 
   if (dailyLimitExceeded) {
@@ -2769,6 +2781,15 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
       // loop can try other chips. The chip's cooldownUntil already prevents this
       // chip from being selected by the message query.
       await releaseMessageAndChipLock(message.id, message.chipId, 'send_error_recovery')
+      // BUGFIX: Rollback the sentToday increment since we're not actually sending
+      if (sentTodayIncremented) {
+        try {
+          await db.$executeRaw`UPDATE "Chip" SET "sentToday" = GREATEST("sentToday" - 1, 0), "hourlySent" = GREATEST("hourlySent" - 1, 0) WHERE "id" = ${message.chipId}`
+          sentTodayIncremented = false
+        } catch (rbErr: any) {
+          console.error(`[SendingEngine] Failed to rollback sentToday (cooldown): ${rbErr.message}`)
+        }
+      }
       return {
         processed: false,
         delayMs: 1000, // Short delay — process-all loop will try other chips
@@ -2804,6 +2825,15 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
         where: { id: message.id },
         data: { status: 'failed', error: 'Mensagem duplicada — já enviada em outro registro' },
       })
+      // BUGFIX: Rollback the sentToday increment since we're not actually sending
+      if (sentTodayIncremented) {
+        try {
+          await db.$executeRaw`UPDATE "Chip" SET "sentToday" = GREATEST("sentToday" - 1, 0), "hourlySent" = GREATEST("hourlySent" - 1, 0) WHERE "id" = ${message.chipId}`
+          sentTodayIncremented = false
+        } catch (rbErr: any) {
+          console.error(`[SendingEngine] Failed to rollback sentToday (duplicate): ${rbErr.message}`)
+        }
+      }
       const remaining = await db.message.count({ where: { campaignId, status: 'pending' } })
       return { processed: true, delayMs: 1000, remaining, completed: remaining === 0 }
     }
@@ -2823,6 +2853,15 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
   if (!claimCheck) {
     // Message was recovered/reset by another process — skip it
     console.debug(`[SendingEngine] Message ${message.id} claim lost (no longer in 'sending'), skipping`)
+    // BUGFIX: Rollback the sentToday increment since we're not actually sending
+    if (sentTodayIncremented) {
+      try {
+        await db.$executeRaw`UPDATE "Chip" SET "sentToday" = GREATEST("sentToday" - 1, 0), "hourlySent" = GREATEST("hourlySent" - 1, 0) WHERE "id" = ${message.chipId}`
+        sentTodayIncremented = false
+      } catch (rbErr: any) {
+        console.error(`[SendingEngine] Failed to rollback sentToday (claim lost): ${rbErr.message}`)
+      }
+    }
     return { processed: false, delayMs: 500, remaining: -1, completed: false, reason: 'message_claim_lost' }
   }
 
@@ -3167,28 +3206,12 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
       }
     }
 
-    // Increment chip counter (daily + hourly)
-    // CONDITIONAL ATOMIC INCREMENT: Only increment sentToday if still under effectiveLimit.
-    // This prevents race conditions where concurrent processes both pass the pre-check
-    // and increment past the daily limit (e.g. 41/40).
-    const effectiveLimitForIncrement = getEffectiveDailyLimit(currentChip, settings, warmingMode)
-    const conditionalIncrement = antiBanEnabled
-      ? await db.$executeRaw`UPDATE "Chip" SET "sentToday" = "sentToday" + 1 WHERE "id" = ${message.chipId} AND "sentToday" < ${effectiveLimitForIncrement}`
-      : await db.$executeRaw`UPDATE "Chip" SET "sentToday" = "sentToday" + 1 WHERE "id" = ${message.chipId}`
-
-    if (conditionalIncrement === 0 && antiBanEnabled) {
-      console.warn(`[SendingEngine] Conditional increment skipped for chip ${currentChip.name} — already at limit (${currentChip.sentToday}/${effectiveLimitForIncrement})`)
-      // Release the message so it can be reassigned
-      await releaseMessageAndChipLock(message.id, message.chipId, 'conditional_increment_limit')
-      const remaining = await db.message.count({ where: { campaignId, status: 'pending' } })
-      return { processed: false, delayMs: 1000, remaining, completed: remaining === 0, reason: `conditional_increment_limit_${currentChip.name}` }
-    }
-
-    // Also set warmingStartedAt on first-ever send (if not already set)
+    // BUGFIX: sentToday and hourlySent were already incremented earlier (line ~2653)
+    // as a "reservation" before the send. We do NOT increment again here — that was
+    // a duplicate-counting bug. Only update lastSeen and warmingStartedAt.
     await db.chip.update({
       where: { id: message.chipId },
       data: {
-        hourlySent: { increment: 1 },
         lastSeen: new Date(),
         ...(currentChip.warmingStartedAt ? {} : { warmingStartedAt: new Date() }),
       },
@@ -3434,6 +3457,18 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
 
   } catch (error: any) {
     console.error(`[SendingEngine] Failed to send message ${message.id}:`, error.message)
+
+    // BUGFIX: Rollback the sentToday/hourlySent increment since the send failed.
+    // The increment was done earlier (line ~2653) as a "reservation" — if the send
+    // fails, we must release that reservation to avoid inflating the count.
+    if (sentTodayIncremented) {
+      try {
+        await db.$executeRaw`UPDATE "Chip" SET "sentToday" = GREATEST("sentToday" - 1, 0), "hourlySent" = GREATEST("hourlySent" - 1, 0) WHERE "id" = ${message.chipId}`
+        console.debug(`[SendingEngine] Rolled back sentToday increment for chip ${message.chipId} due to send failure`)
+      } catch (rollbackErr: any) {
+        console.error(`[SendingEngine] Failed to rollback sentToday for chip ${message.chipId}:`, rollbackErr.message)
+      }
+    }
 
     // ============================================
     // BAN DETECTION FROM SEND ERRORS
