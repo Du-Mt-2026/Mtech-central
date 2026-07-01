@@ -3929,7 +3929,18 @@ function CampanhasTab() {
   const [exportingId, setExportingId] = useState<string | null>(null)
   const [exportingAll, setExportingAll] = useState(false)
   const [refreshingDetail, setRefreshingDetail] = useState(false)
-  const [detailSortBy, setDetailSortBy] = useState<'name' | 'sendOrder'>('name')
+  // BUGFIX: Default é 'sendOrder' (ordem de envio) em vez de 'name' (alfabética).
+  // Persiste a escolha do usuário em localStorage para não re-selecionar toda vez.
+  const [detailSortBy, setDetailSortBy] = useState<'name' | 'sendOrder'>(() => {
+    if (typeof window === 'undefined') return 'sendOrder'
+    const saved = window.localStorage.getItem('campaignDetail_sortBy')
+    return saved === 'name' ? 'name' : 'sendOrder'
+  })
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem('campaignDetail_sortBy', detailSortBy)
+    }
+  }, [detailSortBy])
   const [detailSearchQuery, setDetailSearchQuery] = useState('')
   const [detailStatusFilter, setDetailStatusFilter] = useState('all')
   const [antiBanSettings, setAntiBanSettings] = useState<AntiBanSettings | null>(null)
