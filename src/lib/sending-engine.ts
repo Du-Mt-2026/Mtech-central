@@ -3370,7 +3370,18 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
 
         if (recentMessages.length >= drc.minSample) {
           const sample = recentMessages.slice(0, drc.minSample)
-          const delivered = sample.filter(m => m.status === 'delivered' || m.status === 'read').length
+          // BUGFIX: Consider 'sent' as delivered when calculating delivery rate.
+          // The Evolution API webhook does not always update message status to
+          // 'delivered' (ack=2 receipts are not consistently processed). Without
+          // counting 'sent', the delivery rate always reads as 0% and triggers
+          // the critical 4x slowdown multiplier on every message — even when
+          // messages are actually being delivered.
+          // WhatsApp only returns HTTP 200 (which sets status='sent') when the
+          // message has been accepted by the server, so 'sent' is a reliable
+          // signal that the message reached WhatsApp's infrastructure.
+          const delivered = sample.filter(m =>
+            m.status === 'sent' || m.status === 'delivered' || m.status === 'read'
+          ).length
           const deliveryRate = (delivered / sample.length) * 100
 
           let deliveryMultiplier = 1.0
