@@ -37,7 +37,22 @@ export async function GET(
     if (!campaign) {
       return NextResponse.json({ error: 'Campanha não encontrada' }, { status: 404 })
     }
-    return NextResponse.json(campaign)
+
+    // PROBLEMA 5: incluir messageStatusCounts (status breakdown) no retorno.
+    // Sem isso, o frontend não consegue exibir o botão "Reenviar falhadas" no
+    // detalhe da campanha, porque openDetail() busca este endpoint e sobrescreve
+    // o selectedCampaign — fazendo messageStatusCounts.failed ficar undefined.
+    const statusCounts = await db.message.groupBy({
+      by: ['status'],
+      where: { campaignId },
+      _count: { status: true },
+    })
+    const messageStatusCounts: Record<string, number> = {}
+    for (const sc of statusCounts) {
+      messageStatusCounts[sc.status] = sc._count.status
+    }
+
+    return NextResponse.json({ ...campaign, messageStatusCounts })
   } catch {
     return NextResponse.json({ error: 'Campanha não encontrada' }, { status: 404 })
   }
@@ -179,7 +194,17 @@ export async function PATCH(
           contactList: { select: { id: true, name: true } },
         },
       })
-      return NextResponse.json(updatedCampaign)
+      // PROBLEMA 5: incluir messageStatusCounts também no PATCH (após status transition)
+      const patchStatusCounts = await db.message.groupBy({
+        by: ['status'],
+        where: { campaignId },
+        _count: { status: true },
+      })
+      const patchMessageStatusCounts: Record<string, number> = {}
+      for (const sc of patchStatusCounts) {
+        patchMessageStatusCounts[sc.status] = sc._count.status
+      }
+      return NextResponse.json({ ...updatedCampaign, messageStatusCounts: patchMessageStatusCounts })
     }
 
     // Non-status updates — apply whitelisted fields only
@@ -204,7 +229,17 @@ export async function PATCH(
         contactList: { select: { id: true, name: true } },
       },
     })
-    return NextResponse.json(campaign)
+    // PROBLEMA 5: incluir messageStatusCounts também no PATCH (non-status updates)
+    const nonStatusCounts = await db.message.groupBy({
+      by: ['status'],
+      where: { campaignId },
+      _count: { status: true },
+    })
+    const nonStatusMessageStatusCounts: Record<string, number> = {}
+    for (const sc of nonStatusCounts) {
+      nonStatusMessageStatusCounts[sc.status] = sc._count.status
+    }
+    return NextResponse.json({ ...campaign, messageStatusCounts: nonStatusMessageStatusCounts })
   } catch (error) {
     console.error('Campaign PATCH error:', error)
     return NextResponse.json({ error: 'Erro ao atualizar campanha' }, { status: 500 })
