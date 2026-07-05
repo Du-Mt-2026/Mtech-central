@@ -4004,6 +4004,39 @@ function CampanhasTab() {
   const fetchChips = useCallback(async () => {
     try { const res = await fetch('/api/chips'); setAvailableChips(await res.json()) } catch { /* empty */ }
   }, [])
+
+  // PROBLEMA 4: Pausa individual de chip — pausa sem desconectar do WhatsApp.
+  // Quando pausado, o chip não recebe novas mensagens de campanha, mas continua
+  // conectado. Mensagens pendentes ficam aguardando (não são redistribuídas).
+  const toggleChipPause = useCallback(async (chipId: string, currentlyPaused: boolean, chipName: string) => {
+    try {
+      const endpoint = currentlyPaused ? 'resume' : 'pause'
+      const res = await fetch(`/api/chips/${chipId}/${endpoint}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: currentlyPaused ? '{}' : JSON.stringify({ reason: 'Pausa manual pelo usuário' }),
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Erro desconhecido' }))
+        throw new Error(err.error || `HTTP ${res.status}`)
+      }
+      const data = await res.json()
+      // Atualiza o estado local dos availableChips
+      setAvailableChips(prev => prev.map(c => c.id === chipId ? { ...c, paused: data.chip?.paused ?? !currentlyPaused, pausedAt: data.chip?.pausedAt ?? null, pauseReason: data.chip?.pauseReason ?? null } : c))
+      // Atualiza também o chip dentro da campanha selecionada (se for o caso)
+      setSelectedCampaign(prev => {
+        if (!prev || !prev.chips) return prev
+        return {
+          ...prev,
+          chips: prev.chips.map((cc: any) => cc.chip?.id === chipId ? { ...cc, chip: { ...cc.chip, paused: data.chip?.paused ?? !currentlyPaused, pausedAt: data.chip?.pausedAt ?? null, pauseReason: data.chip?.pauseReason ?? null } } : cc)
+        }
+      })
+      toast.success(data.message || `Chip ${chipName} ${currentlyPaused ? 'retomado' : 'pausado'}`)
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Erro ao alterar pausa do chip'
+      toast.error(msg)
+    }
+  }, [])
   const fetchLists = useCallback(async () => {
     try { const res = await fetch('/api/contact-lists'); setAvailableLists(await res.json()) } catch { /* empty */ }
   }, [])
