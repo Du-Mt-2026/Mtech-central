@@ -2069,8 +2069,12 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
   // This preserves contact-by-contact ordering when chips are ready.
 
   // Helper: chip readiness filter used in queries
+  // PROBLEMA 4: inclui `paused: false` para que chips pausados individualmente
+  // não sejam selecionados para envio (continuam conectados ao WhatsApp, mas
+  // não recebem novas mensagens de campanha).
   const chipReadyFilter = antiBanEnabled ? {
     status: 'connected',
+    paused: false,
     evolutionInstance: { not: null },
     AND: [
       { OR: [{ nextSendAt: null }, { nextSendAt: { lt: new Date() } }] },
@@ -2079,6 +2083,7 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
   } : {
     // When anti-ban is disabled, only check connection status
     status: 'connected',
+    paused: false,
     evolutionInstance: { not: null },
   }
 
@@ -2360,10 +2365,13 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
       console.debug(`[SendingEngine] Chip ${message.chip.name} is DISCONNECTED — checking for other chips in this campaign`)
 
       // Find other connected chips that BELONG to this campaign (via CampaignChip)
+      // PROBLEMA 4: exclui chips pausados individualmente — eles não devem
+      // receber mensagens redistribuídas.
       const otherChips = await db.chip.findMany({
         where: {
           id: { not: message.chip.id },
           status: 'connected',
+          paused: false,
           evolutionInstance: { not: null },
           campaigns: { some: { campaignId } },
         },
@@ -2450,10 +2458,12 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
       }).catch(() => {})
 
       // Find other connected chips that BELONG to this campaign (via CampaignChip)
+      // PROBLEMA 4: exclui chips pausados individualmente
       const otherChips = await db.chip.findMany({
         where: {
           id: { not: message.chip.id },
           status: 'connected',
+          paused: false,
           evolutionInstance: { not: null },
           campaigns: { some: { campaignId } },
         },
@@ -2709,6 +2719,7 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
       where: {
         id: { not: currentChip.id },
         status: 'connected',
+        paused: false,
         evolutionInstance: { not: null },
         campaigns: { some: { campaignId } },
       },
@@ -3536,6 +3547,7 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
         where: {
           id: { not: message.chipId },
           status: 'connected',
+          paused: false,
           campaigns: { some: { campaignId } },
         },
       })
@@ -3749,10 +3761,11 @@ export async function performBreakWindowReadingPresence(): Promise<number> {
   const breakPc = getPresenceConfig(breakSettings)
   if (Math.random() > (breakPc.idleReadingChance)) return 0
 
-  // Find all connected chips
+  // Find all connected chips (excluding paused ones — they shouldn't appear online)
   const connectedChips = await db.chip.findMany({
     where: {
       status: 'connected',
+      paused: false,
       evolutionInstance: { not: null },
     },
     select: { id: true, name: true, evolutionInstance: true },

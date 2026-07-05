@@ -719,6 +719,31 @@ function ChipsTab() {
     finally { setLoading(false) }
   }, [])
 
+  // PROBLEMA 4: Pausa individual de chip — pausa sem desconectar do WhatsApp.
+  // Quando pausado, o chip não recebe novas mensagens de campanha, mas continua
+  // conectado. Mensagens pendentes ficam aguardando (não são redistribuídas).
+  const toggleChipPause = useCallback(async (chipId: string, currentlyPaused: boolean, chipName: string) => {
+    try {
+      const endpoint = currentlyPaused ? 'resume' : 'pause'
+      const res = await fetch(`/api/chips/${chipId}/${endpoint}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: currentlyPaused ? '{}' : JSON.stringify({ reason: 'Pausa manual pelo usuário' }),
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Erro desconhecido' }))
+        throw new Error(err.error || `HTTP ${res.status}`)
+      }
+      const data = await res.json()
+      // Atualiza o estado local dos chips
+      setChips(prev => prev.map(c => c.id === chipId ? { ...c, paused: data.chip?.paused ?? !currentlyPaused, pausedAt: data.chip?.pausedAt ?? null, pauseReason: data.chip?.pauseReason ?? null } : c))
+      toast.success(data.message || `Chip ${chipName} ${currentlyPaused ? 'retomado' : 'pausado'}`)
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Erro ao alterar pausa do chip'
+      toast.error(msg)
+    }
+  }, [])
+
   // Check proxy status for all chips that have WireGuard or SOCKS5 config
   const checkAllProxies = useCallback(async (chipList: Chip[]) => {
     const chipsWithProxy = chipList.filter(c => c.wireguardIp || (c.proxyMode === 'socks5' && c.socks5Host && c.socks5Pass))
@@ -5849,16 +5874,18 @@ function CampanhasTab() {
                       const inCooldown = chip.cooldownUntil && new Date(chip.cooldownUntil) > new Date()
                       const cooldownMin = inCooldown ? Math.ceil((new Date(chip.cooldownUntil).getTime() - Date.now()) / 60000) : 0
                       const chipInfo = getChipEffectiveInfo(chip)
+                      const isPaused = chip.paused === true
                       return (
-                        <div key={chip.id} className={`p-2 rounded-lg text-xs flex items-center gap-2 ${inCooldown ? 'bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800' : chip.status === 'connected' ? 'bg-emerald-50 dark:bg-emerald-900/10 border border-emerald-200 dark:border-emerald-800' : 'bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800'}`}>
-                          <div className={`size-2.5 rounded-full shrink-0 ${chip.status === 'connected' ? 'bg-emerald-500' : chip.status === 'disconnected' ? 'bg-zinc-400' : 'bg-rose-500'}`} />
+                        <div key={chip.id} className={`p-2 rounded-lg text-xs flex items-center gap-2 ${isPaused ? 'bg-zinc-100 dark:bg-zinc-900/40 border border-zinc-300 dark:border-zinc-700' : inCooldown ? 'bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800' : chip.status === 'connected' ? 'bg-emerald-50 dark:bg-emerald-900/10 border border-emerald-200 dark:border-emerald-800' : 'bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800'}`}>
+                          <div className={`size-2.5 rounded-full shrink-0 ${isPaused ? 'bg-zinc-400' : chip.status === 'connected' ? 'bg-emerald-500' : chip.status === 'disconnected' ? 'bg-zinc-400' : 'bg-rose-500'}`} />
                           <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2 flex-wrap">
                               <span className="font-medium">{chip.name}</span>
                               <span className="text-muted-foreground">{chip.phoneNumber}</span>
+                              {isPaused && <Badge variant="outline" className="text-[9px] px-1 py-0 h-4 bg-zinc-200 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 border-zinc-400">⏸ Pausado</Badge>}
                               {chip.status !== 'connected' && <Badge variant="destructive" className="text-[9px] px-1 py-0 h-4">Desconectado</Badge>}
                             </div>
-                            <div className="flex items-center gap-2 mt-0.5">
+                            <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                               <span className="text-muted-foreground">{chip.sentToday || 0}/{chipInfo.effectiveLimit} enviadas hoje</span>
                               {chipInfo.effectiveLimit < (chip.dailyLimit ?? 200) && (
                                 <span className="text-[10px] text-muted-foreground">(de {chip.dailyLimit ?? 200})</span>
@@ -5873,13 +5900,27 @@ function CampanhasTab() {
                                   {chip.warmingPhase === 'nursery' ? '🌿 Aquecendo' : chip.warmingPhase === 'prewarm' ? '🔥 Pré-aquecimento' : chip.warmingPhase}
                                 </Badge>
                               )}
+                              {isPaused && chip.pauseReason && (
+                                <span className="text-[10px] text-muted-foreground italic truncate" title={chip.pauseReason}>— {chip.pauseReason}</span>
+                              )}
                             </div>
                           </div>
-                          {inCooldown && (
+                          {inCooldown && !isPaused && (
                             <div className="text-right shrink-0">
                               <p className="text-amber-600 font-medium text-[10px]">Retoma em</p>
                               <p className="text-amber-700 font-bold text-xs">{cooldownMin}min</p>
                             </div>
+                          )}
+                          {/* PROBLEMA 4: Botão de pausa individual — só para chips conectados */}
+                          {chip.status === 'connected' && (
+                            <button
+                              onClick={() => toggleChipPause(chip.id, isPaused, chip.name)}
+                              disabled={chip.status !== 'connected'}
+                              title={isPaused ? 'Retomar envios deste chip' : 'Pausar envios deste chip (continua conectado ao WhatsApp)'}
+                              className={`shrink-0 inline-flex items-center justify-center size-7 rounded-md transition-colors ${isPaused ? 'bg-emerald-100 hover:bg-emerald-200 dark:bg-emerald-900/40 dark:hover:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300' : 'bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300'}`}
+                            >
+                              {isPaused ? <Play className="size-3.5" /> : <Pause className="size-3.5" />}
+                            </button>
                           )}
                         </div>
                       )
