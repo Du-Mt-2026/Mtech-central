@@ -4550,7 +4550,10 @@ function CampanhasTab() {
 
   const openDetail = async (campaign: Campaign) => {
     setSelectedCampaign(campaign); setDetailDialogOpen(true); setEditing(false)
-    setDetailSortBy('name'); setDetailSearchQuery(''); setDetailStatusFilter('all')
+    // PROBLEMA 2: Não resetar detailSortBy para 'name' — respeitar o default
+    // 'sendOrder' (ou a preferência salva no localStorage do usuário).
+    // Apenas resetar search e status filter.
+    setDetailSearchQuery(''); setDetailStatusFilter('all')
     try {
       // Fetch fresh campaign data with latest chip info
       const [campRes, msgRes] = await Promise.all([
