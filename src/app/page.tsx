@@ -6113,6 +6113,8 @@ function CampanhasTab() {
                                     <div className="text-right shrink-0 text-[10px]">
                                       {m.sentAt && <p className="text-muted-foreground">{new Date(m.sentAt).toLocaleString('pt-BR')}</p>}
                                       {m.deliveredAt && <p className="text-emerald-600">{new Date(m.deliveredAt).toLocaleString('pt-BR')}</p>}
+                                      {m.status === 'failed' && !m.sentAt && m.updatedAt && <p className="text-rose-600">{new Date(m.updatedAt).toLocaleString('pt-BR')}</p>}
+                                      {m.status === 'failed' && !m.sentAt && !m.updatedAt && m.createdAt && <p className="text-rose-600">{new Date(m.createdAt).toLocaleString('pt-BR')}</p>}
                                       {m.status === 'pending' && !m.sentAt && <p className="text-amber-600 font-medium">Aguardando</p>}
                                     </div>
                                   </div>
@@ -6138,6 +6140,8 @@ function CampanhasTab() {
                                 <div className="text-right shrink-0 text-[10px]">
                                   {m.sentAt && <p className="text-muted-foreground">{new Date(m.sentAt).toLocaleString('pt-BR')}</p>}
                                   {m.deliveredAt && <p className="text-emerald-600">{new Date(m.deliveredAt).toLocaleString('pt-BR')}</p>}
+                                  {m.status === 'failed' && !m.sentAt && m.updatedAt && <p className="text-rose-600">{new Date(m.updatedAt).toLocaleString('pt-BR')}</p>}
+                                  {m.status === 'failed' && !m.sentAt && !m.updatedAt && m.createdAt && <p className="text-rose-600">{new Date(m.createdAt).toLocaleString('pt-BR')}</p>}
                                   {m.status === 'pending' && !m.sentAt && <p className="text-amber-600 font-medium">Aguardando</p>}
                                 </div>
                               </div>
