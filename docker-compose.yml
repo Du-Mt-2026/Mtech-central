@@ -30,7 +30,7 @@ services:
         condition: service_healthy
     networks:
       - internal
-    command: ["sh", "-c", "npx prisma@6 db push --accept-data-loss && echo 'Migrations done!'"]
+    command: ["sh", "-c", "npx prisma@6 migrate deploy && echo 'Migrations done!'"]
     restart: "no"  # Roda uma vez e sai
 
   # ==========================================
