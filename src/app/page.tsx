@@ -250,6 +250,7 @@ interface MessageItem {
   error: string | null
   evolutionMessageId: string | null
   createdAt: string
+  updatedAt?: string | null
   chip: { name: string; phoneNumber: string }
   contact: { name: string; phone: string }
 }
