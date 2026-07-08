@@ -732,7 +732,10 @@ async function releaseMessageAndChipLock(messageId: string, chipId: string, reas
   await db.message.update({ where: { id: messageId }, data: { status: 'pending' } })
   // Only clear nextSendAt if we can confirm it's our own temporary lock.
   // If lockTimestamp is provided, only clear if the chip's nextSendAt matches it (±2s).
-  // If lockTimestamp is NOT provided (legacy callers), fall back to clearing if < 3 min.
+  // If lockTimestamp is NOT provided (legacy callers), only clear if it's a temporary
+  // lock (within 130 seconds — the chip lock is always 120s). This prevents
+  // clearing legitimate interval locks (e.g. 60s, 90s, 120s) that were set
+  // by successful sends.
   if (lockTimestamp) {
     // Precise: only clear if it's our lock (within ±2 seconds tolerance)
     const chip = await db.chip.findUnique({ where: { id: chipId }, select: { nextSendAt: true } })
@@ -743,12 +746,15 @@ async function releaseMessageAndChipLock(messageId: string, chipId: string, reas
       }
     }
   } else {
-    // Legacy fallback: clear if within 3 minutes (more conservative than before)
-    const threeMinutesFromNow = new Date(Date.now() + 180_000)
+    // Legacy fallback: only clear if nextSendAt is within 130s from now.
+    // The chip lock is always set to now + 120s, so this only clears temporary
+    // locks, NOT legitimate interval locks (which are >= 60s but could be up to 180s).
+    // FIX: was 180s (3 min), now 130s — prevents clearing legitimate 90-120s intervals.
+    const oneThirtySecondsFromNow = new Date(Date.now() + 130_000)
     await db.chip.updateMany({
       where: {
         id: chipId,
-        nextSendAt: { lt: threeMinutesFromNow },
+        nextSendAt: { lt: oneThirtySecondsFromNow },
       },
       data: { nextSendAt: null },
     })
@@ -2121,9 +2127,9 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
       }
 
       // AUTO-COMPLETION FIX: Recover stuck "sending" messages (stuck > 5 min)
-      const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000)
+      const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000)
       const recovered = await db.message.updateMany({
-        where: { campaignId, status: 'sending', updatedAt: { lt: fiveMinutesAgo } },
+        where: { campaignId, status: 'sending', updatedAt: { lt: tenMinutesAgo } },
         data: { status: 'pending' },
       })
       if (recovered.count > 0) {
@@ -2322,9 +2328,9 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
   if (!message) {
     // AUTO-COMPLETION FIX: Same recovery logic as above
     // Check for stale "sending" messages and recover them before deciding
-    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000)
+    const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000)
     const recovered = await db.message.updateMany({
-      where: { campaignId, status: 'sending', updatedAt: { lt: fiveMinutesAgo } },
+      where: { campaignId, status: 'sending', updatedAt: { lt: tenMinutesAgo } },
       data: { status: 'pending' },
     })
     if (recovered.count > 0) {
@@ -2501,28 +2507,36 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
         // CRITICAL FIX: Agrupar por contato — todos os steps do mesmo contato
         // devem ir para o MESMO chip novo. Chip banido não reconecta, então
         // precisamos redistribuir tudo, mas mantendo a consistência de chip por contato.
+        // RACE CONDITION FIX: Usar updateMany atômico por grupo de contato em vez
+        // de update individual. Isso previne que processo concorrente faça claim
+        // das mensagens enquanto estão sendo redistribuídas.
         const pendingMessages = await db.message.findMany({
           where: { campaignId, chipId: message.chip.id, status: 'pending' },
           take: 50,
+          select: { id: true, contactId: true },
         })
 
         const availableChips = await getAvailableChipsForReassignment(campaignId, otherChips)
         // Group by contactId to ensure all steps for same contact go to same chip
-        const contactGroups = new Map<string, typeof pendingMessages>()
+        const contactGroups = new Map<string, string[]>() // contactId → messageIds
         for (const m of pendingMessages) {
           if (!contactGroups.has(m.contactId)) contactGroups.set(m.contactId, [])
-          contactGroups.get(m.contactId)!.push(m)
+          contactGroups.get(m.contactId)!.push(m.id)
         }
         let groupIdx = 0
-        for (const [, msgs] of contactGroups) {
+        for (const [contactId, messageIds] of contactGroups) {
           const targetChip = availableChips[groupIdx % availableChips.length]
           groupIdx++
-          for (const m of msgs) {
-            await db.message.update({
-              where: { id: m.id },
-              data: { chipId: targetChip.id },
-            })
-          }
+          // Atomic update: all messages for this contact go to the same chip
+          // This is atomic and prevents race condition where another process
+          // could claim individual messages between updates
+          await db.message.updateMany({
+            where: {
+              id: { in: messageIds },
+              status: 'pending', // Only update if still pending (not claimed by another process)
+            },
+            data: { chipId: targetChip.id },
+          })
         }
 
         console.debug(`[SendingEngine] Reassigned ${pendingMessages.length} messages from banned chip ${message.chip.name} to other campaign chips`)
@@ -3506,11 +3520,22 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
     //    so anti-ban processing time doesn't add to the step delay
     // ============================================
     if (stepFollowUpDelayMs !== null && stepFollowUpDelayMs < nextDelay) {
-      console.debug(`[SendingEngine] Step follow-up override: reducing delay from ${Math.round(nextDelay/1000)}s to ${Math.round(stepFollowUpDelayMs/1000)}s for next step of contact ${message.contactId}`)
-      nextDelay = stepFollowUpDelayMs
-      // Clear in-memory guard so step 2 can be sent after the short delay
-      // Without this, isChipInMemoryCooling() blocks the chip for 60 seconds
-      chipLastSendMap.delete(message.chipId)
+      // ANTI-BAN FIX: Nunca deixar nextDelay abaixo do mínimo absoluto de 60s.
+      // Anteriormente, se um step 2 tivesse delayMinutes=4 com delayUnit='seconds',
+      // o nextDelay caía para 4s — violando o floor anti-ban de 60s.
+      // Agora respeitamos o step delay, mas NUNCA abaixo do mínimo absoluto.
+      const minDelay = Math.max(ABSOLUTE_MIN_INTERVAL_MS, settings.messageIntervalMin * 1000)
+      if (stepFollowUpDelayMs >= minDelay) {
+        console.debug(`[SendingEngine] Step follow-up override: reducing delay from ${Math.round(nextDelay/1000)}s to ${Math.round(stepFollowUpDelayMs/1000)}s for next step of contact ${message.contactId}`)
+        nextDelay = stepFollowUpDelayMs
+        // Clear in-memory guard so step 2 can be sent after the configured delay
+        chipLastSendMap.delete(message.chipId)
+      } else {
+        // Step delay is too short — use the minimum instead
+        console.warn(`[SendingEngine] Step follow-up delay ${Math.round(stepFollowUpDelayMs/1000)}s is below minimum ${Math.round(minDelay/1000)}s — using minimum instead for contact ${message.contactId}`)
+        nextDelay = minDelay
+        chipLastSendMap.delete(message.chipId)
+      }
     }
 
     // ============================================
@@ -3828,11 +3853,11 @@ export async function processCampaign(campaignId: string): Promise<{
  */
 export async function recoverStuckMessages(campaignId?: string): Promise<number> {
   try {
-    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000)
+    const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000)
 
     const where: Record<string, unknown> = {
       status: 'sending',
-      updatedAt: { lt: fiveMinutesAgo },
+      updatedAt: { lt: tenMinutesAgo },
     }
     if (campaignId) where.campaignId = campaignId
 
