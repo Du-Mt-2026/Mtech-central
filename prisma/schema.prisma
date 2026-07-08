@@ -67,6 +67,7 @@ model Chip {
   paused              Boolean  @default(false)
   pausedAt            DateTime?
   pauseReason         String?
+  pausedUntil         DateTime?   // Circuit breaker: quando null = pausa manual indefinida; quando preenchido = auto-retoma nesta data
 
   // Vendedor association — each chip can belong to a vendedor
   vendedorId String?

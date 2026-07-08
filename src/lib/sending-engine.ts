@@ -3603,6 +3603,119 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
     }
 
     // ============================================
+    // CIRCUIT BREAKER: Erro 463 — pausa chip por 2h e redistribui
+    // ============================================
+    // O erro 463 indica que o WhatsApp está recusando entregas para
+    // destinatários específicos através deste chip (provável shadowban
+    // ou degradação de reputação). Em vez de continuar enviando e
+    // acumular falhas, o circuit breaker:
+    //   1. Pausa o chip por 2 horas (auto-retoma via autoUnpauseExpiredChips)
+    //   2. Redistribui mensagens pendentes para outros chips da campanha
+    //   3. Marca a mensagem atual como failed
+    if (errorMsg.includes('463')) {
+      console.warn(`[CircuitBreaker] Erro 463 detectado para chip ${message.chip.name} — ativando circuit breaker (2h pause + redistribute)`)
+
+      const CIRCUIT_BREAKER_PAUSE_MS = 2 * 60 * 60 * 1000 // 2 horas
+      const pausedUntil = new Date(Date.now() + CIRCUIT_BREAKER_PAUSE_MS)
+
+      // 1. Pausar o chip por 2 horas
+      await db.chip.update({
+        where: { id: message.chipId },
+        data: {
+          paused: true,
+          pausedAt: new Date(),
+          pausedUntil,
+          pauseReason: `Circuit breaker: erro 463 (WhatsApp recusou entrega) — pausado por 2h, auto-retoma em ${pausedUntil.toISOString()}`,
+        },
+      })
+
+      // 2. Encontrar outros chips conectados e não pausados nesta campanha
+      const otherChips = await db.chip.findMany({
+        where: {
+          id: { not: message.chipId },
+          status: 'connected',
+          paused: false,
+          evolutionInstance: { not: null },
+          campaigns: { some: { campaignId } },
+        },
+      })
+
+      if (otherChips.length > 0) {
+        // Redistribuir mensagens pendentes (incluindo a atual) para outros chips
+        // Marcar a mensagem atual como pending (não failed) para que seja reenviada
+        await db.message.update({
+          where: { id: message.id },
+          data: { status: 'pending', error: null, sentAt: null },
+        })
+
+        const pendingMessages = await db.message.findMany({
+          where: { campaignId, chipId: message.chipId, status: 'pending' },
+          take: 100,
+        })
+
+        const availableChips = await getAvailableChipsForReassignment(campaignId, otherChips)
+        for (let i = 0; i < pendingMessages.length; i++) {
+          const targetChip = availableChips[i % availableChips.length]
+          await db.message.update({
+            where: { id: pendingMessages[i].id },
+            data: { chipId: targetChip.id },
+          })
+        }
+
+        console.warn(`[CircuitBreaker] Chip ${message.chip.name} pausado por 2h. ${pendingMessages.length} mensagens redistribuídas para ${otherChips.length} outros chips da campanha`)
+
+        // Notificar campanha
+        await db.campaign.update({
+          where: { id: campaignId },
+          data: {
+            statusReason: `Circuit breaker 463: chip ${message.chip.name} pausado por 2h — ${pendingMessages.length} mensagens redirecionadas para outros chips`,
+          },
+        })
+
+        const remaining = await db.message.count({ where: { campaignId, status: 'pending' } })
+        return {
+          processed: true,
+          delayMs: 1000,
+          remaining,
+          completed: remaining === 0,
+          reason: `circuit_breaker_463_${message.chip.name}`,
+          events: [{ type: 'chip_circuit_breaker', chipName: message.chip.name }],
+        }
+      } else {
+        // Nenhum outro chip disponível — marcar como failed e pausar campanha
+        await db.message.update({
+          where: { id: message.id },
+          data: {
+            status: 'failed',
+            error: `Circuit breaker 463: chip pausado por 2h, nenhum outro chip disponível para redirecionar`,
+          },
+        })
+
+        await db.campaign.update({
+          where: { id: campaignId },
+          data: {
+            status: 'paused',
+            statusReason: `Circuit breaker 463: chip ${message.chip.name} pausado por 2h — sem outros chips disponíveis, campanha pausada`,
+            pausedAt: new Date(),
+            nextSendAt: null,
+          },
+        })
+
+        console.warn(`[CircuitBreaker] Chip ${message.chip.name} pausado por 2h. Nenhum outro chip disponível — campanha pausada`)
+
+        const remaining = await db.message.count({ where: { campaignId, status: 'pending' } })
+        return {
+          processed: true,
+          delayMs: 0,
+          remaining,
+          completed: remaining === 0,
+          reason: 'circuit_breaker_463_no_chips',
+          events: [{ type: 'chip_circuit_breaker' }, { type: 'campaign_auto_paused' }],
+        }
+      }
+    }
+
+    // ============================================
     // GENERIC ERROR HANDLING (non-ban errors)
     // ============================================
     await db.message.update({
@@ -3717,6 +3830,12 @@ export async function releaseStaleCampaignSlots(): Promise<number> {
  * Also recovers any stuck "sending" messages and releases stale slots.
  */
 export async function getRunningCampaigns(): Promise<string[]> {
+  // CIRCUIT BREAKER: Auto-unpause chips whose pausedUntil has expired
+  // (e.g. chips paused by the 463 circuit breaker for 2 hours)
+  try {
+    await autoUnpauseExpiredChips()
+  } catch { /* non-critical */ }
+
   // Recover stuck messages across all running campaigns (best-effort)
   try {
     await recoverStuckMessages()
@@ -3732,6 +3851,34 @@ export async function getRunningCampaigns(): Promise<string[]> {
     select: { id: true },
   })
   return campaigns.map(c => c.id)
+}
+
+/**
+ * CIRCUIT BREAKER — Auto-unpause chips whose pausedUntil has expired.
+ *
+ * When the 463 circuit breaker pauses a chip, it sets pausedUntil = now + 2h.
+ * This function runs on every cron tick and unpauses chips when that time
+ * has passed, allowing them to resume sending automatically.
+ *
+ * Manual pauses (pausedUntil = null) are NOT affected — they require
+ * explicit user action to resume.
+ */
+async function autoUnpauseExpiredChips(): Promise<void> {
+  const result = await db.chip.updateMany({
+    where: {
+      paused: true,
+      pausedUntil: { not: null, lt: new Date() },
+    },
+    data: {
+      paused: false,
+      pausedAt: null,
+      pausedUntil: null,
+      pauseReason: null,
+    },
+  })
+  if (result.count > 0) {
+    console.log(`[CircuitBreaker] Auto-unpaused ${result.count} chip(s) whose pause period expired`)
+  }
 }
 
 // ============================================================
