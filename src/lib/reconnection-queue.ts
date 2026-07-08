@@ -601,6 +601,16 @@ async function attemptReconnection(entry: ReconnectionEntry): Promise<void> {
         },
       })
 
+      // CAUSA 3 FIX: Se já tentamos 3+ vezes e ainda precisa de QR, parar.
+      if (entry.attemptCount >= 3) {
+        console.warn(`[ReconnectQueue] Chip ${chipName} still needs QR after ${entry.attemptCount} attempts. Stopping.`)
+        reconnectionQueue.set(chipId, { ...updatedEntry, attemptCount: entry.attemptCount + 1, status: 'failed', lastError: 'Aguardando QR code manual' })
+        currentlyReconnecting.delete(chipId)
+        totalFailed++
+        await db.chip.update({ where: { id: chipId }, data: { status: 'disconnected' } }).catch(() => {})
+        return
+      }
+
       // Keep in queue but with long backoff (needs human interaction)
       const newEntry: ReconnectionEntry = {
         ...updatedEntry,
@@ -628,6 +638,20 @@ async function attemptReconnection(entry: ReconnectionEntry): Promise<void> {
     }
 
     const newAttemptCount = entry.attemptCount + 1
+
+    // CAUSA 3 FIX: Detectar erro de sessão corrompida e parar de tentar.
+    const isSessionCorrupted = error.message?.includes("store doesn't contain") ||
+                               error.message?.includes("device JID") ||
+                               error.message?.includes("forced logout")
+
+    if (isSessionCorrupted) {
+      console.warn(`[ReconnectQueue] Chip ${chipName} has corrupted session. Stopping — needs manual QR scan.`)
+      reconnectionQueue.set(chipId, { ...updatedEntry, attemptCount: newAttemptCount, status: 'failed', lastError: 'Sessão corrompida — escanear QR code manualmente' })
+      currentlyReconnecting.delete(chipId)
+      totalFailed++
+      await db.chip.update({ where: { id: chipId }, data: { status: 'disconnected', isQrPaired: false, qrPairingCode: null } }).catch(() => {})
+      return
+    }
 
     if (newAttemptCount >= CONFIG.MAX_ATTEMPTS) {
       console.log(`[ReconnectQueue] Chip ${chipName} exceeded max attempts (${CONFIG.MAX_ATTEMPTS}), marking as failed`)
