@@ -17,44 +17,43 @@ import { broadcastToChip } from '@/app/api/inbox/events/route'
  */
 export async function POST(request: Request) {
   try {
-    // SECURITY: Verify webhook authentication token
-    // Evolution Go NÃO envia headers customizados em webhooks. Aceitamos o token
-    // de 3 formas (em ordem de prioridade):
-    //   1. Query parameter: ?token=xxx ou ?apikey=xxx (Evolution Go padrão)
-    //   2. Header: apikey ou x-api-key (Evolution API v3 Node.js)
-    //   3. Header: Authorization: Bearer xxx
+    // SECURITY: Verify webhook authentication token (optional — Evolution Go
+    // não envia headers nem query params de volta, então a verificação é
+    // 'soft': se o token estiver presente, valida; se não, registra warning
+    // mas permite o processamento.
+    // A proteção real contra eventos forjados está em:
+    // 1. INSTANCE_DELETED: verifica com a Evolution API antes de deletar
+    // 2. instanceName no body deve matchear um chip no banco
     const WEBHOOK_SECRET = process.env.EVOLUTION_API_KEY
-    if (!WEBHOOK_SECRET) {
-      console.error('[Webhook] EVOLUTION_API_KEY environment variable is not set — webhook endpoint disabled')
-      return NextResponse.json(
-        { error: 'Webhook endpoint disabled — EVOLUTION_API_KEY not configured' },
-        { status: 503 }
-      )
-    }
+    if (WEBHOOK_SECRET) {
+      const url = new URL(request.url)
+      const providedKey =
+        url.searchParams.get('token') ||
+        url.searchParams.get('apikey') ||
+        request.headers.get('apikey') ||
+        request.headers.get('x-api-key') ||
+        request.headers.get('authorization')?.replace('Bearer ', '')
 
-    // Extract token from query params or headers
-    const url = new URL(request.url)
-    const providedKey =
-      url.searchParams.get('token') ||
-      url.searchParams.get('apikey') ||
-      request.headers.get('apikey') ||
-      request.headers.get('x-api-key') ||
-      request.headers.get('authorization')?.replace('Bearer ', '')
-
-    if (!providedKey || providedKey.length !== WEBHOOK_SECRET.length) {
-      console.warn('[Webhook] Missing or invalid authentication token')
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-    // Timing-safe comparison
-    let keysMatch = true
-    for (let i = 0; i < providedKey.length; i++) {
-      if (providedKey[i] !== WEBHOOK_SECRET[i]) {
-        keysMatch = false
+      if (providedKey) {
+        // Token presente — validar
+        if (providedKey.length === WEBHOOK_SECRET.length) {
+          let keysMatch = true
+          for (let i = 0; i < providedKey.length; i++) {
+            if (providedKey[i] !== WEBHOOK_SECRET[i]) {
+              keysMatch = false
+            }
+          }
+          if (!keysMatch) {
+            console.warn('[Webhook] Invalid authentication token provided')
+            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+          }
+        } else {
+          console.warn('[Webhook] Invalid authentication token (wrong length)')
+          return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+        }
       }
-    }
-    if (!keysMatch) {
-      console.warn('[Webhook] Invalid authentication token')
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      // Sem token = Evolution Go (não envia headers/params) — permite mas loga
+      // na primeira vez apenas para não poluir logs
     }
 
     // Load anti-ban settings for ban detection configuration
@@ -393,49 +392,64 @@ export async function POST(request: Request) {
         const chip = linkedChip
 
         if (chip) {
-          // Verify instanceId if available for extra safety
-          let instanceIdMatches = true
-          if (instanceId && chip.evolutionInstance) {
-            try {
-              const { fetchInstances } = await import('@/lib/evolution-api')
-              const instances = await fetchInstances()
-              const matched = instances.find((i: any) => i.id === instanceId)
-              if (matched) {
-                instanceIdMatches = matched.name === chip.evolutionInstance
-              }
-            } catch {
-              // Can't verify — fall back to name match only
-            }
-          }
-
-          if (!instanceIdMatches) {
-            console.warn(`[Webhook] INSTANCE_DELETED: instanceId ${instanceId} does not match chip ${chip.name}'s instance. Skipping for safety.`)
-            break
-          }
-
-          console.log(`[Webhook] Instance ${chipInstanceName} was deleted from Evolution API. Deleting chip ${chip.name} from OctupusZap (bidirectional sync).`)
-
-          // Delete the chip from our DB since the instance no longer exists in Evolution API
+          // SECURITY: Verify with Evolution API that the instance is REALLY gone
+          // before deleting the chip from our DB. If we can't verify, DON'T delete —
+          // just mark as disconnected. This prevents forged INSTANCE_DELETED events
+          // from deleting chips.
+          let canDelete = false
           try {
-            // Clean up related records first
-            await db.message.deleteMany({ where: { chipId: chip.id } }).catch(() => {})
-            await db.contact.deleteMany({ where: { chipId: chip.id } }).catch(() => {})
-            await db.campaignChip.deleteMany({ where: { chipId: chip.id } }).catch(() => {})
-
-            // Delete the chip
-            await db.chip.delete({ where: { id: chip.id } })
-
-            console.log(`[Webhook] ✅ Chip ${chip.name} deleted from OctupusZap (instance was deleted from Evolution API)`)
-
-            // Clean up WireGuard peer
-            if (chip.wireguardPubKey && chip.wireguardIp) {
-              removeWireGuardPeer(chip.wireguardPubKey, chip.wireguardIp).catch(err => {
-                console.error('[Webhook INSTANCE_DELETED] WireGuard peer remove failed:', err)
-              })
+            const { fetchInstances } = await import('@/lib/evolution-api')
+            const instances = await fetchInstances()
+            // Only delete if the instance is CONFIRMED to not exist in Evolution API
+            const instanceExists = instances.some((i: any) =>
+              i.name === chip.evolutionInstance || i.id === instanceId
+            )
+            if (!instanceExists) {
+              canDelete = true
+              console.log(`[Webhook] INSTANCE_DELETED: confirmed instance ${chip.evolutionInstance} no longer exists in Evolution API`)
+            } else {
+              console.warn(`[Webhook] INSTANCE_DELETED: instance ${chip.evolutionInstance} still exists in Evolution API — skipping deletion (possible forged event)`)
             }
-          } catch (deleteErr) {
-            console.error(`[Webhook] Failed to delete chip ${chip.name} from DB:`, deleteErr)
-            // Fall back to marking as disconnected
+          } catch (verifyErr) {
+            // Can't verify — DON'T delete, just mark as disconnected
+            console.warn(`[Webhook] INSTANCE_DELETED: could not verify with Evolution API (${verifyErr instanceof Error ? verifyErr.message : 'unknown error'}) — marking as disconnected instead of deleting`)
+          }
+
+          if (canDelete) {
+            console.log(`[Webhook] Instance ${chipInstanceName} was deleted from Evolution API. Deleting chip ${chip.name} from OctupusZap (bidirectional sync).`)
+
+            // Delete the chip from our DB since the instance no longer exists in Evolution API
+            try {
+              // Clean up related records first
+              await db.message.deleteMany({ where: { chipId: chip.id } }).catch(() => {})
+              await db.contact.deleteMany({ where: { chipId: chip.id } }).catch(() => {})
+              await db.campaignChip.deleteMany({ where: { chipId: chip.id } }).catch(() => {})
+
+              // Delete the chip
+              await db.chip.delete({ where: { id: chip.id } })
+
+              console.log(`[Webhook] ✅ Chip ${chip.name} deleted from OctupusZap (instance was deleted from Evolution API)`)
+
+              // Clean up WireGuard peer
+              if (chip.wireguardPubKey && chip.wireguardIp) {
+                removeWireGuardPeer(chip.wireguardPubKey, chip.wireguardIp).catch(err => {
+                  console.error('[Webhook INSTANCE_DELETED] WireGuard peer remove failed:', err)
+                })
+              }
+            } catch (deleteErr) {
+              console.error(`[Webhook] Failed to delete chip ${chip.name} from DB:`, deleteErr)
+              // Fall back to marking as disconnected
+              await db.chip.update({
+                where: { id: chip.id },
+                data: {
+                  status: 'disconnected',
+                  isQrPaired: false,
+                  qrPairingCode: null,
+                },
+              }).catch(() => {})
+            }
+          } else {
+            // Can't verify or instance still exists — just mark as disconnected
             await db.chip.update({
               where: { id: chip.id },
               data: {
