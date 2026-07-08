@@ -10,9 +10,42 @@ import { broadcastToChip } from '@/app/api/inbox/events/route'
  *
  * v3 webhook format:
  *   { event: "Message"|"Connected"|"Disconnected"|"QRCode"|"SEND_MESSAGE"|"READ_RECEIPT"|..., data: {...}, instanceId: "uuid" }
+ *
+ * SECURITY: Verifies the `apikey` header (or `x-api-key`) against the EVOLUTION_API_KEY
+ * environment variable. If the key is not set, the endpoint refuses all requests.
+ * This prevents forged webhook events from deleting chips or altering state.
  */
 export async function POST(request: Request) {
   try {
+    // SECURITY FIX: Verify webhook authentication token
+    // Evolution Go sends the apikey in the header when configured with webhook_secret
+    // We also accept x-api-key as fallback for Evolution API v3 Node.js format
+    const WEBHOOK_SECRET = process.env.EVOLUTION_API_KEY
+    if (!WEBHOOK_SECRET) {
+      console.error('[Webhook] EVOLUTION_API_KEY environment variable is not set — webhook endpoint disabled')
+      return NextResponse.json(
+        { error: 'Webhook endpoint disabled — EVOLUTION_API_KEY not configured' },
+        { status: 503 }
+      )
+    }
+
+    const providedKey = request.headers.get('apikey') || request.headers.get('x-api-key') || request.headers.get('authorization')?.replace('Bearer ', '')
+    if (!providedKey || providedKey.length !== WEBHOOK_SECRET.length) {
+      console.warn('[Webhook] Missing or invalid apikey header')
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+    // Timing-safe comparison
+    let keysMatch = true
+    for (let i = 0; i < providedKey.length; i++) {
+      if (providedKey[i] !== WEBHOOK_SECRET[i]) {
+        keysMatch = false
+      }
+    }
+    if (!keysMatch) {
+      console.warn('[Webhook] Invalid apikey header')
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
     // Load anti-ban settings for ban detection configuration
     const settings = await db.antiBanSettings.findFirst()
     const banCodes = (() => { try { return settings?.banCodes ? JSON.parse(settings.banCodes) : [401,403,428,440] } catch { return [401,403,428,440] } })()

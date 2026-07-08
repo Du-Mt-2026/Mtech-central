@@ -5,8 +5,14 @@ import { hashPassword } from '@/lib/auth'
 /**
  * POST /api/auth/reset-password
  * Allows password reset without being logged in.
- * Security: requires the Evolution API Key as verification (stored in DB Settings).
- * This way, only someone with access to the Evolution API config can reset the password.
+ *
+ * SECURITY FIX: Uses AUTH_SECRET (environment variable) as verification instead
+ * of EVOLUTION_API_KEY. The EVOLUTION_API_KEY is visible to operators in the
+ * Settings page, which allowed privilege escalation. AUTH_SECRET is only in the
+ * server's .env file — only someone with server access can reset passwords.
+ *
+ * If AUTH_SECRET is not set, the endpoint refuses all requests and directs
+ * the user to reset via SSH + CLI command.
  */
 export async function POST(request: NextRequest) {
   try {
@@ -20,22 +26,31 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Verify using Evolution API Key from DB Settings
-    const apiKeySetting = await db.settings.findUnique({
-      where: { key: 'evolution_api_key' },
-    })
-
-    if (!apiKeySetting) {
+    // SECURITY FIX: Use AUTH_SECRET (from .env) instead of EVOLUTION_API_KEY (visible in UI)
+    const AUTH_SECRET = process.env.AUTH_SECRET
+    if (!AUTH_SECRET) {
       return NextResponse.json(
-        { error: 'Configuração de segurança não encontrada. Contate o administrador.' },
-        { status: 500 }
+        { error: 'Recuperação de senha não configurada. Acesse o servidor via SSH e execute: docker exec octupuszap-app node -e "require(\'./src/lib/auth.ts\').hashPassword(\'novasenha\').then(h => console.log(h))" ou configure AUTH_SECRET no arquivo .env' },
+        { status: 503 }
       )
     }
 
-    // Security: verificationKey is REQUIRED — prevents unauthorized password resets
-    if (!verificationKey || verificationKey !== apiKeySetting.value) {
+    // Verify using AUTH_SECRET with timing-safe comparison
+    if (!verificationKey || verificationKey.length !== AUTH_SECRET.length) {
       return NextResponse.json(
-        { error: 'Chave de verificação inválida. Verifique a Evolution API Key.' },
+        { error: 'Código de segurança inválido. Use o AUTH_SECRET do arquivo .env do servidor.' },
+        { status: 401 }
+      )
+    }
+    let keysMatch = true
+    for (let i = 0; i < verificationKey.length; i++) {
+      if (verificationKey[i] !== AUTH_SECRET[i]) {
+        keysMatch = false
+      }
+    }
+    if (!keysMatch) {
+      return NextResponse.json(
+        { error: 'Código de segurança inválido. Use o AUTH_SECRET do arquivo .env do servidor.' },
         { status: 401 }
       )
     }

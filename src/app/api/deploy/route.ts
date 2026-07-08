@@ -8,22 +8,45 @@
 // POST /api/deploy
 // Headers: X-Deploy-Secret: <secret>
 // Body: {"ref":"main","sha":"<commit-sha>"}
+//
+// SECURITY: DEPLOY_SECRET MUST be set in environment variables. No hardcoded fallback.
+// If not set, the endpoint returns 503 Service Unavailable.
 
 import { NextRequest, NextResponse } from 'next/server'
 import { execSync } from 'child_process'
 import { writeFileSync } from 'fs'
 
-const DEPLOY_SECRET = process.env.DEPLOY_SECRET || '117a8794222043e42eb5e4982bffb28739774596695f6ad3525897e2138fd913'
+const DEPLOY_SECRET = process.env.DEPLOY_SECRET
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN || ''
 const GITHUB_REPO = process.env.GITHUB_REPO || 'Du-Mt-26/Mtech-central'
 const PROJECT_DIR = '/opt/octupuszap'
 
 export async function POST(request: NextRequest) {
   try {
-    // Verify deploy secret
+    // SECURITY FIX: No hardcoded fallback. If DEPLOY_SECRET is not set, refuse all deploys.
+    if (!DEPLOY_SECRET) {
+      console.error('[Deploy] DEPLOY_SECRET environment variable is not set — deploy endpoint disabled')
+      return NextResponse.json(
+        { error: 'Deploy endpoint disabled — DEPLOY_SECRET not configured' },
+        { status: 503 }
+      )
+    }
+
+    // Verify deploy secret using timing-safe comparison
     const secret = request.headers.get('X-Deploy-Secret')
-    if (secret !== DEPLOY_SECRET) {
+    if (!secret || secret.length !== DEPLOY_SECRET.length) {
       console.warn('[Deploy] Invalid or missing X-Deploy-Secret header')
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+    // Timing-safe comparison to prevent timing attacks
+    let secretsMatch = true
+    for (let i = 0; i < secret.length; i++) {
+      if (secret[i] !== DEPLOY_SECRET[i]) {
+        secretsMatch = false
+      }
+    }
+    if (!secretsMatch) {
+      console.warn('[Deploy] Invalid X-Deploy-Secret header')
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 

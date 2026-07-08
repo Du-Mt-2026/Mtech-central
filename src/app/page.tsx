@@ -8193,20 +8193,20 @@ export default function OctupusZapApp() {
               <DialogHeader>
                 <DialogTitle className="text-white">Redefinir Senha</DialogTitle>
                 <DialogDescription className="text-zinc-400">
-                  Crie uma nova senha para acessar o painel. A recuperação é protegida pela Evolution API Key.
+                  Crie uma nova senha para acessar o painel. A recuperação é protegida pelo código de segurança do servidor.
                 </DialogDescription>
               </DialogHeader>
               <div className="space-y-4 py-4">
                 <div className="space-y-2">
-                  <Label className="text-zinc-300">Evolution API Key (verificação)</Label>
+                  <Label className="text-zinc-300">Código de Segurança (AUTH_SECRET)</Label>
                   <Input
                     type="password"
-                    placeholder="Cole a API Key da Evolution API"
+                    placeholder="Cole o AUTH_SECRET do arquivo .env do servidor"
                     value={forgotForm.verificationKey}
                     onChange={e => setForgotForm(p => ({ ...p, verificationKey: e.target.value }))}
                     className="bg-zinc-800/50 border-zinc-700 text-white placeholder:text-zinc-500 focus:border-emerald-500"
                   />
-                  <p className="text-xs text-zinc-500">Encontre em: Configurações → Evolution API → API Key</p>
+                  <p className="text-xs text-zinc-500">Encontre no servidor: /opt/octupuszap/.env → AUTH_SECRET</p>
                 </div>
                 <div className="space-y-2">
                   <Label className="text-zinc-300">Nova Senha</Label>
@@ -8231,7 +8231,7 @@ export default function OctupusZapApp() {
                 </div>
                 <div className="rounded-lg bg-amber-500/10 border border-amber-500/20 p-3 flex items-start gap-2">
                   <AlertTriangle className="size-4 text-amber-500 mt-0.5 shrink-0" />
-                  <p className="text-xs text-amber-400">Por segurança, é necessário informar a Evolution API Key para redefinir a senha. Isso garante que apenas administradores com acesso à API possam alterar a senha.</p>
+                  <p className="text-xs text-amber-400">Por segurança, é necessário informar o AUTH_SECRET (do arquivo .env do servidor) para redefinir a senha. Isso garante que apenas administradores com acesso ao servidor possam alterar a senha.</p>
                 </div>
               </div>
               <DialogFooter>
