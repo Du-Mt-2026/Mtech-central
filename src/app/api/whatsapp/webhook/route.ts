@@ -17,9 +17,12 @@ import { broadcastToChip } from '@/app/api/inbox/events/route'
  */
 export async function POST(request: Request) {
   try {
-    // SECURITY FIX: Verify webhook authentication token
-    // Evolution Go sends the apikey in the header when configured with webhook_secret
-    // We also accept x-api-key as fallback for Evolution API v3 Node.js format
+    // SECURITY: Verify webhook authentication token
+    // Evolution Go NÃO envia headers customizados em webhooks. Aceitamos o token
+    // de 3 formas (em ordem de prioridade):
+    //   1. Query parameter: ?token=xxx ou ?apikey=xxx (Evolution Go padrão)
+    //   2. Header: apikey ou x-api-key (Evolution API v3 Node.js)
+    //   3. Header: Authorization: Bearer xxx
     const WEBHOOK_SECRET = process.env.EVOLUTION_API_KEY
     if (!WEBHOOK_SECRET) {
       console.error('[Webhook] EVOLUTION_API_KEY environment variable is not set — webhook endpoint disabled')
@@ -29,9 +32,17 @@ export async function POST(request: Request) {
       )
     }
 
-    const providedKey = request.headers.get('apikey') || request.headers.get('x-api-key') || request.headers.get('authorization')?.replace('Bearer ', '')
+    // Extract token from query params or headers
+    const url = new URL(request.url)
+    const providedKey =
+      url.searchParams.get('token') ||
+      url.searchParams.get('apikey') ||
+      request.headers.get('apikey') ||
+      request.headers.get('x-api-key') ||
+      request.headers.get('authorization')?.replace('Bearer ', '')
+
     if (!providedKey || providedKey.length !== WEBHOOK_SECRET.length) {
-      console.warn('[Webhook] Missing or invalid apikey header')
+      console.warn('[Webhook] Missing or invalid authentication token')
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
     // Timing-safe comparison
@@ -42,7 +53,7 @@ export async function POST(request: Request) {
       }
     }
     if (!keysMatch) {
-      console.warn('[Webhook] Invalid apikey header')
+      console.warn('[Webhook] Invalid authentication token')
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 

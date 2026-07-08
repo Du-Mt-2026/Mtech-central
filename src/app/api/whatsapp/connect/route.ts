@@ -30,7 +30,11 @@ export async function POST(request: Request) {
     // IMPORTANT: Use NEXT_PUBLIC_APP_URL (stable production URL) over VERCEL_URL (deployment-specific)
     // VERCEL_URL changes on every deploy, which breaks existing webhooks in Evolution Go
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || (process.env.VERCEL_URL ? 'https://' + process.env.VERCEL_URL : 'http://localhost:3000')
-    const webhookUrl = `${appUrl}/api/whatsapp/webhook`
+    // SECURITY: Include token in webhook URL so Evolution Go sends it back for auth
+    const webhookToken = process.env.EVOLUTION_API_KEY || ''
+    const webhookUrl = webhookToken
+      ? `${appUrl}/api/whatsapp/webhook?token=${webhookToken}`
+      : `${appUrl}/api/whatsapp/webhook`
 
     // ===== Evolution Go Connection Flow =====
     // Resolve proxy config for this chip

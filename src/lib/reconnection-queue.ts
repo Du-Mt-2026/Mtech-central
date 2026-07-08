@@ -544,7 +544,10 @@ async function attemptReconnection(entry: ReconnectionEntry): Promise<void> {
     })
 
     // 5. Attempt reconnection via Evolution API (v3-only)
-    const webhookUrl = `${process.env.VERCEL_URL ? 'https://' + process.env.VERCEL_URL : process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/whatsapp/webhook`
+    // SECURITY: Include token in webhook URL so Evolution Go sends it back
+    const webhookToken = process.env.EVOLUTION_API_KEY || ''
+    const webhookBase = `${process.env.VERCEL_URL ? 'https://' + process.env.VERCEL_URL : process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/whatsapp/webhook`
+    const webhookUrl = webhookToken ? `${webhookBase}?token=${webhookToken}` : webhookBase
 
     let effectiveInstanceName = instanceName
 
