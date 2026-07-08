@@ -3520,22 +3520,10 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
     //    so anti-ban processing time doesn't add to the step delay
     // ============================================
     if (stepFollowUpDelayMs !== null && stepFollowUpDelayMs < nextDelay) {
-      // ANTI-BAN FIX: Nunca deixar nextDelay abaixo do mínimo absoluto de 60s.
-      // Anteriormente, se um step 2 tivesse delayMinutes=4 com delayUnit='seconds',
-      // o nextDelay caía para 4s — violando o floor anti-ban de 60s.
-      // Agora respeitamos o step delay, mas NUNCA abaixo do mínimo absoluto.
-      const minDelay = Math.max(ABSOLUTE_MIN_INTERVAL_MS, settings.messageIntervalMin * 1000)
-      if (stepFollowUpDelayMs >= minDelay) {
-        console.debug(`[SendingEngine] Step follow-up override: reducing delay from ${Math.round(nextDelay/1000)}s to ${Math.round(stepFollowUpDelayMs/1000)}s for next step of contact ${message.contactId}`)
-        nextDelay = stepFollowUpDelayMs
-        // Clear in-memory guard so step 2 can be sent after the configured delay
-        chipLastSendMap.delete(message.chipId)
-      } else {
-        // Step delay is too short — use the minimum instead
-        console.warn(`[SendingEngine] Step follow-up delay ${Math.round(stepFollowUpDelayMs/1000)}s is below minimum ${Math.round(minDelay/1000)}s — using minimum instead for contact ${message.contactId}`)
-        nextDelay = minDelay
-        chipLastSendMap.delete(message.chipId)
-      }
+      console.debug(`[SendingEngine] Step follow-up override: reducing delay from ${Math.round(nextDelay/1000)}s to ${Math.round(stepFollowUpDelayMs/1000)}s for next step of contact ${message.contactId}`)
+      nextDelay = stepFollowUpDelayMs
+      // Clear in-memory guard so step 2 can be sent after the short delay
+      chipLastSendMap.delete(message.chipId)
     }
 
     // ============================================
