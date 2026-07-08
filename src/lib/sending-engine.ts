@@ -2379,10 +2379,37 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
 
       if (otherChips.length > 0) {
         // Reassign pending messages from this chip to other campaign chips (round-robin)
-        const pendingMessages = await db.message.findMany({
+        // CRITICAL FIX: Não redistribuir mensagens onde um step anterior do mesmo
+        // contato já foi ENVIADO por este chip. Essas mensagens devem permanecer no
+        // chip desconectado e serem enviadas quando ele reconectar — garante que o
+        // mesmo chip envie todas as mensagens para o mesmo contato.
+        const allPendingMessages = await db.message.findMany({
           where: { campaignId, chipId: message.chip.id, status: 'pending' },
           take: 50,
         })
+
+        // Buscar todos os contactIds que já têm step 1 enviado por este chip
+        const sentStep1ContactIds = new Set<string>()
+        const sentMessages = await db.message.findMany({
+          where: {
+            campaignId,
+            chipId: message.chip.id,
+            status: { in: ['sent', 'delivered', 'read'] },
+            stepOrder: 1,
+          },
+          select: { contactId: true },
+        })
+        for (const sm of sentMessages) {
+          sentStep1ContactIds.add(sm.contactId)
+        }
+
+        // Separar: mensagens que PODEM ser redistribuídas vs mensagens que DEVEM PERMANECER
+        const pendingMessages = allPendingMessages.filter(m => !sentStep1ContactIds.has(m.contactId))
+        const keptMessages = allPendingMessages.filter(m => sentStep1ContactIds.has(m.contactId))
+
+        if (keptMessages.length > 0) {
+          console.debug(`[SendingEngine] Keeping ${keptMessages.length} messages on disconnected chip ${message.chip.name} (step 1 already sent by this chip — waiting for reconnection)`)
+        }
 
         const availableChips = await getAvailableChipsForReassignment(campaignId, otherChips)
           for (let i = 0; i < pendingMessages.length; i++) {
@@ -2470,19 +2497,32 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
       })
 
       if (otherChips.length > 0) {
-        // Reassign pending messages from the banned chip to other campaign chips (round-robin)
+        // Reassign pending messages from the banned chip to other campaign chips
+        // CRITICAL FIX: Agrupar por contato — todos os steps do mesmo contato
+        // devem ir para o MESMO chip novo. Chip banido não reconecta, então
+        // precisamos redistribuir tudo, mas mantendo a consistência de chip por contato.
         const pendingMessages = await db.message.findMany({
           where: { campaignId, chipId: message.chip.id, status: 'pending' },
           take: 50,
         })
 
         const availableChips = await getAvailableChipsForReassignment(campaignId, otherChips)
-          for (let i = 0; i < pendingMessages.length; i++) {
-          const targetChip = availableChips[i % availableChips.length]
-          await db.message.update({
-            where: { id: pendingMessages[i].id },
-            data: { chipId: targetChip.id },
-          })
+        // Group by contactId to ensure all steps for same contact go to same chip
+        const contactGroups = new Map<string, typeof pendingMessages>()
+        for (const m of pendingMessages) {
+          if (!contactGroups.has(m.contactId)) contactGroups.set(m.contactId, [])
+          contactGroups.get(m.contactId)!.push(m)
+        }
+        let groupIdx = 0
+        for (const [, msgs] of contactGroups) {
+          const targetChip = availableChips[groupIdx % availableChips.length]
+          groupIdx++
+          for (const m of msgs) {
+            await db.message.update({
+              where: { id: m.id },
+              data: { chipId: targetChip.id },
+            })
+          }
         }
 
         console.debug(`[SendingEngine] Reassigned ${pendingMessages.length} messages from banned chip ${message.chip.name} to other campaign chips`)
@@ -3059,6 +3099,23 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
         evolutionMessageId: result.key?.id || null,
       },
     })
+
+    // CRITICAL FIX: Garantir que todos os steps subsequentes do mesmo contato
+    // usem o MESMO chip que enviou esta mensagem. Sem isso, quando um chip
+    // desconecta e suas mensagens são redistribuídas, o step 2 pode acabar
+    // sendo enviado por um chip diferente do step 1 — violando a regra de que
+    // o mesmo chip deve enviar todas as mensagens para o mesmo contato.
+    if (message.stepOrder === 1) {
+      await db.message.updateMany({
+        where: {
+          campaignId,
+          contactId: message.contactId,
+          stepOrder: { gt: message.stepOrder },
+          status: 'pending',
+        },
+        data: { chipId: message.chipId },
+      }).catch(() => { /* non-critical — best effort */ })
+    }
 
     // IN-MEMORY SEND GUARD: Mark this chip as having sent a message just now.
     // This prevents race conditions where concurrent ticks could send two messages
@@ -3654,12 +3711,23 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
         })
 
         const availableChips = await getAvailableChipsForReassignment(campaignId, otherChips)
-        for (let i = 0; i < pendingMessages.length; i++) {
-          const targetChip = availableChips[i % availableChips.length]
-          await db.message.update({
-            where: { id: pendingMessages[i].id },
-            data: { chipId: targetChip.id },
-          })
+        // CRITICAL FIX: Agrupar por contato — todos os steps do mesmo contato
+        // devem ir para o MESMO chip novo.
+        const contactGroups = new Map<string, typeof pendingMessages>()
+        for (const m of pendingMessages) {
+          if (!contactGroups.has(m.contactId)) contactGroups.set(m.contactId, [])
+          contactGroups.get(m.contactId)!.push(m)
+        }
+        let groupIdx = 0
+        for (const [, msgs] of contactGroups) {
+          const targetChip = availableChips[groupIdx % availableChips.length]
+          groupIdx++
+          for (const m of msgs) {
+            await db.message.update({
+              where: { id: m.id },
+              data: { chipId: targetChip.id },
+            })
+          }
         }
 
         console.warn(`[CircuitBreaker] Chip ${message.chip.name} pausado por 2h. ${pendingMessages.length} mensagens redistribuídas para ${otherChips.length} outros chips da campanha`)
