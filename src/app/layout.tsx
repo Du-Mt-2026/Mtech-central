@@ -18,7 +18,7 @@ export const metadata: Metadata = {
   title: "OctupusZap - WhatsApp Mass Messaging",
   description: "Ferramenta de envio em massa via WhatsApp com integração WireGuard",
   icons: {
-    icon: "/logo.svg",
+    icon: "/favicon.ico",
   },
 };
 
