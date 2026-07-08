@@ -75,6 +75,9 @@ model Chip {
 
   @@index([status])
   @@index([evolutionInstance])
+  @@index([paused, pausedUntil])     // Circuit breaker auto-unpause queries
+  @@index([vendedorId])             // Vendedor filter in dashboard
+  @@index([warmingPhase, status])   // UI filter for warming chips
 }
 
 model AntiBanSettings {
@@ -267,6 +270,9 @@ model Contact {
   // Stores all extra columns: empresa, vendedor, nota, etc.
   // Accessed via {{column_name}} in message templates
   customFields      String?    // JSON: {"empresa":"Tech Corp","vendedor":"Renato","nota":"VIP"}
+
+  @@index([contactListId, position])  // Contact list queries with ordering
+  @@index([chipId])
 }
 
 model Campaign {
@@ -360,6 +366,7 @@ model Message {
   @@unique([campaignId, contactId, stepOrder])
   @@index([campaignId, status])
   @@index([chipId, status])
+  @@index([chipId, sentAt])          // Delivery rate queries (recent messages by chip)
   @@index([status])
 }
 
