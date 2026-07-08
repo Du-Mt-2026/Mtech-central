@@ -1,6 +1,6 @@
 'use client'
 // v2025.05.19-horizontal-layout
-import React, { useState, useEffect, useCallback, useRef, CSSProperties } from 'react'
+import React, { useState, useEffect, useCallback, useRef, useMemo, CSSProperties } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Smartphone, Send, Shield, BarChart3, Plus, Trash2,
@@ -799,8 +799,10 @@ function ChipsTab() {
       fetchAntiBanSettings()
     }
     init()
-    // Auto-refresh chips every 5 seconds for real-time status updates
-    const interval = setInterval(fetchChips, 5000)
+    // Auto-refresh chips every 10 seconds for real-time status updates
+    // PERF FIX: was 5s, now 10s. /api/chips already syncs with Evolution API
+    // internally, so this is the only polling needed for chip status.
+    const interval = setInterval(fetchChips, 10000)
     return () => clearInterval(interval)
   }, [fetchChips, fetchAntiBanSettings])
 
@@ -820,26 +822,13 @@ function ChipsTab() {
   // === Calculate effective daily limit and phase day for a chip ===
   const getChipEffectiveInfo = useCallback((chip: Chip) => calcChipEffectiveInfo(chip, antiBanSettings), [antiBanSettings])
 
-  // Sync WhatsApp status on load + every 5 seconds
-  useEffect(() => {
-    const syncStatuses = async () => {
-      try {
-        const res = await fetch('/api/whatsapp/status')
-        if (res.ok) {
-          const data = await res.json()
-          if (data.chips) {
-            // Re-fetch chips to get updated statuses from DB
-            fetchChips()
-          }
-        }
-      } catch {
-        // Silently fail — status sync is best-effort
-      }
-    }
-    syncStatuses()
-    const interval = setInterval(syncStatuses, 5000)
-    return () => clearInterval(interval)
-  }, [fetchChips])
+  // PERF FIX: Removed duplicate polling (syncStatuses).
+  // Previously there were TWO intervals both calling fetchChips():
+  //   1. setInterval(fetchChips, 5000) — line above
+  //   2. setInterval(syncStatuses, 5000) — called /api/whatsapp/status then fetchChips()
+  // This caused /api/chips to be called every ~2.5s (double polling).
+  // /api/chips already syncs with Evolution API internally, so the second
+  // interval was completely redundant.
 
   useEffect(() => {
     if (selectedChipConfig?.config) {
@@ -3936,6 +3925,24 @@ function CampanhasTab() {
   const [detailDialogOpen, setDetailDialogOpen] = useState(false)
   const [selectedCampaign, setSelectedCampaign] = useState<Campaign | null>(null)
   const [detailMessages, setDetailMessages] = useState<MessageItem[]>([])
+
+  // PERF FIX: Memoize status counts to avoid 4+ .filter() calls on every render.
+  // Previously, each of the 4 status cards called detailMessages.filter() separately,
+  // plus 2 more in the tab buttons. Now computed once per detailMessages change.
+  const detailMessageCounts = useMemo(() => {
+    let pending = 0, sent = 0, delivered = 0, failed = 0, sending = 0
+    for (const m of detailMessages) {
+      switch (m.status) {
+        case 'pending': pending++; break
+        case 'sent': sent++; break
+        case 'delivered':
+        case 'read': delivered++; break
+        case 'failed': failed++; break
+        case 'sending': sending++; break
+      }
+    }
+    return { pending, sent, delivered, failed, sending, total: detailMessages.length }
+  }, [detailMessages])
   const [availableChips, setAvailableChips] = useState<Chip[]>([])
   const [availableLists, setAvailableLists] = useState<ContactList[]>([])
   const [messageKeys, setMessageKeys] = useState<Array<{ id: string; name: string; label: string; category: string; variations: string; resolutionType?: string; timeSlots?: string | null }>>([])
@@ -4078,11 +4085,12 @@ function CampanhasTab() {
 
   useEffect(() => { fetchCampaigns(); fetchChips(); fetchLists(); fetchKeys(); fetchTemplates(); fetchAntiBanSettings() }, [fetchCampaigns, fetchChips, fetchLists, fetchKeys, fetchTemplates, fetchAntiBanSettings])
 
-  // Auto-refresh campaigns every 5 seconds when any campaign is running (for live progress)
+  // Auto-refresh campaigns every 10 seconds when any campaign is running (for live progress)
+  // PERF FIX: was 5s, now 10s. Detail dialog polling handles real-time updates.
   useEffect(() => {
     const hasRunning = campaigns.some(c => c.status === 'running')
     if (!hasRunning) return
-    const interval = setInterval(fetchCampaigns, 5000)
+    const interval = setInterval(fetchCampaigns, 10000)
     return () => clearInterval(interval)
   }, [campaigns, fetchCampaigns])
 
@@ -4111,6 +4119,9 @@ function CampanhasTab() {
 
     if (!isActive) return
 
+    // PERF FIX: was 3s, now 5s. Also removed redundant fetchCampaigns() call
+    // (the 10s campaign list polling already keeps cards in sync).
+    // Reduced message limit from 5000 to 500 — most users only see recent messages.
     detailPollingRef.current = setInterval(async () => {
       const campaignId = detailCampaignIdRef.current
       if (!campaignId) return
@@ -4120,13 +4131,11 @@ function CampanhasTab() {
         if (!res.ok) return
         const updated = await res.json()
         setSelectedCampaign(updated)
-        // Refresh messages
-        const msgRes = await fetch(`/api/messages?campaignId=${campaignId}&limit=5000`, { cache: 'no-store' })
+        // Refresh messages (limit 500 — enough for real-time view)
+        const msgRes = await fetch(`/api/messages?campaignId=${campaignId}&limit=500`, { cache: 'no-store' })
         const msgData = await msgRes.json()
         const messages = Array.isArray(msgData?.data) ? msgData.data : Array.isArray(msgData) ? msgData : []
         setDetailMessages(messages)
-        // Also refresh the campaign list so cards stay in sync
-        fetchCampaigns()
         // Stop polling if campaign is no longer active and no messages are pending/sending
         const stillActive = ['running', 'scheduled'].includes(updated.status) ||
           messages.some((m: MessageItem) => m.status === 'pending' || m.status === 'sending')
@@ -4135,7 +4144,7 @@ function CampanhasTab() {
           detailPollingRef.current = null
         }
       } catch { /* silent — will retry next interval */ }
-    }, 3000)
+    }, 5000)
 
     return () => {
       if (detailPollingRef.current) {
@@ -5896,10 +5905,10 @@ function CampanhasTab() {
                   <Badge variant="outline" className="gap-1">{selectedCampaign.warmingMode === 'stealth' ? <><Snowflake className="size-3" /> Furtivo</> : selectedCampaign.warmingMode === 'agressive' ? <><Flame className="size-3" /> Agressivo</> : <><Shield className="size-3" /> Normal</>}</Badge>
                 </div>
                 <div className="grid grid-cols-2 gap-2">
-                  <Card className="shadow"><CardContent className="p-2 text-center"><p className="text-[10px] text-muted-foreground">Pendentes</p><p className="text-lg font-bold">{detailMessages.filter(m => m.status === 'pending').length}</p></CardContent></Card>
-                  <Card className="shadow"><CardContent className="p-2 text-center"><p className="text-[10px] text-muted-foreground">Enviadas</p><p className="text-lg font-bold text-sky-600">{detailMessages.filter(m => m.status === 'sent').length}</p></CardContent></Card>
-                  <Card className="shadow"><CardContent className="p-2 text-center"><p className="text-[10px] text-muted-foreground">Entregues</p><p className="text-lg font-bold text-emerald-600">{detailMessages.filter(m => m.status === 'delivered' || m.status === 'read').length}</p></CardContent></Card>
-                  <Card className="shadow"><CardContent className="p-2 text-center"><p className="text-[10px] text-muted-foreground">Falharam</p><p className="text-lg font-bold text-rose-600">{detailMessages.filter(m => m.status === 'failed').length}</p></CardContent></Card>
+                  <Card className="shadow"><CardContent className="p-2 text-center"><p className="text-[10px] text-muted-foreground">Pendentes</p><p className="text-lg font-bold">{detailMessageCounts.pending}</p></CardContent></Card>
+                  <Card className="shadow"><CardContent className="p-2 text-center"><p className="text-[10px] text-muted-foreground">Enviadas</p><p className="text-lg font-bold text-sky-600">{detailMessageCounts.sent}</p></CardContent></Card>
+                  <Card className="shadow"><CardContent className="p-2 text-center"><p className="text-[10px] text-muted-foreground">Entregues</p><p className="text-lg font-bold text-emerald-600">{detailMessageCounts.delivered}</p></CardContent></Card>
+                  <Card className="shadow"><CardContent className="p-2 text-center"><p className="text-[10px] text-muted-foreground">Falharam</p><p className="text-lg font-bold text-rose-600">{detailMessageCounts.failed}</p></CardContent></Card>
                 </div>
                 {/* Chips atribuídos com status de cooldown */}
                 {selectedCampaign.chips && selectedCampaign.chips.length > 0 && (
@@ -6019,7 +6028,7 @@ function CampanhasTab() {
                           { value: 'delivered', label: 'Entregues' },
                           { value: 'failed', label: 'Falharam' },
                         ].map(tab => {
-                          const count = detailMessages.filter(m => tab.value === 'all' || m.status === tab.value).length
+                          const count = tab.value === 'all' ? detailMessageCounts.total : (detailMessageCounts as any)[tab.value] || 0
                           const isActive = detailStatusFilter === tab.value
                           return (
                             <button
@@ -6375,7 +6384,8 @@ function TemplatesTab() {
 
   useEffect(() => {
     fetchTemplates()
-    const interval = setInterval(fetchTemplates, 10000)
+    // PERF FIX: was 10s, now 30s. Templates rarely change.
+    const interval = setInterval(fetchTemplates, 30000)
     return () => clearInterval(interval)
   }, [fetchTemplates])
 
@@ -6743,7 +6753,8 @@ function MensagensTab() {
 
   useEffect(() => {
     fetchMessages()
-    const interval = setInterval(() => fetchMessages(), 5000)
+    // PERF FIX: was 5s, now 10s.
+    const interval = setInterval(() => fetchMessages(), 10000)
     return () => clearInterval(interval)
   }, [fetchMessages])
 
@@ -7929,9 +7940,14 @@ export default function OctupusZapApp() {
   const [forgotLoading, setForgotLoading] = useState(false)
 
   // Live clock — Brasília time (UTC-3)
+  // PERF FIX: Only update seconds every 1s. Date and time (HH:MM) only change
+  // once per day / once per minute respectively, so we skip redundant setState
+  // calls that would cause unnecessary re-renders of the entire OctupusZapApp.
   const [brasiliaTime, setBrasiliaTime] = useState('')
   const [brasiliaDate, setBrasiliaDate] = useState('')
   const [brasiliaSeconds, setBrasiliaSeconds] = useState('')
+  const lastTimeRef = useRef('')
+  const lastDateRef = useRef('')
   useEffect(() => {
     const update = () => {
       const now = new Date()
@@ -7943,8 +7959,20 @@ export default function OctupusZapApp() {
       })
       const parts = fmt.formatToParts(now)
       const get = (type: string) => parts.find(p => p.type === type)?.value || ''
-      setBrasiliaDate(`${get('day')}/${get('month')}/${get('year')}`)
-      setBrasiliaTime(`${get('hour')}:${get('minute')}`)
+      const newDate = `${get('day')}/${get('month')}/${get('year')}`
+      const newTime = `${get('hour')}:${get('minute')}`
+
+      // Only update date if it changed (once per day)
+      if (newDate !== lastDateRef.current) {
+        lastDateRef.current = newDate
+        setBrasiliaDate(newDate)
+      }
+      // Only update time if it changed (once per minute)
+      if (newTime !== lastTimeRef.current) {
+        lastTimeRef.current = newTime
+        setBrasiliaTime(newTime)
+      }
+      // Always update seconds (once per second)
       setBrasiliaSeconds(get('second'))
     }
     update()
@@ -7969,13 +7997,14 @@ export default function OctupusZapApp() {
     }).catch(() => {}).finally(() => setAuthLoading(false))
   }, [])
 
-  // Auto-refresh stats every 5 seconds when logged in (smooth real-time updates)
+  // Auto-refresh stats every 15 seconds when logged in
+  // PERF FIX: was 5s, now 15s. Stats don't change fast enough to justify 5s polling.
   useEffect(() => {
     if (!loggedIn) return
     fetch('/api/stats').then(r => r.json()).then(setStats).catch(() => {})
     const interval = setInterval(() => {
       fetch('/api/stats').then(r => r.json()).then(setStats).catch(() => {})
-    }, 5000)
+    }, 15000)
     return () => clearInterval(interval)
   }, [loggedIn])
 
