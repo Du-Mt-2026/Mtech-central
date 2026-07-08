@@ -1294,6 +1294,40 @@ export async function POST(request: Request) {
           console.log(`[Webhook] Saved ${fromMe ? 'outgoing' : 'incoming'} message on ${chipInstanceName}`)
           } // end if (messageContent || messageType !== 'text')
 
+          // PERF: Upsert Conversation table for fast inbox list queries.
+          if (linkedChip?.id) {
+            try {
+              await db.conversation.upsert({
+                where: { chipId_remoteJid: { chipId: linkedChip.id, remoteJid: chatJid } },
+                update: {
+                  lastMessageAt: new Date(),
+                  lastMessagePreview: (messageContent || '').substring(0, 200),
+                  lastMessageType: messageType || 'text',
+                  lastMessageFromMe: fromMe,
+                  contactName: pushName || undefined,
+                  pushName: pushName || undefined,
+                  isGroup,
+                  ...(fromMe ? { lastMessageStatus: 'sent' } : {}),
+                  ...(!fromMe ? { unreadCount: { increment: 1 } } : {}),
+                },
+                create: {
+                  chipId: linkedChip.id,
+                  remoteJid: chatJid,
+                  remotePhone: chatJid.split('@')[0],
+                  contactName: pushName || null,
+                  pushName: pushName || null,
+                  isGroup,
+                  lastMessageAt: new Date(),
+                  lastMessagePreview: (messageContent || '').substring(0, 200),
+                  lastMessageType: messageType || 'text',
+                  lastMessageFromMe: fromMe,
+                  ...(fromMe ? { lastMessageStatus: 'sent' } : {}),
+                  ...(!fromMe ? { unreadCount: 1 } : {}),
+                },
+              }).catch(() => {})
+            } catch { /* non-critical */ }
+          }
+
         } catch (inboxErr) {
           console.error('[Webhook] Error saving inbox message:', inboxErr)
         }

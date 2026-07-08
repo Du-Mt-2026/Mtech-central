@@ -35,7 +35,59 @@ export async function GET(request: NextRequest) {
     })
 
     // ═══════════════════════════════════════════════════════════════════
-    // STEP 1: Fetch ALL messages for this chip
+    // STEP 1: Try Conversation table FIRST (fast — uses index, no JS aggregation)
+    // ═══════════════════════════════════════════════════════════════════
+
+    const conversationWhere: Record<string, unknown> = {
+      chipId,
+      isArchived: false,
+      AND: [{ remoteJid: { not: 'status@broadcast' } }],
+    }
+    if (!showGroups) conversationWhere.isGroup = false
+    if (search) {
+      conversationWhere.OR = [
+        { contactName: { contains: search, mode: 'insensitive' } },
+        { pushName: { contains: search, mode: 'insensitive' } },
+        { remotePhone: { contains: search, mode: 'insensitive' } },
+        { lastMessagePreview: { contains: search, mode: 'insensitive' } },
+      ]
+    }
+
+    const conversationsFromTable = await db.conversation.findMany({
+      where: conversationWhere,
+      orderBy: { lastMessageAt: 'desc' },
+      take: 500,
+      select: { id: true, chipId: true, remoteJid: true, remotePhone: true, contactName: true, pushName: true, groupName: true, isGroup: true, lastMessageAt: true, lastMessagePreview: true, lastMessageType: true, lastMessageFromMe: true, lastMessageStatus: true, unreadCount: true, profilePicUrl: true, participantCount: true, status: true },
+    })
+
+    if (conversationsFromTable.length > 0) {
+      const groupJids = conversationsFromTable.filter(c => c.isGroup).map(c => c.remoteJid)
+      const groupNameMap = new Map<string, string>()
+      if (groupJids.length > 0) {
+        try {
+          const cachedGroups = await db.groupMetadata.findMany({ where: { groupJid: { in: groupJids } }, select: { groupJid: true, subject: true } })
+          for (const cg of cachedGroups) { if (cg.subject && cg.subject !== 'unknown') groupNameMap.set(cg.groupJid, cg.subject) }
+        } catch {}
+      }
+      const formatted = conversationsFromTable.map(c => ({
+        chipId: c.chipId, remoteJid: c.remoteJid, remotePhone: c.remotePhone,
+        contactName: c.contactName || c.pushName || c.remotePhone || 'Desconhecido',
+        pushName: c.pushName,
+        groupName: c.isGroup ? (groupNameMap.get(c.remoteJid) || c.groupName || c.contactName) : null,
+        lastMessage: { content: (c.lastMessagePreview || '').substring(0, 100), type: c.lastMessageType || 'text', fromMe: c.lastMessageFromMe, senderName: c.isGroup ? (c.pushName || null) : null, isCampaign: false, status: c.lastMessageStatus || 'pending', ack: c.lastMessageFromMe ? 1 : 0 },
+        lastMessageAt: c.lastMessageAt.toISOString(), unreadCount: c.unreadCount, totalMessages: 0,
+        isGroup: c.isGroup, hasCampaignMessages: false,
+        participantCount: c.isGroup ? (c.participantCount || 0) : null,
+        profilePicUrl: c.profilePicUrl || null,
+        chip: chip ? { id: chip.id, name: chip.name, phoneNumber: chip.phoneNumber, profilePicUrl: chip.profilePicUrl, status: chip.status } : null,
+      }))
+      return NextResponse.json({ conversations: formatted })
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // FALLBACK: Conversation table empty — use old InboxMessage method
+    // ═══════════════════════════════════════════════════════════════════
+    // STEP 1B: Fetch ALL messages for this chip
     // ═══════════════════════════════════════════════════════════════════
 
     const baseWhere: Record<string, unknown> = {

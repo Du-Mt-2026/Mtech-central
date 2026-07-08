@@ -806,6 +806,34 @@ function ChipsTab() {
     return () => clearInterval(interval)
   }, [fetchChips, fetchAntiBanSettings])
 
+  // ALERT: Detect chip disconnections and notify the user in real-time.
+  const prevChipStatusesRef = useRef<Record<string, string>>({})
+  const isFirstLoadRef = useRef(true)
+  useEffect(() => {
+    if (chips.length === 0) return
+    if (isFirstLoadRef.current) {
+      isFirstLoadRef.current = false
+      const initialStatuses: Record<string, string> = {}
+      for (const chip of chips) { initialStatuses[chip.id] = chip.status }
+      prevChipStatusesRef.current = initialStatuses
+      return
+    }
+    const prevStatuses = prevChipStatusesRef.current
+    const newStatuses: Record<string, string> = {}
+    for (const chip of chips) {
+      newStatuses[chip.id] = chip.status
+      const prevStatus = prevStatuses[chip.id]
+      if (prevStatus === 'connected' && (chip.status === 'disconnected' || chip.status === 'banned')) {
+        const msg = chip.status === 'banned' ? `Chip ${chip.name} foi BANIDO!` : `Chip ${chip.name} desconectou!`
+        toast.error(msg, { duration: 10000 })
+        if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+          new Notification('OctupusZap', { body: msg, icon: '/favicon.ico' })
+        }
+      }
+    }
+    prevChipStatusesRef.current = newStatuses
+  }, [chips])
+
   // Auto-check proxy statuses when chips are loaded or changed
   const chipsIdRef = useRef<string>('')
   useEffect(() => {
@@ -7986,6 +8014,10 @@ export default function OctupusZapApp() {
         setLoggedIn(true)
         setUsername(data.user?.username || '')
         setUserRole(data.user?.role || 'operador')
+        // Request browser notification permission for chip disconnect alerts
+        if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+          Notification.requestPermission().catch(() => {})
+        }
         // If active tab is not accessible with user's role, reset to dashboard
         const userLevel = ROLE_LEVELS[data.user?.role || 'operador'] || 1
         const currentItem = NAV_ITEMS.find(n => n.id === activeTab)
