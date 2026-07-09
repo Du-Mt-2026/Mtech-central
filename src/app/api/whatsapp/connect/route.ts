@@ -9,6 +9,36 @@ import {
   findInstanceByName,
 } from '@/lib/evolution-router'
 import { getInstanceName as v3GetInstanceName, findInstanceByName as v3FindInstanceByName, resolveChipProxy, getInstanceQRCode, getConnectionState as v3GetConnectionState, clearInstanceIdCache, enableRejectCallAfterConnection } from '@/lib/evolution-api'
+import { getQRCode } from '@/lib/qr-cache'
+
+// Helper: busca QR code com retry (Evolution Go pode demorar pra gerar)
+async function fetchQRWithRetry(instanceName: string, maxRetries = 3, delayMs = 3000): Promise<{ qrcode: string | null; code: string | null; state: string }> {
+  // PRIMEIRO: checa cache (QR code recebido via webhook)
+  const cachedQR = getQRCode(instanceName)
+  if (cachedQR?.qrcode) {
+    console.log(`[QR] QR code encontrado no cache para ${instanceName}`)
+    return { qrcode: cachedQR.qrcode, code: cachedQR.code, state: 'close' }
+  }
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const qrResult = await getInstanceQRCode(instanceName)
+      if (qrResult.qrcode) {
+        console.log(`[QR] QR code obtido na tentativa ${attempt}/${maxRetries} para ${instanceName}`)
+        return { qrcode: qrResult.qrcode, code: qrResult.code || null, state: qrResult.state || 'close' }
+      }
+      if (qrResult.state === 'open') {
+        return { qrcode: null, code: null, state: 'open' }
+      }
+      console.log(`[QR] Tentativa ${attempt}/${maxRetries}: sem QR code ainda, aguardando ${delayMs}ms...`)
+      if (attempt < maxRetries) await new Promise(r => setTimeout(r, delayMs))
+    } catch (err) {
+      console.warn(`[QR] Tentativa ${attempt}/${maxRetries} falhou:`, err)
+      if (attempt < maxRetries) await new Promise(r => setTimeout(r, delayMs))
+    }
+  }
+  return { qrcode: null, code: null, state: 'close' }
+}
 
 export async function POST(request: Request) {
   try {
@@ -152,27 +182,12 @@ export async function POST(request: Request) {
       let code: string | null = connectResult.code || connectResult.pairingCode || null
       let effectiveState: string = connectResult.state || 'close'
       if (!qrcode && effectiveState !== 'open') {
-        try {
-          // Wait 4 seconds for Evolution Go to fully start the client and
-          // generate the QR code. The client is started in a goroutine by
-          // POST /instance/connect, so we need to give it time.
-          await new Promise(r => setTimeout(r, 4000))
-          const qrResult = await getInstanceQRCode(effectiveInstanceName)
-          qrcode = qrResult.qrcode ?? null
-          code = code ?? qrResult.code ?? null
-          // If QR fetch returns 'open' (session already logged in), update state
-          if (qrResult.state === 'open') {
-            effectiveState = 'open'
-          }
-        } catch {
-          // QR code not available yet — will be delivered via webhook
-        }
+        await new Promise(r => setTimeout(r, 4000))
+        const qrRetry = await fetchQRWithRetry(effectiveInstanceName, 3, 3000)
+        qrcode = qrRetry.qrcode
+        code = code ?? qrRetry.code
+        if (qrRetry.state === 'open') effectiveState = 'open'
       }
-
-      // connectInstance() already verifies against /instance/status when a jid is returned.
-      // If state='open', it means Connected=true AND LoggedIn=true — truly connected.
-      // If state='close', the session was stale (Connected=true, LoggedIn=false) or
-      // there was no stored session — needs QR code to connect.
 
       const isConnected = effectiveState === 'open'
       const newStatus = isConnected ? 'connected' : 'connecting'
@@ -236,21 +251,11 @@ export async function POST(request: Request) {
     let code: string | null = connectResult.code || connectResult.pairingCode || null
     let effectiveState: string = connectResult.state || 'close'
     if (!qrcode && effectiveState !== 'open') {
-      try {
-        // Wait 4 seconds for Evolution Go to fully start the client and
-        // generate the QR code. The client is started in a goroutine by
-        // POST /instance/connect, so we need to give it time.
-        await new Promise(r => setTimeout(r, 4000))
-        const qrResult = await getInstanceQRCode(effectiveInstanceName)
-        qrcode = qrResult.qrcode ?? null
-        code = code ?? qrResult.code ?? null
-        // If QR fetch returns 'open' (session already logged in), update state
-        if (qrResult.state === 'open') {
-          effectiveState = 'open'
-        }
-      } catch {
-        // QR code not available yet — will be delivered via webhook
-      }
+      await new Promise(r => setTimeout(r, 4000))
+      const qrRetry = await fetchQRWithRetry(effectiveInstanceName, 3, 3000)
+      qrcode = qrRetry.qrcode
+      code = code ?? qrRetry.code
+      if (qrRetry.state === 'open') effectiveState = 'open'
     }
 
     // ============================================
@@ -343,17 +348,10 @@ export async function POST(request: Request) {
           effectiveState = newConnectResult.state || 'close'
 
           if (!qrcode && effectiveState !== 'open') {
-            try {
-              await new Promise(r => setTimeout(r, 2000))
-              const retryQr = await getInstanceQRCode(newEffectiveName)
-              qrcode = retryQr.qrcode ?? null
-              code = code ?? retryQr.code ?? null
-              if (retryQr.state === 'open') {
-                effectiveState = 'open'
-              }
-            } catch {
-              // QR not available yet
-            }
+            const recoveryQr = await fetchQRWithRetry(newEffectiveName, 4, 3000)
+            qrcode = recoveryQr.qrcode
+            code = code ?? recoveryQr.code
+            if (recoveryQr.state === 'open') effectiveState = 'open'
           }
 
           console.log(`[Connect] Instance recovery: qrcode=${!!qrcode}, state=${effectiveState}`)

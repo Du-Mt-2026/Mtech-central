@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { removeWireGuardPeer } from '@/lib/wireguard-peer-api'
 import { enqueueReconnection, markChipReconnected, dequeueReconnection } from '@/lib/reconnection-queue'
 import { db } from '@/lib/db'
+import { setQRCode, clearQRCode } from '@/lib/qr-cache'
 import { parseWhatsAppMessage } from '@/lib/whatsapp-message-parser'
 import { broadcastToChip } from '@/app/api/inbox/events/route'
 
@@ -369,6 +370,11 @@ export async function POST(request: Request) {
 
         if (chip) {
           const code = data?.Code || data?.code || null
+          const qrcode = data?.Qrcode || data?.qrcode || null
+
+          if (qrcode && chipInstanceName) {
+            setQRCode(chipInstanceName, qrcode, code)
+          }
 
           await db.chip.update({
             where: { id: chip.id },
@@ -378,7 +384,7 @@ export async function POST(request: Request) {
             },
           })
 
-          console.log(`[Webhook] QR Code received for ${chipInstanceName}`)
+          console.log(`[Webhook] QR Code received for ${chipInstanceName} (qrcode=${!!qrcode}, code=${!!code})`)
         }
         break
       }

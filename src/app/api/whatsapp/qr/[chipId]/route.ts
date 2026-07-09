@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { getInstanceQRCode } from '@/lib/evolution-router'
 import { getInstanceName as v3GetInstanceName } from '@/lib/evolution-api'
 import { db } from '@/lib/db'
+import { getQRCode } from '@/lib/qr-cache'
 
 export async function GET(request: Request, { params }: { params: Promise<{ chipId: string }> }) {
   try {
@@ -15,8 +16,41 @@ export async function GET(request: Request, { params }: { params: Promise<{ chip
     // Build instance name
     const instanceName = chip.evolutionInstance || v3GetInstanceName(chip.id, chip.name)
 
-    // Fetch QR code via the router
-    const qrResult = await getInstanceQRCode(instanceName)
+    // PRIMEIRO: checa cache de QR code (recebido via webhook)
+    const cachedQR = getQRCode(instanceName)
+    if (cachedQR?.qrcode) {
+      console.log(`[QR route] QR code encontrado no cache para ${instanceName}`)
+      return NextResponse.json({
+        qrcode: cachedQR.qrcode,
+        code: cachedQR.code || null,
+        state: 'close',
+      })
+    }
+
+    // Se não tem no cache, busca via API
+    let qrResult: { qrcode: string | null; code: string | null; pairingCode: string | null; state: string } | null = null
+    let lastErr: any = null
+    
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const r = await getInstanceQRCode(instanceName)
+        if (r.qrcode || r.state === 'open') {
+          qrResult = r
+          break
+        }
+        console.log(`[QR route] Tentativa ${attempt}/3: sem QR ainda, aguardando 2s...`)
+        if (attempt < 3) await new Promise(r => setTimeout(r, 2000))
+      } catch (err) {
+        lastErr = err
+        console.warn(`[QR route] Tentativa ${attempt}/3 falhou:`, err)
+        if (attempt < 3) await new Promise(r => setTimeout(r, 2000))
+      }
+    }
+    
+    if (!qrResult) {
+      if (lastErr) throw lastErr
+      qrResult = { qrcode: null, code: null, pairingCode: null, state: 'close' }
+    }
 
     const isConnected = qrResult.state === 'open'
 

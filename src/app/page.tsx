@@ -1,4 +1,6 @@
 'use client'
+
+import dynamic from 'next/dynamic'
 // v2025.05.19-horizontal-layout
 import React, { useState, useEffect, useCallback, useRef, useMemo, CSSProperties } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -34,6 +36,8 @@ import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Skeleton, ChipCardSkeleton, CardListSkeleton, RowListSkeleton, TableSkeleton, StatsSkeleton, ChipsGridSkeleton } from '@/components/ui/skeleton'
+import { EmptyState } from '@/components/ui/empty-state'
 import {
   AlertDialog, AlertDialogTrigger, AlertDialogContent, AlertDialogHeader,
   AlertDialogFooter, AlertDialogTitle, AlertDialogDescription, AlertDialogAction, AlertDialogCancel,
@@ -452,7 +456,7 @@ function DashboardTab({ stats, onRefresh, setActiveTab }: { stats: Stats | null;
     setRefreshing(false)
   }
 
-  if (!stats) return <div className="flex items-center justify-center py-20"><RefreshCw className="size-6 animate-spin text-muted-foreground" /></div>
+  if (!stats) return <StatsSkeleton />
 
   const s = {
     totalChips: stats.totalChips ?? 0, connectedChips: stats.connectedChips ?? 0,
@@ -1452,17 +1456,14 @@ function ChipsTab() {
 
       {/* Chip Cards - Grouped by Connection Status */}
       {loading ? (
-        <div className="flex items-center justify-center py-20"><RefreshCw className="size-6 animate-spin text-muted-foreground" /></div>
+        <ChipsGridSkeleton />
       ) : filteredChips.length === 0 ? (
-        <Card className="shadow-lg border-0">
-          <CardContent className="flex flex-col items-center justify-center py-16">
-            <div className="flex size-16 items-center justify-center rounded-2xl bg-violet-100 dark:bg-violet-900/30 mb-4">
-              <Search className="size-8 text-violet-500" />
-            </div>
-            <p className="text-lg font-semibold">Nenhum chip encontrado</p>
-            <p className="text-sm text-muted-foreground mt-1">{searchQuery ? 'Tente outro termo de busca' : 'Adicione um chip para começar'}</p>
-          </CardContent>
-        </Card>
+        <EmptyState
+          icon={Search}
+          title="Nenhum chip encontrado"
+          description={searchQuery ? 'Tente outro termo de busca ou ajuste os filtros aplicados.' : 'Adicione um chip para começar a enviar mensagens via WhatsApp.'}
+          action={searchQuery ? undefined : { label: 'Adicionar Chip', onClick: () => setAddDialogOpen(true) }}
+        />
       ) : (
         <div className="space-y-6">
           {/* Connected Group */}
@@ -3153,13 +3154,13 @@ function ContatosTab() {
             </motion.div>
           ))}
           {contactLists.length === 0 && (
-            <Card className="shadow-lg border-0 hover:shadow-xl transition-all duration-200 col-span-full">
-              <CardContent className="flex flex-col items-center justify-center py-16">
-                <Users className="size-10 text-muted-foreground mb-3" />
-                <p className="font-semibold">Nenhuma lista criada</p>
-                <p className="text-sm text-muted-foreground">Crie uma lista para organizar seus contatos</p>
-              </CardContent>
-            </Card>
+            <EmptyState
+              icon={Users}
+              title="Nenhuma lista criada"
+              description="Crie uma lista para organizar seus contatos e facilitar o envio de campanhas."
+              action={{ label: 'Criar primeira lista', onClick: () => setAddListDialog(true) }}
+              className="col-span-full"
+            />
           )}
         </div>
       )}
@@ -5677,13 +5678,12 @@ function CampanhasTab() {
       {loading ? (
         <div className="flex items-center justify-center py-20"><RefreshCw className="size-6 animate-spin text-muted-foreground" /></div>
       ) : campaigns.length === 0 ? (
-        <Card className="shadow-lg border-0 hover:shadow-xl transition-all duration-200">
-          <CardContent className="flex flex-col items-center justify-center py-16">
-            <Send className="size-10 text-muted-foreground mb-3" />
-            <p className="font-semibold">Nenhuma campanha criada</p>
-            <p className="text-sm text-muted-foreground">Crie sua primeira campanha para começar</p>
-          </CardContent>
-        </Card>
+        <EmptyState
+          icon={Send}
+          title="Nenhuma campanha criada"
+          description="Crie sua primeira campanha para começar a enviar mensagens em massa via WhatsApp."
+          action={{ label: 'Criar primeira campanha', onClick: () => setCreateDialogOpen(true) }}
+        />
       ) : (
         <div className="space-y-4">
           {campaigns.map((c, i) => (
@@ -6606,15 +6606,14 @@ function TemplatesTab() {
       </div>
 
       {loading ? (
-        <div className="flex items-center justify-center py-20"><RefreshCw className="size-6 animate-spin text-muted-foreground" /></div>
+        <CardListSkeleton count={6} />
       ) : filtered.length === 0 ? (
-        <Card className="shadow-lg border-0 hover:shadow-xl transition-all duration-200">
-          <CardContent className="flex flex-col items-center justify-center py-16">
-            <FileText className="size-10 text-muted-foreground mb-3" />
-            <p className="font-semibold">Nenhum template encontrado</p>
-            <p className="text-sm text-muted-foreground">Crie seu primeiro template de mensagem</p>
-          </CardContent>
-        </Card>
+        <EmptyState
+          icon={FileText}
+          title="Nenhum template encontrado"
+          description="Crie seu primeiro template de mensagem para reutilizar em campanhas."
+          action={{ label: 'Criar primeiro template', onClick: () => setCreateDialogOpen(true) }}
+        />
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {filtered.map((t, i) => {
@@ -6959,6 +6958,8 @@ function ConfiguracoesTab() {
     evolutionApiUrl: '', evolutionApiKey: '',
     socks5Host: '', socks5Port: '8084', socks5User: '', socks5Pass: '',
   })
+  const [initialConfig, setInitialConfig] = useState<typeof config | null>(null)
+  const isDirty = initialConfig ? JSON.stringify(initialConfig) !== JSON.stringify(config) : false
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [testingConnection, setTestingConnection] = useState(false)
@@ -6982,6 +6983,20 @@ function ConfiguracoesTab() {
         if (data.default_socks5_port) setConfig(prev => ({ ...prev, socks5Port: data.default_socks5_port }))
         if (data.default_socks5_user) setConfig(prev => ({ ...prev, socks5User: data.default_socks5_user }))
         if (data.default_socks5_pass) setConfig(prev => ({ ...prev, socks5Pass: data.default_socks5_pass }))
+        // Snapshot inicial pra detectar mudancas (dirty state) — dentro do try pra ter acesso a data
+        setInitialConfig({
+          resetHour: parseInt(data.resetHour) || 0,
+          defaultProxyMode: data.defaultProxyMode || 'none',
+          globalDailyLimit: parseInt(data.globalDailyLimit) || 1000,
+          emailNotifications: data.emailNotifications === 'true',
+          timezone: data.timezone || 'America/Sao_Paulo',
+          evolutionApiUrl: data.evolution_api_url || '',
+          evolutionApiKey: data.evolution_api_key || '',
+          socks5Host: data.default_socks5_host || '',
+          socks5Port: data.default_socks5_port || '8084',
+          socks5User: data.default_socks5_user || '',
+          socks5Pass: data.default_socks5_pass || '',
+        })
       } catch { /* empty */ }
       finally { setLoading(false) }
     }
@@ -7009,6 +7024,7 @@ function ConfiguracoesTab() {
       })
       if (!res.ok) throw new Error()
       toast.success('Configurações salvas!')
+      setInitialConfig({ ...config })
       setConnectionResult(null)
     } catch { toast.error('Erro ao salvar configurações') }
     finally { setSaving(false) }
@@ -7286,9 +7302,21 @@ function ConfiguracoesTab() {
         </Card>
       </div>
 
-      <div className="flex justify-end">
+      <div className="flex items-center justify-end gap-3">
+        {isDirty && !saving && (
+          <Badge variant="secondary" className="bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">
+            <span className="size-1.5 rounded-full bg-amber-500 animate-pulse" />
+            Não salvo
+          </Badge>
+        )}
+        {saving && (
+          <Badge variant="secondary" className="bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300">
+            <RefreshCw className="size-3 animate-spin" />
+            Salvando
+          </Badge>
+        )}
         <Button className="gap-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 shadow-lg"
-          onClick={saveSettings} disabled={saving}>
+          onClick={saveSettings} disabled={saving || !isDirty}>
           {saving ? <RefreshCw className="size-4 animate-spin" /> : <Check className="size-4" />} Salvar Configurações
         </Button>
       </div>
@@ -8154,6 +8182,12 @@ export default function OctupusZapApp() {
   }
 
   const renderContent = () => {
+    const tabFallback = (
+      <div className="flex items-center justify-center py-20">
+        <RefreshCw className="size-6 animate-spin text-muted-foreground" />
+      </div>
+    )
+    
     switch (activeTab) {
       case 'dashboard': return <DashboardTab stats={stats} onRefresh={refreshStats} setActiveTab={setActiveTab} />
       case 'chips': return <ChipsTab />
