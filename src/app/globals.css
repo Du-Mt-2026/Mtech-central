@@ -148,3 +148,22 @@
 .dark .scrollbar-thin::-webkit-scrollbar-thumb:hover {
   background-color: oklch(0.55 0 0);
 }
+
+/* Anti-Ban sidebar — hide scrollbar on mobile (horizontal pills), keep it visible on desktop */
+.antiban-sidebar-nav {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.antiban-sidebar-nav::-webkit-scrollbar {
+  display: none;
+}
+@media (min-width: 1024px) {
+  .antiban-sidebar-nav {
+    scrollbar-width: auto;
+    -ms-overflow-style: auto;
+  }
+  .antiban-sidebar-nav::-webkit-scrollbar {
+    display: block;
+    width: 6px;
+  }
+}
