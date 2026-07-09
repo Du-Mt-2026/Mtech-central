@@ -1756,9 +1756,11 @@ function ChipsTab() {
                                 <Globe className="size-3" /> Proxy
                               </Button>
                               <div className="flex-1" />
-                              <Button variant="ghost" size="sm" className="size-7 p-0 text-rose-500 hover:text-rose-600" onClick={() => setDeleteConfirm(chip.id)}>
-                                <Trash2 className="size-3.5" />
-                              </Button>
+                              <TooltipProvider><Tooltip><TooltipTrigger asChild>
+                                <Button variant="ghost" size="sm" className="size-7 p-0 text-rose-500 hover:text-rose-600" onClick={() => setDeleteConfirm(chip.id)}>
+                                  <Trash2 className="size-3.5" />
+                                </Button>
+                              </TooltipTrigger><TooltipContent>Excluir chip</TooltipContent></Tooltip></TooltipProvider>
                             </div>
                           </CardContent>
                         </Card>
@@ -2061,9 +2063,11 @@ function ChipsTab() {
                                 <Globe className="size-3" /> Proxy
                               </Button>
                               <div className="flex-1" />
-                              <Button variant="ghost" size="sm" className="size-7 p-0 text-rose-500 hover:text-rose-600" onClick={() => setDeleteConfirm(chip.id)}>
-                                <Trash2 className="size-3.5" />
-                              </Button>
+                              <TooltipProvider><Tooltip><TooltipTrigger asChild>
+                                <Button variant="ghost" size="sm" className="size-7 p-0 text-rose-500 hover:text-rose-600" onClick={() => setDeleteConfirm(chip.id)}>
+                                  <Trash2 className="size-3.5" />
+                                </Button>
+                              </TooltipTrigger><TooltipContent>Excluir chip</TooltipContent></Tooltip></TooltipProvider>
                             </div>
                           </CardContent>
                         </Card>
@@ -2555,12 +2559,16 @@ function SortableContactRow({ contact, isSelected, onToggleSelect, onEdit, onDel
       </td>
       <td className="p-3">
         <div className="flex gap-1">
-          <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-emerald-600" onClick={onEdit}>
-            <Pencil className="size-3.5" />
-          </Button>
-          <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-rose-600" onClick={onDelete}>
-            <Trash2 className="size-3.5" />
-          </Button>
+          <TooltipProvider><Tooltip><TooltipTrigger asChild>
+            <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-emerald-600" onClick={onEdit}>
+              <Pencil className="size-3.5" />
+            </Button>
+          </TooltipTrigger><TooltipContent>Editar contato</TooltipContent></Tooltip></TooltipProvider>
+          <TooltipProvider><Tooltip><TooltipTrigger asChild>
+            <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-muted-foreground hover:text-rose-600" onClick={onDelete}>
+              <Trash2 className="size-3.5" />
+            </Button>
+          </TooltipTrigger><TooltipContent>Excluir contato</TooltipContent></Tooltip></TooltipProvider>
         </div>
       </td>
     </tr>
@@ -3134,9 +3142,11 @@ function ContatosTab() {
                       <CardTitle className="truncate text-base">{list.name}</CardTitle>
                       <CardDescription>{list._count?.contacts || 0} contatos</CardDescription>
                     </div>
-                    <Button variant="ghost" size="sm" className="text-rose-500 hover:text-rose-600" onClick={(e) => { e.stopPropagation(); setDeleteConfirm(list.id) }}>
-                      <Trash2 className="size-4" />
-                    </Button>
+                    <TooltipProvider><Tooltip><TooltipTrigger asChild>
+                      <Button variant="ghost" size="sm" className="text-rose-500 hover:text-rose-600" onClick={(e) => { e.stopPropagation(); setDeleteConfirm(list.id) }}>
+                        <Trash2 className="size-4" />
+                      </Button>
+                    </TooltipTrigger><TooltipContent>Excluir lista</TooltipContent></Tooltip></TooltipProvider>
                   </div>
                 </CardHeader>
               </Card>
@@ -3979,6 +3989,7 @@ function CampanhasTab() {
   const [previewContact, setPreviewContact] = useState<{ name: string; phone: string; customFields?: string } | null>(null)
   const [activeStep, setActiveStep] = useState(0)
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
+  const [cancelConfirm, setCancelConfirm] = useState<string | null>(null)
   const [processing, setProcessing] = useState(false)
   const [continuousProcessing, setContinuousProcessing] = useState(false)
   const [continuousStats, setContinuousStats] = useState({ processed: 0, remaining: 0, elapsed: 0 })
@@ -5325,7 +5336,7 @@ function CampanhasTab() {
                               ) : step.mediatype === 'video' ? <Film className="size-3.5 text-sky-500" /> : step.mediatype === 'audio' ? <Music className="size-3.5 text-amber-500" /> : <FileIcon className="size-3.5 text-zinc-500" />}
                               <span className="truncate text-emerald-600 dark:text-emerald-400">Mídia salva</span>
                               <a href={step.mediaUrl} target="_blank" rel="noopener noreferrer" className="text-muted-foreground hover:text-foreground underline truncate max-w-[120px]">abrir</a>
-                              <Button variant="ghost" size="sm" className="h-5 w-5 p-0 ml-auto text-red-500 hover:text-red-400" onClick={() => { updateStep(idx, 'mediaUrl', ''); updateStep(idx, 'mediatype', ''); }}><X className="size-3" /></Button>
+                              <TooltipProvider><Tooltip><TooltipTrigger asChild><Button variant="ghost" size="sm" className="h-5 w-5 p-0 ml-auto text-red-500 hover:text-red-400" onClick={() => { updateStep(idx, 'mediaUrl', ''); updateStep(idx, 'mediatype', ''); }}><X className="size-3" /></Button></TooltipTrigger><TooltipContent>Remover mídia</TooltipContent></Tooltip></TooltipProvider>
                             </div>
                           ) : null}
                         </div>
@@ -5447,7 +5458,7 @@ function CampanhasTab() {
                                       ) : v.mediatype === 'video' ? <Film className="size-3 text-sky-500" /> : v.mediatype === 'audio' ? <Music className="size-3 text-amber-500" /> : <FileIcon className="size-3 text-zinc-500" />}
                                       <span className="truncate text-emerald-600 dark:text-emerald-400">Mídia salva</span>
                                       <a href={v.mediaUrl} target="_blank" rel="noopener noreferrer" className="text-muted-foreground hover:text-foreground underline truncate max-w-[80px]">abrir</a>
-                                      <Button variant="ghost" size="sm" className="h-4 w-4 p-0 ml-auto text-red-500 hover:text-red-400" onClick={() => { updateVariation(idx, vIdx, 'mediaUrl', ''); updateVariation(idx, vIdx, 'mediatype', ''); }}><X className="size-2.5" /></Button>
+                                      <TooltipProvider><Tooltip><TooltipTrigger asChild><Button variant="ghost" size="sm" className="h-4 w-4 p-0 ml-auto text-red-500 hover:text-red-400" onClick={() => { updateVariation(idx, vIdx, 'mediaUrl', ''); updateVariation(idx, vIdx, 'mediatype', ''); }}><X className="size-2.5" /></Button></TooltipTrigger><TooltipContent>Remover mídia</TooltipContent></Tooltip></TooltipProvider>
                                     </div>
                                   ) : null}
                                 </div>
@@ -5753,10 +5764,10 @@ function CampanhasTab() {
                       </TooltipTrigger><TooltipContent>Salvar como template</TooltipContent></Tooltip></TooltipProvider>
                       {['draft', 'paused', 'scheduled'].includes(c.status) && <Button variant="outline" size="sm" className="gap-1" onClick={() => { setSelectedCampaign(c); startEditing(c); setCreateDialogOpen(true) }}><Pencil className="size-3.5" /> Editar</Button>}
                       {c.status === 'draft' && <Button size="sm" className="gap-1 bg-emerald-600 hover:bg-emerald-700" disabled={startingCampaignIds.has(c.id)} onClick={() => startCampaignAction(c.id)}>{startingCampaignIds.has(c.id) ? <><Loader2 className="size-3.5 animate-spin" /> Iniciando...</> : <><Play className="size-3.5" /> Iniciar</>}</Button>}
-                      {c.status === 'running' && <Button variant="outline" size="sm" className="gap-1" onClick={async () => { try { await fetch(`/api/campaigns/${c.id}/pause`, { method: 'POST' }); toast.success('Campanha pausada!'); fetchCampaigns() } catch { toast.error('Erro ao pausar') } }}><Pause className="size-3.5" /> Pausar</Button>}
+                      {c.status === 'running' && <Button variant="outline" size="sm" className="gap-1 text-amber-600 hover:text-amber-700 border-amber-200" onClick={async () => { try { await fetch(`/api/campaigns/${c.id}/pause`, { method: 'POST' }); toast.success('Campanha pausada!'); fetchCampaigns() } catch { toast.error('Erro ao pausar') } }}><Pause className="size-3.5" /> Pausar</Button>}
                       {c.status === 'paused' && <Button size="sm" className="gap-1 bg-emerald-600 hover:bg-emerald-700" onClick={async () => { try { await fetch(`/api/campaigns/${c.id}/resume`, { method: 'POST' }); toast.success('Campanha retomada!'); fetchCampaigns() } catch { toast.error('Erro ao retomar') } }}><Play className="size-3.5" /> Retomar</Button>}
-                      {(c.status === 'running' || c.status === 'paused') && <Button variant="outline" size="sm" className="gap-1 text-amber-600 hover:text-amber-700 border-amber-200" onClick={() => updateCampaignStatus(c.id, 'cancelled')}><X className="size-3.5" /> Cancelar</Button>}
-                      <Button variant="outline" size="sm" className="text-rose-500 hover:text-rose-600" onClick={() => setDeleteConfirm(c.id)}><Trash2 className="size-3.5" /></Button>
+                      {(c.status === 'running' || c.status === 'paused') && <Button variant="outline" size="sm" className="gap-1 text-rose-600 hover:text-rose-700 border-rose-200" onClick={() => setCancelConfirm(c.id)}><X className="size-3.5" /> Cancelar</Button>}
+                      <TooltipProvider><Tooltip><TooltipTrigger asChild><Button variant="outline" size="sm" className="text-rose-500 hover:text-rose-600" onClick={() => setDeleteConfirm(c.id)}><Trash2 className="size-3.5" /></Button></TooltipTrigger><TooltipContent>Excluir campanha</TooltipContent></Tooltip></TooltipProvider>
                     </div>
                   </div>
                 </CardContent>
@@ -5769,6 +5780,10 @@ function CampanhasTab() {
       <ConfirmDialog open={!!deleteConfirm} onOpenChange={() => setDeleteConfirm(null)}
         title="Remover Campanha" description="Tem certeza? Esta ação não pode ser desfeita."
         onConfirm={() => { if (deleteConfirm) deleteCampaign(deleteConfirm) }} confirmLabel="Remover" variant="destructive" />
+
+      <ConfirmDialog open={!!cancelConfirm} onOpenChange={() => setCancelConfirm(null)}
+        title="Cancelar Campanha" description="Tem certeza que deseja cancelar esta campanha? As mensagens já enviadas não serão desfeitas, mas o envio será interrompido."
+        onConfirm={() => { if (cancelConfirm) updateCampaignStatus(cancelConfirm, 'cancelled'); setCancelConfirm(null) }} confirmLabel="Sim, cancelar" variant="destructive" />
 
       {/* Detail Dialog */}
       <Dialog open={detailDialogOpen} onOpenChange={(open) => { setDetailDialogOpen(open); if (!open) setEditing(false) }}>
@@ -5793,7 +5808,7 @@ function CampanhasTab() {
                   </Button>
                 )}
                 {selectedCampaign && (selectedCampaign.status === 'running' || selectedCampaign.status === 'paused') && (
-                  <Button variant="outline" size="sm" className="gap-1.5 text-amber-600 hover:text-amber-700 border-amber-200" onClick={async () => { await updateCampaignStatus(selectedCampaign.id, 'cancelled'); const res = await fetch(`/api/campaigns/${selectedCampaign.id}`, { cache: 'no-store' }); if (res.ok) setSelectedCampaign(await res.json()) }}>
+                  <Button variant="outline" size="sm" className="gap-1.5 text-rose-600 hover:text-rose-700 border-rose-200" onClick={async () => { await updateCampaignStatus(selectedCampaign.id, 'cancelled'); const res = await fetch(`/api/campaigns/${selectedCampaign.id}`, { cache: 'no-store' }); if (res.ok) setSelectedCampaign(await res.json()) }}>
                     <X className="size-3.5" /> Cancelar
                   </Button>
                 )}
@@ -6648,12 +6663,16 @@ function TemplatesTab() {
                     <div className="flex justify-between items-center">
                       <span className="text-xs text-muted-foreground">{new Date(t.createdAt).toLocaleDateString('pt-BR')}</span>
                       <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-emerald-600 h-7 w-7 p-0" onClick={() => openEditTemplate(t)}>
-                          <Pencil className="size-3.5" />
-                        </Button>
-                        <Button variant="ghost" size="sm" className="text-rose-500 hover:text-rose-600 h-7 w-7 p-0" onClick={() => setDeleteConfirm(t.id)}>
-                          <Trash2 className="size-3.5" />
-                        </Button>
+                        <TooltipProvider><Tooltip><TooltipTrigger asChild>
+                          <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-emerald-600 h-7 w-7 p-0" onClick={() => openEditTemplate(t)}>
+                            <Pencil className="size-3.5" />
+                          </Button>
+                        </TooltipTrigger><TooltipContent>Editar template</TooltipContent></Tooltip></TooltipProvider>
+                        <TooltipProvider><Tooltip><TooltipTrigger asChild>
+                          <Button variant="ghost" size="sm" className="text-rose-500 hover:text-rose-600 h-7 w-7 p-0" onClick={() => setDeleteConfirm(t.id)}>
+                            <Trash2 className="size-3.5" />
+                          </Button>
+                        </TooltipTrigger><TooltipContent>Excluir template</TooltipContent></Tooltip></TooltipProvider>
                       </div>
                     </div>
                   </CardContent>
