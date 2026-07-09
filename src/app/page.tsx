@@ -45,16 +45,17 @@ import {
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert'
 import { toast } from 'sonner'
 import QRCode from 'qrcode'
-import { VerificarSection } from '@/components/verificar-section'
-import { KeysSection } from '@/components/keys-section'
-import { VendedoresSection } from '@/components/vendedores-section'
+// Lazy loaded components (code splitting)
+const VerificarSection = dynamic(() => import('@/components/verificar-section').then(m => ({ default: m.VerificarSection })), { loading: () => <div className="flex items-center justify-center py-20"><RefreshCw className="size-6 animate-spin text-muted-foreground" /></div> })
+const KeysSection = dynamic(() => import('@/components/keys-section').then(m => ({ default: m.KeysSection })), { loading: () => <div className="flex items-center justify-center py-20"><RefreshCw className="size-6 animate-spin text-muted-foreground" /></div> })
+const VendedoresSection = dynamic(() => import('@/components/vendedores-section').then(m => ({ default: m.VendedoresSection })), { loading: () => <div className="flex items-center justify-center py-20"><RefreshCw className="size-6 animate-spin text-muted-foreground" /></div> })
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core'
 import { SortableContext, useSortable, horizontalListSortingStrategy, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable'
 import { restrictToHorizontalAxis, restrictToVerticalAxis } from '@dnd-kit/modifiers'
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable'
-import { AntiBanTab } from '@/components/antiban-tab'
-import { WarmingTab } from '@/components/warming-tab'
-import { InboxTab } from '@/components/inbox-tab'
+const AntiBanTab = dynamic(() => import('@/components/antiban-tab').then(m => ({ default: m.AntiBanTab })), { loading: () => <div className="flex items-center justify-center py-20"><RefreshCw className="size-6 animate-spin text-muted-foreground" /></div> })
+const WarmingTab = dynamic(() => import('@/components/warming-tab').then(m => ({ default: m.WarmingTab })), { loading: () => <div className="flex items-center justify-center py-20"><RefreshCw className="size-6 animate-spin text-muted-foreground" /></div> })
+const InboxTab = dynamic(() => import('@/components/inbox-tab').then(m => ({ default: m.InboxTab })), { loading: () => <div className="flex items-center justify-center py-20"><RefreshCw className="size-6 animate-spin text-muted-foreground" /></div> })
 import { type AntiBanSettings } from '@/lib/constants'
 
 // ===== Client-side Audio Conversion (OGG/Opus for WhatsApp) =====
