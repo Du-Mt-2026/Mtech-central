@@ -56,7 +56,7 @@ import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/componen
 const AntiBanTab = dynamic(() => import('@/components/antiban-tab').then(m => ({ default: m.AntiBanTab })), { loading: () => <div className="flex items-center justify-center py-20"><RefreshCw className="size-6 animate-spin text-muted-foreground" /></div> })
 const WarmingTab = dynamic(() => import('@/components/warming-tab').then(m => ({ default: m.WarmingTab })), { loading: () => <div className="flex items-center justify-center py-20"><RefreshCw className="size-6 animate-spin text-muted-foreground" /></div> })
 const InboxTab = dynamic(() => import('@/components/inbox-tab').then(m => ({ default: m.InboxTab })), { loading: () => <div className="flex items-center justify-center py-20"><RefreshCw className="size-6 animate-spin text-muted-foreground" /></div> })
-import { type AntiBanSettings } from '@/lib/constants'
+import { type AntiBanSettings, WARMING_MODE_MULTIPLIERS } from '@/lib/constants'
 
 // ===== Client-side Audio Conversion (OGG/Opus for WhatsApp) =====
 let ffmpegInstance: any = null
@@ -330,7 +330,7 @@ const CONTACT_VARIABLES = [
 
 // ===== Chip Effective Info Utility =====
 // Shared function to calculate effective daily limit considering warming phase
-function calcChipEffectiveInfo(chip: Chip, antiBanSettings: AntiBanSettings | null): { effectiveLimit: number; phaseDay: number; phaseMaxDays: number } {
+function calcChipEffectiveInfo(chip: Chip, antiBanSettings: AntiBanSettings | null, warmingMode?: string): { effectiveLimit: number; phaseDay: number; phaseMaxDays: number } {
   if (!antiBanSettings || !chip.warmingEnabled || !antiBanSettings.warmingEnabled) {
     return { effectiveLimit: chip.dailyLimit || 200, phaseDay: 0, phaseMaxDays: 0 }
   }
@@ -385,6 +385,12 @@ function calcChipEffectiveInfo(chip: Chip, antiBanSettings: AntiBanSettings | nu
 
   // Cap at chip's dailyLimit
   limit = Math.min(limit, chip.dailyLimit || antiBanSettings.dailyLimitPerChip)
+
+  // Apply warming mode multiplier (matching backend behavior)
+  const modeMultiplier = WARMING_MODE_MULTIPLIERS[warmingMode || 'normal']
+  if (modeMultiplier) {
+    limit = Math.round(limit * modeMultiplier.limitMultiplier)
+  }
 
   const phaseMaxDays = schedule.length > 0 ? schedule[schedule.length - 1].days[1] : 0
 

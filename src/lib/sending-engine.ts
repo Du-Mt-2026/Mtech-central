@@ -545,7 +545,18 @@ function getEffectiveDailyLimit(
     // Previously, prewarm used prewarmStartedAt which could be NULL or recent,
     // causing the backend to calculate day 1-2 while the frontend calculated day 38.
     // This mismatch made the backend block at limit 20 while the UI showed 150.
-    dayInPhase = Math.floor((now.getTime() - warmingStart.getTime()) / (1000 * 60 * 60 * 24)) + 1
+    //
+    // BUGFIX 2: Use Brasilia timezone (America/Sao_Paulo) for day calculation,
+    // matching the frontend. Previously used UTC which could be off by 1 day
+    // near midnight Brasilia time (UTC-3).
+    const spFormatter = new Intl.DateTimeFormat('en-US', { year: 'numeric', month: 'numeric', day: 'numeric', timeZone: 'America/Sao_Paulo' })
+    const nowStr = spFormatter.format(now)
+    const startStr = spFormatter.format(warmingStart)
+    const [nm, nd, ny] = nowStr.split('/').map(Number)
+    const [sm, sd, sy] = startStr.split('/').map(Number)
+    const nowDate = new Date(ny, nm - 1, nd)
+    const startDate = new Date(sy, sm - 1, sd)
+    dayInPhase = Math.max(1, Math.floor((nowDate.getTime() - startDate.getTime()) / (86400000)) + 1)
   }
   
   dayInPhase = Math.max(1, dayInPhase)
@@ -1066,7 +1077,15 @@ async function advanceWarmingPhase(chipId: string, settings: AntiBanConfig): Pro
       : 20  // Fallback if schedule is empty
     // BUGFIX: Use warmingStartedAt (not prewarmStartedAt) for consistency with frontend.
     const warmingStart = chip.warmingStartedAt ? new Date(chip.warmingStartedAt) : createdAt
-    const daysSincePrewarm = Math.floor((now.getTime() - warmingStart.getTime()) / (1000 * 60 * 60 * 24)) + 1
+    // BUGFIX 2: Use Brasilia timezone for day calculation (matching frontend + getEffectiveDailyLimit)
+    const spFmt = new Intl.DateTimeFormat('en-US', { year: 'numeric', month: 'numeric', day: 'numeric', timeZone: 'America/Sao_Paulo' })
+    const nowSp = spFmt.format(now)
+    const startSp = spFmt.format(warmingStart)
+    const [nm2, nd2, ny2] = nowSp.split('/').map(Number)
+    const [sm2, sd2, sy2] = startSp.split('/').map(Number)
+    const nowDate2 = new Date(ny2, nm2 - 1, nd2)
+    const startDate2 = new Date(sy2, sm2 - 1, sd2)
+    const daysSincePrewarm = Math.max(1, Math.floor((nowDate2.getTime() - startDate2.getTime()) / (86400000)) + 1)
     
     if (daysSincePrewarm > prewarmDuration) {
       // Transition to ready
