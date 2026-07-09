@@ -105,6 +105,7 @@ export const presenceConfigSchema = z.object({
   .refine(d => d.mediaRecordingMaxMs >= d.mediaRecordingMinMs, { message: 'Gravação máxima deve ser >= mínima', path: ['mediaRecordingMaxMs'] })
 
 export const deliveryRateConfigSchema = z.object({
+  enabled: z.boolean().default(true),
   normalThreshold: z.number().int().min(10).max(100).default(60),   // Delivery rate >= 60% → normal
   mediumThreshold: z.number().int().min(10).max(100).default(40),   // Delivery rate 40-59% → medium slow
   mediumMultiplier: z.number().min(1).max(5).default(1.5),           // 1.5x slower
@@ -190,6 +191,7 @@ export const DEFAULT_HUMAN_BEHAVIOR: HumanBehaviorConfig = {
     mediaRecordingMaxMs: 4000,
   },
   deliveryRate: {
+    enabled: true,
     normalThreshold: 60,
     mediumThreshold: 40,
     mediumMultiplier: 1.5,

@@ -157,6 +157,7 @@ function getPresenceConfig(settings: AntiBanConfig) {
 function getDeliveryRateConfig(settings: AntiBanConfig) {
   const dr = settings.humanBehaviorConfig?.deliveryRate
   return {
+    enabled: dr?.enabled ?? true,
     normalThreshold: dr?.normalThreshold ?? 60,
     mediumThreshold: dr?.mediumThreshold ?? 40,
     mediumMultiplier: dr?.mediumMultiplier ?? 1.5,
@@ -3439,6 +3440,10 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
     if (antiBanEnabled) {
       try {
         const drc = getDeliveryRateConfig(settings)
+        // If user disabled delivery rate auto-adjust in UI, skip entirely.
+        if (!drc.enabled) {
+          // No-op — keep current speed
+        } else {
         const recentMessages = await db.message.findMany({
           where: {
             chipId: currentChip.id,
@@ -3480,6 +3485,7 @@ export async function processNextMessage(campaignId: string, skipContactIds?: Se
             console.warn(`[SendingEngine] Delivery rate ${deliveryRate.toFixed(0)}% — slowing down ${deliveryMultiplier}x for chip ${currentChip.name}`)
           }
         }
+        } // end if (drc.enabled)
       } catch (deliveryErr: any) {
         // Non-critical — if this fails, just use normal speed
         console.error(`[SendingEngine] Delivery rate check failed: ${deliveryErr.message}`)
