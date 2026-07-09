@@ -1,0 +1,643 @@
+networks:
+  infra-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  rabbitmq_data:
+  traefik_certs:
+  portainer_data:
+  grafana_data:
+  prometheus_data:
+  loki_data:
+  n8n_data:
+  supabase_db_data:
+  chatwoot_storage:
+
+services:
+  traefik:
+    image: traefik:v2.11
+    container_name: traefik
+    mem_limit: 256m
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /opt/infra/traefik/certs:/certs:ro
+      - /opt/infra/traefik/config/traefik.yml:/etc/traefik/traefik.yml:ro
+      - /opt/infra/traefik/config/dynamic.yml:/etc/traefik/dynamic.yml:ro
+    networks:
+      - infra-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.dashboard.rule=Host(`traefik.nikki.com.br`)"
+      - "traefik.http.routers.dashboard.entrypoints=websecure"
+      - "traefik.http.routers.dashboard.tls=true"
+      - "traefik.http.routers.dashboard.service=api@internal"
+      - "traefik.http.routers.dashboard.middlewares=auth"
+      - "traefik.http.middlewares.auth.basicauth.users=admin:$$2y$$05$$KG8SQdXBFR4JMKnSCKGKy.H8VApbVJJ3LLhWCr5MHkDRMR9FXLdAu"
+
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: postgres
+    command: postgres -c max_connections=500
+    mem_limit: 2g
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: HOVoWCMi7Hnx029y3OUIcMpfe7ELlFbST4YcAZ8k
+      POSTGRES_DB: postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - infra-network
+    ports:
+      - "127.0.0.1:5432:5432"
+      - "10.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    container_name: pgbouncer
+    mem_limit: 128m
+    restart: unless-stopped
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: postgres
+      DB_PASSWORD: HOVoWCMi7Hnx029y3OUIcMpfe7ELlFbST4YcAZ8k
+      DB_NAME: postgres
+      LISTEN_PORT: 6432
+      POOL_MODE: transaction
+      DEFAULT_POOL_SIZE: 50
+      RESERVE_POOL_SIZE: 10
+      MAX_CLIENT_CONN: 400
+      MAX_DB_CONNECTIONS: 60
+      SERVER_IDLE_TIMEOUT: 300
+      AUTH_TYPE: plain
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - infra-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    mem_limit: 1g
+    restart: unless-stopped
+    command: redis-server /data/redis-custom.conf --appendonly yes
+    volumes:
+      - redis_data:/data
+    networks:
+      - infra-network
+    ports:
+      - "10.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: rabbitmq
+    mem_limit: 256m
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: admin
+      RABBITMQ_DEFAULT_PASS: XXYpxK4lCcIzSxlI115XMKauiZtIjwTG
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    ports:
+      - "10.0.0.1:5672:5672"
+    networks:
+      - infra-network
+
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.rabbitmq.rule=Host(`rabbitmq.nikki.com.br`)"
+      - "traefik.http.routers.rabbitmq.entrypoints=websecure"
+      - "traefik.http.routers.rabbitmq.tls=true"
+      - "traefik.http.services.rabbitmq.loadbalancer.server.port=15672"
+
+  portainer:
+    image: portainer/portainer-ce:latest
+    container_name: portainer
+    mem_limit: 128m
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer_data:/data
+    networks:
+      - infra-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.portainer.rule=Host(`portainer.nikki.com.br`)"
+      - "traefik.http.routers.portainer.entrypoints=websecure"
+      - "traefik.http.routers.portainer.tls=true"
+      - "traefik.http.services.portainer.loadbalancer.server.port=9000"
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    mem_limit: 1g
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+    volumes:
+      - /opt/infra/prometheus/config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+      - /opt/infra/prometheus/config/alerts.yml:/etc/prometheus/alerts.yml:ro
+    networks:
+      - infra-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.prometheus.rule=Host(`prometheus.nikki.com.br`)"
+      - "traefik.http.routers.prometheus.entrypoints=websecure"
+      - "traefik.http.routers.prometheus.tls=true"
+      - "traefik.http.services.prometheus.loadbalancer.server.port=9090"
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    mem_limit: 256m
+    restart: unless-stopped
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=@Rtur2007
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+    networks:
+      - infra-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.grafana.rule=Host(`monitor.nikki.com.br`)"
+      - "traefik.http.routers.grafana.entrypoints=websecure"
+      - "traefik.http.routers.grafana.tls=true"
+      - "traefik.http.services.grafana.loadbalancer.server.port=3000"
+
+  loki:
+    image: grafana/loki:latest
+    container_name: loki
+    mem_limit: 512m
+    restart: unless-stopped
+    command: -config.file=/etc/loki/loki.yml
+    volumes:
+      - /opt/infra/loki/config/loki.yml:/etc/loki/loki.yml:ro
+      - loki_data:/loki
+    ports:
+      - "10.0.0.1:3100:3100"
+    networks:
+      - infra-network
+
+  promtail:
+    image: grafana/promtail:latest
+    container_name: promtail
+    mem_limit: 128m
+    restart: unless-stopped
+    command: -config.file=/etc/promtail/promtail.yml
+    volumes:
+      - /opt/infra/promtail/config/promtail.yml:/etc/promtail/promtail.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/log:/var/log:ro
+    networks:
+      - infra-network
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    container_name: cadvisor
+    mem_limit: 768m
+    cpus: 0.5
+    restart: unless-stopped
+    command:
+      - "--disable_metrics=disk"
+      - "--housekeeping_interval=30s"
+      - "--docker_only=true"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    networks:
+      - infra-network
+
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: node-exporter
+    mem_limit: 64m
+    restart: unless-stopped
+    command:
+      - '--path.rootfs=/host'
+    volumes:
+      - /:/host:ro,rslave
+    networks:
+      - infra-network
+
+  alertmanager:
+    image: prom/alertmanager:latest
+    container_name: alertmanager
+    mem_limit: 128m
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+    volumes:
+      - /opt/infra/alertmanager/config/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    networks:
+      - infra-network
+
+  supabase-studio:
+    image: supabase/studio:20240101-8e4a094
+    container_name: supabase-studio
+    mem_limit: 256m
+    restart: unless-stopped
+    healthcheck:
+      disable: true
+    environment:
+      STUDIO_PG_META_HOST: supabase-meta
+      STUDIO_PG_META_PORT: 8080
+      STUDIO_PG_META_URL: http://supabase-meta:8080
+      SUPABASE_INTERNAL_URL: http://supabase-kong:8000
+      SUPABASE_PUBLIC_URL: https://supabase.nikki.com.br
+      POSTGRES_PASSWORD: "lwvAvNN5VOQoTDo5oH0ODpeUBpvd8u5HoAFjNc5M"
+      SUPABASE_URL: https://supabase.nikki.com.br
+      SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlIiwiaWF0IjoxNzAwMDAwMDAwLCJleHAiOjIwMDAwMDAwMDB9.SsNSGn45h6MBR4S33_xaX8CXoYb20kBFmFE9ia_I97M
+      SUPABASE_SERVICE_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIiwiaXNzIjoic3VwYWJhc2UiLCJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MjAwMDAwMDAwMH0.alSUZu6MQY2LopdTGREClof5b7YE0YCaLKcDFQn-cik
+    networks:
+      - infra-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.supabase.rule=Host(`supabase.nikki.com.br`)"
+      - "traefik.http.routers.supabase.entrypoints=websecure"
+      - "traefik.http.routers.supabase.tls=true"
+      - "traefik.http.services.supabase.loadbalancer.server.port=3000"
+
+  supabase-kong:
+    image: kong:2.8.1
+    container_name: supabase-kong
+    mem_limit: 256m
+    restart: unless-stopped
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /var/lib/kong/kong.yml
+      KONG_PLUGINS: request-transformer,cors,key-auth,rate-limiting,response-transformer
+    volumes:
+      - /opt/infra/supabase/config/kong.yml:/var/lib/kong/kong.yml:ro
+    ports:
+      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:8001:8001"
+    networks:
+      - infra-network
+    healthcheck:
+      test: ["CMD", "kong", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  supabase-auth:
+    image: supabase/gotrue:v2.158.0
+    container_name: supabase-auth
+    mem_limit: 256m
+    restart: unless-stopped
+    environment:
+      GOTRUE_API_HOST: 0.0.0.0
+      GOTRUE_API_PORT: 9999
+      API_EXTERNAL_URL: https://supabase.nikki.com.br
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DB_DATABASE_URL: "postgres://supabase_auth_admin:lwvAvNN5VOQoTDo5oH0ODpeUBpvd8u5HoAFjNc5M@supabase-db:5432/postgres?sslmode=disable"
+      GOTRUE_SITE_URL: https://supabase.nikki.com.br
+      GOTRUE_JWT_SECRET: GyzunTUtA0ZCZn3nsOJ7Rf8TBqhbNAJfWK7SJrpF
+      GOTRUE_JWT_EXP: 3600
+      GOTRUE_MAILER_AUTOCONFIRM: "true"
+    networks:
+      - infra-network
+
+  supabase-rest:
+    image: postgrest/postgrest:v12.0.2
+    container_name: supabase-rest
+    mem_limit: 128m
+    restart: unless-stopped
+    environment:
+      PGRST_DB_URI: "postgres://authenticator:lwvAvNN5VOQoTDo5oH0ODpeUBpvd8u5HoAFjNc5M@supabase-db:5432/postgres"
+      PGRST_DB_SCHEMA: public,storage,graphql_public
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: GyzunTUtA0ZCZn3nsOJ7Rf8TBqhbNAJfWK7SJrpF
+    networks:
+      - infra-network
+
+  supabase-realtime:
+    image: supabase/realtime:v2.34.47
+    container_name: supabase-realtime
+    mem_limit: 256m
+    restart: unless-stopped
+    environment:
+      PORT: 4000
+      DB_HOST: supabase-db
+      DB_PORT: 5432
+      DB_USER: supabase_admin
+      DB_PASSWORD: "lwvAvNN5VOQoTDo5oH0ODpeUBpvd8u5HoAFjNc5M"
+      DB_NAME: postgres
+      DB_IP_VERSION: ipv4
+      JWT_SECRET: GyzunTUtA0ZCZn3nsOJ7Rf8TBqhbNAJfWK7SJrpF
+      REPLICATION_MODE: RLS
+      APP_NAME: realtime
+      DB_SCHEMA: realtime
+      SECRET_KEY_BASE: "404197cc25096aa374b8944205721c174c2b6d2dee738c69799de8bc9d52d928f3cd8e0c3e64c74d9803c7405175215cad8200c7dab6dc3cd92bcab31fefcb5d"
+      SECURE_CHANNELS: "true"
+      RLIMIT_NOFILE: "1024"
+    entrypoint: ["/app/run.sh"]
+    command: ["/app/bin/realtime", "start"]
+    networks:
+      - infra-network
+
+  supabase-storage:
+    image: supabase/storage-api:v1.11.12
+    container_name: supabase-storage
+    mem_limit: 256m
+    restart: unless-stopped
+    environment:
+      ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlIiwiaWF0IjoxNzAwMDAwMDAwLCJleHAiOjIwMDAwMDAwMDB9.SsNSGn45h6MBR4S33_xaX8CXoYb20kBFmFE9ia_I97M
+      SERVICE_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIiwiaXNzIjoic3VwYWJhc2UiLCJpYXQiOjE3MDAwMDAwMDAsImV4cCI6MjAwMDAwMDAwMH0.alSUZu6MQY2LopdTGREClof5b7YE0YCaLKcDFQn-cik
+      POSTGREST_URL: http://supabase-rest:3000
+      PGRST_JWT_SECRET: GyzunTUtA0ZCZn3nsOJ7Rf8TBqhbNAJfWK7SJrpF
+      DATABASE_URL: "postgres://supabase_storage_admin:lwvAvNN5VOQoTDo5oH0ODpeUBpvd8u5HoAFjNc5M@supabase-db:5432/postgres"
+      FILE_SIZE_LIMIT: 52428800
+      STORAGE_BACKEND: file
+      FILE_STORAGE_BACKEND_PATH: /var/lib/storage
+      TENANT_ID: stub
+      REGION: stub
+      GLOBAL_S3_BUCKET: stub
+    networks:
+      - infra-network
+
+  supabase-meta:
+    image: supabase/postgres-meta:v0.96.4
+    container_name: supabase-meta
+    mem_limit: 256m
+    restart: unless-stopped
+    environment:
+      PG_META_PORT: 8080
+      PG_META_DB_HOST: postgres
+      PG_META_DB_PORT: 5432
+      PG_META_DB_NAME: postgres
+      PG_META_DB_USER: supabase_admin
+      PG_META_DB_PASSWORD: "lwvAvNN5VOQoTDo5oH0ODpeUBpvd8u5HoAFjNc5M"
+    networks:
+      - infra-network
+
+  supabase-inbucket:
+    image: inbucket/inbucket:3.0.4
+    container_name: supabase-inbucket
+    mem_limit: 128m
+    restart: unless-stopped
+    networks:
+      - infra-network
+
+  supabase-vector:
+    image: timberio/vector:0.28.1-alpine
+    container_name: supabase-vector
+    mem_limit: 256m
+    restart: unless-stopped
+    volumes:
+      - /opt/infra/supabase/config/vector.toml:/etc/vector/vector.toml:ro
+    networks:
+      - infra-network
+
+  supabase-db:
+    image: supabase/postgres:15.1.0.135
+    container_name: supabase-db
+    mem_limit: 512m
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5433:5432"
+    environment:
+      POSTGRES_PASSWORD: "lwvAvNN5VOQoTDo5oH0ODpeUBpvd8u5HoAFjNc5M"
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+    volumes:
+      - supabase_db_data:/var/lib/postgresql/data
+    networks:
+      - infra-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  vault:
+    image: hashicorp/vault:latest
+    container_name: vault
+    mem_limit: 256m
+    restart: unless-stopped
+    command: vault server -config=/vault/config/vault.hcl
+    environment:
+      - SKIP_SETCAP=true
+      - VAULT_SKIP_VERIFY=true
+    volumes:
+      - /opt/infra/vault/config/vault.hcl:/vault/config/vault.hcl:ro
+      - /opt/infra/vault/data:/vault/data
+    networks:
+      - infra-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.vault.rule=Host(`valtinho.nikki.com.br`)"
+      - "traefik.http.routers.vault.entrypoints=websecure"
+      - "traefik.http.routers.vault.tls=true"
+      - "traefik.http.services.vault.loadbalancer.server.port=8200"
+
+  redisinsight:
+    image: redis/redisinsight:latest
+    container_name: redisinsight
+    mem_limit: 256m
+    restart: unless-stopped
+    networks:
+      - infra-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.redisinsight.rule=Host(`redisinsight.nikki.com.br`)"
+      - "traefik.http.routers.redisinsight.entrypoints=websecure"
+      - "traefik.http.routers.redisinsight.tls=true"
+      - "traefik.http.services.redisinsight.loadbalancer.server.port=5540"
+
+  n8n-duda:
+    image: docker.n8n.io/n8nio/n8n
+    container_name: n8n-duda
+    mem_limit: 768m
+    env_file:
+      - /opt/infra/n8n/.env.duda
+    environment:
+      - N8N_RUNNERS_ENABLED=false
+      - N8N_PROXY_HOPS=1
+      - N8N_PUBLIC_API_ENABLED=true
+      - N8N_PUBLIC_API_ENABLED=true
+      - EXECUTIONS_DATA_PRUNE=true
+      - EXECUTIONS_MODE=queue
+      - QUEUE_BULL_REDIS_HOST=redis
+      - QUEUE_BULL_REDIS_PORT=6379
+      - EXECUTIONS_DATA_MAX_AGE=168
+      - EXECUTIONS_DATA_PRUNE_MAX_COUNT=50000
+    restart: unless-stopped
+    volumes:
+      - n8n_data:/home/node/.n8n
+    networks:
+      - infra-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.n8n-duda.rule=Host(`n8n-duda.nikki.com.br`)"
+      - "traefik.http.routers.n8n-duda.entrypoints=websecure"
+      - "traefik.http.routers.n8n-duda.tls=true"
+      - "traefik.http.services.n8n-duda.loadbalancer.server.port=5678"
+
+  n8n-duda-worker-1:
+    image: docker.n8n.io/n8nio/n8n
+    container_name: n8n-duda-worker-1
+    mem_limit: 384m
+    command: worker
+    env_file:
+      - /opt/infra/n8n/.env.duda
+    environment:
+      - N8N_RUNNERS_ENABLED=false
+      - EXECUTIONS_MODE=queue
+      - QUEUE_BULL_REDIS_HOST=redis
+      - QUEUE_BULL_REDIS_PORT=6379
+      - QUEUE_WORKER_CONCURRENCY=4
+      - EXECUTIONS_DATA_MAX_AGE=168
+      - EXECUTIONS_DATA_PRUNE_MAX_COUNT=50000
+    restart: unless-stopped
+    volumes:
+      - n8n_data:/home/node/.n8n
+    networks:
+      - infra-network
+    depends_on:
+      - n8n-duda
+      - redis
+
+  n8n-duda-worker-2:
+    image: docker.n8n.io/n8nio/n8n
+    container_name: n8n-duda-worker-2
+    mem_limit: 384m
+    command: worker
+    env_file:
+      - /opt/infra/n8n/.env.duda
+    environment:
+      - N8N_RUNNERS_ENABLED=false
+      - EXECUTIONS_MODE=queue
+      - QUEUE_BULL_REDIS_HOST=redis
+      - QUEUE_BULL_REDIS_PORT=6379
+      - QUEUE_WORKER_CONCURRENCY=4
+      - EXECUTIONS_DATA_MAX_AGE=168
+      - EXECUTIONS_DATA_PRUNE_MAX_COUNT=50000
+    restart: unless-stopped
+    volumes:
+      - n8n_data:/home/node/.n8n
+    networks:
+      - infra-network
+    depends_on:
+      - n8n-duda
+      - redis
+
+  n8n-duda-worker-3:
+    image: docker.n8n.io/n8nio/n8n
+    container_name: n8n-duda-worker-3
+    mem_limit: 384m
+    command: worker
+    env_file:
+      - /opt/infra/n8n/.env.duda
+    environment:
+      - N8N_RUNNERS_ENABLED=false
+      - EXECUTIONS_MODE=queue
+      - QUEUE_BULL_REDIS_HOST=redis
+      - QUEUE_BULL_REDIS_PORT=6379
+      - QUEUE_WORKER_CONCURRENCY=4
+      - EXECUTIONS_DATA_MAX_AGE=168
+      - EXECUTIONS_DATA_PRUNE_MAX_COUNT=50000
+    restart: unless-stopped
+    volumes:
+      - n8n_data:/home/node/.n8n
+    networks:
+      - infra-network
+    depends_on:
+      - n8n-duda
+      - redis
+
+  chatwoot-rails:
+    image: chatwoot/chatwoot:latest
+    container_name: chatwoot-rails
+    mem_limit: 1g
+    restart: unless-stopped
+    env_file:
+      - /opt/infra/chatwoot/chatwoot.env
+    command: bundle exec rails server -b 0.0.0.0 -p 3000
+    volumes:
+      - chatwoot_storage:/app/storage
+    networks:
+      - infra-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.chatwoot.rule=Host(`chatwoot.nikki.com.br`)"
+      - "traefik.http.routers.chatwoot.entrypoints=websecure"
+      - "traefik.http.routers.chatwoot.tls=true"
+      - "traefik.http.services.chatwoot.loadbalancer.server.port=3000"
+
+  chatwoot-sidekiq:
+    image: chatwoot/chatwoot:latest
+    container_name: chatwoot-sidekiq
+    mem_limit: 1g
+    restart: unless-stopped
+    env_file:
+      - /opt/infra/chatwoot/chatwoot.env
+    command: bundle exec sidekiq -C config/sidekiq.yml
+    volumes:
+      - chatwoot_storage:/app/storage
+    networks:
+      - infra-network
+
+
+  vault-mcp:
+    image: vault-mcp:latest
+    container_name: vault-mcp
+    mem_limit: 128m
+    restart: unless-stopped
+    environment:
+      - VAULT_PATH=/data/vault
+      - PORT=8000
+    ports:
+      - "127.0.0.1:8002:8000"
+    volumes:
+      - /opt/infra/vault/data:/data/vault
+    networks:
+      - infra-network
+
+  postgres-exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter:latest
+    container_name: postgres-exporter
+    mem_limit: 64m
+    restart: unless-stopped
+    environment:
+      - DATA_SOURCE_NAME=postgresql://postgres:HOVoWCMi7Hnx029y3OUIcMpfe7ELlFbST4YcAZ8k@postgres:5432/postgres?sslmode=disable
+    networks:
+      - infra-network
+
+  redis-exporter:
+    image: oliver006/redis_exporter:latest
+    container_name: redis-exporter
+    mem_limit: 64m
+    restart: unless-stopped
+    environment:
+      - REDIS_ADDR=redis://redis:6379
+    networks:
+      - infra-network
