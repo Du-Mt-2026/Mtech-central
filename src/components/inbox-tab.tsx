@@ -645,12 +645,12 @@ export function InboxTab() {
       <ResizablePanelGroup direction="horizontal" className="flex h-full">
 
         {/* ====== PANEL 1: Chip / Inbox Selector ====== */}
-        <ResizablePanel defaultSize={16} minSize={12} maxSize={24}>
+        <ResizablePanel defaultSize={20} minSize={14} maxSize={28}>
           <div className="h-full flex flex-col border-r border-border/40">
             {/* Header */}
             <div className="px-3 py-3 border-b border-border/40">
               <div className="flex items-center justify-between mb-2">
-                <h2 className="text-sm font-semibold tracking-tight">Caixa de Entrada</h2>
+                <h2 className="text-base font-semibold tracking-tight">Caixa de Entrada</h2>
                 <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -691,14 +691,14 @@ export function InboxTab() {
                       key={chip.id}
                       onClick={() => { setSelectedChipId(chip.id); setSelectedConversation(null); setMessages([]) }}
                       className={cn(
-                        'w-full flex items-center gap-2.5 px-3 py-2.5 transition-colors text-left',
+                        'w-full flex items-center gap-3 px-3.5 py-3 transition-colors text-left',
                         selectedChipId === chip.id
                           ? 'bg-accent text-accent-foreground'
                           : 'hover:bg-muted/50'
                       )}
                     >
                       <div className="relative shrink-0">
-                        <Avatar className="size-9">
+                        <Avatar className="size-10">
                           {chip.profilePicUrl && <AvatarImage src={chip.profilePicUrl} alt={chip.name} />}
                           <AvatarFallback className={cn(avatarColor(chip.name), 'text-white text-xs font-semibold')}>
                             {chip.name.charAt(0).toUpperCase()}
@@ -768,12 +768,12 @@ export function InboxTab() {
         <ResizableHandle withHandle />
 
         {/* ====== PANEL 2: Conversations ====== */}
-        <ResizablePanel defaultSize={28} minSize={20} maxSize={40}>
+        <ResizablePanel defaultSize={30} minSize={22} maxSize={45}>
           <div className="h-full flex flex-col border-r border-border/40">
             {/* Header */}
             <div className="px-3 py-3 border-b border-border/40">
               <div className="flex items-center justify-between mb-2">
-                <h3 className="text-sm font-semibold tracking-tight truncate">
+                <h3 className="text-base font-semibold tracking-tight truncate">
                   {selectedChipId ? chips.find(c => c.id === selectedChipId)?.name || 'Conversas' : 'Conversas'}
                 </h3>
                 <div className="flex items-center gap-1.5">
@@ -851,7 +851,7 @@ export function InboxTab() {
                         key={`${conv.chipId}-${conv.remoteJid}`}
                         onClick={() => setSelectedConversation(conv)}
                         className={cn(
-                          'w-full flex items-start gap-2.5 px-3 py-2.5 transition-colors text-left',
+                          'w-full flex items-start gap-3 px-3.5 py-3 transition-colors text-left',
                           isSelected
                             ? 'bg-primary/8 border-l-2 border-primary'
                             : 'hover:bg-muted/40 border-l-2 border-transparent',
@@ -881,7 +881,7 @@ export function InboxTab() {
                           <div className="flex items-center justify-between gap-2">
                             <div className="flex items-center gap-1.5 min-w-0">
                               <p className={cn(
-                                'text-[13px] truncate',
+                                'text-sm truncate',
                                 conv.unreadCount > 0 ? 'font-bold text-foreground' : 'font-medium text-foreground/90'
                               )}>
                                 {name}
@@ -955,16 +955,18 @@ export function InboxTab() {
         <ResizableHandle withHandle />
 
         {/* ====== PANEL 3: Chat View ====== */}
-        <ResizablePanel defaultSize={56} minSize={30}>
+        <ResizablePanel defaultSize={50} minSize={30}>
           <div className="h-full flex flex-col bg-background">
             {!selectedConversation ? (
               /* Empty State */
-              <div className="flex-1 flex flex-col items-center justify-center">
-                <div className="size-20 rounded-2xl bg-muted/50 flex items-center justify-center mb-4">
-                  <MessageCircle className="size-10 text-muted-foreground/30" />
+              <div className="flex-1 flex flex-col items-center justify-center px-6 text-center">
+                <div className="flex size-20 items-center justify-center rounded-full bg-muted/50 mb-5">
+                  <MessageCircle className="size-10 text-muted-foreground/40" />
                 </div>
-                <p className="text-lg font-medium text-muted-foreground">Caixa de Entrada</p>
-                <p className="text-sm text-muted-foreground/60 mt-1">Selecione um chip e uma conversa para começar</p>
+                <h3 className="text-xl font-semibold mb-2">Bem-vindo à Caixa de Entrada</h3>
+                <p className="text-sm text-muted-foreground max-w-xs">
+                  Selecione um chip à esquerda e uma conversa para começar a responder mensagens dos seus contatos.
+                </p>
               </div>
             ) : (
               <>
@@ -1064,7 +1066,7 @@ export function InboxTab() {
                           <p className="text-sm text-muted-foreground">Nenhuma mensagem nesta conversa</p>
                         </div>
                       ) : (
-                        <div className="space-y-1.5 max-w-3xl mx-auto">
+                        <div className="space-y-2 max-w-3xl mx-auto">
                           {/* Load more button */}
                           {hasMore && (
                             <div className="flex items-center justify-center py-2">
