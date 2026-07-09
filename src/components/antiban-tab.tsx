@@ -791,12 +791,14 @@ export function AntiBanTab() {
                     'group shrink-0 lg:shrink lg:w-full flex items-center gap-2 lg:gap-3 rounded-lg lg:rounded-lg px-3 py-2 lg:py-2 text-left transition-colors whitespace-nowrap lg:whitespace-normal',
                     isActive
                       ? 'bg-primary/10 text-primary font-medium'
-                      : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                      : 'text-foreground/80 hover:bg-muted hover:text-foreground'
                   )}
                 >
                   <div className={cn(
                     'flex size-7 lg:size-7 shrink-0 items-center justify-center rounded-md transition-colors',
-                    isActive ? section.accent : 'bg-muted text-muted-foreground group-hover:bg-background'
+                    isActive 
+                      ? section.accent 
+                      : 'bg-muted/60 text-foreground/70 group-hover:bg-muted group-hover:text-foreground'
                   )}>
                     <Icon className="size-4" />
                   </div>
@@ -1513,6 +1515,8 @@ export function AntiBanTab() {
                 icon={Brain}
               />
 
+              {/* Wrapper com space-y-8 (vs space-y-6 padrão) — seção densa pede mais respiro vertical */}
+              <div className="space-y-8">
               {/* Master toggle */}
               <Card className="shadow-lg">
                 <CardContent className="p-5">
@@ -2200,6 +2204,7 @@ export function AntiBanTab() {
                   </Card>
                 </>
               )}
+              </div>
             </>
           )}
 
