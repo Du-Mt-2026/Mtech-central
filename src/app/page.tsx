@@ -563,7 +563,7 @@ function DashboardTab({ stats, onRefresh, setActiveTab }: { stats: Stats | null;
           <CardContent>
             {stats.recentMessages && stats.recentMessages.length > 0 ? (
               <ScrollArea className="h-72">
-                <div className="space-y-3">
+                <div className="space-y-4">
                   {stats.recentMessages.map((msg) => (
                     <div key={msg.id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-muted/50 transition-colors">
                       <div className={`size-2 rounded-full ${statusColor(msg.status)}`} />
@@ -600,7 +600,7 @@ function DashboardTab({ stats, onRefresh, setActiveTab }: { stats: Stats | null;
           </CardHeader>
           <CardContent>
             {stats.chipStatuses && stats.chipStatuses.length > 0 ? (
-              <div className="space-y-3">
+              <div className="space-y-4">
                 {stats.chipStatuses.map((chip) => (
                   <div key={chip.id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-muted/50 transition-colors">
                     <div className={`size-3 rounded-full ${statusColor(chip.status)} ring-2 ring-offset-2 ring-offset-background ${chip.status === 'connected' ? 'ring-emerald-500/30' : chip.status === 'error' ? 'ring-rose-500/30' : 'ring-zinc-500/30'}`} />
@@ -637,7 +637,7 @@ function DashboardTab({ stats, onRefresh, setActiveTab }: { stats: Stats | null;
             </div>
           </CardHeader>
           <CardContent>
-            <div className="space-y-3">
+            <div className="space-y-4">
               {stats.runningCampaigns.map((c: any) => (
                 <div key={c.id} className="flex items-center gap-4 p-3 rounded-lg bg-muted/30">
                   <div className="flex-1 min-w-0">
@@ -1387,7 +1387,7 @@ function ChipsTab() {
           <div key={s.label} className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md">
             <s.icon className={`size-3.5 ${s.color}`} />
             <span className="text-sm font-bold">{s.value}</span>
-            <span className="text-[10px] text-muted-foreground">{s.label}</span>
+            <span className="text-xs text-muted-foreground">{s.label}</span>
           </div>
         ))}
       </div>
@@ -1418,7 +1418,7 @@ function ChipsTab() {
               { key: 'error', label: 'Erro', count: errorCount },
             ].map(f => (
               <Button key={f.key} variant={statusFilter === f.key ? 'default' : 'ghost'} size="sm" className="h-7 text-xs px-2.5 gap-1" onClick={() => setStatusFilter(f.key as typeof statusFilter)}>
-                {f.label} <span className="text-[10px] opacity-60">{f.count}</span>
+                {f.label} <span className="text-xs opacity-60">{f.count}</span>
               </Button>
             ))}
           </div>
@@ -1472,7 +1472,7 @@ function ChipsTab() {
                 <div className="flex items-center gap-2">
                   <div className="size-2.5 rounded-full bg-emerald-500" />
                   <h3 className="text-sm font-semibold">Conectados</h3>
-                  <Badge variant="secondary" className="text-[10px] h-5">{connectedChips.length}</Badge>
+                  <Badge variant="secondary" className="text-xs h-5">{connectedChips.length}</Badge>
                 </div>
                 <ChevronDown className={`size-4 text-muted-foreground transition-transform ${collapsedGroups.has('connected') ? '-rotate-90' : ''}`} />
               </button>
@@ -1491,7 +1491,7 @@ function ChipsTab() {
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-center gap-1.5 min-w-0">
                                   <CardTitle className="flex-1 min-w-0 truncate text-sm" title={chip.name}>{chip.name}</CardTitle>
-                                  <Badge variant="outline" className="gap-0.5 text-[9px] px-1 py-0 shrink-0 leading-none">
+                                  <Badge variant="outline" className="gap-0.5 text-[10px] px-1 py-0 shrink-0 leading-none">
                                     v3
                                   </Badge>
                                   {chip.disconnectionReasonCode && (
@@ -1519,12 +1519,12 @@ function ChipsTab() {
                                   )}
                                 </div>
                                 {chip.profileName && chip.profileName !== chip.name && (
-                                  <p className="text-[10px] text-muted-foreground/60 truncate" title={`Perfil WhatsApp: ${chip.profileName}`}>{chip.profileName}</p>
+                                  <p className="text-xs text-muted-foreground/70 truncate" title={`Perfil WhatsApp: ${chip.profileName}`}>{chip.profileName}</p>
                                 )}
                                 <div className="flex items-center gap-1.5 min-w-0">
                                   <CardDescription className="flex-1 min-w-0 truncate text-xs" title={chip.phoneNumber}>{chip.phoneNumber}</CardDescription>
                                   {chip.evolutionInstance && (
-                                    <span className="text-[9px] font-mono text-muted-foreground/70 truncate max-w-20" title={chip.evolutionInstance}>{chip.evolutionInstance.replace(/^OctupusZap_/, '')}</span>
+                                    <span className="text-[11px] font-mono text-muted-foreground/80 truncate max-w-24" title={chip.evolutionInstance}>{chip.evolutionInstance.replace(/^OctupusZap_/, '')}</span>
                                   )}
                                 </div>
                               </div>
@@ -1618,7 +1618,7 @@ function ChipsTab() {
                                           {chipStatus === 'disconnected' && (
                                             <>
                                               <p className="text-xs font-semibold text-zinc-700 dark:text-zinc-400">Chip desconectado</p>
-                                              <p className="text-[10px] text-zinc-600 dark:text-zinc-500">Conecte para enviar mensagens</p>
+                                              <p className="text-xs text-zinc-600 dark:text-zinc-500">Conecte para enviar mensagens</p>
                                             </>
                                           )}
                                         </div>
@@ -1636,7 +1636,7 @@ function ChipsTab() {
                                           {chip.sentToday}/{info.effectiveLimit}
                                         </span>
                                         {info.effectiveLimit < (chip.dailyLimit || 200) && (
-                                          <span className="text-[10px] text-muted-foreground" title={`Limite total do chip: ${chip.dailyLimit || 200}/dia`}>
+                                          <span className="text-xs text-muted-foreground" title={`Limite total do chip: ${chip.dailyLimit || 200}/dia`}>
                                             (de {chip.dailyLimit || 200})
                                           </span>
                                         )}
@@ -1689,14 +1689,14 @@ function ChipsTab() {
                                               )}
                                               {chip.warmingStartedAt && info.phaseMaxDays > 0 && (
                                                 <span className="text-[11px] text-muted-foreground">
-                                                  Dia {info.phaseDay} de {info.phaseMaxDays} — <span className="font-medium text-foreground">{info.effectiveLimit} msg/dia</span>
+                                                  Dia {info.phaseDay} de {info.phaseMaxDays} — <span className="text-sm font-medium text-foreground">{info.effectiveLimit} msg/dia</span>
                                                 </span>
                                               )}
                                             </div>
                                             <Button
                                               variant="ghost"
                                               size="sm"
-                                              className="h-6 px-2 text-[10px] text-muted-foreground hover:text-foreground gap-1"
+                                              className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground gap-1"
                                               onClick={() => {
                                                 const maxDay = info.phaseMaxDays || 20
                                                 const input = prompt(`Definir dia do aquecimento (1-${maxDay}):`, String(info.phaseDay))
@@ -1777,7 +1777,7 @@ function ChipsTab() {
                 <div className="flex items-center gap-2">
                   <div className="size-2.5 rounded-full bg-zinc-400" />
                   <h3 className="text-sm font-semibold">Desconectados</h3>
-                  <Badge variant="secondary" className="text-[10px] h-5">{disconnectedChips.length}</Badge>
+                  <Badge variant="secondary" className="text-xs h-5">{disconnectedChips.length}</Badge>
                 </div>
                 <ChevronDown className={`size-4 text-muted-foreground transition-transform ${collapsedGroups.has('disconnected') ? '-rotate-90' : ''}`} />
               </button>
@@ -1796,7 +1796,7 @@ function ChipsTab() {
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-center gap-1.5 min-w-0">
                                   <CardTitle className="flex-1 min-w-0 truncate text-sm" title={chip.name}>{chip.name}</CardTitle>
-                                  <Badge variant="outline" className="gap-0.5 text-[9px] px-1 py-0 shrink-0 leading-none">
+                                  <Badge variant="outline" className="gap-0.5 text-[10px] px-1 py-0 shrink-0 leading-none">
                                     v3
                                   </Badge>
                                   {chip.disconnectionReasonCode && (
@@ -1824,12 +1824,12 @@ function ChipsTab() {
                                   )}
                                 </div>
                                 {chip.profileName && chip.profileName !== chip.name && (
-                                  <p className="text-[10px] text-muted-foreground/60 truncate" title={`Perfil WhatsApp: ${chip.profileName}`}>{chip.profileName}</p>
+                                  <p className="text-xs text-muted-foreground/70 truncate" title={`Perfil WhatsApp: ${chip.profileName}`}>{chip.profileName}</p>
                                 )}
                                 <div className="flex items-center gap-1.5 min-w-0">
                                   <CardDescription className="flex-1 min-w-0 truncate text-xs" title={chip.phoneNumber}>{chip.phoneNumber}</CardDescription>
                                   {chip.evolutionInstance && (
-                                    <span className="text-[9px] font-mono text-muted-foreground/70 truncate max-w-20" title={chip.evolutionInstance}>{chip.evolutionInstance.replace(/^OctupusZap_/, '')}</span>
+                                    <span className="text-[11px] font-mono text-muted-foreground/80 truncate max-w-24" title={chip.evolutionInstance}>{chip.evolutionInstance.replace(/^OctupusZap_/, '')}</span>
                                   )}
                                 </div>
                               </div>
@@ -1923,7 +1923,7 @@ function ChipsTab() {
                                           {chipStatus === 'disconnected' && (
                                             <>
                                               <p className="text-xs font-semibold text-zinc-700 dark:text-zinc-400">Chip desconectado</p>
-                                              <p className="text-[10px] text-zinc-600 dark:text-zinc-500">Conecte para enviar mensagens</p>
+                                              <p className="text-xs text-zinc-600 dark:text-zinc-500">Conecte para enviar mensagens</p>
                                             </>
                                           )}
                                         </div>
@@ -1941,7 +1941,7 @@ function ChipsTab() {
                                           {chip.sentToday}/{info.effectiveLimit}
                                         </span>
                                         {info.effectiveLimit < (chip.dailyLimit || 200) && (
-                                          <span className="text-[10px] text-muted-foreground" title={`Limite total do chip: ${chip.dailyLimit || 200}/dia`}>
+                                          <span className="text-xs text-muted-foreground" title={`Limite total do chip: ${chip.dailyLimit || 200}/dia`}>
                                             (de {chip.dailyLimit || 200})
                                           </span>
                                         )}
@@ -1994,14 +1994,14 @@ function ChipsTab() {
                                               )}
                                               {chip.warmingStartedAt && info.phaseMaxDays > 0 && (
                                                 <span className="text-[11px] text-muted-foreground">
-                                                  Dia {info.phaseDay} de {info.phaseMaxDays} — <span className="font-medium text-foreground">{info.effectiveLimit} msg/dia</span>
+                                                  Dia {info.phaseDay} de {info.phaseMaxDays} — <span className="text-sm font-medium text-foreground">{info.effectiveLimit} msg/dia</span>
                                                 </span>
                                               )}
                                             </div>
                                             <Button
                                               variant="ghost"
                                               size="sm"
-                                              className="h-6 px-2 text-[10px] text-muted-foreground hover:text-foreground gap-1"
+                                              className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground gap-1"
                                               onClick={() => {
                                                 const maxDay = info.phaseMaxDays || 20
                                                 const input = prompt(`Definir dia do aquecimento (1-${maxDay}):`, String(info.phaseDay))
@@ -3126,8 +3126,8 @@ function ContatosTab() {
             <motion.div key={list.id} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}>
               <Card className="shadow-lg hover:shadow-xl transition-all duration-200 cursor-pointer border-0" onClick={() => { setSelectedList(list); fetchContacts(list.id) }}>
                 <CardHeader>
-                  <div className="flex items-center gap-3">
-                    <div className="flex size-10 items-center justify-center rounded-xl bg-sky-100 dark:bg-sky-900/30">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-sky-100 dark:bg-sky-900/30">
                       <LayoutList className="size-5 text-sky-600" />
                     </div>
                     <div className="flex-1 min-w-0">
@@ -5674,7 +5674,7 @@ function CampanhasTab() {
           </CardContent>
         </Card>
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-4">
           {campaigns.map((c, i) => (
             <motion.div key={c.id} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}>
               <Card className="shadow-lg hover:shadow-xl transition-all duration-200 border-0">
@@ -6609,8 +6609,8 @@ function TemplatesTab() {
               <motion.div key={t.id} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}>
                 <Card className="shadow-lg hover:shadow-xl transition-all duration-200 border-0 group">
                   <CardHeader className="pb-3">
-                    <div className="flex items-center gap-3">
-                      <div className="flex size-10 items-center justify-center rounded-xl bg-teal-100 dark:bg-teal-900/30">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-teal-100 dark:bg-teal-900/30">
                         <MessageCircle className="size-5 text-teal-600" />
                       </div>
                       <div className="flex-1 min-w-0">
@@ -6628,7 +6628,7 @@ function TemplatesTab() {
                       </div>
                     </div>
                   </CardHeader>
-                  <CardContent className="space-y-3">
+                  <CardContent className="space-y-4">
                     <p className="text-sm text-muted-foreground line-clamp-3">{t.content}</p>
                     {t.mediaDescription && (
                       <p className="text-xs text-muted-foreground italic flex items-center gap-1">
@@ -7470,8 +7470,8 @@ function VpsSetupTab() {
           </div>
           <CardDescription>Cole esta config no arquivo /etc/wireguard/wg0.conf do servidor VPN</CardDescription>
         </CardHeader>
-        <CardContent className="space-y-3">
-          <pre className="bg-zinc-900 text-zinc-100 p-4 rounded-lg text-xs overflow-x-auto whitespace-pre-wrap break-all font-mono border border-zinc-700 max-h-64 overflow-y-auto">
+        <CardContent className="space-y-4">
+          <pre className="bg-zinc-900 text-zinc-100 p-4 rounded-lg text-sm overflow-x-auto whitespace-pre-wrap break-all font-mono border border-zinc-700 max-h-64 overflow-y-auto">
             {setupData.wgServerConfig}
           </pre>
           <Button onClick={() => copyToClipboard(setupData.wgServerConfig, 'server')} variant="outline" className="w-full gap-2">
@@ -8377,7 +8377,7 @@ export default function OctupusZapApp() {
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
               <span className="relative inline-flex rounded-full size-2 bg-emerald-500"></span>
             </span>
-            <span className="text-[11px] text-zinc-500">Auto-refresh 60s • Auto-deploy</span>
+            <span className="text-xs text-zinc-500">Auto-refresh 60s • Auto-deploy</span>
           </div>
         </div>
       </aside>
@@ -8447,7 +8447,7 @@ export default function OctupusZapApp() {
           <div className="flex items-center gap-1.5 text-xs text-muted-foreground select-none">
             <span className="font-medium">{brasiliaDate}</span>
             <span className="text-foreground font-semibold tabular-nums text-sm">{brasiliaTime}</span>
-            <span className="text-[10px] tabular-nums text-muted-foreground">{brasiliaSeconds}</span>
+            <span className="text-xs tabular-nums text-muted-foreground">{brasiliaSeconds}</span>
           </div>
 
         </header>

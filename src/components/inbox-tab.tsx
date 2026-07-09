@@ -270,10 +270,10 @@ function AudioPlayer({ src, duration, isMe }: { src: string; duration: number | 
         </div>
         {/* Time */}
         <div className="flex items-center justify-between">
-          <span className="text-[10px] text-muted-foreground tabular-nums">
+          <span className="text-xs text-muted-foreground tabular-nums">
             {playing ? formatDuration(currentTime) : '0:00'}
           </span>
-          <span className="text-[10px] text-muted-foreground tabular-nums">
+          <span className="text-xs text-muted-foreground tabular-nums">
             {formatDuration(audioDuration)}
           </span>
         </div>
@@ -295,7 +295,7 @@ function ReactionBadges({ reactions, isMe }: { reactions: { emoji: string; from:
       {Array.from(emojiCounts.entries()).map(([emoji, count], ri) => (
         <span key={ri} className="inline-flex items-center gap-0.5 bg-background/80 border border-border/30 rounded-full px-2 py-0.5 text-sm shadow-sm hover:bg-background transition-colors cursor-default">
           <span className="text-base leading-none">{emoji}</span>
-          {count > 1 && <span className="text-[10px] text-muted-foreground tabular-nums">{count}</span>}
+          {count > 1 && <span className="text-xs text-muted-foreground tabular-nums">{count}</span>}
         </span>
       ))}
     </div>
@@ -716,12 +716,12 @@ export function InboxTab() {
                             selectedChipId === chip.id ? 'font-semibold' : 'font-medium'
                           )}>{chip.name}</p>
                           {chip.unreadCount > 0 && (
-                            <Badge className="size-5 p-0 flex items-center justify-center text-[10px] bg-emerald-600 text-white rounded-full shrink-0">
+                            <Badge className="size-5 p-0 flex items-center justify-center text-xs bg-emerald-600 text-white rounded-full shrink-0">
                               {chip.unreadCount > 99 ? '99+' : chip.unreadCount}
                             </Badge>
                           )}
                         </div>
-                        <p className="text-[11px] text-muted-foreground truncate">{chip.phoneNumber}</p>
+                        <p className="text-xs text-muted-foreground truncate">{chip.phoneNumber}</p>
                       </div>
                     </button>
                   ))}
@@ -734,7 +734,7 @@ export function InboxTab() {
               <Button
                 variant="ghost"
                 size="sm"
-                className="w-full h-7 text-[11px] text-muted-foreground hover:text-foreground"
+                className="w-full h-8 text-xs text-muted-foreground hover:text-foreground"
                 onClick={async () => {
                   try {
                     toast.loading('Limpando mensagens de aquecimento...')
@@ -777,7 +777,7 @@ export function InboxTab() {
                   {selectedChipId ? chips.find(c => c.id === selectedChipId)?.name || 'Conversas' : 'Conversas'}
                 </h3>
                 <div className="flex items-center gap-1.5">
-                  <Badge variant="outline" className="text-[10px] font-normal">
+                  <Badge variant="outline" className="text-xs font-normal">
                     {filteredConversations.length}
                   </Badge>
                 </div>
@@ -806,7 +806,7 @@ export function InboxTab() {
                         variant={statusFilter === f.key ? 'secondary' : 'ghost'}
                         size="sm"
                         className={cn(
-                          'h-6 px-2 text-[10px]',
+                          'h-7 px-2 text-xs',
                           statusFilter === f.key && 'bg-primary/10 text-primary font-semibold'
                         )}
                         onClick={() => setStatusFilter(f.key)}
@@ -887,13 +887,13 @@ export function InboxTab() {
                                 {name}
                               </p>
                               {conv.isGroup && (
-                                <span className="text-[9px] text-muted-foreground bg-muted px-1 py-0 rounded shrink-0">
+                                <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded shrink-0">
                                   {conv.participantCount || '?'} pes.
                                 </span>
                               )}
                             </div>
                             <span className={cn(
-                              'text-[10px] shrink-0 tabular-nums',
+                              'text-xs shrink-0 tabular-nums',
                               conv.unreadCount > 0 ? 'text-emerald-600 font-semibold' : 'text-muted-foreground'
                             )}>
                               {formatTime(conv.lastMessageAt)}
@@ -937,7 +937,7 @@ export function InboxTab() {
                           {/* Unread badge */}
                           {conv.unreadCount > 0 && (
                             <div className="mt-1">
-                              <Badge className="size-5 p-0 flex items-center justify-center text-[10px] bg-emerald-600 text-white rounded-full font-semibold">
+                              <Badge className="size-5 p-0 flex items-center justify-center text-xs bg-emerald-600 text-white rounded-full font-semibold">
                                 {conv.unreadCount}
                               </Badge>
                             </div>
@@ -998,27 +998,27 @@ export function InboxTab() {
                         {displayName(selectedConversation)}
                       </p>
                       {selectedConversation.isGroup && !displayName(selectedConversation).startsWith('Grupo') && (
-                        <Badge variant="secondary" className="text-[9px] px-1.5 py-0 shrink-0">
+                        <Badge variant="secondary" className="text-xs px-1.5 py-0 shrink-0">
                           Grupo
                         </Badge>
                       )}
                       {/* Conversation status */}
                       <Select value={convStatus} onValueChange={updateConvStatus}>
-                        <SelectTrigger className="h-5 w-auto border-0 p-0 gap-0.5 text-[10px] focus:ring-0 focus:ring-offset-0 text-muted-foreground hover:text-foreground">
+                        <SelectTrigger className="h-6 w-auto border-0 p-0 gap-0.5 text-xs focus:ring-0 focus:ring-offset-0 text-muted-foreground hover:text-foreground">
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="open">
-                            <Badge variant="secondary" className="text-[9px] px-1 py-0 bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400">Aberta</Badge>
+                            <Badge variant="secondary" className="text-xs px-1.5 py-0 bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400">Aberta</Badge>
                           </SelectItem>
                           <SelectItem value="pending">
-                            <Badge variant="secondary" className="text-[9px] px-1 py-0 bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400">Pendente</Badge>
+                            <Badge variant="secondary" className="text-xs px-1.5 py-0 bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400">Pendente</Badge>
                           </SelectItem>
                           <SelectItem value="resolved">
-                            <Badge variant="secondary" className="text-[9px] px-1 py-0 bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">Resolvida</Badge>
+                            <Badge variant="secondary" className="text-xs px-1.5 py-0 bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">Resolvida</Badge>
                           </SelectItem>
                           <SelectItem value="snoozed">
-                            <Badge variant="secondary" className="text-[9px] px-1 py-0 bg-gray-100 text-gray-700 dark:bg-gray-900/30 dark:text-gray-400">Adiada</Badge>
+                            <Badge variant="secondary" className="text-xs px-1.5 py-0 bg-gray-100 text-gray-700 dark:bg-gray-900/30 dark:text-gray-400">Adiada</Badge>
                           </SelectItem>
                         </SelectContent>
                       </Select>
@@ -1034,7 +1034,7 @@ export function InboxTab() {
 
                   {/* Header actions */}
                   <div className="flex items-center gap-1.5 shrink-0">
-                    <Badge variant="outline" className="text-[10px] font-normal">
+                    <Badge variant="outline" className="text-xs font-normal">
                       {selectedConversation.totalMessages} msg
                     </Badge>
                     <TooltipProvider>
@@ -1118,7 +1118,7 @@ export function InboxTab() {
                                 {/* Date separator */}
                                 {showDate && (
                                   <div className="flex items-center justify-center py-3">
-                                    <span className="text-[11px] text-muted-foreground/70 bg-muted/50 rounded-full px-3 py-1">
+                                    <span className="text-xs text-muted-foreground/70 bg-muted/50 rounded-full px-3 py-1">
                                       {new Date(msg.createdAt).toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' })}
                                     </span>
                                   </div>
@@ -1127,7 +1127,7 @@ export function InboxTab() {
                                 {/* Group sender name */}
                                 {isGroupMsg && senderDisplayName && senderDisplayName !== 'unknown' && (
                                   <p className={cn(
-                                    'text-[11px] font-semibold ml-3 mb-0.5',
+                                    'text-xs font-semibold ml-3 mb-0.5',
                                     ['a','e','i','o','u'].some(v => senderDisplayName[0]?.toLowerCase() === v)
                                       ? 'text-violet-400'
                                       : 'text-sky-400'
@@ -1154,7 +1154,7 @@ export function InboxTab() {
                                     {msg.isCampaign && isMe && (
                                       <div className="flex items-center gap-1 mb-1">
                                         <Megaphone className="size-3 text-emerald-400" />
-                                        <span className="text-[9px] font-semibold text-emerald-400 uppercase tracking-wider">Campanha</span>
+                                        <span className="text-xs font-semibold text-emerald-400 uppercase tracking-wider">Campanha</span>
                                       </div>
                                     )}
 
@@ -1212,7 +1212,7 @@ export function InboxTab() {
                                         </div>
                                         <div className="min-w-0 flex-1">
                                           <span className="text-xs block truncate font-medium">{msg.fileName || 'Documento'}</span>
-                                          {msg.mimeType && <span className="text-[10px] text-muted-foreground">{msg.mimeType}</span>}
+                                          {msg.mimeType && <span className="text-xs text-muted-foreground">{msg.mimeType}</span>}
                                         </div>
                                       </div>
                                     )}
@@ -1299,12 +1299,12 @@ export function InboxTab() {
                                       'flex items-center gap-1 mt-1',
                                       isMe ? 'justify-end' : 'justify-start'
                                     )}>
-                                      <span className="text-[10px] text-muted-foreground/70 tabular-nums">
+                                      <span className="text-xs text-muted-foreground/70 tabular-nums">
                                         {new Date(msg.createdAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
                                       </span>
                                       {/* Media type label for non-standard types */}
                                       {msg.messageType !== 'text' && msg.messageType !== 'image' && msg.messageType !== 'video' && msg.messageType !== 'audio' && msg.messageType !== 'document' && msg.messageType !== 'sticker' && msg.messageType !== 'deleted' && msg.messageType !== 'reaction' && msg.messageType !== 'unknown' && msg.messageType !== 'system' && msg.messageType !== 'contact' && msg.messageType !== 'location' && (
-                                        <span className="text-[9px] text-muted-foreground/50">
+                                        <span className="text-xs text-muted-foreground/50">
                                           {msg.messageType === 'template' ? 'template' : msg.messageType === 'button_response' ? 'botao' : msg.messageType === 'list_response' ? 'lista' : msg.messageType === 'poll' ? 'enquete' : msg.messageType === 'group_invite' ? 'convite' : msg.messageType}
                                         </span>
                                       )}
