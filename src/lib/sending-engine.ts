@@ -540,12 +540,12 @@ function getEffectiveDailyLimit(
 
   if (!warmingStart) {
     dayInPhase = 1
-  } else if (phase === 'nursery') {
-    dayInPhase = Math.floor((now.getTime() - warmingStart.getTime()) / (1000 * 60 * 60 * 24)) + 1
   } else {
-    // prewarm phase — use prewarmStartedAt as reference (not warmingStartedAt)
-    const prewarmStart = chip.prewarmStartedAt ? new Date(chip.prewarmStartedAt) : warmingStart
-    dayInPhase = Math.floor((now.getTime() - prewarmStart.getTime()) / (1000 * 60 * 60 * 24)) + 1
+    // BUGFIX: Use warmingStartedAt for ALL phases (nursery + prewarm), matching the frontend.
+    // Previously, prewarm used prewarmStartedAt which could be NULL or recent,
+    // causing the backend to calculate day 1-2 while the frontend calculated day 38.
+    // This mismatch made the backend block at limit 20 while the UI showed 150.
+    dayInPhase = Math.floor((now.getTime() - warmingStart.getTime()) / (1000 * 60 * 60 * 24)) + 1
   }
   
   dayInPhase = Math.max(1, dayInPhase)
@@ -1064,8 +1064,9 @@ async function advanceWarmingPhase(chipId: string, settings: AntiBanConfig): Pro
     const prewarmDuration = prewarmSchedule.length > 0
       ? prewarmSchedule[prewarmSchedule.length - 1].days[1]
       : 20  // Fallback if schedule is empty
-    const prewarmStart = chip.prewarmStartedAt ? new Date(chip.prewarmStartedAt) : createdAt
-    const daysSincePrewarm = Math.floor((now.getTime() - prewarmStart.getTime()) / (1000 * 60 * 60 * 24)) + 1
+    // BUGFIX: Use warmingStartedAt (not prewarmStartedAt) for consistency with frontend.
+    const warmingStart = chip.warmingStartedAt ? new Date(chip.warmingStartedAt) : createdAt
+    const daysSincePrewarm = Math.floor((now.getTime() - warmingStart.getTime()) / (1000 * 60 * 60 * 24)) + 1
     
     if (daysSincePrewarm > prewarmDuration) {
       // Transition to ready
