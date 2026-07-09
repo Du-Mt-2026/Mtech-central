@@ -554,6 +554,86 @@ function DashboardTab({ stats, onRefresh, setActiveTab }: { stats: Stats | null;
         </CardContent>
       </Card>
 
+      {/* ===== Charts Row ===== */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Message Status Donut */}
+        <Card className="shadow-lg border-0 hover:shadow-xl transition-all duration-200">
+          <CardHeader className="pb-3">
+            <div className="flex items-center gap-2">
+              <div className="flex size-8 items-center justify-center rounded-lg bg-cyan-100 dark:bg-cyan-900/30">
+                <Activity className="size-4 text-cyan-600" />
+              </div>
+              <CardTitle className="text-lg">Status das Mensagens</CardTitle>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <DonutChart
+              segments={[
+                { value: s.deliveredMessages, color: '#10b981', label: 'Entregues' },
+                { value: s.readMessages, color: '#3b82f6', label: 'Lidas' },
+                { value: s.pendingMessages, color: '#f59e0b', label: 'Pendentes' },
+                { value: s.failedMessages, color: '#ef4444', label: 'Falhas' },
+              ].filter(seg => seg.value > 0)}
+              centerValue={s.totalMessages > 0 ? String(s.totalMessages) : '0'}
+              centerLabel="total"
+            />
+          </CardContent>
+        </Card>
+
+        {/* Chip Status Donut */}
+        <Card className="shadow-lg border-0 hover:shadow-xl transition-all duration-200">
+          <CardHeader className="pb-3">
+            <div className="flex items-center gap-2">
+              <div className="flex size-8 items-center justify-center rounded-lg bg-violet-100 dark:bg-violet-900/30">
+                <Smartphone className="size-4 text-violet-600" />
+              </div>
+              <CardTitle className="text-lg">Status dos Chips</CardTitle>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <DonutChart
+              segments={[
+                { value: stats.connectedChips ?? 0, color: '#10b981', label: 'Conectados' },
+                { value: stats.disconnectedChips ?? 0, color: '#71717a', label: 'Desconectados' },
+                { value: stats.errorChips ?? 0, color: '#ef4444', label: 'Erro' },
+              ].filter(seg => seg.value > 0)}
+              centerValue={String(s.totalChips)}
+              centerLabel="chips"
+            />
+          </CardContent>
+        </Card>
+
+        {/* Chip Performance Bar Chart */}
+        <Card className="shadow-lg border-0 hover:shadow-xl transition-all duration-200">
+          <CardHeader className="pb-3">
+            <div className="flex items-center gap-2">
+              <div className="flex size-8 items-center justify-center rounded-lg bg-emerald-100 dark:bg-emerald-900/30">
+                <TrendingUp className="size-4 text-emerald-600" />
+              </div>
+              <CardTitle className="text-lg">Envios por Chip (Hoje)</CardTitle>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {stats.chipStatuses && stats.chipStatuses.length > 0 ? (
+              <MiniBarChart
+                data={stats.chipStatuses.slice(0, 6).map(chip => ({
+                  label: chip.name.length > 15 ? chip.name.substring(0, 15) + '...' : chip.name,
+                  value: chip.sentToday,
+                  maxValue: chip.dailyLimit,
+                  color: chip.sentToday >= chip.dailyLimit ? '#ef4444' : chip.sentToday > chip.dailyLimit * 0.8 ? '#f59e0b' : '#10b981',
+                }))}
+                max={Math.max(...stats.chipStatuses.map(c => c.dailyLimit), 200)}
+              />
+            ) : (
+              <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
+                <Smartphone className="size-8 mb-2 opacity-50" />
+                <p className="text-sm">Nenhum chip cadastrado</p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Recent Activity */}
         <Card className="shadow-lg border-0 hover:shadow-xl transition-all duration-200">
@@ -657,6 +737,104 @@ function DashboardTab({ stats, onRefresh, setActiveTab }: { stats: Stats | null;
           </CardContent>
         </Card>
       )}
+    </div>
+  )
+}
+
+
+// ===== SVG Chart Components (no external deps) =====
+
+function DonutChart({ segments, size = 160, strokeWidth = 20, centerLabel, centerValue }: {
+  segments: { value: number; color: string; label: string }[]
+  size?: number
+  strokeWidth?: number
+  centerLabel?: string
+  centerValue?: string
+}) {
+  const total = segments.reduce((sum, s) => sum + s.value, 0)
+  const radius = (size - strokeWidth) / 2
+  const circumference = 2 * Math.PI * radius
+  let offset = 0
+
+  return (
+    <div className="flex items-center gap-4">
+      <svg width={size} height={size} className="shrink-0">
+        {total === 0 ? (
+          <circle
+            cx={size / 2} cy={size / 2} r={radius}
+            fill="none" stroke="currentColor" strokeWidth={strokeWidth}
+            className="text-muted/30"
+          />
+        ) : (
+          segments.map((seg, i) => {
+            const dash = (seg.value / total) * circumference
+            const circle = (
+              <circle
+                key={i}
+                cx={size / 2} cy={size / 2} r={radius}
+                fill="none" stroke={seg.color} strokeWidth={strokeWidth}
+                strokeDasharray={`${dash} ${circumference - dash}`}
+                strokeDashoffset={-offset}
+                transform={`rotate(-90 ${size / 2} ${size / 2})`}
+                strokeLinecap="butt"
+              />
+            )
+            offset += dash
+            return circle
+          })
+        )}
+        {centerValue && (
+          <text x="50%" y="48%" textAnchor="middle" className="fill-foreground text-2xl font-bold" style={{ fontSize: '24px' }}>
+            {centerValue}
+          </text>
+        )}
+        {centerLabel && (
+          <text x="50%" y="62%" textAnchor="middle" className="fill-muted-foreground" style={{ fontSize: '11px' }}>
+            {centerLabel}
+          </text>
+        )}
+      </svg>
+      <div className="space-y-1.5">
+        {segments.map((seg, i) => (
+          <div key={i} className="flex items-center gap-2 text-sm">
+            <div className="size-3 rounded-full shrink-0" style={{ backgroundColor: seg.color }} />
+            <span className="text-muted-foreground">{seg.label}</span>
+            <span className="font-semibold ml-auto">{seg.value}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function MiniBarChart({ data, max }: {
+  data: { label: string; value: number; maxValue: number; color: string }[]
+  max: number
+}) {
+  return (
+    <div className="space-y-2.5">
+      {data.map((item, i) => {
+        const pct = max > 0 ? (item.value / max) * 100 : 0
+        const limitPct = max > 0 ? (item.maxValue / max) * 100 : 0
+        return (
+          <div key={i} className="space-y-1">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-medium truncate">{item.label}</span>
+              <span className="text-muted-foreground tabular-nums">{item.value}/{item.maxValue}</span>
+            </div>
+            <div className="relative h-2.5 rounded-full bg-muted overflow-hidden">
+              <div
+                className="absolute top-0 bottom-0 w-0.5 bg-muted-foreground/40 z-10"
+                style={{ left: `${limitPct}%` }}
+              />
+              <div
+                className="h-full rounded-full transition-all duration-500"
+                style={{ width: `${pct}%`, backgroundColor: item.color }}
+              />
+            </div>
+          </div>
+        )
+      })}
     </div>
   )
 }
