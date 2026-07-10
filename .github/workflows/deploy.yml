@@ -1,4 +1,4 @@
-name: Deploy to KVM8
+name: Build & Deploy to KVM8
 
 on:
   push:
@@ -6,10 +6,41 @@ on:
   workflow_dispatch:  # Allow manual trigger from GitHub UI
 
 jobs:
+  build-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install --ignore-scripts
+
+      - name: Generate Prisma Client
+        run: npx prisma generate
+
+      - name: Build (TypeScript check + Next.js build)
+        run: npm run build
+        env:
+          DATABASE_URL: postgresql://dummy:dummy@localhost:5432/dummy
+          NEXT_PUBLIC_APP_URL: https://octupuszap.nikki.com.br
+          EVOLUTION_API_URL: http://localhost:8080
+          EVOLUTION_API_KEY: dummy
+          AUTH_SECRET: dummy-secret-for-build-only
+
+      - name: ✅ Build passed
+        run: echo "Build verification passed! Triggering deploy..."
+
   deploy:
+    needs: build-check
     runs-on: ubuntu-latest
     timeout-minutes: 5
-
     steps:
       - name: Trigger deploy webhook
         run: |
