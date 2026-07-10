@@ -695,3 +695,22 @@ model BlockedContact {
   @@index([contactPhone])
   @@index([unblockedAt])                          // Filter active blocks (unblockedAt = null)
 }
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  userName  String?
+  userRole  String?
+  action    String
+  category  String   @default("general")
+  targetId  String?
+  targetType String?
+  details   Json?
+  ipAddress String?
+  timestamp DateTime @default(now())
+
+  @@index([timestamp])
+  @@index([category])
+  @@index([targetType, targetId])
+  @@index([userId])
+}

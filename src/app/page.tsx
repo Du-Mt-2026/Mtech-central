@@ -59,6 +59,8 @@ const AntiBanTab = dynamic(() => import('@/components/antiban-tab').then(m => ({
 const WarmingTab = dynamic(() => import('@/components/warming-tab').then(m => ({ default: m.WarmingTab })), { loading: () => <div className="flex items-center justify-center py-20"><RefreshCw className="size-6 animate-spin text-muted-foreground" /></div> })
 const InboxTab = dynamic(() => import('@/components/inbox-tab').then(m => ({ default: m.InboxTab })), { loading: () => <div className="flex items-center justify-center py-20"><RefreshCw className="size-6 animate-spin text-muted-foreground" /></div> })
 import { type AntiBanSettings, WARMING_MODE_MULTIPLIERS } from '@/lib/constants'
+import { logAction } from '@/lib/audit-log'
+import { cn } from '@/lib/utils'
 
 // ===== Client-side Audio Conversion (OGG/Opus for WhatsApp) =====
 let ffmpegInstance: any = null
@@ -953,6 +955,7 @@ function ChipsTab() {
       // Atualiza o estado local dos chips
       setChips(prev => prev.map(c => c.id === chipId ? { ...c, paused: data.chip?.paused ?? !currentlyPaused, pausedAt: data.chip?.pausedAt ?? null, pauseReason: data.chip?.pauseReason ?? null } : c))
       toast.success(data.message || `Chip ${chipName} ${currentlyPaused ? 'retomado' : 'pausado'}`)
+      logAction({ action: currentlyPaused ? 'RESUME_CHIP' : 'PAUSE_CHIP', category: 'chip', targetType: 'Chip', targetId: chipId, details: { name: chipName } })
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Erro ao alterar pausa do chip'
       toast.error(msg)
@@ -1334,6 +1337,7 @@ function ChipsTab() {
       const res = await fetch('/api/chips', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newChip) })
       if (!res.ok) { const data = await res.json(); throw new Error(data.error) }
       toast.success('Chip criado com sucesso!')
+      logAction({ action: 'CREATE_CHIP', category: 'chip', targetType: 'Chip', details: { name: newChip.name, phone: newChip.phoneNumber } })
       setAddDialogOpen(false)
       setNewChip({ name: '', phoneNumber: '' })
       fetchChips()
@@ -4504,6 +4508,7 @@ function CampanhasTab() {
               toast.success(`Campanha atualizada! ${redistData.redistributed} mensagens redistribuídas.`)
             } else {
               toast.success('Campanha atualizada com sucesso!')
+            logAction({ action: 'UPDATE_CAMPAIGN', category: 'campaign', targetType: 'Campaign' })
             }
           } catch {
             toast.success('Campanha atualizada com sucesso! (redistribuição automática falhou)')
@@ -4516,6 +4521,7 @@ function CampanhasTab() {
         const res = await fetch('/api/campaigns', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
         if (!res.ok) { const data = await res.json().catch(() => ({})); throw new Error(data.error || `Erro ${res.status} ao criar campanha`) }
         toast.success('Campanha criada com sucesso!')
+        logAction({ action: 'CREATE_CAMPAIGN', category: 'campaign', targetType: 'Campaign' })
       }
       setCreateDialogOpen(false); setEditing(false); resetNewCampaign(); setActiveStep(0); fetchCampaigns()
     } catch (err: unknown) {
@@ -8192,7 +8198,104 @@ function UsuariosTab() {
         title="Excluir Usuário" description="Tem certeza? Esta ação não pode ser desfeita."
         onConfirm={() => { if (deleteConfirm) { deleteUser(deleteConfirm); setDeleteConfirm(null) } }}
         confirmLabel="Excluir" />
+
+      {/* Audit Log */}
+      <AuditLogSection />
     </div>
+  )
+}
+
+// ===== Audit Log Section =====
+function AuditLogSection() {
+  const [logs, setLogs] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+  const [filter, setFilter] = useState('')
+
+  const fetchLogs = useCallback(async () => {
+    try {
+      const res = await fetch('/api/audit-logs?limit=50')
+      const data = await res.json()
+      setLogs(data.logs || [])
+    } catch { /* silent */ }
+    finally { setLoading(false) }
+  }, [])
+
+  useEffect(() => { fetchLogs() }, [fetchLogs])
+
+  const filtered = filter ? logs.filter(l =>
+    l.action?.toLowerCase().includes(filter.toLowerCase()) ||
+    l.userName?.toLowerCase().includes(filter.toLowerCase()) ||
+    l.targetType?.toLowerCase().includes(filter.toLowerCase())
+  ) : logs
+
+  const actionColors: Record<string, string> = {
+    CREATE: 'text-emerald-600',
+    UPDATE: 'text-sky-600',
+    DELETE: 'text-rose-600',
+    PAUSE: 'text-amber-600',
+    RESUME: 'text-emerald-600',
+    CONNECT: 'text-violet-600',
+    DISCONNECT: 'text-orange-600',
+  }
+
+  const getActionColor = (action: string) => {
+    for (const [key, color] of Object.entries(actionColors)) {
+      if (action.startsWith(key)) return color
+    }
+    return 'text-muted-foreground'
+  }
+
+  return (
+    <Card className="shadow-lg border-0">
+      <CardHeader>
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <div className="flex size-8 items-center justify-center rounded-lg bg-slate-100 dark:bg-slate-900/30">
+              <Database className="size-4 text-slate-600" />
+            </div>
+            <CardTitle className="text-lg">Log de Auditoria</CardTitle>
+          </div>
+          <Input
+            placeholder="Filtrar por ação, usuário..."
+            value={filter}
+            onChange={e => setFilter(e.target.value)}
+            className="h-8 w-56 text-sm"
+          />
+        </div>
+      </CardHeader>
+      <CardContent>
+        {loading ? (
+          <div className="flex items-center justify-center py-8">
+            <RefreshCw className="size-5 animate-spin text-muted-foreground" />
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
+            <Database className="size-8 mb-2 opacity-50" />
+            <p className="text-sm">Nenhum log de auditoria ainda</p>
+          </div>
+        ) : (
+          <div className="space-y-1 max-h-96 overflow-y-auto scrollbar-thin">
+            {filtered.map((log) => (
+              <div key={log.id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-muted/50 text-sm">
+                <span className={cn('font-mono font-semibold shrink-0 w-32', getActionColor(log.action))}>
+                  {log.action}
+                </span>
+                <span className="text-muted-foreground shrink-0 w-32 truncate">
+                  {log.userName || 'Sistema'}
+                </span>
+                <span className="text-foreground/70 truncate flex-1">
+                  {log.targetType ? log.targetType : ''}
+                  {log.targetId ? ': ' + log.targetId.substring(0, 8) + '...' : ''}
+                </span>
+                <span className="text-xs text-muted-foreground shrink-0">
+                  {new Date(log.timestamp).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   )
 }
 
