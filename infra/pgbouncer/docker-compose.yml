@@ -1,0 +1,31 @@
+# PgBouncer — Connection pooler for PostgreSQL
+# Deploy: KVM4-1 (/opt/infra/docker-compose.yml)
+# Purpose: Pool connections from Evolution Go to PostgreSQL
+# IMPORTANT: pool_mode MUST be "session" (not "transaction") — Evolution Go uses prepared statements
+
+pgbouncer:
+  image: edoburu/pgbouncer:latest
+  container_name: pgbouncer
+  mem_limit: 128m
+  restart: unless-stopped
+  ports:
+    - "10.0.0.1:6432:6432"
+  environment:
+    DB_HOST: postgres
+    DB_PORT: 5432
+    DB_USER: postgres
+    DB_PASSWORD: ${POSTGRES_PASSWORD}
+    DB_NAME: "*"
+    LISTEN_PORT: 6432
+    POOL_MODE: session          # CRITICAL: must be session, not transaction
+    DEFAULT_POOL_SIZE: 50
+    RESERVE_POOL_SIZE: 10
+    MAX_CLIENT_CONN: 400
+    MAX_DB_CONNECTIONS: 60
+    SERVER_IDLE_TIMEOUT: 300
+    AUTH_TYPE: plain
+  depends_on:
+    postgres:
+      condition: service_healthy
+  networks:
+    - infra-network

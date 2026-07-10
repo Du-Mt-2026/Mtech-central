@@ -89,3 +89,6 @@ secrets-inventory.md
 infra/backups/*.sql
 infra/backups/*.sql.gz
 infra/backups/*.dump
+evolution-go.env
+instances-memory-backup.json
+*.local.sh
