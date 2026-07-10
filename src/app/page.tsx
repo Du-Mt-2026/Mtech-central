@@ -904,7 +904,30 @@ function ChipsTab() {
     try {
       const res = await fetch('/api/chips')
       const data = await res.json()
-      setChips(data)
+      setChips(prev => {
+        // Alerta de chips que cairam (eram connected, agora não estão)
+        if (prev.length > 0) {
+          data.forEach((newChip: Chip) => {
+            const oldChip = prev.find(c => c.id === newChip.id)
+            if (oldChip && oldChip.status === 'connected' && newChip.status !== 'connected') {
+              toast.warning(`⚠️ Chip "${newChip.name}" desconectou!`, {
+                description: `Status atual: ${newChip.status}`,
+                duration: 10000,
+              })
+            }
+          })
+          // Alerta de chips que voltaram
+          data.forEach((newChip: Chip) => {
+            const oldChip = prev.find(c => c.id === newChip.id)
+            if (oldChip && oldChip.status !== 'connected' && newChip.status === 'connected') {
+              toast.success(`✅ Chip "${newChip.name}" voltou a ficar online!`, {
+                duration: 5000,
+              })
+            }
+          })
+        }
+        return data
+      })
     } catch { toast.error('Erro ao carregar chips') }
     finally { setLoading(false) }
   }, [])

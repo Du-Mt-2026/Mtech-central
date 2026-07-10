@@ -664,10 +664,13 @@ async function attemptReconnection(entry: ReconnectionEntry): Promise<void> {
       currentlyReconnecting.delete(chipId)
       totalFailed++
 
-      // Reset chip status to disconnected
+      // BUGFIX: Mark chip as 'error' (not 'disconnected') in DB so healthCheckDisconnectedChips()
+      // does NOT re-enqueue it. Health check only looks for 'disconnected'/'connecting' statuses.
+      // Previously, setting to 'disconnected' caused an infinite loop where the health check
+      // would re-enqueue the chip, reset the attempt count, and try again.
       await db.chip.update({
         where: { id: chipId },
-        data: { status: 'disconnected' },
+        data: { status: 'error' },
       }).catch(() => {})
       return
     }
