@@ -72,3 +72,20 @@ worklog.md
 
 # Backup files
 *.bak
+
+# === Secrets (NUNCA commitar) ===
+.env
+*.env.*
+.env.backup
+.env.*.backup
+secrets-inventory.md
+*.backup
+*.key
+*.pem
+*.p12
+*.pfx
+
+# === Infra: backups locais ===
+infra/backups/*.sql
+infra/backups/*.sql.gz
+infra/backups/*.dump

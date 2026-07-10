@@ -4116,7 +4116,7 @@ function MessageBuilder({ value, onChange, messageKeys, templates, contactVariab
           >
             <RefreshCw className="size-3" />
           </Button>
-          <span>{charCount} chars · {lineCount} linha(s)</span>
+          <span className={cn(charCount > 1024 && 'text-rose-500 font-medium')}>{charCount} chars · {lineCount} linha(s){charCount > 1024 ? ' limite excedido' : ''}</span>
         </div>
       )}
     </div>
@@ -4230,6 +4230,8 @@ function CampanhasTab() {
   const [exportingId, setExportingId] = useState<string | null>(null)
   const [exportingAll, setExportingAll] = useState(false)
   const [refreshingDetail, setRefreshingDetail] = useState(false)
+  const [campaignFilter, setCampaignFilter] = useState<'all' | 'running' | 'paused' | 'completed' | 'cancelled' | 'draft'>('all')
+  const [campaignSearch, setCampaignSearch] = useState('')
   // BUGFIX: Default é 'sendOrder' (ordem de envio) em vez de 'name' (alfabética).
   // Persiste a escolha do usuário em localStorage para não re-selecionar toda vez.
   const [detailSortBy, setDetailSortBy] = useState<'name' | 'sendOrder'>(() => {
@@ -4866,6 +4868,17 @@ function CampanhasTab() {
     setActiveStep(newLength - 1) // auto-switch to the new step (0-indexed)
   }
   const removeStep = (idx: number) => setNewCampaign(prev => ({ ...prev, steps: prev.steps.filter((_, i) => i !== idx) }))
+  const duplicateStep = (idx: number) => {
+    setNewCampaign(prev => {
+      const stepToCopy = prev.steps[idx]
+      if (!stepToCopy) return prev
+      const newStep = { ...stepToCopy, mediaFile: null, mediaUrl: stepToCopy.mediaUrl, variations: stepToCopy.variations?.map(v => ({ ...v, mediaFile: null })) || [] }
+      const newSteps = [...prev.steps]
+      newSteps.splice(idx + 1, 0, newStep)
+      return { ...prev, steps: newSteps }
+    })
+    setActiveStep(idx + 1)
+  }
   const moveStep = (fromIdx: number, toIdx: number) => {
     setNewCampaign(prev => {
       const steps = arrayMove(prev.steps, fromIdx, toIdx)
@@ -5455,10 +5468,20 @@ function CampanhasTab() {
                             />
                           )
                         })}
-                        <Button variant="ghost" size="sm" className="gap-1 text-emerald-600 h-7 px-2 shrink-0" onClick={addStep}>
-                          <Plus className="size-3.5" />
-                          <span className="text-xs">Adicionar mensagem</span>
-                        </Button>
+                        <div className="flex items-center gap-1 shrink-0">
+                          {newCampaign.steps.length > 1 && (
+                            <TooltipProvider><Tooltip><TooltipTrigger asChild>
+                              <Button variant="ghost" size="sm" className="gap-1 text-sky-600 h-7 px-2" onClick={() => duplicateStep(activeStep)}>
+                                <Copy className="size-3.5" />
+                                <span className="text-xs">Duplicar</span>
+                              </Button>
+                            </TooltipTrigger><TooltipContent>Duplicar mensagem atual</TooltipContent></Tooltip></TooltipProvider>
+                          )}
+                          <Button variant="ghost" size="sm" className="gap-1 text-emerald-600 h-7 px-2" onClick={addStep}>
+                            <Plus className="size-3.5" />
+                            <span className="text-xs">Adicionar mensagem</span>
+                          </Button>
+                        </div>
                       </div>
                     </SortableContext>
                   </DndContext>
@@ -5915,10 +5938,45 @@ function CampanhasTab() {
           action={{ label: 'Criar primeira campanha', onClick: () => setCreateDialogOpen(true) }}
         />
       ) : (
+        <>
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex items-center gap-1 bg-muted/40 rounded-lg p-1">
+            {[
+              { value: 'all', label: 'Todas' },
+              { value: 'running', label: 'Executando' },
+              { value: 'paused', label: 'Pausadas' },
+              { value: 'completed', label: 'Concluídas' },
+              { value: 'cancelled', label: 'Canceladas' },
+              { value: 'draft', label: 'Rascunhos' },
+            ].map(f => {
+              const count = f.value === 'all' ? campaigns.length : campaigns.filter(c => c.status === f.value).length
+              return (
+                <button key={f.value} onClick={() => setCampaignFilter(f.value as any)}
+                  className={cn('px-3 py-1.5 rounded-md text-xs font-medium transition-all',
+                    campaignFilter === f.value ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground')}>
+                  {f.label} ({count})
+                </button>
+              )
+            })}
+          </div>
+          <div className="relative flex-1 min-w-[200px]">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
+            <Input placeholder="Buscar campanha por nome..." value={campaignSearch} onChange={e => setCampaignSearch(e.target.value)} className="h-9 pl-8 text-sm" />
+          </div>
+        </div>
         <div className="space-y-4">
-          {campaigns.map((c, i) => (
+          {campaigns.filter(c => {
+            const matchFilter = campaignFilter === 'all' || c.status === campaignFilter
+            const matchSearch = !campaignSearch || c.name.toLowerCase().includes(campaignSearch.toLowerCase())
+            return matchFilter && matchSearch
+          }).map((c, i) => (
             <motion.div key={c.id} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}>
-              <Card className="shadow-lg hover:shadow-xl transition-all duration-200 border-0">
+              <Card className={cn('shadow-lg hover:shadow-xl transition-all duration-200 border-l-4',
+                c.status === 'running' ? 'border-l-emerald-500' :
+                c.status === 'paused' ? 'border-l-amber-500' :
+                c.status === 'completed' ? 'border-l-sky-500' :
+                c.status === 'cancelled' ? 'border-l-rose-500' :
+                'border-l-zinc-300 dark:border-l-zinc-700')}>
                 <CardContent className="p-5">
                   <div className="flex items-center gap-4">
                     <div className="flex size-12 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-400 to-teal-500 shadow-lg">
@@ -5942,6 +6000,17 @@ function CampanhasTab() {
                       </div>
                       <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
                         <span className="flex items-center gap-1"><Smartphone className="size-3" /> {c.chips?.length || 0} chips</span>
+                        {(() => {
+                          const msc = c.messageStatusCounts || {}
+                          const total = (msc.pending || 0) + (msc.sent || 0) + (msc.delivered || 0) + (msc.read || 0) + (msc.failed || 0)
+                          const done = (msc.sent || 0) + (msc.delivered || 0) + (msc.read || 0)
+                          const failed = msc.failed || 0
+                          if (total > 0 && done + failed > 0) {
+                            const successRate = Math.round((done / (done + failed)) * 100)
+                            return <span className={cn('flex items-center gap-1 font-medium', successRate >= 80 ? 'text-emerald-600' : successRate >= 50 ? 'text-amber-600' : 'text-rose-600')}>{successRate}% sucesso</span>
+                          }
+                          return null
+                        })()}
                         {c.contactList && <span className="flex items-center gap-1"><Users className="size-3" /> {c.contactList.name}</span>}
                         {c.scheduledAt && <span className="flex items-center gap-1"><CalendarDays className="size-3" /> {new Date(c.scheduledAt).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>}
                         {c.sequenceSteps?.length > 0 && <span className="flex items-center gap-1"><ArrowRight className="size-3" /> {c.sequenceSteps.length} mensagens</span>}
@@ -5967,11 +6036,10 @@ function CampanhasTab() {
                               </span>
                               <span className="font-semibold text-muted-foreground">{pct}%</span>
                             </div>
-                            <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
-                              <div
-                                className={`h-full rounded-full transition-all duration-500 ${barColor} ${isRunning ? 'animate-pulse' : ''}`}
-                                style={{ width: `${pct}%` }}
-                              />
+                            <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden flex">
+                              {done > 0 && <div className="h-full bg-emerald-500 transition-all duration-500" style={{ width: `${(done / total) * 100}%` }} />}
+                              {failed > 0 && <div className="h-full bg-rose-500 transition-all duration-500" style={{ width: `${(failed / total) * 100}%` }} />}
+                              {pending > 0 && <div className="h-full bg-muted-foreground/30 transition-all duration-500" style={{ width: `${(pending / total) * 100}%` }} />}
                             </div>
                           </div>
                         )
@@ -6005,6 +6073,7 @@ function CampanhasTab() {
             </motion.div>
           ))}
         </div>
+        </>
       )}
 
       <ConfirmDialog open={!!deleteConfirm} onOpenChange={() => setDeleteConfirm(null)}
@@ -6415,7 +6484,13 @@ function CampanhasTab() {
                                     <span className="text-muted-foreground truncate">{m.contact?.phone || ''}</span>
                                   </div>
                                   <div className="flex items-center gap-2 mt-0.5">
-                                    <StatusBadge status={m.status} />
+                                    <span className="flex items-center gap-1 text-[10px] font-medium">
+                                      {m.status === 'delivered' || m.status === 'read' ? <CheckCircle2 className="size-3 text-emerald-500" /> :
+                                       m.status === 'sent' ? <Check className="size-3 text-sky-500" /> :
+                                       m.status === 'failed' ? <XCircle className="size-3 text-rose-500" /> :
+                                       m.status === 'pending' ? <Clock className="size-3 text-amber-500" /> : null}
+                                      <StatusBadge status={m.status} />
+                                    </span>
                                     {m.chip?.name && <span className="text-muted-foreground">via {m.chip.name}</span>}
                                   </div>
                                   {m.error && <p className="text-rose-600 mt-0.5 font-medium truncate">Erro: {m.error}</p>}
@@ -6484,6 +6559,21 @@ function CampanhasTab() {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
+            <Button variant="outline" size="sm" className="w-full gap-2 text-xs" onClick={() => {
+              const pending = selectedCampaign?.messageStatusCounts?.pending || 0
+              const connectedChips = (selectedCampaign?.chips || []).filter((cc: any) => cc.chip?.status === 'connected' && !cc.chip?.paused)
+              if (connectedChips.length === 0) return
+              const perChip = Math.floor(pending / connectedChips.length)
+              const remainder = pending % connectedChips.length
+              const newDist: Record<string, number> = {}
+              connectedChips.forEach((cc: any, i: number) => {
+                newDist[cc.chipId] = perChip + (i < remainder ? 1 : 0)
+              })
+              setRedistributeDistribution(newDist)
+            }}>
+              <ArrowRightLeft className="size-3.5" /> Distribuir igualmente entre chips conectados
+            </Button>
+
             {/* Mode toggle */}
             <div className="flex items-center gap-1 p-1 bg-muted/40 rounded-md">
               <button type="button" onClick={() => setDistMode('absolute')} className={`flex-1 text-xs py-1 rounded transition-all ${distMode === 'absolute' ? 'bg-emerald-500 text-white font-medium' : 'text-muted-foreground hover:text-foreground'}`}>

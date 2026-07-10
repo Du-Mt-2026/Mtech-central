@@ -54,7 +54,6 @@ app.use(async (req, res) => {
     'content-type': req.headers['content-type'] || 'application/json',
   };
   
-  console.log('[Proxy] Header original apikey:', req.headers.apikey?.substring(0, 30) + '...');
   
   if (needsInstanceToken) {
     let instanceName = null;
@@ -96,7 +95,6 @@ app.use(async (req, res) => {
         headers.apikey = instance.token;
         headers.instanceid = instance.id;
         console.log('[Proxy] Token trocado para:', instanceName);
-        console.log('[Proxy] Novo apikey:', headers.apikey.substring(0, 30) + '...');
         console.log('[Proxy] instanceid:', headers.instanceid);
       } else {
         console.log('[Proxy] Instância não encontrada:', instanceName);

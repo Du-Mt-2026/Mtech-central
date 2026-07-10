@@ -14,7 +14,7 @@ docker run -d \
   --name evolution-proxy \
   --network duda-bot_duda-network \
   -p 3001:3001 \
-  -e GLOBAL_API_KEY="0fdef2ec34b1f60c89470b6d50ab845a246d13ac50b320bc" \
+  -e GLOBAL_API_KEY="${GLOBAL_API_KEY}" \
   --restart unless-stopped \
   evolution-proxy
 

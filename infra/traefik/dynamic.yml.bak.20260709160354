@@ -1,0 +1,26 @@
+tls:
+  certificates:
+    - certFile: /certs/origin.crt
+      keyFile: /certs/origin.key
+      stores:
+        - default
+  stores:
+    default:
+      defaultCertificate:
+        certFile: /certs/origin.crt
+        keyFile: /certs/origin.key
+
+http:
+  routers:
+    evolution-go:
+      rule: "Host(`evolution-go-manager.nikki.com.br`)"
+      entryPoints:
+        - websecure
+      tls: {}
+      service: evolution-go
+
+  services:
+    evolution-go:
+      loadBalancer:
+        servers:
+          - url: "http://evolution-go:8080"
