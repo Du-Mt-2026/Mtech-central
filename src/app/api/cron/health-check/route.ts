@@ -9,6 +9,7 @@ import {
   isOctupusZapInstance,
   clearInstanceIdCache,
 } from '@/lib/evolution-api'
+import { checkQuarantineCooldown } from '@/lib/reconnection-queue'
 
 /**
  * Cron Health Check — detecta e recupera instâncias presas.
@@ -34,7 +35,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    // 1. Fetch all instances from Evolution API
+    // 0. Verificar chips em quarentena com cooldown expirado (auto-reativar)
+  await checkQuarantineCooldown().catch(err => console.log('[HealthCheck] Quarantine check failed:', err))
+
+  // 1. Fetch all instances from Evolution API
     let allInstances: any[] = []
     try {
       allInstances = await fetchInstances()

@@ -80,6 +80,10 @@ const DEFAULT_CONFIG = {
   RESPECT_SENDING_WINDOW: false,
   INTER_RECONNECT_DELAY_MS: 15_000,
   CONNECT_TIMEOUT_MS: 60_000,
+  // Quarentena: 5 quedas em 1h → marca como 'quarantined'
+  QUARANTINE_THRESHOLD: 5,
+  QUARANTINE_WINDOW_MS: 60 * 60 * 1000,
+  QUARANTINE_COOLDOWN_MS: 60 * 60 * 1000,
 }
 
 /**
@@ -120,6 +124,9 @@ async function getConfig(): Promise<typeof DEFAULT_CONFIG> {
         RESPECT_SENDING_WINDOW: settings.reconnectRespectWindow ?? DEFAULT_CONFIG.RESPECT_SENDING_WINDOW,
         INTER_RECONNECT_DELAY_MS: settings.reconnectInterDelayMs ?? DEFAULT_CONFIG.INTER_RECONNECT_DELAY_MS,
         CONNECT_TIMEOUT_MS: settings.reconnectConnectTimeoutMs ?? DEFAULT_CONFIG.CONNECT_TIMEOUT_MS,
+        QUARANTINE_THRESHOLD: DEFAULT_CONFIG.QUARANTINE_THRESHOLD,
+        QUARANTINE_WINDOW_MS: DEFAULT_CONFIG.QUARANTINE_WINDOW_MS,
+        QUARANTINE_COOLDOWN_MS: DEFAULT_CONFIG.QUARANTINE_COOLDOWN_MS,
       }
       configCache = { data: config, expiresAt: now + 60_000 }
       return config
@@ -135,6 +142,9 @@ async function getConfig(): Promise<typeof DEFAULT_CONFIG> {
 // ============================================================
 
 let reconnectionQueue: Map<string, ReconnectionEntry> = new Map()
+
+// Quarentena: rastreia quedas por chip (array de timestamps)
+const chipDisconnectTracker = new Map<string, number[]>()
 let currentlyReconnecting: Set<string> = new Set() // chipIds being processed right now
 let recentReconnections: Date[] = [] // timestamps of recent reconnects (for rate limiting)
 let consecutiveApiFailures = 0
@@ -668,6 +678,11 @@ async function attemptReconnection(entry: ReconnectionEntry): Promise<void> {
       // does NOT re-enqueue it. Health check only looks for 'disconnected'/'connecting' statuses.
       // Previously, setting to 'disconnected' caused an infinite loop where the health check
       // would re-enqueue the chip, reset the attempt count, and try again.
+      const quarantined = await checkAndApplyQuarantine(chipId, chipName)
+      if (quarantined) {
+        return
+      }
+
       await db.chip.update({
         where: { id: chipId },
         data: { status: 'error' },
@@ -694,6 +709,81 @@ async function attemptReconnection(entry: ReconnectionEntry): Promise<void> {
       data: { status: 'disconnected' },
     }).catch(() => {})
   }
+}
+
+/**
+ * Verifica se um chip deve ser colocado em quarentena.
+ */
+async function checkAndApplyQuarantine(chipId: string, chipName: string): Promise<boolean> {
+  const now = Date.now()
+  const config = await getConfig()
+
+  const disconnects = chipDisconnectTracker.get(chipId) || []
+  const recentDisconnects = disconnects.filter(ts => now - ts < config.QUARANTINE_WINDOW_MS)
+  chipDisconnectTracker.set(chipId, recentDisconnects)
+
+  if (recentDisconnects.length >= config.QUARANTINE_THRESHOLD) {
+    console.log(`[ReconnectQueue] Chip ${chipName} em quarentena: ${recentDisconnects.length} quedas em ${config.QUARANTINE_WINDOW_MS / 60000}min`)
+
+    await db.chip.update({
+      where: { id: chipId },
+      data: {
+        status: 'quarantined',
+        cooldownUntil: new Date(now + config.QUARANTINE_COOLDOWN_MS),
+      },
+    }).catch(() => {})
+
+    try {
+      const { notify } = await import('./notification')
+      await notify({
+        title: 'Chip em quarentena',
+        message: `${chipName} caiu ${recentDisconnects.length} vezes em ${config.QUARANTINE_WINDOW_MS / 60000}min. Pausado por ${config.QUARANTINE_COOLDOWN_MS / 60000}min.`,
+        severity: 'warning',
+        key: `quarantine-${chipId}`,
+        details: {
+          chip: chipName,
+          quedas: recentDisconnects.length,
+          janela_min: config.QUARANTINE_WINDOW_MS / 60000,
+          cooldown_min: config.QUARANTINE_COOLDOWN_MS / 60000,
+        },
+      })
+    } catch {}
+
+    chipDisconnectTracker.delete(chipId)
+    return true
+  }
+
+  return false
+}
+
+export async function checkQuarantineCooldown(): Promise<void> {
+  const now = Date.now()
+
+  const quarantinedChips = await db.chip.findMany({
+    where: {
+      status: 'quarantined',
+      cooldownUntil: { lt: new Date(now) },
+    },
+  }).catch(() => [])
+
+  for (const chip of quarantinedChips) {
+    console.log(`[ReconnectQueue] Chip ${chip.name} saiu de quarentena`)
+    await db.chip.update({
+      where: { id: chip.id },
+      data: {
+        status: 'disconnected',
+        cooldownUntil: null,
+      },
+    }).catch(() => {})
+    chipDisconnectTracker.delete(chip.id)
+  }
+}
+
+export function recordChipDisconnect(chipId: string): void {
+  const now = Date.now()
+  const disconnects = chipDisconnectTracker.get(chipId) || []
+  disconnects.push(now)
+  chipDisconnectTracker.set(chipId, disconnects)
 }
 
 /**
