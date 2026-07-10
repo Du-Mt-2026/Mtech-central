@@ -16,8 +16,10 @@ import {
   Sparkles, Heart, Star, AlertTriangle, Info, ChevronDown,
   Pencil, LayoutList, Database, WifiOff, ArrowDownToLine, Save, XCircle, ShieldBan,
   Inbox, LogOut, RotateCcw, Film, Music, File as FileIcon, ImageIcon, Key, Paperclip, MapPin, Link2,
-  Baby, CheckCircle2, Video, MoreVertical, Mic, User, Smile, BookmarkPlus, GripVertical, Loader2, Eraser, Megaphone, ArrowRightLeft
+  Baby, CheckCircle2, Video, MoreVertical, Mic, User, Smile, BookmarkPlus, GripVertical, Loader2, Eraser, Megaphone, ArrowRightLeft,
+  Sun, Moon
 } from 'lucide-react'
+import { useTheme } from 'next-themes'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardAction } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -8206,6 +8208,38 @@ const STANDARD_CONTACT_FIELDS = [
 ] as const
 
 // ===== Main App =====
+// ===== Theme Toggle Component =====
+function ThemeToggle() {
+  const { theme, setTheme } = useTheme()
+  const [mounted, setMounted] = React.useState(false)
+
+  React.useEffect(() => setMounted(true), [])
+
+  if (!mounted) {
+    return <div className="h-8 w-8" />
+  }
+
+  const isDark = theme === 'dark'
+
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-zinc-400 hover:text-amber-400 h-8 w-8 p-0"
+            onClick={() => setTheme(isDark ? 'light' : 'dark')}
+          >
+            {isDark ? <Sun className="size-4" /> : <Moon className="size-4" />}
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>{isDark ? 'Modo claro' : 'Modo escuro'}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  )
+}
+
 export default function OctupusZapApp() {
   const [activeTab, setActiveTab] = useState('dashboard')
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -8622,6 +8656,7 @@ export default function OctupusZapApp() {
               <p className="text-sm font-medium text-white truncate">{username || 'OctupusZap'}</p>
               <p className="text-xs text-zinc-400">{userRole === 'master' ? 'Master' : userRole === 'admin' ? 'Admin' : 'Operador'}</p>
             </div>
+            <ThemeToggle />
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
