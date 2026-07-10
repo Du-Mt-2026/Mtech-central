@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getSession, verifyPassword, hashPassword } from '@/lib/auth'
 import { db } from '@/lib/db'
+import { logAction } from '@/lib/audit-log'
 
 export async function PUT(request: Request) {
   try {
@@ -40,6 +41,16 @@ export async function PUT(request: Request) {
     await db.adminUser.update({
       where: { id: user.id },
       data: { password: hashedPassword },
+    })
+
+    await logAction({
+      userId: session.userId,
+      userName: session.username,
+      userRole: session.role,
+      action: 'CHANGE_PASSWORD',
+      category: 'auth',
+      targetId: user.id,
+      targetType: 'user',
     })
 
     return NextResponse.json({ success: true, message: 'Senha alterada com sucesso' })

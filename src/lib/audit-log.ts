@@ -12,6 +12,10 @@ interface AuditLogData {
   ipAddress?: string
 }
 
+/**
+ * Registra uma ação no log de auditoria.
+ * Falhas são silenciosas (não quebram o fluxo principal).
+ */
 export async function logAction(data: AuditLogData): Promise<void> {
   try {
     await db.auditLog.create({
@@ -23,15 +27,19 @@ export async function logAction(data: AuditLogData): Promise<void> {
         category: data.category || 'general',
         targetId: data.targetId || null,
         targetType: data.targetType || null,
-        details: data.details ?? undefined,
+        details: data.details || undefined,
         ipAddress: data.ipAddress || null,
       },
     })
   } catch (error) {
+    // Silencioso — não pode quebrar o fluxo principal
     console.error('[AuditLog] Erro ao registrar log:', error)
   }
 }
 
+/**
+ * Busca logs de auditoria com paginação.
+ */
 export async function getAuditLogs(options: {
   limit?: number
   offset?: number

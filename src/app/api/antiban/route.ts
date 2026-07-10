@@ -4,6 +4,8 @@ import { toMins } from '@/lib/time-utils'
 import { FIELD_DEFAULTS, SECTION_FIELDS, antiBanUpdateSchema, scheduleEntrySchema, breakWindowSchema, humanBehaviorConfigSchema } from '@/lib/constants'
 import { ZodError } from 'zod'
 import { clearAntiBanApiCache } from '@/lib/evolution-api'
+import { getSession } from '@/lib/auth'
+import { logAction } from '@/lib/audit-log'
 
 // GET /api/antiban — Get current anti-ban settings
 export async function GET() {
@@ -340,6 +342,20 @@ export async function PATCH(request: NextRequest) {
     })
 
     clearAntiBanApiCache() // Invalidate cached API settings (timeout, call reject, etc.)
+
+    // Audit log for anti-ban config changes
+    const session = await getSession()
+    await logAction({
+      userId: session?.userId,
+      userName: session?.username,
+      userRole: session?.role,
+      action: 'UPDATE_ANTIBAN_SETTINGS',
+      category: 'config',
+      targetId: settings.id,
+      targetType: 'antiban',
+      details: { fields: Object.keys(updateData) },
+    })
+
     return NextResponse.json(updated)
   } catch (error) {
     if (error instanceof ZodError) {

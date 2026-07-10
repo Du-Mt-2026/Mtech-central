@@ -9,6 +9,8 @@ import {
 } from '@/lib/evolution-router'
 import { setProxy, getConnectionState, getInstanceName as v3GetInstanceName } from '@/lib/evolution-api'
 import { removeWireGuardPeer } from '@/lib/wireguard-peer-api'
+import { getSession } from '@/lib/auth'
+import { logAction } from '@/lib/audit-log'
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ chipId: string }> }) {
   const { chipId } = await params
@@ -45,6 +47,19 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ c
     await db.contact.deleteMany({ where: { chipId } })
     await db.campaignChip.deleteMany({ where: { chipId } })
     await db.chip.delete({ where: { id: chipId } })
+
+    const session = await getSession()
+    await logAction({
+      userId: session?.userId,
+      userName: session?.username,
+      userRole: session?.role,
+      action: 'DELETE_CHIP',
+      category: 'chip',
+      targetId: chipId,
+      targetType: 'chip',
+      details: { name: chip?.name, phoneNumber: chip?.phoneNumber },
+    })
+
     return NextResponse.json({ success: true })
   } catch {
     return NextResponse.json({ error: 'Chip não encontrado' }, { status: 404 })

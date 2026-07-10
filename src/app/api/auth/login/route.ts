@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { hashPassword, verifyPassword, createToken, setSessionCookie } from '@/lib/auth'
+import { logAction } from '@/lib/audit-log'
 
 // ─── Brute force protection ───────────────────────────────────────
 const MAX_FAILED_ATTEMPTS = 5
@@ -91,6 +92,12 @@ export async function POST(req: NextRequest) {
 
     if (!adminUser) {
       recordFailedAttempt(ip)
+      await logAction({
+        action: 'LOGIN_FAILED',
+        category: 'auth',
+        ipAddress: ip,
+        details: { email, reason: 'user_not_found' },
+      })
       return NextResponse.json(
         { error: 'Email ou senha incorretos. Verifique seus dados e tente novamente.' },
         { status: 401 }
@@ -107,6 +114,12 @@ export async function POST(req: NextRequest) {
     const isValid = await verifyPassword(password, adminUser.password)
     if (!isValid) {
       recordFailedAttempt(ip)
+      await logAction({
+        action: 'LOGIN_FAILED',
+        category: 'auth',
+        ipAddress: ip,
+        details: { email, reason: 'wrong_password' },
+      })
       return NextResponse.json(
         { error: 'Email ou senha incorretos. Verifique seus dados e tente novamente.' },
         { status: 401 }
@@ -114,6 +127,16 @@ export async function POST(req: NextRequest) {
     }
 
     resetAttempts(ip)
+
+    await logAction({
+      userId: adminUser.id,
+      userName: adminUser.name,
+      userRole: adminUser.role,
+      action: 'LOGIN_SUCCESS',
+      category: 'auth',
+      ipAddress: ip,
+      details: { email: adminUser.email },
+    })
 
     const token = await createToken({
       userId: adminUser.id,

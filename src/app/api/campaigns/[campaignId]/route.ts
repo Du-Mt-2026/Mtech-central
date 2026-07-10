@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { startCampaign } from '@/lib/sending-engine'
+import { getSession } from '@/lib/auth'
+import { logAction } from '@/lib/audit-log'
 
 // Allowed fields for PATCH (whitelist to prevent arbitrary data injection)
 const ALLOWED_FIELDS = [
@@ -121,6 +123,19 @@ export async function PATCH(
           { status: 400 }
         )
       }
+
+      // Audit log for status transitions
+      const session = await getSession()
+      await logAction({
+        userId: session?.userId,
+        userName: session?.username,
+        userRole: session?.role,
+        action: `CAMPAIGN_${newStatus.toUpperCase()}`,
+        category: 'campaign',
+        targetId: campaignId,
+        targetType: 'campaign',
+        details: { from: currentCampaign.status, to: newStatus, name: currentCampaign.name },
+      })
 
       // Handle specific transitions
       if (newStatus === 'scheduled') {
@@ -252,10 +267,25 @@ export async function DELETE(
 ) {
   const { campaignId } = await params
   try {
+    const campaign = await db.campaign.findUnique({ where: { id: campaignId }, select: { name: true } })
+
     await db.sequenceStep.deleteMany({ where: { campaignId } })
     await db.campaignChip.deleteMany({ where: { campaignId } })
     await db.message.deleteMany({ where: { campaignId } })
     await db.campaign.delete({ where: { id: campaignId } })
+
+    const session = await getSession()
+    await logAction({
+      userId: session?.userId,
+      userName: session?.username,
+      userRole: session?.role,
+      action: 'DELETE_CAMPAIGN',
+      category: 'campaign',
+      targetId: campaignId,
+      targetType: 'campaign',
+      details: { name: campaign?.name },
+    })
+
     return NextResponse.json({ success: true })
   } catch {
     return NextResponse.json({ error: 'Campanha não encontrada' }, { status: 404 })

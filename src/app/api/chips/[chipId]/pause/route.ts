@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { getSession } from '@/lib/auth'
+import { logAction } from '@/lib/audit-log'
 
 /**
  * POST /api/chips/{chipId}/pause
@@ -40,6 +42,18 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ chi
     })
 
     console.log(`[Chip Pause] Chip ${chip.name} (${chip.phoneNumber}) pausado individualmente${reason ? ` — motivo: ${reason}` : ''}`)
+
+    const session = await getSession()
+    await logAction({
+      userId: session?.userId,
+      userName: session?.username,
+      userRole: session?.role,
+      action: 'PAUSE_CHIP',
+      category: 'chip',
+      targetId: chipId,
+      targetType: 'chip',
+      details: { name: chip.name, phoneNumber: chip.phoneNumber, reason },
+    })
 
     return NextResponse.json({
       success: true,

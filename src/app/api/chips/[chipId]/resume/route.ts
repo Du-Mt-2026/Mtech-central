@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { getSession } from '@/lib/auth'
+import { logAction } from '@/lib/audit-log'
 
 /**
  * POST /api/chips/{chipId}/resume
@@ -36,6 +38,18 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ chi
     })
 
     console.log(`[Chip Resume] Chip ${chip.name} (${chip.phoneNumber}) retomado — voltará a receber mensagens`)
+
+    const session = await getSession()
+    await logAction({
+      userId: session?.userId,
+      userName: session?.username,
+      userRole: session?.role,
+      action: 'RESUME_CHIP',
+      category: 'chip',
+      targetId: chipId,
+      targetType: 'chip',
+      details: { name: chip.name, phoneNumber: chip.phoneNumber },
+    })
 
     return NextResponse.json({
       success: true,

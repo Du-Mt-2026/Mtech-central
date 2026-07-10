@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { getSession } from '@/lib/auth'
+import { logAction } from '@/lib/audit-log'
 
 export async function GET(request: Request) {
   try {
@@ -174,6 +176,19 @@ export async function POST(request: Request) {
           select: { id: true, nome: true, treatAs: true },
         },
       },
+    })
+
+    const session = await getSession()
+
+    await logAction({
+      userId: session?.userId,
+      userName: session?.username,
+      userRole: session?.role,
+      action: 'CREATE_CAMPAIGN',
+      category: 'campaign',
+      targetId: campaign.id,
+      targetType: 'campaign',
+      details: { name: campaign.name, chipCount: chipIds?.length || 0 },
     })
 
     return NextResponse.json(campaign, { status: 201 })

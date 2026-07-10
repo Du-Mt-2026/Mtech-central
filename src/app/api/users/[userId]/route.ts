@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { getSession, hashPassword } from '@/lib/auth'
+import { logAction } from '@/lib/audit-log'
 
 // GET /api/users/[userId] — Get a single user (master only)
 export async function GET(req: NextRequest, { params }: { params: Promise<{ userId: string }> }) {
@@ -112,6 +113,17 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ us
       },
     })
 
+    await logAction({
+      userId: session.userId,
+      userName: session.username,
+      userRole: session.role,
+      action: 'UPDATE_USER',
+      category: 'user',
+      targetId: userId,
+      targetType: 'user',
+      details: { name: user.name, email: user.email, role: user.role, fieldsChanged: Object.keys(updateData) },
+    })
+
     return NextResponse.json(user)
   } catch (error: any) {
     console.error('[Users] Update error:', error)
@@ -140,6 +152,17 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ u
     }
 
     await db.adminUser.delete({ where: { id: userId } })
+
+    await logAction({
+      userId: session.userId,
+      userName: session.username,
+      userRole: session.role,
+      action: 'DELETE_USER',
+      category: 'user',
+      targetId: userId,
+      targetType: 'user',
+      details: { name: existing.name, email: existing.email },
+    })
 
     return NextResponse.json({ success: true, message: 'Usuário excluído com sucesso' })
   } catch (error: any) {

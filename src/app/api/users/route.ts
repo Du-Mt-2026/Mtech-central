@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { getSession, hashPassword } from '@/lib/auth'
+import { logAction } from '@/lib/audit-log'
 
 // GET /api/users — List all users (master only)
 export async function GET() {
@@ -85,6 +86,17 @@ export async function POST(req: NextRequest) {
         createdAt: true,
         updatedAt: true,
       },
+    })
+
+    await logAction({
+      userId: session.userId,
+      userName: session.username,
+      userRole: session.role,
+      action: 'CREATE_USER',
+      category: 'user',
+      targetId: user.id,
+      targetType: 'user',
+      details: { name: user.name, email: user.email, role: user.role },
     })
 
     return NextResponse.json(user, { status: 201 })
