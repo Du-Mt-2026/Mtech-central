@@ -849,8 +849,20 @@ function MiniBarChart({ data, max }: {
   )
 }
 
+// ===== Visibility Hook =====
+function useIsVisible() {
+  const [isVisible, setIsVisible] = useState(true)
+  useEffect(() => {
+    const handleVisibility = () => setIsVisible(!document.hidden)
+    document.addEventListener('visibilitychange', handleVisibility)
+    return () => document.removeEventListener('visibilitychange', handleVisibility)
+  }, [])
+  return isVisible
+}
+
 // ===== Chips Tab =====
 function ChipsTab() {
+  const isVisible = useIsVisible()
   const [chips, setChips] = useState<Chip[]>([])
   const [loading, setLoading] = useState(true)
   const [antiBanSettings, setAntiBanSettings] = useState<AntiBanSettings | null>(null)
@@ -1019,9 +1031,9 @@ function ChipsTab() {
     // Auto-refresh chips every 10 seconds for real-time status updates
     // PERF FIX: was 5s, now 10s. /api/chips already syncs with Evolution API
     // internally, so this is the only polling needed for chip status.
-    const interval = setInterval(fetchChips, 10000)
+    const interval = setInterval(fetchChips, isVisible ? 15000 : 60000)
     return () => clearInterval(interval)
-  }, [fetchChips, fetchAntiBanSettings])
+  }, [fetchChips, fetchAntiBanSettings, isVisible])
 
   // ALERT: Detect chip disconnections and notify the user in real-time.
   const prevChipStatusesRef = useRef<Record<string, string>>({})
@@ -2792,6 +2804,7 @@ function SortableContactRow({ contact, isSelected, onToggleSelect, onEdit, onDel
 
 // ===== Contatos Tab =====
 function ContatosTab() {
+  const isVisible = useIsVisible()
   const [contactLists, setContactLists] = useState<ContactList[]>([])
   const [contacts, setContacts] = useState<ContactItem[]>([])
   const [totalContacts, setTotalContacts] = useState(0)
@@ -2921,7 +2934,7 @@ function ContatosTab() {
 
   useEffect(() => {
     fetchLists()
-    const interval = setInterval(fetchLists, 10000)
+    const interval = setInterval(fetchLists, isVisible ? 30000 : 120000)
     return () => clearInterval(interval)
   }, [fetchLists])
   useEffect(() => { if (selectedList) fetchContacts(selectedList.id, 1) }, [selectedList, fetchContacts])
@@ -4172,6 +4185,7 @@ function SortableTab({ id, idx, isActive, canClose, onClick, onClose, isFollowUp
 }
 
 function CampanhasTab() {
+  const isVisible = useIsVisible()
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
   const [loading, setLoading] = useState(true)
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
@@ -4344,7 +4358,7 @@ function CampanhasTab() {
   useEffect(() => {
     const hasRunning = campaigns.some(c => c.status === 'running')
     if (!hasRunning) return
-    const interval = setInterval(fetchCampaigns, 10000)
+    const interval = setInterval(fetchCampaigns, isVisible ? 20000 : 120000)
     return () => clearInterval(interval)
   }, [campaigns, fetchCampaigns])
 
@@ -6625,6 +6639,7 @@ function CampanhasTab() {
 
 // ===== Templates Tab =====
 function TemplatesTab() {
+  const isVisible = useIsVisible()
   const [templates, setTemplates] = useState<MessageTemplate[]>([])
   const [loading, setLoading] = useState(true)
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
@@ -6644,7 +6659,7 @@ function TemplatesTab() {
   useEffect(() => {
     fetchTemplates()
     // PERF FIX: was 10s, now 30s. Templates rarely change.
-    const interval = setInterval(fetchTemplates, 30000)
+    const interval = setInterval(fetchTemplates, isVisible ? 60000 : 300000)
     return () => clearInterval(interval)
   }, [fetchTemplates])
 
@@ -7846,6 +7861,7 @@ interface AdminUserItem {
 }
 
 function UsuariosTab() {
+  const isVisible = useIsVisible()
   const [users, setUsers] = useState<AdminUserItem[]>([])
   const [loading, setLoading] = useState(true)
   const [addDialogOpen, setAddDialogOpen] = useState(false)
@@ -7871,7 +7887,7 @@ function UsuariosTab() {
 
   useEffect(() => {
     fetchUsers()
-    const interval = setInterval(fetchUsers, 15000)
+    const interval = setInterval(fetchUsers, isVisible ? 30000 : 300000)
     return () => clearInterval(interval)
   }, [fetchUsers])
 
