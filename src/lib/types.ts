@@ -141,3 +141,36 @@ export interface MessageTemplate {
   createdAt: string
   updatedAt: string
 }
+
+export type StepForm = {
+  content: string
+  delayMinutes: number
+  delayUnit: string
+  mediaFile: File | null
+  mediaUrl: string
+  mediatype: string
+  audioMode: 'whatsapp' | 'original'
+  caption: string
+  linkUrl: string
+  linkPreview: boolean
+  contactName: string
+  contactPhone: string
+  locationLat: string
+  locationLng: string
+  locationName: string
+  variations: Array<{
+    content: string
+    mediaFile: File | null
+    mediaUrl: string
+    mediatype: string
+    audioMode: 'whatsapp' | 'original'
+    caption: string
+    linkUrl: string
+    linkPreview: boolean
+    contactName: string
+    contactPhone: string
+    locationLat: string
+    locationLng: string
+    locationName: string
+  }>
+}
