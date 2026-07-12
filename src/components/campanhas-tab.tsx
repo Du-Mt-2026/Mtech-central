@@ -888,6 +888,7 @@ export function CampanhasTab() {
     chipDistribution: {} as Record<string, number>,
   })
 
+  const prevStatusRef = useRef<Record<string, string>>({})
   const fetchCampaigns = useCallback(async () => {
     try {
       const res = await fetch('/api/campaigns', { cache: 'no-store' })
@@ -2582,11 +2583,36 @@ export function CampanhasTab() {
           </div>
         </div>
         <div className="space-y-4">
-          {campaigns.filter(c => {
-            const matchFilter = campaignFilter === 'all' || c.status === campaignFilter
-            const matchSearch = !campaignSearch || c.name.toLowerCase().includes(campaignSearch.toLowerCase())
-            return matchFilter && matchSearch
-          }).map((c, i) => (
+          {(() => {
+            const filtered = campaigns.filter(c => {
+              const matchFilter = campaignFilter === 'all' || c.status === campaignFilter
+              const matchSearch = !campaignSearch || c.name.toLowerCase().includes(campaignSearch.toLowerCase())
+              return matchFilter && matchSearch
+            })
+            // Agrupar por data
+            const groups: { label: string; items: typeof filtered }[] = []
+            const now = new Date()
+            const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+            const yesterday = new Date(today.getTime() - 86400000)
+            const weekAgo = new Date(today.getTime() - 7 * 86400000)
+            const addToGroup = (label: string, item: typeof filtered[0]) => {
+              let g = groups.find(g => g.label === label)
+              if (!g) { g = { label, items: [] }; groups.push(g) }
+              g.items.push(item)
+            }
+            for (const c of filtered) {
+              const d = new Date(c.createdAt)
+              if (d >= today) addToGroup('Hoje', c)
+              else if (d >= yesterday) addToGroup('Ontem', c)
+              else if (d >= weekAgo) addToGroup('Esta semana', c)
+              else addToGroup('Mais antigas', c)
+            }
+            return groups.map(group => (
+              <div key={group.label}>
+                <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2 mt-4 first:mt-0">{group.label} ({group.items.length})</h4>
+                <div className="space-y-3">
+                {group.items.map((c, i) => (
+
             <motion.div key={c.id} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}>
               <Card className={cn('shadow-lg hover:shadow-xl transition-all duration-200 border-l-4',
                 c.status === 'running' ? 'border-l-emerald-500' :
@@ -2617,6 +2643,17 @@ export function CampanhasTab() {
                       </div>
                       <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
                         <span className="flex items-center gap-1"><Smartphone className="size-3" /> {c.chips?.length || 0} chips</span>
+                        {c.chips && c.chips.length > 0 && (
+                          <span className="flex items-center gap-1 text-muted-foreground/70">
+                            {c.chips.slice(0, 2).map((cc, idx) => (
+                              <span key={cc.chipId} className="flex items-center gap-0.5">
+                                {idx > 0 && <span>·</span>}
+                                <span className="truncate max-w-[80px]">{cc.chip?.name || cc.chip?.phoneNumber}</span>
+                              </span>
+                            ))}
+                            {c.chips.length > 2 && <span>+{c.chips.length - 2}</span>}
+                          </span>
+                        )}
                         {(() => {
                           const msc = c.messageStatusCounts || {}
                           const total = (msc.pending || 0) + (msc.sent || 0) + (msc.delivered || 0) + (msc.read || 0) + (msc.failed || 0)
@@ -2651,7 +2688,17 @@ export function CampanhasTab() {
                                 {failed > 0 && <span className="text-rose-500 font-medium">{failed} falha{failed !== 1 ? 's' : ''}</span>}
                                 {pending > 0 && <span className="text-muted-foreground">{pending} pendente{pending !== 1 ? 's' : ''}</span>}
                               </span>
-                              <span className="font-semibold text-muted-foreground">{pct}%</span>
+                              <span className="flex items-center gap-2">
+                                {isRunning && pending > 0 && (() => {
+                                  const avgInterval = (c.sendIntervalMin + c.sendIntervalMax) / 2
+                                  const chipsCount = c.chips?.length || 1
+                                  const totalSecs = (pending * avgInterval) / chipsCount
+                                  const hrs = Math.floor(totalSecs / 3600)
+                                  const mins = Math.ceil((totalSecs % 3600) / 60)
+                                  return <span className="text-amber-600 dark:text-amber-400 font-medium">~{hrs > 0 ? `${hrs}h ` : ''}{mins}min restante</span>
+                                })()}
+                                <span className="font-semibold text-muted-foreground">{pct}%</span>
+                              </span>
                             </div>
                             <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden flex">
                               {done > 0 && <div className="h-full bg-emerald-500 transition-all duration-500" style={{ width: `${(done / total) * 100}%` }} />}
@@ -2688,7 +2735,11 @@ export function CampanhasTab() {
                 </CardContent>
               </Card>
             </motion.div>
-          ))}
+                ))}
+                </div>
+              </div>
+            ))
+          })()}
         </div>
         </>
       )}
