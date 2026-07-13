@@ -1336,10 +1336,10 @@ export function CampanhasTab() {
     catch { toast.error('Erro ao remover campanha') }
   }
 
-  const exportCampaign = async (id: string, name: string) => {
+  const exportCampaign = async (id: string, name: string, format: string = 'csv') => {
     setExportingId(id)
     try {
-      const res = await fetch(`/api/campaigns/${id}/export`)
+      const res = await fetch(`/api/campaigns/${id}/export?format=${format}`)
       if (!res.ok) throw new Error('Erro ao exportar')
       const blob = await res.blob()
       const url = window.URL.createObjectURL(blob)
@@ -3207,7 +3207,15 @@ export function CampanhasTab() {
                         let globalIdx = 0
                         const groups = Array.from(contactGroups.entries())
                         return groups.map(([contactId, messages]) => {
-                          return messages.map((m, stepIdx) => {
+                          const contactName = messages[0]?.contact?.name || messages[0]?.contact?.phone || '—'
+                          return [
+                          <div key={`header-${contactId}`} className="flex items-center gap-2 pt-2 pb-0.5">
+                            <User className="size-3 text-muted-foreground" />
+                            <span className="text-[10px] font-semibold text-muted-foreground">{contactName}</span>
+                            <span className="text-[9px] text-muted-foreground">({messages.length} msg{messages.length > 1 ? 's' : ''})</span>
+                            <div className="flex-1 h-px bg-border" />
+                          </div>,
+                          ...messages.map((m, stepIdx) => {
                             globalIdx++
                             const isFollowUp = stepIdx > 0
                             const isLastInGroup = stepIdx === messages.length - 1
@@ -3308,11 +3316,47 @@ export function CampanhasTab() {
                               </div>
                             )
                           })
+                          ]
                         })
                       })()}
                     </div>
                   </div>
                 )}
+                {/* #19 Timeline de eventos */}
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-semibold">Timeline de Eventos</Label>
+                  <div className="space-y-1 max-h-[200px] overflow-y-auto">
+                    {(() => {
+                      const events: Array<{ time: string; text: string; color: string }> = []
+                      for (const m of detailMessages) {
+                        if (m.sentAt) {
+                          events.push({ time: m.sentAt, text: `${m.contact?.name || m.contact?.phone || '—'} enviada via ${m.chip?.name || '—'}`, color: 'text-sky-600' })
+                        }
+                        if (m.deliveredAt) {
+                          events.push({ time: m.deliveredAt, text: `${m.contact?.name || m.contact?.phone || '—'} entregue`, color: 'text-emerald-600' })
+                        }
+                        if (m.status === 'failed' && m.updatedAt) {
+                          events.push({ time: m.updatedAt, text: `${m.contact?.name || m.contact?.phone || '—'} falhou: ${m.error || 'erro'}`, color: 'text-rose-600' })
+                        }
+                      }
+                      if (selectedCampaign.startedAt) events.push({ time: selectedCampaign.startedAt, text: 'Campanha iniciada', color: 'text-emerald-600' })
+                      if (selectedCampaign.completedAt) events.push({ time: selectedCampaign.completedAt, text: 'Campanha concluída', color: 'text-sky-600' })
+                      if (selectedCampaign.pausedAt) events.push({ time: selectedCampaign.pausedAt, text: 'Campanha pausada', color: 'text-amber-600' })
+                      events.sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime())
+                      if (events.length === 0) return <p className="text-xs text-muted-foreground">Nenhum evento registrado</p>
+                      return events.slice(0, 50).map((e, i) => (
+                        <div key={i} className="flex items-start gap-2 text-xs p-1.5 rounded bg-muted/30">
+                          <div className={`size-2 rounded-full mt-1 shrink-0 ${e.color.includes('emerald') ? 'bg-emerald-500' : e.color.includes('sky') ? 'bg-sky-500' : e.color.includes('amber') ? 'bg-amber-500' : 'bg-rose-500'}`} />
+                          <div className="flex-1 min-w-0">
+                            <span className={`font-medium ${e.color}`}>{e.text}</span>
+                            <span className="text-muted-foreground ml-2">{new Date(e.time).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
+                          </div>
+                        </div>
+                      ))
+                    })()}
+                  </div>
+                </div>
+
                 {selectedCampaign.sequenceSteps?.length > 0 && (
                   <div className="space-y-1.5">
                     <Label className="text-xs font-semibold">Mensagens & Variações</Label>
@@ -3377,7 +3421,7 @@ export function CampanhasTab() {
               <ArrowRightLeft className="size-3.5" /> Distribuir igualmente entre chips conectados
             </Button>
 
-            {/* Mode toggle */}
+            {/* Mode toggle + Distribuição automática */}
             <div className="flex items-center gap-1 p-1 bg-muted/40 rounded-md">
               <button type="button" onClick={() => setDistMode('absolute')} className={`flex-1 text-xs py-1 rounded transition-all ${distMode === 'absolute' ? 'bg-emerald-500 text-white font-medium' : 'text-muted-foreground hover:text-foreground'}`}>
                 Número absoluto
@@ -3386,6 +3430,41 @@ export function CampanhasTab() {
                 Porcentagem %
               </button>
             </div>
+            {/* #30 Distribuição automática inteligente */}
+            <Button variant="outline" size="sm" className="w-full gap-1.5 text-xs" onClick={() => {
+              if (!selectedCampaign) return
+              const pendingCount = selectedCampaign.messageStatusCounts?.pending || 0
+              if (pendingCount === 0) return
+              const chips = (selectedCampaign.chips || []).map((cc: any) => {
+                const chip = cc.chip
+                if (!chip) return null
+                const chipInfo = getChipEffectiveInfo(chip)
+                const capacity = Math.max(0, chipInfo.effectiveLimit - (chip.sentToday || 0))
+                return { chipId: cc.chipId, capacity, name: chip.name }
+              }).filter((c: any) => c !== null) as { chipId: string; capacity: number; name: string }[]
+
+              const totalCapacity = chips.reduce((sum, c) => sum + c.capacity, 0)
+              if (totalCapacity === 0) {
+                toast.error('Nenhum chip tem capacidade disponível')
+                return
+              }
+
+              const newDist: Record<string, number> = {}
+              let allocated = 0
+              for (let i = 0; i < chips.length; i++) {
+                if (i === chips.length - 1) {
+                  newDist[chips[i].chipId] = Math.min(pendingCount - allocated, chips[i].capacity)
+                } else {
+                  const share = Math.floor(pendingCount * chips[i].capacity / totalCapacity)
+                  newDist[chips[i].chipId] = Math.min(share, chips[i].capacity)
+                  allocated += newDist[chips[i].chipId]
+                }
+              }
+              setRedistributeDistribution(newDist)
+              toast.success('Distribuição automática aplicada (proporcional à capacidade)')
+            }}>
+              <ArrowRightLeft className="size-3.5" /> Distribuir automaticamente (proporcional à capacidade)
+            </Button>
 
             {/* Chip sliders */}
             <div className="space-y-3 max-h-[400px] overflow-y-auto">
@@ -3469,6 +3548,25 @@ export function CampanhasTab() {
                     <span className="text-muted-foreground">Mensagens pendentes:</span>
                     <span className="font-medium">{pendingCount}</span>
                   </div>
+                  {(() => {
+                    const chips = (selectedCampaign?.chips || []).map((cc: any) => {
+                      const chip = cc.chip
+                      if (!chip) return null
+                      const chipInfo = getChipEffectiveInfo(chip)
+                      const capacity = Math.max(0, chipInfo.effectiveLimit - (chip.sentToday || 0))
+                      const allocated = redistributeDistribution[cc.chipId] || 0
+                      return { name: chip.name, capacity, allocated, exceeded: allocated > capacity }
+                    }).filter((c: any) => c !== null) as { name: string; capacity: number; allocated: number; exceeded: boolean }[]
+                    const exceededChips = chips.filter(c => c.exceeded)
+                    if (exceededChips.length > 0) {
+                      return (
+                        <p className="text-red-500 font-medium flex items-center gap-1">
+                          <AlertTriangle className="size-3" /> Capacidade excedida: {exceededChips.map(c => c.name).join(', ')}
+                        </p>
+                      )
+                    }
+                    return null
+                  })()}
                   {manualTotal > 0 && (
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Alocados manualmente:</span>
