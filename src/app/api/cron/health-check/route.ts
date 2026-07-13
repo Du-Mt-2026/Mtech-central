@@ -253,7 +253,8 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// Also support GET for easy testing
+// Also support GET for easy testing (cron-job.org fallback)
+// Cast to NextRequest — POST only uses nextauth-irrelevant fields like headers and url
 export async function GET(request: Request) {
-  return POST(request)
+  return POST(request as unknown as NextRequest)
 }
