@@ -9,7 +9,7 @@ import {
   Pencil, Eye, XCircle, CheckCircle2,
   File as FileIcon, ImageIcon, Film, Music, Mic, MapPin, Link2,
   BookmarkPlus, GripVertical, Loader2, Eraser, ArrowRightLeft,
-  ChevronDown, Filter, Smile, Shuffle, CheckCircle, FileSpreadsheet, FileText, Flame, Globe, Key, MoreVertical, Paperclip, Phone, RotateCcw, Shield, Smartphone, Snowflake, Trash, Type, User, Video
+  ChevronDown, Filter, Smile, Shuffle, Save, CheckCircle, FileSpreadsheet, FileText, Flame, Globe, Key, MoreVertical, Paperclip, Phone, RotateCcw, Shield, Smartphone, Snowflake, Trash, Type, User, Video
 } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -1052,7 +1052,7 @@ export function CampanhasTab() {
     }
   }, [newCampaign.contactListId, fetchContactVariables])
 
-  const createCampaign = async () => {
+  const createCampaign = async (asDraft: boolean = false) => {
     if (saving) return // prevent double-click
     setSaving(true)
     try {
@@ -1121,6 +1121,7 @@ export function CampanhasTab() {
           return new Date(localVal + brasiliaOffset).toISOString()
         })() : null,
         steps: stepsPayload, antiBanEnabled: newCampaign.antiBanEnabled, warmingMode: newCampaign.warmingMode,
+        status: asDraft ? 'draft' : undefined,
       }
 
       console.log('[createCampaign] Saving campaign:', { name: payload.name, stepsCount: stepsPayload.length, editing, campaignId: selectedCampaign?.id })
@@ -1154,7 +1155,7 @@ export function CampanhasTab() {
         // Create mode: POST new campaign
         const res = await fetch('/api/campaigns', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
         if (!res.ok) { const data = await res.json().catch(() => ({})); throw new Error(data.error || `Erro ${res.status} ao criar campanha`) }
-        toast.success('Campanha criada com sucesso!')
+        toast.success(asDraft ? 'Rascunho salvo com sucesso!' : 'Campanha criada com sucesso!')
         logAction({ action: 'CREATE_CAMPAIGN', category: 'campaign', targetType: 'Campaign' })
       }
       setCreateDialogOpen(false); setEditing(false); resetNewCampaign(); setActiveStep(0); fetchCampaigns()
@@ -1354,10 +1355,11 @@ export function CampanhasTab() {
     finally { setExportingId(null) }
   }
 
-  const exportAllCampaigns = async () => {
+  const exportAllCampaigns = async (filter?: string) => {
     setExportingAll(true)
     try {
-      const res = await fetch('/api/campaigns/export-all')
+      const query = filter && filter !== 'all' ? `?status=${filter}` : ''
+      const res = await fetch(`/api/campaigns/export-all${query}`)
       if (!res.ok) throw new Error('Erro ao exportar')
       const blob = await res.blob()
       const url = window.URL.createObjectURL(blob)
@@ -1787,11 +1789,33 @@ export function CampanhasTab() {
             </Button>
           )}
           <TooltipProvider><Tooltip><TooltipTrigger asChild>
-            <Button variant="outline" className="gap-2 border-sky-500/30 text-sky-500 hover:bg-sky-500/10 hover:text-sky-400" onClick={exportAllCampaigns} disabled={exportingAll || campaigns.length === 0}>
-              {exportingAll ? <RefreshCw className="size-4 animate-spin" /> : <FileSpreadsheet className="size-4" />}
-              Exportar Todas
-            </Button>
-          </TooltipTrigger><TooltipContent>Exportar relatório geral de todas as campanhas</TooltipContent></Tooltip></TooltipProvider>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" className="gap-2 border-sky-500/30 text-sky-500 hover:bg-sky-500/10 hover:text-sky-400" disabled={exportingAll || campaigns.length === 0}>
+                  {exportingAll ? <RefreshCw className="size-4 animate-spin" /> : <FileSpreadsheet className="size-4" />}
+                  Exportar
+                  <ChevronDown className="size-3" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => exportAllCampaigns()} className="gap-2">
+                  <FileSpreadsheet className="size-4" /> Todas as campanhas (CSV)
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => exportAllCampaigns('running')} className="gap-2">
+                  <Play className="size-4" /> Só em execução (CSV)
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => exportAllCampaigns('completed')} className="gap-2">
+                  <CheckCircle className="size-4" /> Só concluídas (CSV)
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => exportAllCampaigns('paused')} className="gap-2">
+                  <Pause className="size-4" /> Só pausadas (CSV)
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => exportAllCampaigns('cancelled')} className="gap-2">
+                  <X className="size-4" /> Só canceladas (CSV)
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </TooltipTrigger><TooltipContent>Exportar relatório de campanhas com filtros</TooltipContent></Tooltip></TooltipProvider>
           <Dialog open={createDialogOpen} onOpenChange={(o) => { setCreateDialogOpen(o); if (!o) { setEditing(false); setSaving(false); resetNewCampaign(); setActiveStep(0) } }}>
             <DialogTrigger asChild>
               <Button className="gap-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 shadow-lg">
@@ -2534,9 +2558,21 @@ export function CampanhasTab() {
                   {!newCampaign.name.trim() ? 'Informe o nome da campanha' : newCampaign.chipIds.length === 0 ? 'Selecione pelo menos 1 chip para envio' : 'Preencha pelo menos 1 mensagem (texto ou mídia)'}
                 </p>
               )}
+              {canCreate && !saving && !editing && (
+                <div className="flex items-center gap-3 mb-1 sm:mb-0 sm:mr-auto text-xs text-muted-foreground">
+                  <span className="flex items-center gap-1"><Smartphone className="size-3" /> {newCampaign.chipIds.length} chip{newCampaign.chipIds.length !== 1 ? 's' : ''}</span>
+                  <span className="flex items-center gap-1"><ArrowRight className="size-3" /> {newCampaign.steps.length} mensagem{newCampaign.steps.length !== 1 ? 'ns' : ''}</span>
+                  <span className="flex items-center gap-1"><Clock className="size-3" /> {newCampaign.sendIntervalMin}-{newCampaign.sendIntervalMax}s entre envios</span>
+                </div>
+              )}
               <div className="flex gap-2 sm:ml-auto">
                 <DialogClose asChild><Button variant="outline">Cancelar</Button></DialogClose>
-                <Button onClick={createCampaign} disabled={!canCreate || saving} className="bg-emerald-600 hover:bg-emerald-700">
+                {!editing && (
+                  <Button variant="outline" onClick={() => createCampaign(true)} disabled={!newCampaign.name.trim() || saving} className="gap-1">
+                    {saving ? <><RefreshCw className="size-4 animate-spin" /> Salvando...</> : <><Save className="size-4" /> Salvar Rascunho</>}
+                  </Button>
+                )}
+                <Button onClick={() => createCampaign(false)} disabled={!canCreate || saving} className="bg-emerald-600 hover:bg-emerald-700">
                   {saving ? <><RefreshCw className="size-4 animate-spin" /> Salvando...</> : editing ? 'Salvar Alterações' : 'Criar Campanha'}
                 </Button>
               </div>
