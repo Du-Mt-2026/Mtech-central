@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { timingSafeEqual } from 'crypto'
 import { removeWireGuardPeer } from '@/lib/wireguard-peer-api'
 import { enqueueReconnection, markChipReconnected, dequeueReconnection } from '@/lib/reconnection-queue'
 import { db } from '@/lib/db'
@@ -12,21 +13,35 @@ import { broadcastToChip } from '@/app/api/inbox/events/route'
  * v3 webhook format:
  *   { event: "Message"|"Connected"|"Disconnected"|"QRCode"|"SEND_MESSAGE"|"READ_RECEIPT"|..., data: {...}, instanceId: "uuid" }
  *
- * SECURITY: Verifies the `apikey` header (or `x-api-key`) against the EVOLUTION_API_KEY
- * environment variable. If the key is not set, the endpoint refuses all requests.
- * This prevents forged webhook events from deleting chips or altering state.
+  * SECURITY (P1.1): Fail-closed apikey verification.
+ * The endpoint REQUIRES the `apikey` header (or `x-api-key`, `?token=`, `?apikey=`,
+ * `Authorization: Bearer <key>`) to match EVOLUTION_API_KEY. If the env var is
+ * not set in production, the endpoint refuses all requests.
+ * In development, allows requests without auth (with a warning) for local testing.
+ *
+ * To configure Evolution Go to send the apikey header on webhooks:
+ *   - In Evolution Go dashboard, edit the webhook configuration
+ *   - Add a custom header: apikey = <your EVOLUTION_API_KEY>
+ *   - Or use the /api/whatsapp/setup-webhook endpoint which sets it automatically
+ *
+ * SECURITY (P1.6): Uses crypto.timingSafeEqual to prevent timing attacks.
  */
 export async function POST(request: Request) {
   try {
-    // SECURITY: Verify webhook authentication token (optional — Evolution Go
-    // não envia headers nem query params de volta, então a verificação é
-    // 'soft': se o token estiver presente, valida; se não, registra warning
-    // mas permite o processamento.
-    // A proteção real contra eventos forjados está em:
-    // 1. INSTANCE_DELETED: verifica com a Evolution API antes de deletar
-    // 2. instanceName no body deve matchear um chip no banco
+    // SECURITY (P1.1): Fail-closed webhook authentication.
     const WEBHOOK_SECRET = process.env.EVOLUTION_API_KEY
-    if (WEBHOOK_SECRET) {
+    const isProduction = process.env.NODE_ENV === 'production'
+
+    if (!WEBHOOK_SECRET) {
+      if (isProduction) {
+        console.error('[Webhook] EVOLUTION_API_KEY not configured in production — webhook disabled (fail-closed)')
+        return NextResponse.json(
+          { error: 'Webhook disabled — EVOLUTION_API_KEY not configured' },
+          { status: 503 }
+        )
+      }
+      console.warn('[Webhook] EVOLUTION_API_KEY not set in development — allowing (fail-open in dev only)')
+    } else {
       const url = new URL(request.url)
       const providedKey =
         url.searchParams.get('token') ||
@@ -34,27 +49,28 @@ export async function POST(request: Request) {
         request.headers.get('apikey') ||
         request.headers.get('x-api-key') ||
         request.headers.get('authorization')?.replace('Bearer ', '')
+        || null
 
-      if (providedKey) {
-        // Token presente — validar
-        if (providedKey.length === WEBHOOK_SECRET.length) {
-          let keysMatch = true
-          for (let i = 0; i < providedKey.length; i++) {
-            if (providedKey[i] !== WEBHOOK_SECRET[i]) {
-              keysMatch = false
-            }
-          }
-          if (!keysMatch) {
-            console.warn('[Webhook] Invalid authentication token provided')
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-          }
-        } else {
-          console.warn('[Webhook] Invalid authentication token (wrong length)')
-          return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-        }
+      if (!providedKey) {
+        console.warn('[Webhook] Rejected — no apikey provided')
+        return NextResponse.json(
+          { error: 'Unauthorized — webhook apikey required' },
+          { status: 401 }
+        )
       }
-      // Sem token = Evolution Go (não envia headers/params) — permite mas loga
-      // na primeira vez apenas para não poluir logs
+
+      const secretBuffer = Buffer.from(WEBHOOK_SECRET, 'utf8')
+      const providedBuffer = Buffer.from(providedKey, 'utf8')
+
+      if (secretBuffer.length !== providedBuffer.length) {
+        console.warn('[Webhook] Rejected — apikey wrong length')
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      }
+
+      if (!timingSafeEqual(secretBuffer, providedBuffer)) {
+        console.warn('[Webhook] Rejected — invalid apikey')
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      }
     }
 
     // Load anti-ban settings for ban detection configuration

@@ -1,5 +1,6 @@
 import { recoverStuckMessages } from '@/lib/sending-engine'
 import { NextResponse } from 'next/server'
+import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 import {
   fetchInstances,
@@ -10,6 +11,7 @@ import {
   clearInstanceIdCache,
 } from '@/lib/evolution-api'
 import { checkQuarantineCooldown } from '@/lib/reconnection-queue'
+import { verifyCronAuth } from '@/lib/cron-auth'
 
 /**
  * Cron Health Check — detecta e recupera instâncias presas.
@@ -21,19 +23,18 @@ import { checkQuarantineCooldown } from '@/lib/reconnection-queue'
  *   3. Perderam a configuração de webhook
  *
  * Para cada problema encontrado, tenta recuperação automática.
+ *
+ * SECURITY (P0.3): Fail-closed CRON_SECRET verification — refuses if unset in prod.
+ * SECURITY (P1.6): Uses crypto.timingSafeEqual to prevent timing attacks.
  */
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   const startTime = Date.now()
   const results: string[] = []
   const errors: string[] = []
 
   try {
-    // Optional: protect with a secret to prevent external abuse
-    const authHeader = request.headers.get('authorization')
-    const cronSecret = process.env.CRON_SECRET
-    if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    const authError = await verifyCronAuth(request)
+    if (authError) return authError
 
     // 0. Verificar chips em quarentena com cooldown expirado (auto-reativar)
   await checkQuarantineCooldown().catch(err => console.log('[HealthCheck] Quarantine check failed:', err))

@@ -1,7 +1,7 @@
 // Deploy Webhook API — Receives GitHub Actions push notifications
 // and triggers the deploy script on the server.
 //
-// Strategy: 
+// Strategy:
 // 1. Download latest code from GitHub as tarball (no git auth needed on server)
 // 2. Run docker rebuild in a SEPARATE container (survives app restart)
 //
@@ -11,10 +11,18 @@
 //
 // SECURITY: DEPLOY_SECRET MUST be set in environment variables. No hardcoded fallback.
 // If not set, the endpoint returns 503 Service Unavailable.
+//
+// SECURITY (P1.2): IP allowlist — only accepts requests from GitHub webhook IPs.
+// Behind Cloudflare/Traefik, checks cf-connecting-ip and x-forwarded-for headers.
+// Set ALLOW_NON_GITHUB_IPS=true in .env to bypass (NOT recommended for production).
+//
+// SECURITY (P1.6): Uses crypto.timingSafeEqual for secret comparison.
 
 import { NextRequest, NextResponse } from 'next/server'
 import { execSync } from 'child_process'
 import { writeFileSync } from 'fs'
+import { timingSafeEqual } from 'crypto'
+import { isGitHubWebhookIp } from '@/lib/cron-auth'
 
 const DEPLOY_SECRET = process.env.DEPLOY_SECRET
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN || ''
@@ -32,20 +40,33 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Verify deploy secret using timing-safe comparison
+    // SECURITY (P1.2): IP allowlist — only accept requests from GitHub webhook IPs
+    // unless explicitly bypassed via ALLOW_NON_GITHUB_IPS=true
+    const allowBypass = process.env.ALLOW_NON_GITHUB_IPS === 'true'
+    if (!allowBypass && !isGitHubWebhookIp(request)) {
+      console.warn('[Deploy] Rejected — request not from GitHub webhook IP')
+      return NextResponse.json(
+        { error: 'Forbidden — request not from GitHub' },
+        { status: 403 }
+      )
+    }
+
+    // SECURITY (P1.6): Verify deploy secret using crypto.timingSafeEqual
     const secret = request.headers.get('X-Deploy-Secret')
-    if (!secret || secret.length !== DEPLOY_SECRET.length) {
-      console.warn('[Deploy] Invalid or missing X-Deploy-Secret header')
+    if (!secret) {
+      console.warn('[Deploy] Missing X-Deploy-Secret header')
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
-    // Timing-safe comparison to prevent timing attacks
-    let secretsMatch = true
-    for (let i = 0; i < secret.length; i++) {
-      if (secret[i] !== DEPLOY_SECRET[i]) {
-        secretsMatch = false
-      }
+
+    const secretBuffer = Buffer.from(DEPLOY_SECRET, 'utf8')
+    const providedBuffer = Buffer.from(secret, 'utf8')
+
+    if (secretBuffer.length !== providedBuffer.length) {
+      console.warn('[Deploy] Invalid X-Deploy-Secret header (wrong length)')
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
-    if (!secretsMatch) {
+
+    if (!timingSafeEqual(secretBuffer, providedBuffer)) {
       console.warn('[Deploy] Invalid X-Deploy-Secret header')
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }

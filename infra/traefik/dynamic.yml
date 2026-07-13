@@ -19,6 +19,27 @@ http:
       tls: {}
       service: evolution-go
 
+    # SECURITY (P0.4): Traefik dashboard protected with basicAuth.
+    # Accessible only via this router, not via the insecure entrypoint.
+    # Set TRAEFIK_DASHBOARD_USER and TRAEFIK_DASHBOARD_PASSWORD_HASH in .env.
+    # Generate the hash with: htpasswd -nbB <user> <password>
+    # Then put the full "user:hash" string in TRAEFIK_DASHBOARD_AUTH.
+    traefik-dashboard:
+      rule: "Host(`traefik-dashboard.nikki.com.br`)"
+      entryPoints:
+        - websecure
+      tls: {}
+      service: api@internal
+      middlewares:
+        - dashboard-auth
+
+  middlewares:
+    dashboard-auth:
+      basicAuth:
+        users:
+          - "${TRAEFIK_DASHBOARD_AUTH:-admin:$$apr1$$default$$placeholderReplaceMeInProduction}"
+        removeHeader: true
+
   services:
     evolution-go:
       loadBalancer:

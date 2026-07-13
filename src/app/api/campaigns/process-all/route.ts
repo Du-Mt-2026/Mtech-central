@@ -3,42 +3,24 @@ import { db } from '@/lib/db'
 import { getRunningCampaigns, processNextMessage, startCampaign, performBreakWindowReadingPresence } from '@/lib/sending-engine'
 import { healthCheckDisconnectedChips, processQueue } from '@/lib/reconnection-queue'
 import { processAllWarmingSessions, autoStartScheduledSessions } from '@/lib/warming-engine'
+import { verifyCronAuth } from '@/lib/cron-auth'
 
 /**
  * Process messages for running campaigns.
  * Also checks for scheduled campaigns whose time has come and auto-starts them.
  *
- * TRIGGERED BY: cron-job.org (external free cron service)
- * SECURITY: Requires CRON_SECRET in header or query param to prevent unauthorized access.
+ * TRIGGERED BY: cron-job.org (external free cron service) or campaign-cron container.
+ * SECURITY: Requires CRON_SECRET (fail-closed in production). See src/lib/cron-auth.ts.
  *
  * KEY IMPROVEMENT: Instead of processing just 1 message per campaign per cron tick,
  * this now uses a time-based approach — it processes messages in a loop
  * until the function is about to timeout (25 seconds max for Vercel serverless).
  */
 export async function POST(request: NextRequest) {
-  // Security: Verify CRON_SECRET to prevent unauthorized access
-  const cronSecret = process.env.CRON_SECRET
-  if (cronSecret) {
-    const headerSecret = request.headers.get('x-cron-secret') || request.headers.get('authorization')?.replace('Bearer ', '')
-    const querySecret = new URL(request.url).searchParams.get('cron_secret')
-
-    // Try to read from body without consuming it
-    let bodyCronSecret: string | undefined
-    try {
-      const clonedRequest = request.clone()
-      const body = await clonedRequest.json()
-      bodyCronSecret = body.cron_secret
-    } catch { /* no body or invalid JSON */ }
-
-    const providedSecret = headerSecret || querySecret || bodyCronSecret
-
-    if (providedSecret !== cronSecret) {
-      return NextResponse.json(
-        { error: 'Unauthorized — invalid or missing cron secret' },
-        { status: 401 }
-      )
-    }
-  }
+  // SECURITY (P0.3): Fail-closed CRON_SECRET verification — refuses if unset in prod.
+  // SECURITY (P1.6): Uses crypto.timingSafeEqual to prevent timing attacks.
+  const authError = await verifyCronAuth(request)
+  if (authError) return authError
 
   const FUNCTION_TIMEOUT_MS = 25_000 // cron-job.org timeout is 30s, leave 5s margin
   const startTime = Date.now()

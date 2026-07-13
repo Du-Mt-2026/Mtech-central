@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { syncLinvixClients } from '@/lib/linvix-api'
+import { verifyCronAuth } from '@/lib/cron-auth'
 
 export const maxDuration = 300 // 5 minutes for Vercel Pro
 
@@ -10,7 +11,8 @@ export const maxDuration = 300 // 5 minutes for Vercel Pro
  * Syncs clients and sales data from Linvix ERP into OctupusZap.
  * Triggered by cron-job.org every hour.
  *
- * Security: Requires CRON_SECRET in header or query param.
+ * SECURITY (P0.3): Fail-closed CRON_SECRET verification — refuses if unset in prod.
+ * SECURITY (P1.6): Uses crypto.timingSafeEqual to prevent timing attacks.
  *
  * What it does:
  * 1. Logs into Linvix ERP with stored credentials (AJAX endpoint)
@@ -21,28 +23,8 @@ export const maxDuration = 300 // 5 minutes for Vercel Pro
 export async function POST(request: NextRequest) {
   const startTime = Date.now()
 
-  // Security: Verify CRON_SECRET
-  const cronSecret = process.env.CRON_SECRET
-  if (cronSecret) {
-    const headerSecret = request.headers.get('x-cron-secret') || request.headers.get('authorization')?.replace('Bearer ', '')
-    const querySecret = new URL(request.url).searchParams.get('cron_secret')
-
-    let bodyCronSecret: string | undefined
-    try {
-      const clonedRequest = request.clone()
-      const body = await clonedRequest.json()
-      bodyCronSecret = body.cron_secret
-    } catch { /* no body or invalid JSON */ }
-
-    const providedSecret = headerSecret || querySecret || bodyCronSecret
-
-    if (providedSecret !== cronSecret) {
-      return NextResponse.json(
-        { error: 'Unauthorized — invalid or missing cron secret' },
-        { status: 401 }
-      )
-    }
-  }
+  const authError = await verifyCronAuth(request)
+  if (authError) return authError
 
   try {
     // Check if Linvix credentials are configured

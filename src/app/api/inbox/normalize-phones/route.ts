@@ -1,27 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { verifyCronAuth } from '@/lib/cron-auth'
 
 /**
  * POST /api/inbox/normalize-phones
- * 
+ *
  * This endpoint handles data cleanup tasks:
  * 1. Normalizes phone numbers in InboxMessage (original purpose)
  * 2. Marks campaign messages as isCampaign=true (cleanup for existing data)
- * 
- * Protected by CRON_SECRET or admin session cookie.
+ *
+ * SECURITY (P0.3): Fail-closed CRON_SECRET verification — refuses if unset in prod.
+ * SECURITY (P1.6): Uses crypto.timingSafeEqual to prevent timing attacks.
+ *
  * Query params:
  * - action: 'normalize' | 'mark-campaign' (default: 'mark-campaign')
  */
 export async function POST(request: NextRequest) {
   try {
-    // Allow CRON_SECRET for automated runs
-    const authHeader = request.headers.get('authorization')
-    const cronSecret = process.env.CRON_SECRET
-    if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
-      // Also allow if authenticated via session cookie (middleware will handle)
-      // But since this is a direct call, we check CRON_SECRET
-      return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
-    }
+    const authError = await verifyCronAuth(request)
+    if (authError) return authError
 
     const body = await request.json().catch(() => ({}))
     const action = body.action || 'mark-campaign'

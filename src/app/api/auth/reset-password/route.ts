@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { timingSafeEqual } from 'crypto'
 import { db } from '@/lib/db'
 import { hashPassword } from '@/lib/auth'
 
@@ -13,6 +14,8 @@ import { hashPassword } from '@/lib/auth'
  *
  * If AUTH_SECRET is not set, the endpoint refuses all requests and directs
  * the user to reset via SSH + CLI command.
+ *
+ * SECURITY (P1.6): Uses crypto.timingSafeEqual to prevent timing attacks.
  */
 export async function POST(request: NextRequest) {
   try {
@@ -35,20 +38,25 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Verify using AUTH_SECRET with timing-safe comparison
-    if (!verificationKey || verificationKey.length !== AUTH_SECRET.length) {
+    // SECURITY (P1.6): Verify using crypto.timingSafeEqual
+    if (!verificationKey) {
       return NextResponse.json(
         { error: 'Código de segurança inválido. Use o AUTH_SECRET do arquivo .env do servidor.' },
         { status: 401 }
       )
     }
-    let keysMatch = true
-    for (let i = 0; i < verificationKey.length; i++) {
-      if (verificationKey[i] !== AUTH_SECRET[i]) {
-        keysMatch = false
-      }
+
+    const secretBuffer = Buffer.from(AUTH_SECRET, 'utf8')
+    const providedBuffer = Buffer.from(verificationKey, 'utf8')
+
+    if (secretBuffer.length !== providedBuffer.length) {
+      return NextResponse.json(
+        { error: 'Código de segurança inválido. Use o AUTH_SECRET do arquivo .env do servidor.' },
+        { status: 401 }
+      )
     }
-    if (!keysMatch) {
+
+    if (!timingSafeEqual(secretBuffer, providedBuffer)) {
       return NextResponse.json(
         { error: 'Código de segurança inválido. Use o AUTH_SECRET do arquivo .env do servidor.' },
         { status: 401 }

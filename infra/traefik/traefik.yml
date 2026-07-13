@@ -1,10 +1,13 @@
 log:
-  level: DEBUG
+  level: WARN
 accessLog: {}
 
 api:
   dashboard: true
-  insecure: true
+  # SECURITY (P0.4): insecure dashboard disabled.
+  # Dashboard now requires explicit router with basicAuth middleware.
+  # See infra/traefik/dynamic.yml for the protected dashboard route.
+  insecure: false
 
 entryPoints:
   web:
