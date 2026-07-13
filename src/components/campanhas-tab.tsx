@@ -2691,6 +2691,14 @@ export function CampanhasTab() {
                 'border-l-zinc-300 dark:border-l-zinc-700')}>
                 <CardContent className="p-5">
                   <div className="flex items-center gap-4">
+                    <input type="checkbox" checked={selectedCampaignIds.has(c.id)} onChange={() => {
+                      setSelectedCampaignIds(prev => {
+                        const next = new Set(prev)
+                        if (next.has(c.id)) next.delete(c.id)
+                        else next.add(c.id)
+                        return next
+                      })
+                    }} className="size-4 rounded border-gray-300 shrink-0" />
                     <div className="flex size-12 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-400 to-teal-500 shadow-lg">
                       <Send className="size-6 text-white" />
                     </div>
