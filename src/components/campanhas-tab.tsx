@@ -442,6 +442,20 @@ function MessageBuilder({ value, onChange, messageKeys, templates, contactVariab
   }
 
   const previewText = generatePreviewText(value, messageKeys, previewSeed, contactVariables, previewContactData)
+  const [previewContactList, setPreviewContactList] = useState<Array<{ name: string; phone: string; customFields?: string }>>([])
+  const [previewContactIdx, setPreviewContactIdx] = useState(0)
+
+  // Fetch contacts from selected list for preview
+  useEffect(() => {
+    if (previewContactData) {
+      setPreviewContactList([previewContactData])
+      setPreviewContactIdx(0)
+    } else {
+      setPreviewContactList([])
+    }
+  }, [previewContactData])
+
+  const currentPreviewContact = previewContactList[previewContactIdx] || previewContactData
   const charCount = previewText.length
   const lineCount = value.split('\n').length
 
@@ -964,6 +978,15 @@ export function CampanhasTab() {
       // Also store first contact data for realistic preview
       if (data.firstContact) {
         setPreviewContact(data.firstContact)
+        // #16: Fetch more contacts for preview selector
+        try {
+          const contactsRes = await fetch(`/api/contact-lists/${data.firstContact.contactListId || ''}/contacts?page=1&limit=10`)
+          const contactsData = await contactsRes.json()
+          const contacts = Array.isArray(contactsData) ? contactsData : (contactsData.contacts || contactsData.data || [])
+          if (contacts.length > 0) {
+            setPreviewContact(contacts[0])
+          }
+        } catch {}
       } else {
         setPreviewContact(null)
       }
