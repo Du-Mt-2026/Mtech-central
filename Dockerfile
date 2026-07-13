@@ -54,6 +54,11 @@ COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 COPY --from=builder /app/prisma ./prisma
 
+# Copy scripts/ for one-off admin tasks (e.g. setup-all-webhooks, seed-users)
+COPY --from=builder /app/scripts ./scripts
+# tsx is needed to run .ts scripts — install as global
+RUN npm install -g tsx
+
 USER nextjs
 
 EXPOSE 3000
