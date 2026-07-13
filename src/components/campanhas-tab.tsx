@@ -847,6 +847,8 @@ export function CampanhasTab() {
   const [exportingId, setExportingId] = useState<string | null>(null)
   const [exportingAll, setExportingAll] = useState(false)
   const [refreshingDetail, setRefreshingDetail] = useState(false)
+  const [selectedCampaignIds, setSelectedCampaignIds] = useState<Set<string>>(new Set())
+  const [batchAction, setBatchAction] = useState<'pause' | 'cancel' | 'delete' | null>(null)
   const [campaignFilter, setCampaignFilter] = useState<'all' | 'running' | 'paused' | 'completed' | 'cancelled' | 'draft'>('all')
   const [campaignSearch, setCampaignSearch] = useState('')
   // BUGFIX: Default é 'sendOrder' (ordem de envio) em vez de 'name' (alfabética).
@@ -2618,6 +2620,37 @@ export function CampanhasTab() {
             <Input placeholder="Buscar campanha por nome..." value={campaignSearch} onChange={e => setCampaignSearch(e.target.value)} className="h-9 pl-8 text-sm" />
           </div>
         </div>
+        {/* #14 Toolbar de ações em lote */}
+        {selectedCampaignIds.size > 0 && (
+          <div className="flex items-center gap-3 p-3 bg-primary/5 rounded-lg border">
+            <span className="text-sm font-medium">{selectedCampaignIds.size} selecionada(s)</span>
+            <Button variant="outline" size="sm" className="gap-1" onClick={async () => {
+              for (const id of selectedCampaignIds) {
+                try { await fetch(`/api/campaigns/${id}/pause`, { method: 'POST' }) } catch {}
+              }
+              toast.success(`${selectedCampaignIds.size} campanha(s) pausada(s)`)
+              setSelectedCampaignIds(new Set())
+              fetchCampaigns()
+            }}><Pause className="size-3.5" /> Pausar</Button>
+            <Button variant="outline" size="sm" className="gap-1 text-amber-600" onClick={async () => {
+              for (const id of selectedCampaignIds) {
+                try { await fetch(`/api/campaigns/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'cancelled' }) }) } catch {}
+              }
+              toast.success(`${selectedCampaignIds.size} campanha(s) cancelada(s)`)
+              setSelectedCampaignIds(new Set())
+              fetchCampaigns()
+            }}><X className="size-3.5" /> Cancelar</Button>
+            <Button variant="outline" size="sm" className="gap-1 text-rose-600" onClick={async () => {
+              for (const id of selectedCampaignIds) {
+                try { await fetch(`/api/campaigns/${id}`, { method: 'DELETE' }) } catch {}
+              }
+              toast.success(`${selectedCampaignIds.size} campanha(s) excluída(s)`)
+              setSelectedCampaignIds(new Set())
+              fetchCampaigns()
+            }}><Trash2 className="size-3.5" /> Excluir</Button>
+            <Button variant="ghost" size="sm" onClick={() => setSelectedCampaignIds(new Set())}>Desmarcar</Button>
+          </div>
+        )}
         <div className="space-y-4">
           {(() => {
             const filtered = campaigns.filter(c => {
@@ -2960,6 +2993,18 @@ export function CampanhasTab() {
                 {selectedCampaign.chips && selectedCampaign.chips.length > 0 && (
                   <div className="space-y-1.5">
                     <Label className="text-xs font-semibold">Chips Atribuídos</Label>
+                    {/* #22 Estatísticas por chip */}
+                    {(() => {
+                      const chipStats: Record<string, { sent: number; failed: number; pending: number; total: number }> = {}
+                      for (const m of detailMessages) {
+                        if (!chipStats[m.chipId]) chipStats[m.chipId] = { sent: 0, failed: 0, pending: 0, total: 0 }
+                        chipStats[m.chipId].total++
+                        if (['sent', 'delivered', 'read'].includes(m.status)) chipStats[m.chipId].sent++
+                        else if (m.status === 'failed') chipStats[m.chipId].failed++
+                        else if (m.status === 'pending') chipStats[m.chipId].pending++
+                      }
+                      return null
+                    })()}
                     {selectedCampaign.chips.map((cc: any) => {
                       const chip = cc.chip
                       if (!chip) return null
@@ -2974,11 +3019,34 @@ export function CampanhasTab() {
                             <div className="flex items-center gap-2 flex-wrap">
                               <span className="font-medium">{chip.name}</span>
                               <span className="text-muted-foreground">{chip.phoneNumber}</span>
+                              {/* #22 Stats por chip */}
+                              {(() => {
+                                const stats = detailMessages.reduce((acc, m) => {
+                                  if (m.chipId === chip.id) {
+                                    acc.total++
+                                    if (['sent', 'delivered', 'read'].includes(m.status)) acc.sent++
+                                    else if (m.status === 'failed') acc.failed++
+                                  }
+                                  return acc
+                                }, { sent: 0, failed: 0, total: 0 })
+                                if (stats.total === 0) return null
+                                return (
+                                  <span className="text-[9px] text-muted-foreground">
+                                    {stats.sent} enviadas · {stats.failed} falhas · {stats.total} total
+                                  </span>
+                                )
+                              })()}
                               {isPaused && <Badge variant="outline" className="text-[9px] px-1 py-0 h-4 bg-zinc-200 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 border-zinc-400">⏸ Pausado</Badge>}
                               {chip.status !== 'connected' && <Badge variant="destructive" className="text-[9px] px-1 py-0 h-4">Desconectado</Badge>}
                             </div>
                             <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                              <span className="text-muted-foreground">{chip.sentToday || 0}/{chipInfo.effectiveLimit} enviadas hoje</span>
+                              <span className={`text-muted-foreground ${chip.sentToday >= chipInfo.effectiveLimit ? 'text-rose-600 font-semibold' : chip.sentToday >= chipInfo.effectiveLimit * 0.8 ? 'text-amber-600 font-medium' : ''}`}>{chip.sentToday || 0}/{chipInfo.effectiveLimit} enviadas hoje</span>
+                              {chip.sentToday >= chipInfo.effectiveLimit && (
+                                <Badge variant="destructive" className="text-[9px] px-1 py-0 h-4">Limite atingido</Badge>
+                              )}
+                              {chip.sentToday >= chipInfo.effectiveLimit * 0.8 && chip.sentToday < chipInfo.effectiveLimit && (
+                                <Badge variant="outline" className="text-[9px] px-1 py-0 h-4 text-amber-600 border-amber-300 bg-amber-50">80% limite</Badge>
+                              )}
                               {chipInfo.effectiveLimit < (chip.dailyLimit ?? 200) && (
                                 <span className="text-[10px] text-muted-foreground">(de {chip.dailyLimit ?? 200})</span>
                               )}
@@ -3199,12 +3267,35 @@ export function CampanhasTab() {
                                   </div>
                                   {m.error && <p className="text-rose-600 mt-0.5 font-medium truncate">Erro: {m.error}</p>}
                                 </div>
-                                <div className="text-right shrink-0 text-[10px]">
-                                  {m.sentAt && <p className="text-muted-foreground">{new Date(m.sentAt).toLocaleString('pt-BR')}</p>}
-                                  {m.deliveredAt && <p className="text-emerald-600">{new Date(m.deliveredAt).toLocaleString('pt-BR')}</p>}
-                                  {m.status === 'failed' && !m.sentAt && m.updatedAt && <p className="text-rose-600">{new Date(m.updatedAt).toLocaleString('pt-BR')}</p>}
-                                  {m.status === 'failed' && !m.sentAt && !m.updatedAt && m.createdAt && <p className="text-rose-600">{new Date(m.createdAt).toLocaleString('pt-BR')}</p>}
-                                  {m.status === 'pending' && !m.sentAt && <p className="text-amber-600 font-medium">Aguardando</p>}
+                                <div className="flex items-center gap-2 shrink-0">
+                                  <div className="text-right text-[10px]">
+                                    {m.sentAt && <p className="text-muted-foreground">{new Date(m.sentAt).toLocaleString('pt-BR')}</p>}
+                                    {m.deliveredAt && <p className="text-emerald-600">{new Date(m.deliveredAt).toLocaleString('pt-BR')}</p>}
+                                    {m.status === 'failed' && !m.sentAt && m.updatedAt && <p className="text-rose-600">{new Date(m.updatedAt).toLocaleString('pt-BR')}</p>}
+                                    {m.status === 'failed' && !m.sentAt && !m.updatedAt && m.createdAt && <p className="text-rose-600">{new Date(m.createdAt).toLocaleString('pt-BR')}</p>}
+                                    {m.status === 'pending' && !m.sentAt && <p className="text-amber-600 font-medium">Aguardando</p>}
+                                  </div>
+                                  {m.status === 'failed' && (
+                                    <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-rose-500 hover:text-rose-600" title="Reenviar esta mensagem" onClick={async () => {
+                                      try {
+                                        const res = await fetch(`/api/messages/${m.id}/resend`, { method: 'POST' })
+                                        if (res.ok) {
+                                          toast.success('Mensagem reenviada!')
+                                          if (selectedCampaign) {
+                                            const msgRes = await fetch(`/api/messages?campaignId=${selectedCampaign.id}&limit=5000`, { cache: 'no-store' })
+                                            const _r = await msgRes.json()
+                                            setDetailMessages(Array.isArray(_r?.data) ? _r.data : Array.isArray(_r) ? _r : [])
+                                            fetchCampaigns()
+                                          }
+                                        } else {
+                                          const data = await res.json().catch(() => ({}))
+                                          toast.error(data.error || 'Erro ao reenviar')
+                                        }
+                                      } catch { toast.error('Erro ao reenviar mensagem') }
+                                    }}>
+                                      <RotateCcw className="size-3" />
+                                    </Button>
+                                  )}
                                 </div>
                               </div>
                             )
