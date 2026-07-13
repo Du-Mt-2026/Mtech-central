@@ -2681,12 +2681,11 @@ export function CampanhasTab() {
               const matchSearch = !campaignSearch || c.name.toLowerCase().includes(campaignSearch.toLowerCase())
               return matchFilter && matchSearch
             })
-            // Agrupar por data
+            // Agrupar por data (cada dia = um grupo)
             const groups: { label: string; items: typeof filtered }[] = []
             const now = new Date()
             const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
             const yesterday = new Date(today.getTime() - 86400000)
-            const weekAgo = new Date(today.getTime() - 7 * 86400000)
             const addToGroup = (label: string, item: typeof filtered[0]) => {
               let g = groups.find(g => g.label === label)
               if (!g) { g = { label, items: [] }; groups.push(g) }
@@ -2694,10 +2693,17 @@ export function CampanhasTab() {
             }
             for (const c of filtered) {
               const d = new Date(c.createdAt)
-              if (d >= today) addToGroup('Hoje', c)
-              else if (d >= yesterday) addToGroup('Ontem', c)
-              else if (d >= weekAgo) addToGroup('Esta semana', c)
-              else addToGroup('Mais antigas', c)
+              const dayStart = new Date(d.getFullYear(), d.getMonth(), d.getDate())
+              if (dayStart >= today) {
+                addToGroup('Hoje', c)
+              } else if (dayStart >= yesterday) {
+                addToGroup('Ontem', c)
+              } else {
+                // Formatar data: "10/07 (sex)"
+                const dateStr = d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
+                const weekday = d.toLocaleDateString('pt-BR', { weekday: 'short' }).replace('.', '')
+                addToGroup(`${dateStr} (${weekday})`, c)
+              }
             }
             return groups.map(group => (
               <div key={group.label}>
