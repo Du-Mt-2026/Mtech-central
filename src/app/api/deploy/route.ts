@@ -23,6 +23,7 @@ import { execSync } from 'child_process'
 import { writeFileSync } from 'fs'
 import { timingSafeEqual } from 'crypto'
 import { isGitHubWebhookIp } from '@/lib/cron-auth'
+import { getAuditContext, auditLog } from '@/lib/audit-helper'
 
 const DEPLOY_SECRET = process.env.DEPLOY_SECRET
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN || ''
@@ -150,6 +151,18 @@ echo "=== Deploy Completed at $(date) ===" >> ${PROJECT_DIR}/deploy-log.txt
         console.error('[Deploy] All rebuild methods failed')
       }
     }
+
+    // Audit log before returning response
+    const ctx = await getAuditContext(request)
+    await auditLog(ctx, {
+      action: 'DEPLOY_TRIGGERED',
+      category: 'deploy',
+      targetType: 'system',
+      details: {
+        sha,
+        method: gitUpdated ? 'git' : 'tarball',
+      },
+    })
 
     return NextResponse.json({
       message: 'Deploy triggered successfully — code updated, rebuild starting',

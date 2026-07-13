@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { timingSafeEqual } from 'crypto'
 import { db } from '@/lib/db'
 import { hashPassword } from '@/lib/auth'
+import { logAction } from '@/lib/audit-log'
 
 /**
  * POST /api/auth/reset-password
@@ -66,10 +67,13 @@ export async function POST(request: NextRequest) {
     // Find the admin user
     const adminUser = await db.adminUser.findFirst()
 
+    let targetUserId: string
+    let targetUserEmail: string
+
     if (!adminUser) {
       // Create master user with the new password
       const hashedPassword = await hashPassword(newPassword)
-      await db.adminUser.create({
+      const created = await db.adminUser.create({
         data: {
           name: 'Master',
           email: 'admin@mtech.com',
@@ -78,6 +82,8 @@ export async function POST(request: NextRequest) {
           active: true,
         },
       })
+      targetUserId = created.id
+      targetUserEmail = created.email
     } else {
       // Update the existing admin password
       const hashedPassword = await hashPassword(newPassword)
@@ -85,7 +91,21 @@ export async function POST(request: NextRequest) {
         where: { id: adminUser.id },
         data: { password: hashedPassword },
       })
+      targetUserId = adminUser.id
+      targetUserEmail = adminUser.email
     }
+
+    // Audit log: password was reset (no user context — this endpoint is system-level)
+    await logAction({
+      action: 'PASSWORD_RESET',
+      category: 'auth',
+      targetId: targetUserId,
+      targetType: 'user',
+      details: { email: targetUserEmail, method: 'auth_secret' },
+      ipAddress: request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
+        || request.headers.get('x-real-ip')
+        || undefined,
+    })
 
     return NextResponse.json({
       success: true,

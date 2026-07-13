@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { syncLinvixClients } from '@/lib/linvix-api'
 import { verifyCronAuth } from '@/lib/cron-auth'
+import { getAuditContext, auditLog } from '@/lib/audit-helper'
 
 export const maxDuration = 300 // 5 minutes for Vercel Pro
 
@@ -26,6 +27,8 @@ export async function POST(request: NextRequest) {
   const authError = await verifyCronAuth(request)
   if (authError) return authError
 
+  const ctx = await getAuditContext(request)
+
   try {
     // Check if Linvix credentials are configured
     if (!process.env.LINVIX_USER || !process.env.LINVIX_PASS) {
@@ -40,6 +43,19 @@ export async function POST(request: NextRequest) {
     const durationMs = Date.now() - startTime
     console.debug(`[LinvixSync] Completed in ${durationMs}ms — synced: ${result.synced}, skipped: ${result.skipped}, errors: ${result.errors.length}`)
 
+    await auditLog(ctx, {
+      action: 'LINVIX_SYNC_COMPLETED',
+      category: 'sync',
+      targetType: 'contact_list',
+      details: {
+        synced: result.synced,
+        skipped: result.skipped,
+        errors: result.errors.length,
+        total: result.total,
+        durationMs,
+      },
+    })
+
     return NextResponse.json({
       success: true,
       message: `Synced ${result.synced} of ${result.total} clients from Linvix ERP`,
@@ -48,6 +64,12 @@ export async function POST(request: NextRequest) {
     })
   } catch (error: any) {
     console.error('[LinvixSync] Unhandled error:', error)
+    await auditLog(ctx, {
+      action: 'LINVIX_SYNC_FAILED',
+      category: 'sync',
+      targetType: 'contact_list',
+      details: { error: error.message?.substring(0, 200) },
+    })
     return NextResponse.json(
       { error: error.message || 'Erro ao sincronizar com Linvix' },
       { status: 500 }

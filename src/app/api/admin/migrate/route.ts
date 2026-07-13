@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { jwtVerify } from 'jose'
+import { getAuditContext, auditLog } from '@/lib/audit-helper'
 
 const AUTH_SECRET = new TextEncoder().encode(process.env.AUTH_SECRET || '')
 
 export async function POST(req: NextRequest) {
+  const ctx = await getAuditContext(req)
+
   // Security: Only master users can run migrations
   try {
     const token = req.cookies.get('octupuszap-session')?.value
@@ -14,6 +17,12 @@ export async function POST(req: NextRequest) {
     const { payload } = await jwtVerify(token, AUTH_SECRET)
     const role = (payload.role as string) || 'operador'
     if (role !== 'master') {
+      await auditLog(ctx, {
+        action: 'MIGRATE_DENIED',
+        category: 'admin',
+        targetType: 'system',
+        details: { reason: 'insufficient_role', role },
+      })
       return NextResponse.json({ error: 'Acesso negado. Apenas master pode executar migrações.' }, { status: 403 })
     }
   } catch {
@@ -23,6 +32,13 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}))
     const action = body.action || 'default'
+
+    await auditLog(ctx, {
+      action: 'MIGRATE_EXECUTED',
+      category: 'admin',
+      targetType: 'system',
+      details: { action },
+    })
 
     // Mark existing campaign messages in inbox as isCampaign=true
     if (action === 'mark-campaign-inbox') {

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { getAuditContext, auditLog } from '@/lib/audit-helper'
 
 export async function POST(
   req: NextRequest,
@@ -7,6 +8,7 @@ export async function POST(
 ) {
   const { campaignId } = await params
   try {
+    const ctx = await getAuditContext(req)
     const campaign = await db.campaign.findUnique({
       where: { id: campaignId },
     })
@@ -42,6 +44,14 @@ export async function POST(
         sequenceSteps: { orderBy: { stepOrder: 'asc' } },
         contactList: { select: { id: true, name: true } },
       },
+    })
+
+    await auditLog(ctx, {
+      action: 'CAMPAIGN_RESUMED',
+      category: 'campaign',
+      targetId: campaignId,
+      targetType: 'campaign',
+      details: { name: campaign.name, recoveredMessages: recoveredCount },
     })
 
     const response: Record<string, unknown> = { ...updated }

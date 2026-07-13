@@ -16,6 +16,7 @@ import {
 } from '@/lib/evolution-router'
 
 import { getInstanceName as v3GetInstanceName, isOctupusZapInstance as v3IsOctupusZap } from '@/lib/evolution-api'
+import { getAuditContext, auditLog } from '@/lib/audit-helper'
 
 export async function GET() {
   try {
@@ -293,8 +294,9 @@ export async function GET() {
   }
 }
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
+    const ctx = await getAuditContext(request)
     const body = await request.json()
     const { name, phoneNumber } = body
 
@@ -345,6 +347,14 @@ export async function POST(request: Request) {
       })
     }
 
+    await auditLog(ctx, {
+      action: 'CHIP_CREATED',
+      category: 'chip',
+      targetId: chip.id,
+      targetType: 'chip',
+      details: { name, phoneNumber },
+    })
+
     return NextResponse.json(chip, { status: 201 })
   } catch (error) {
     console.error('Chips POST error:', error)
@@ -357,6 +367,7 @@ export async function POST(request: Request) {
 
 export async function DELETE(request: NextRequest) {
   try {
+    const ctx = await getAuditContext(request)
     const { searchParams } = new URL(request.url)
     const id = searchParams.get('id')
 
@@ -420,6 +431,18 @@ export async function DELETE(request: NextRequest) {
     await db.contact.deleteMany({ where: { chipId: id } })
     await db.campaignChip.deleteMany({ where: { chipId: id } })
     await db.chip.delete({ where: { id } })
+
+    await auditLog(ctx, {
+      action: 'CHIP_DELETED',
+      category: 'chip',
+      targetId: id,
+      targetType: 'chip',
+      details: chip ? {
+        name: chip.name,
+        phoneNumber: chip.phoneNumber,
+        evolutionInstance: chip.evolutionInstance,
+      } : {},
+    })
 
     return NextResponse.json({ success: true })
   } catch (error) {

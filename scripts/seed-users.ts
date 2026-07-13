@@ -18,6 +18,7 @@
 
 import { db } from '../src/lib/db'
 import { hashPassword } from '../src/lib/auth'
+import { logAction } from '../src/lib/audit-log'
 import * as readline from 'readline'
 
 // ⚠️ SECURITY NOTE (P0.1): These hashes were previously committed to a public GitHub repo.
@@ -94,6 +95,18 @@ async function main() {
   }))
 
   const created = await db.adminUser.createMany({ data: usersToCreate })
+
+  // Audit log: seed operation was executed (system-level, no user context)
+  await logAction({
+    action: 'USERS_SEEDED',
+    category: 'admin',
+    targetType: 'user',
+    details: {
+      created: created.count,
+      skipped: existingEmails.size,
+      total: existingUsers.length + created.count,
+    },
+  })
 
   console.log(`\n✓ Created ${created.count} users.`)
   console.log(`✓ ${existingEmails.size} already existed and were kept.`)
