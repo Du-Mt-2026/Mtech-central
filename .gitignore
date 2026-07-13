@@ -92,3 +92,21 @@ infra/backups/*.dump
 evolution-go.env
 instances-memory-backup.json
 *.local.sh
+
+# === Dev artifacts (P3 cleanup - commit 7279c95) ===
+# Multi-agent dev logs (16 markdowns, not user-facing)
+/agent-ctx/
+# Ad-hoc screenshots, patches, scripts (downloaded during development)
+/download/
+# Generated PDF analysis
+*.analysis.pdf
+
+# === TLS private keys (P0.1 mitigation) ===
+# Even though infra/traefik/certs/*.key is already covered by *.key above,
+# this explicit rule ensures we never commit Traefik origin keys.
+infra/traefik/certs/origin.key
+infra/traefik/certs/origin.crt
+
+# === Generated audit documents ===
+*.audit.pdf
+*.auditoria.pdf
