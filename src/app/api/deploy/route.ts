@@ -1,45 +1,42 @@
 import { NextResponse } from 'next/server'
 
 /**
- * POST /api/deploy (DEPRECATED — moved to deploy-receiver service)
+ * POST /api/deploy (REMOVED — manual deploy only)
  *
- * As of commit implementing P0.6, the deploy endpoint moved to an isolated
- * 'deploy-receiver' service (infra/deploy-receiver/) accessible via
- * https://deploy.<your-domain>/api/deploy
+ * As of P0.6 (commit 18c7fd6), this endpoint no longer triggers deploys.
+ * The app container no longer has /var/run/docker.sock mounted, so it
+ * cannot trigger Docker rebuilds even if this endpoint was called.
  *
- * This stub exists to:
- *   1. Return a clear error to GitHub webhooks still pointing here
- *   2. Tell the operator to update the webhook URL in GitHub
+ * Deploy is done manually via SSH. See: docs/manual-deploy.md
  *
- * Action required:
- *   - GitHub repo → Settings → Webhooks → edit your webhook
- *   - Change Payload URL from:
- *       https://octupuszap.nikki.com.br/api/deploy
- *     to:
- *       https://deploy.octupuszap.nikki.com.br/api/deploy
- *   - Keep the same X-Deploy-Secret header
+ * History (for context):
+ * - Original: mounted docker.sock in app container, allowed POST to trigger rebuild
+ * - P0.6 attempt 1: created isolated deploy-receiver service (commit 18c7fd6)
+ * - P0.6 attempt 2: removed deploy-receiver after discovering the webhook tool
+ *   on port 9000 (separate root process) was the actual (broken) deploy mechanism
+ * - Final: removed both. Manual SSH deploy only. Simpler and more honest.
  *
- * See: docs/design-docker-sock-removal.md (P0.6)
- * See: infra/deploy-receiver/README.md
+ * If you need to deploy, SSH to the server and run:
+ *   cd /opt/octupuszap
+ *   git pull origin main
+ *   docker compose build app
+ *   docker compose up -d app
  */
 
 export async function POST() {
-  console.warn('[Deploy] Deprecated endpoint hit — webhook URL must be updated to https://deploy.<domain>/api/deploy')
   return NextResponse.json(
     {
-      error: 'Deploy endpoint moved',
-      action_required: 'Update the GitHub webhook URL to point to the deploy-receiver service',
-      new_url_hint: 'https://deploy.<your-domain>/api/deploy',
-      docs: 'See docs/design-docker-sock-removal.md and infra/deploy-receiver/README.md',
+      error: 'Deploy endpoint removed',
+      reason: 'Manual deploy only — see docs/manual-deploy.md',
+      command: 'ssh server && cd /opt/octupuszap && git pull && docker compose build app && docker compose up -d app',
     },
-    { status: 410 } // 410 Gone — permanent redirect semantics
+    { status: 410 } // 410 Gone
   )
 }
 
 export async function GET() {
   return NextResponse.json({
-    status: 'deprecated',
-    message: 'Deploy endpoint moved to deploy-receiver service (P0.6)',
-    new_url_hint: 'https://deploy.<your-domain>/api/deploy',
+    status: 'removed',
+    message: 'Deploy is manual. See docs/manual-deploy.md',
   })
 }

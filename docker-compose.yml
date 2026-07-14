@@ -36,9 +36,14 @@ services:
   # ==========================================
   # App - Next.js (OctupusZap)
   # ==========================================
-  # SECURITY (P0.6): docker.sock is NOT mounted here anymore.
-  # Self-deploy capability moved to the isolated 'deploy-receiver' service below.
-  # The app container no longer has root-equivalent access to the host.
+  # SECURITY (P0.6): docker.sock is NOT mounted here.
+  # The app container has zero host access. Any RCE in any of the 101 API
+  # routes is contained to the app container — cannot escalate to host root.
+  #
+  # Deploy is done manually via SSH (see docs/manual-deploy.md).
+  # No auto-deploy mechanism is in use — the previous webhook tool on
+  # port 9000 was broken (config mismatch) and the deploy-receiver
+  # experiment was redundant. Both have been removed.
   app:
     build:
       context: .
@@ -78,62 +83,6 @@ services:
       resources:
         limits:
           memory: 768M
-
-  # ==========================================
-  # Deploy Receiver — isolated webhook receiver for self-deploy (P0.6)
-  # ==========================================
-  # Minimal HTTP service that owns the docker.sock.
-  # Receives GitHub push webhooks and triggers a rebuild.
-  #
-  # The app container no longer has docker.sock mounted — this receiver
-  # is the only container with that power. It's tiny (Python stdlib only),
-  # hardened (non-root, cap_drop ALL, no-new-privileges), and isolated
-  # on the traefik network only (NOT the internal app+db network).
-  #
-  # See: docs/design-docker-sock-removal.md
-  # See: infra/deploy-receiver/README.md
-  deploy-receiver:
-    build:
-      context: ./infra/deploy-receiver
-      dockerfile: Dockerfile
-    container_name: octupuszap-deploy-receiver
-    restart: unless-stopped
-    volumes:
-      # Only the receiver gets docker.sock now — not the app
-      - /var/run/docker.sock:/var/run/docker.sock
-      # Project dir for git pull
-      - /opt/octupuszap:/opt/octupuszap
-    environment:
-      - DEPLOY_SECRET=${DEPLOY_SECRET:-}
-      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
-      - GITHUB_REPO=${GITHUB_REPO:-Du-Mt-26/Mtech-central}
-      - PROJECT_DIR=/opt/octupuszap
-      - ALLOW_NON_GITHUB_IPS=${ALLOW_NON_GITHUB_IPS:-false}
-      - PORT=3001
-    networks:
-      # ONLY traefik network — NOT internal. Isolation from app+db.
-      - traefik
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.octupuszap-deploy.rule=Host(`${DEPLOY_DOMAIN:-deploy.octupuszap.localhost}`)"
-      - "traefik.http.routers.octupuszap-deploy.entrypoints=websecure"
-      - "traefik.http.routers.octupuszap-deploy.tls=true"
-      - "traefik.http.routers.octupuszap-deploy.tls.certresolver=letsencrypt"
-      - "traefik.http.services.octupuszap-deploy.loadbalancer.server.port=3001"
-      # HTTP → HTTPS redirect
-      - "traefik.http.routers.octupuszap-deploy-http.rule=Host(`${DEPLOY_DOMAIN:-deploy.octupuszap.localhost}`)"
-      - "traefik.http.routers.octupuszap-deploy-http.entrypoints=web"
-      - "traefik.http.routers.octupuszap-deploy-http.middlewares=redirect-to-https"
-    deploy:
-      resources:
-        limits:
-          memory: 128M
-    # Hardening
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-    read_only: false  # Needs to write to /tmp for git operations
 
   # ==========================================
   # Database - PostgreSQL (isolado do restante)
