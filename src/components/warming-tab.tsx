@@ -176,6 +176,20 @@ export function WarmingTab() {
   const [formIntervalMax, setFormIntervalMax] = useState(120)
   const [formActiveStart, setFormActiveStart] = useState(480)
   const [formActiveEnd, setFormActiveEnd] = useState(1260)
+  // AI Bot strategy fields
+  const [formAiBotPhone, setFormAiBotPhone] = useState('48991742716')
+  const [formAiBotTimeout, setFormAiBotTimeout] = useState(300)
+  const [formAiBotMaxMissed, setFormAiBotMaxMissed] = useState(2)
+
+  // Message Pool state
+  const [poolOpen, setPoolOpen] = useState(false)
+  const [poolMessages, setPoolMessages] = useState<Array<{ id: string; category: string; content: string; weight: number; active: boolean }>>([])
+  const [poolCategoryCounts, setPoolCategoryCounts] = useState<Record<string, number>>({})
+  const [poolFilterCategory, setPoolFilterCategory] = useState<string>('all')
+  const [poolSearch, setPoolSearch] = useState('')
+  const [poolLoading, setPoolLoading] = useState(false)
+  const [poolSeedLoading, setPoolSeedLoading] = useState(false)
+  const [newPoolMessage, setNewPoolMessage] = useState({ category: 'saudacao', content: '', weight: 1 })
 
   // Fetch sessions
   const fetchSessions = useCallback(async () => {
@@ -189,6 +203,119 @@ export function WarmingTab() {
       console.error('Error fetching warming sessions:', error)
     }
   }, [])
+
+  // ============================================================
+  // MESSAGE POOL FUNCTIONS
+  // ============================================================
+
+  const POOL_CATEGORIES = [
+    { value: 'saudacao', label: 'Saudação' },
+    { value: 'emoji_unico', label: 'Emoji Único' },
+    { value: 'emoji_combo', label: 'Emoji Combo' },
+    { value: 'pergunta_geral', label: 'Pergunta Geral' },
+    { value: 'declaracao_casual', label: 'Declaração Casual' },
+    { value: 'produto_mtech', label: 'Produto Mtech' },
+    { value: 'info_pedido', label: 'Info Pedido' },
+    { value: 'conversa_fiada', label: 'Conversa Fiada' },
+  ]
+
+  const fetchPool = useCallback(async () => {
+    setPoolLoading(true)
+    try {
+      const params = new URLSearchParams()
+      if (poolFilterCategory !== 'all') params.set('category', poolFilterCategory)
+      if (poolSearch) params.set('search', poolSearch)
+      params.set('limit', '1000')
+
+      const res = await fetch(`/api/warming/message-pool?${params.toString()}`)
+      if (res.ok) {
+        const data = await res.json()
+        setPoolMessages(data.messages || [])
+        setPoolCategoryCounts(data.categoryCounts || {})
+      }
+    } catch (error: any) {
+      console.error('Error fetching pool:', error)
+      toast.error('Erro ao carregar pool de mensagens')
+    } finally {
+      setPoolLoading(false)
+    }
+  }, [poolFilterCategory, poolSearch])
+
+  const handleAddPoolMessage = async () => {
+    if (!newPoolMessage.content.trim()) {
+      toast.error('Conteúdo é obrigatório')
+      return
+    }
+    try {
+      const res = await fetch('/api/warming/message-pool', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newPoolMessage),
+      })
+      if (res.ok) {
+        toast.success('Mensagem adicionada ao pool')
+        setNewPoolMessage({ category: newPoolMessage.category, content: '', weight: 1 })
+        fetchPool()
+      } else {
+        const data = await res.json()
+        toast.error(data.error || 'Erro ao adicionar')
+      }
+    } catch (error: any) {
+      toast.error(error.message)
+    }
+  }
+
+  const handleDeletePoolMessage = async (id: string) => {
+    if (!confirm('Remover esta mensagem do pool?')) return
+    try {
+      const res = await fetch(`/api/warming/message-pool/${id}?hard=true`, { method: 'DELETE' })
+      if (res.ok) {
+        toast.success('Mensagem removida')
+        fetchPool()
+      } else {
+        toast.error('Erro ao remover')
+      }
+    } catch (error: any) {
+      toast.error(error.message)
+    }
+  }
+
+  const handleTogglePoolMessage = async (id: string, currentActive: boolean) => {
+    try {
+      const res = await fetch(`/api/warming/message-pool/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ active: !currentActive }),
+      })
+      if (res.ok) {
+        fetchPool()
+      } else {
+        toast.error('Erro ao alternar')
+      }
+    } catch (error: any) {
+      toast.error(error.message)
+    }
+  }
+
+  const handleSeedPool = async () => {
+    if (!confirm('Importar as 568 mensagens padrão (seed)? Mensagens duplicadas serão puladas.')) return
+    setPoolSeedLoading(true)
+    try {
+      const res = await fetch('/api/warming/message-pool/seed', { method: 'POST' })
+      if (res.ok) {
+        const data = await res.json()
+        toast.success(`${data.inserted} mensagens importadas, ${data.skipped} duplicadas puladas`)
+        fetchPool()
+      } else {
+        toast.error('Erro ao importar seed')
+      }
+    } catch (error: any) {
+      toast.error(error.message)
+    } finally {
+      setPoolSeedLoading(false)
+    }
+  }
+
 
   // Fetch chips — show ALL chips that have an Evolution instance (connected or not)
   // Chips need to be connected to actually warm, but we show disconnected ones too
@@ -331,6 +458,10 @@ export function WarmingTab() {
             intervalMax: formIntervalMax,
             activeHoursStart: formActiveStart,
             activeHoursEnd: formActiveEnd,
+            // AI Bot fields (só usados quando strategy === 'ai_bot')
+            aiBotPhoneNumber: formStrategy === 'ai_bot' ? formAiBotPhone : undefined,
+            aiBotReplyTimeoutSec: formStrategy === 'ai_bot' ? formAiBotTimeout : undefined,
+            aiBotMaxMissedReplies: formStrategy === 'ai_bot' ? formAiBotMaxMissed : undefined,
           }),
         })
         if (res.ok) {
@@ -358,6 +489,9 @@ export function WarmingTab() {
     setFormIntervalMax(120)
     setFormActiveStart(480)
     setFormActiveEnd(1260)
+    setFormAiBotPhone('48991742716')
+    setFormAiBotTimeout(300)
+    setFormAiBotMaxMissed(2)
     setEditingSession(null)
   }
 
@@ -454,6 +588,163 @@ export function WarmingTab() {
           </p>
         </div>
 
+        <div className="flex gap-2">
+          <Dialog open={poolOpen} onOpenChange={(open) => {
+            setPoolOpen(open)
+            if (open) fetchPool()
+          }}>
+            <DialogTrigger asChild>
+              <Button variant="outline">
+                📝 Pool de Mensagens
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-4xl max-h-[85vh] overflow-y-auto">
+              <DialogHeader>
+                <DialogTitle>📝 Pool de Mensagens (AI Bot)</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-4">
+                <p className="text-sm text-muted-foreground">
+                  Pool global de mensagens usadas pela estratégia <strong>ai_bot</strong>. Os chips sorteiam
+                  uma categoria (sem repetir a última) e uma mensagem dentro da categoria para enviar ao bot Duda.
+                </p>
+
+                {/* Stats por categoria */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                  {POOL_CATEGORIES.map(cat => (
+                    <div key={cat.value} className="border rounded p-2 text-center">
+                      <div className="text-xs text-muted-foreground">{cat.label}</div>
+                      <div className="text-lg font-bold">{poolCategoryCounts[cat.value] || 0}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Importar seed */}
+                <div className="flex items-center gap-3 border rounded-lg p-3 bg-muted/30">
+                  <div className="flex-1">
+                    <div className="text-sm font-medium">Importar Seed Padrão</div>
+                    <div className="text-xs text-muted-foreground">
+                      Importa ~335 mensagens pré-cadastradas em 8 categorias. Idempotente (pula duplicatas).
+                    </div>
+                  </div>
+                  <Button onClick={handleSeedPool} disabled={poolSeedLoading}>
+                    {poolSeedLoading ? 'Importando...' : 'Importar Seed'}
+                  </Button>
+                </div>
+
+                {/* Adicionar nova */}
+                <div className="border rounded-lg p-3 space-y-2">
+                  <div className="text-sm font-medium">+ Adicionar Mensagem</div>
+                  <div className="grid grid-cols-1 md:grid-cols-12 gap-2">
+                    <div className="md:col-span-3">
+                      <Select
+                        value={newPoolMessage.category}
+                        onValueChange={(v) => setNewPoolMessage(prev => ({ ...prev, category: v }))}
+                      >
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {POOL_CATEGORIES.map(c => (
+                            <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="md:col-span-7">
+                      <Input
+                        placeholder="Conteúdo da mensagem (texto ou emoji)"
+                        value={newPoolMessage.content}
+                        onChange={(e) => setNewPoolMessage(prev => ({ ...prev, content: e.target.value }))}
+                        onKeyDown={(e) => { if (e.key === 'Enter') handleAddPoolMessage() }}
+                      />
+                    </div>
+                    <div className="md:col-span-1">
+                      <Input
+                        type="number"
+                        min={1}
+                        max={100}
+                        value={newPoolMessage.weight}
+                        onChange={(e) => setNewPoolMessage(prev => ({ ...prev, weight: Number(e.target.value) }))}
+                        title="Peso"
+                      />
+                    </div>
+                    <div className="md:col-span-1">
+                      <Button size="sm" onClick={handleAddPoolMessage} className="w-full">+</Button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Filtros */}
+                <div className="flex flex-wrap gap-2 items-center">
+                  <Select value={poolFilterCategory} onValueChange={setPoolFilterCategory}>
+                    <SelectTrigger className="w-[180px]"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Todas categorias</SelectItem>
+                      {POOL_CATEGORIES.map(c => (
+                        <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Input
+                    placeholder="Buscar..."
+                    value={poolSearch}
+                    onChange={(e) => setPoolSearch(e.target.value)}
+                    className="w-[200px]"
+                  />
+                  <Button variant="outline" size="sm" onClick={fetchPool} disabled={poolLoading}>
+                    {poolLoading ? 'Carregando...' : 'Atualizar'}
+                  </Button>
+                  <div className="ml-auto text-xs text-muted-foreground">
+                    {poolMessages.length} mensagens
+                  </div>
+                </div>
+
+                {/* Lista */}
+                <div className="border rounded-lg max-h-[400px] overflow-y-auto">
+                  {poolLoading ? (
+                    <div className="p-8 text-center text-muted-foreground">Carregando...</div>
+                  ) : poolMessages.length === 0 ? (
+                    <div className="p-8 text-center text-muted-foreground">
+                      Nenhuma mensagem no pool. Clique em "Importar Seed" para começar.
+                    </div>
+                  ) : (
+                    <div className="divide-y">
+                      {poolMessages.map(msg => (
+                        <div key={msg.id} className="flex items-center gap-3 p-2 hover:bg-muted/30">
+                          <Badge variant="outline" className="text-xs">
+                            {POOL_CATEGORIES.find(c => c.value === msg.category)?.label || msg.category}
+                          </Badge>
+                          <div className="flex-1 text-sm truncate" title={msg.content}>
+                            {msg.content}
+                          </div>
+                          <div className="text-xs text-muted-foreground">peso: {msg.weight}</div>
+                          <Badge variant={msg.active ? 'default' : 'secondary'} className="text-xs">
+                            {msg.active ? 'ativo' : 'inativo'}
+                          </Badge>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => handleTogglePoolMessage(msg.id, msg.active)}
+                            title={msg.active ? 'Desativar' : 'Ativar'}
+                          >
+                            {msg.active ? '⏸' : '▶'}
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => handleDeletePoolMessage(msg.id)}
+                            className="text-destructive"
+                            title="Remover"
+                          >
+                            ✕
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
+
         <Dialog open={createOpen} onOpenChange={(open) => {
           setCreateOpen(open)
           if (!open) { resetForm() }
@@ -496,6 +787,7 @@ export function WarmingTab() {
                     <SelectItem value="pairs">Pares (A↔B, C↔D)</SelectItem>
                     <SelectItem value="random">Aleatório</SelectItem>
                     <SelectItem value="group">Grupo (rotação livre)</SelectItem>
+                    <SelectItem value="ai_bot">🤖 AI Bot (chips conversam com o Duda)</SelectItem>
                   </SelectContent>
                 </Select>
                 <p className="text-xs text-muted-foreground">
@@ -503,12 +795,61 @@ export function WarmingTab() {
                   {formStrategy === 'pairs' && 'Chips são pareados e conversam entre si — mais natural para diálogos'}
                   {formStrategy === 'random' && 'Pares aleatórios a cada mensagem — mais imprevisível'}
                   {formStrategy === 'group' && 'Rotação livre, chips com menos mensagens enviam primeiro — equilibrado'}
+                  {formStrategy === 'ai_bot' && 'Chips enviam mensagens do pool global para o número do bot Duda. O bot (n8n + Meta Official) responde com IA. Sem n8n no código do site.'}
                 </p>
               </div>
 
+              {/* Campos específicos da estratégia ai_bot */}
+              {formStrategy === 'ai_bot' && (
+                <div className="space-y-3 border rounded-lg p-4 bg-muted/30">
+                  <div className="text-sm font-medium">🤖 Configuração do AI Bot (Duda)</div>
+                  <p className="text-xs text-muted-foreground">
+                    Os chips enviarão mensagens do pool global para o número do bot Duda.
+                    Quando o Duda responde (via webhook Evolution), o chip envia a próxima mensagem.
+                    Se 2 respostas consecutivas não receberem reply, a conversa do dia é encerrada.
+                  </p>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div className="space-y-2">
+                      <Label htmlFor="ai-bot-phone">Telefone do Bot</Label>
+                      <Input
+                        id="ai-bot-phone"
+                        placeholder="48991742716"
+                        value={formAiBotPhone}
+                        onChange={e => setFormAiBotPhone(e.target.value)}
+                      />
+                      <p className="text-xs text-muted-foreground">Sem o 55. Ex: 48991742716</p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="ai-bot-timeout">Timeout (segundos)</Label>
+                      <Input
+                        id="ai-bot-timeout"
+                        type="number"
+                        min={60}
+                        max={3600}
+                        value={formAiBotTimeout}
+                        onChange={e => setFormAiBotTimeout(Number(e.target.value))}
+                      />
+                      <p className="text-xs text-muted-foreground">Quanto esperar a resposta antes de contar como "missed"</p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="ai-bot-missed">Máx. Missed Consecutivos</Label>
+                      <Input
+                        id="ai-bot-missed"
+                        type="number"
+                        min={1}
+                        max={10}
+                        value={formAiBotMaxMissed}
+                        onChange={e => setFormAiBotMaxMissed(Number(e.target.value))}
+                      />
+                      <p className="text-xs text-muted-foreground">Encerra conversa do dia após N replies sem resposta</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Chips — disabled when editing running session */}
               <div className="space-y-2">
-                <Label>Chips Participantes * (mín. 3)</Label>
+                <Label>Chips Participantes * {formStrategy === 'ai_bot' ? '(mín. 1)' : '(mín. 3)'}</Label>
                 {editingSession?.status === 'running' ? (
                   <div className="border rounded-lg p-3 bg-muted/50">
                     <p className="text-sm text-muted-foreground">Chips não podem ser alterados com sessão em execução. Pause a sessão para alterar.</p>
@@ -686,6 +1027,7 @@ export function WarmingTab() {
             </div>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
 
       {/* Stats Overview */}

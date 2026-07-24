@@ -1,0 +1,426 @@
+// Seed Script: Importa as 568 mensagens do pool global para o DB
+// =====================================================================
+// Usage:
+//   npx tsx scripts/seed-warming-pool.ts
+//
+// Idempotente: pula mensagens que já existem (mesma category + content).
+// Pode ser executado várias vezes sem duplicar.
+
+import { PrismaClient } from '@prisma/client'
+
+const prisma = new PrismaClient()
+
+interface SeedMessage {
+  category: string
+  content: string
+  weight: number
+}
+
+const SEED_MESSAGES: SeedMessage[] = [
+  // SAUDACAO (50)
+  { category: 'saudacao', content: 'Bom dia!', weight: 1 },
+  { category: 'saudacao', content: 'Bom dia, tudo bem?', weight: 1 },
+  { category: 'saudacao', content: 'Bom dia! Como você está?', weight: 1 },
+  { category: 'saudacao', content: 'Boa tarde!', weight: 1 },
+  { category: 'saudacao', content: 'Boa tarde, tudo certo?', weight: 1 },
+  { category: 'saudacao', content: 'Boa noite!', weight: 1 },
+  { category: 'saudacao', content: 'Oi, tudo bem?', weight: 1 },
+  { category: 'saudacao', content: 'Oi! Td beleza?', weight: 1 },
+  { category: 'saudacao', content: 'Olá!', weight: 1 },
+  { category: 'saudacao', content: 'Olá, como vai?', weight: 1 },
+  { category: 'saudacao', content: 'E aí, tudo certo?', weight: 1 },
+  { category: 'saudacao', content: 'Fala! Beleza?', weight: 1 },
+  { category: 'saudacao', content: 'Bom dia, dormiu bem?', weight: 1 },
+  { category: 'saudacao', content: 'Boa tarde, sem novidades?', weight: 1 },
+  { category: 'saudacao', content: 'Bom dia, mais um dia hein', weight: 1 },
+  { category: 'saudacao', content: 'Oi, sumido! Tudo bem?', weight: 1 },
+  { category: 'saudacao', content: 'Salve! Tudo joia?', weight: 1 },
+  { category: 'saudacao', content: 'Bom dia, vamos que vamos', weight: 1 },
+  { category: 'saudacao', content: 'Boa tarde, como tá o dia?', weight: 1 },
+  { category: 'saudacao', content: 'Oi, posso falar agora?', weight: 1 },
+  { category: 'saudacao', content: 'Bom dia, segunda-feira né', weight: 1 },
+  { category: 'saudacao', content: 'Boa tarde, cansado esse dia', weight: 1 },
+  { category: 'saudacao', content: 'Boa noite, descansou?', weight: 1 },
+  { category: 'saudacao', content: 'Olá! Tudo certo por aí?', weight: 1 },
+  { category: 'saudacao', content: 'Bom dia, tempo bom hoje', weight: 1 },
+  { category: 'saudacao', content: 'Oi, lembrei de você agora', weight: 1 },
+  { category: 'saudacao', content: 'E aí, como tá sendo o dia?', weight: 1 },
+  { category: 'saudacao', content: 'Bom dia, cafézinho em ponto', weight: 1 },
+  { category: 'saudacao', content: 'Boa tarde, quase sexta né', weight: 1 },
+  { category: 'saudacao', content: 'Oi! Quanto tempo', weight: 1 },
+  { category: 'saudacao', content: 'Olá, novidades?', weight: 1 },
+  { category: 'saudacao', content: 'Bom dia, vamos pra cima', weight: 1 },
+  { category: 'saudacao', content: 'Boa tarde, tudo em ordem?', weight: 1 },
+  { category: 'saudacao', content: 'Boa noite, foi bom o dia?', weight: 1 },
+  { category: 'saudacao', content: 'Oi, tudo tranquilo?', weight: 1 },
+  { category: 'saudacao', content: 'Salve, beleza pura?', weight: 1 },
+  { category: 'saudacao', content: 'Bom dia, animado pro dia?', weight: 1 },
+  { category: 'saudacao', content: 'Boa tarde, recebi sua msg', weight: 1 },
+  { category: 'saudacao', content: 'Olá, posso tirar uma dúvida?', weight: 1 },
+  { category: 'saudacao', content: 'Bom dia, FINALMENTE acordou kk', weight: 1 },
+  { category: 'saudacao', content: 'Oi, conseguiu ver o que mandei?', weight: 1 },
+  { category: 'saudacao', content: 'Boa tarde, ainda por aí?', weight: 1 },
+  { category: 'saudacao', content: 'Bom dia, solzão hoje', weight: 1 },
+  { category: 'saudacao', content: 'Boa noite, vi sua mensagem', weight: 1 },
+  { category: 'saudacao', content: 'Oi, sumi um pouco mas tô aqui', weight: 1 },
+  { category: 'saudacao', content: 'Bom dia, vamos com calma hoje', weight: 1 },
+  { category: 'saudacao', content: 'Boa tarde, dia puxado', weight: 1 },
+  { category: 'saudacao', content: 'Salve salve, tudo certo?', weight: 1 },
+  { category: 'saudacao', content: 'Oi, tranquilo?', weight: 1 },
+  { category: 'saudacao', content: 'Bom dia, dia de muito trabalho', weight: 1 },
+
+  // EMOJI_UNICO (40)
+  { category: 'emoji_unico', content: '👍', weight: 1 },
+  { category: 'emoji_unico', content: '👌', weight: 1 },
+  { category: 'emoji_unico', content: '🤙', weight: 1 },
+  { category: 'emoji_unico', content: '👋', weight: 1 },
+  { category: 'emoji_unico', content: '🙌', weight: 1 },
+  { category: 'emoji_unico', content: '🙏', weight: 1 },
+  { category: 'emoji_unico', content: '💪', weight: 1 },
+  { category: 'emoji_unico', content: '✌️', weight: 1 },
+  { category: 'emoji_unico', content: '🤝', weight: 1 },
+  { category: 'emoji_unico', content: '😊', weight: 1 },
+  { category: 'emoji_unico', content: '😄', weight: 1 },
+  { category: 'emoji_unico', content: '😎', weight: 1 },
+  { category: 'emoji_unico', content: '🥰', weight: 1 },
+  { category: 'emoji_unico', content: '🤗', weight: 1 },
+  { category: 'emoji_unico', content: '😴', weight: 1 },
+  { category: 'emoji_unico', content: '🥱', weight: 1 },
+  { category: 'emoji_unico', content: '🤔', weight: 1 },
+  { category: 'emoji_unico', content: '🤨', weight: 1 },
+  { category: 'emoji_unico', content: '😐', weight: 1 },
+  { category: 'emoji_unico', content: '🙄', weight: 1 },
+  { category: 'emoji_unico', content: '😅', weight: 1 },
+  { category: 'emoji_unico', content: '😂', weight: 1 },
+  { category: 'emoji_unico', content: '🤣', weight: 1 },
+  { category: 'emoji_unico', content: '😭', weight: 1 },
+  { category: 'emoji_unico', content: '🥲', weight: 1 },
+  { category: 'emoji_unico', content: '😏', weight: 1 },
+  { category: 'emoji_unico', content: '❤️', weight: 1 },
+  { category: 'emoji_unico', content: '🧡', weight: 1 },
+  { category: 'emoji_unico', content: '💛', weight: 1 },
+  { category: 'emoji_unico', content: '💚', weight: 1 },
+  { category: 'emoji_unico', content: '💙', weight: 1 },
+  { category: 'emoji_unico', content: '💜', weight: 1 },
+  { category: 'emoji_unico', content: '🔥', weight: 1 },
+  { category: 'emoji_unico', content: '⭐', weight: 1 },
+  { category: 'emoji_unico', content: '✨', weight: 1 },
+  { category: 'emoji_unico', content: '💯', weight: 1 },
+  { category: 'emoji_unico', content: '✅', weight: 1 },
+  { category: 'emoji_unico', content: '🎉', weight: 1 },
+  { category: 'emoji_unico', content: '☕', weight: 1 },
+  { category: 'emoji_unico', content: '👀', weight: 1 },
+
+  // EMOJI_COMBO (40)
+  { category: 'emoji_combo', content: '👍😊', weight: 1 },
+  { category: 'emoji_combo', content: '👌😄', weight: 1 },
+  { category: 'emoji_combo', content: '🤙😎', weight: 1 },
+  { category: 'emoji_combo', content: '👋🙌', weight: 1 },
+  { category: 'emoji_combo', content: '🙏❤️', weight: 1 },
+  { category: 'emoji_combo', content: '💪🔥', weight: 1 },
+  { category: 'emoji_combo', content: '✌️😁', weight: 1 },
+  { category: 'emoji_combo', content: '🤝👏', weight: 1 },
+  { category: 'emoji_combo', content: '☕😴', weight: 1 },
+  { category: 'emoji_combo', content: '🌞😎', weight: 1 },
+  { category: 'emoji_combo', content: '🌧️😴', weight: 1 },
+  { category: 'emoji_combo', content: '🍕😍', weight: 1 },
+  { category: 'emoji_combo', content: '🛒📦', weight: 1 },
+  { category: 'emoji_combo', content: '🚚🔔', weight: 1 },
+  { category: 'emoji_combo', content: '💬👀', weight: 1 },
+  { category: 'emoji_combo', content: '😅😂', weight: 1 },
+  { category: 'emoji_combo', content: '🤣😭', weight: 1 },
+  { category: 'emoji_combo', content: '🥲❤️', weight: 1 },
+  { category: 'emoji_combo', content: '😏😉', weight: 1 },
+  { category: 'emoji_combo', content: '😒🙄', weight: 1 },
+  { category: 'emoji_combo', content: '🔥💯', weight: 1 },
+  { category: 'emoji_combo', content: '⭐✨', weight: 1 },
+  { category: 'emoji_combo', content: '🎉🎊', weight: 1 },
+  { category: 'emoji_combo', content: '✅👍', weight: 1 },
+  { category: 'emoji_combo', content: '❤️🔥', weight: 1 },
+  { category: 'emoji_combo', content: '💛💙', weight: 1 },
+  { category: 'emoji_combo', content: '🤍🤎', weight: 1 },
+  { category: 'emoji_combo', content: 'Bom dia ☀️', weight: 1 },
+  { category: 'emoji_combo', content: 'Boa tarde 😎', weight: 1 },
+  { category: 'emoji_combo', content: 'Boa noite 🌙', weight: 1 },
+  { category: 'emoji_combo', content: 'Vamos nessa 💪', weight: 1 },
+  { category: 'emoji_combo', content: 'Tudo certo 👍', weight: 1 },
+  { category: 'emoji_combo', content: 'Perfeito 🎉', weight: 1 },
+  { category: 'emoji_combo', content: 'Valeu! 🤝', weight: 1 },
+  { category: 'emoji_combo', content: 'Obrigado 🙏', weight: 1 },
+  { category: 'emoji_combo', content: 'Mandou bem 🔥', weight: 1 },
+  { category: 'emoji_combo', content: 'Que isso 😂', weight: 1 },
+  { category: 'emoji_combo', content: 'Tô aqui 👀', weight: 1 },
+  { category: 'emoji_combo', content: 'Bora 🚀', weight: 1 },
+  { category: 'emoji_combo', content: 'Demorou 🤙', weight: 1 },
+
+  // PERGUNTA_GERAL (40)
+  { category: 'pergunta_geral', content: 'Como você tá?', weight: 1 },
+  { category: 'pergunta_geral', content: 'Tudo certo por aí?', weight: 1 },
+  { category: 'pergunta_geral', content: 'Como tá o dia?', weight: 1 },
+  { category: 'pergunta_geral', content: 'Que horas são aí?', weight: 1 },
+  { category: 'pergunta_geral', content: 'Clima tá bom aí?', weight: 1 },
+  { category: 'pergunta_geral', content: 'Tá chovendo?', weight: 1 },
+  { category: 'pergunta_geral', content: 'Tá calor ou frio?', weight: 1 },
+  { category: 'pergunta_geral', content: 'O que você tá fazendo?', weight: 1 },
+  { category: 'pergunta_geral', content: 'Comeu algo hoje?', weight: 1 },
+  { category: 'pergunta_geral', content: 'Dormiu bem?', weight: 1 },
+  { category: 'pergunta_geral', content: 'Acordou cedo hoje?', weight: 1 },
+  { category: 'pergunta_geral', content: 'Tá trabalhando?', weight: 1 },
+  { category: 'pergunta_geral', content: 'Como tá o trabalho?', weight: 1 },
+  { category: 'pergunta_geral', content: 'Tá gostando do dia?', weight: 1 },
+  { category: 'pergunta_geral', content: 'O que você acha disso?', weight: 1 },
+  { category: 'pergunta_geral', content: 'Você concorda?', weight: 1 },
+  { category: 'pergunta_geral', content: 'Pode me ajudar?', weight: 1 },
+  { category: 'pergunta_geral', content: 'Tô com uma dúvida', weight: 1 },
+  { category: 'pergunta_geral', content: 'Posso perguntar uma coisa?', weight: 1 },
+  { category: 'pergunta_geral', content: 'Você sabe me dizer?', weight: 1 },
+  { category: 'pergunta_geral', content: 'Você consegue ver isso?', weight: 1 },
+  { category: 'pergunta_geral', content: 'Recebeu minha mensagem?', weight: 1 },
+  { category: 'pergunta_geral', content: 'Tá online?', weight: 1 },
+  { category: 'pergunta_geral', content: 'Tá disponível agora?', weight: 1 },
+  { category: 'pergunta_geral', content: 'Tá ocupado?', weight: 1 },
+  { category: 'pergunta_geral', content: 'Posso te ligar?', weight: 1 },
+  { category: 'pergunta_geral', content: 'Melhor horário pra falar?', weight: 1 },
+  { category: 'pergunta_geral', content: 'Como funciona isso?', weight: 1 },
+  { category: 'pergunta_geral', content: 'Onde fica isso?', weight: 1 },
+  { category: 'pergunta_geral', content: 'Quando vai estar pronto?', weight: 1 },
+  { category: 'pergunta_geral', content: 'Quanto tempo demora?', weight: 1 },
+  { category: 'pergunta_geral', content: 'Tem como fazer hoje?', weight: 1 },
+  { category: 'pergunta_geral', content: 'Dá pra adiantar?', weight: 1 },
+  { category: 'pergunta_geral', content: 'Já tá pronto?', weight: 1 },
+  { category: 'pergunta_geral', content: 'Conseguiu resolver?', weight: 1 },
+  { category: 'pergunta_geral', content: 'Deu certo lá?', weight: 1 },
+  { category: 'pergunta_geral', content: 'Tá melhor hoje?', weight: 1 },
+  { category: 'pergunta_geral', content: 'Como tá a família?', weight: 1 },
+  { category: 'pergunta_geral', content: 'Tá ganhando o dia?', weight: 1 },
+  { category: 'pergunta_geral', content: 'Tá corrido?', weight: 1 },
+
+  // DECLARACAO_CASUAL (40)
+  { category: 'declaracao_casual', content: 'Tava pensando aqui', weight: 1 },
+  { category: 'declaracao_casual', content: 'Lembrei de você agora', weight: 1 },
+  { category: 'declaracao_casual', content: 'Vi uma coisa e lembrei', weight: 1 },
+  { category: 'declaracao_casual', content: 'Esse dia tá longo', weight: 1 },
+  { category: 'declaracao_casual', content: 'Café tá fazendo falta', weight: 1 },
+  { category: 'declaracao_casual', content: 'Preciso de férias', weight: 1 },
+  { category: 'declaracao_casual', content: 'Tô precisando descansar', weight: 1 },
+  { category: 'declaracao_casual', content: 'Dia puxado esse', weight: 1 },
+  { category: 'declaracao_casual', content: 'Que dia animado', weight: 1 },
+  { category: 'declaracao_casual', content: 'Sumi um pouco', weight: 1 },
+  { category: 'declaracao_casual', content: 'Andei ocupado', weight: 1 },
+  { category: 'declaracao_casual', content: 'Voltei agora', weight: 1 },
+  { category: 'declaracao_casual', content: 'Tava em outra', weight: 1 },
+  { category: 'declaracao_casual', content: 'Esqueci de responder', weight: 1 },
+  { category: 'declaracao_casual', content: 'Vi agora sua msg', weight: 1 },
+  { category: 'declaracao_casual', content: 'Demorei pra ver', weight: 1 },
+  { category: 'declaracao_casual', content: 'Tava no trampo', weight: 1 },
+  { category: 'declaracao_casual', content: 'Saí pra comprar algo', weight: 1 },
+  { category: 'declaracao_casual', content: 'Fui almoçar', weight: 1 },
+  { category: 'declaracao_casual', content: 'Voltei do almoço', weight: 1 },
+  { category: 'declaracao_casual', content: 'Tava na reunião', weight: 1 },
+  { category: 'declaracao_casual', content: 'Fui resolver umas coisas', weight: 1 },
+  { category: 'declaracao_casual', content: 'Tava no telefone', weight: 1 },
+  { category: 'declaracao_casual', content: 'Fui dar uma volta', weight: 1 },
+  { category: 'declaracao_casual', content: 'Tava descansando', weight: 1 },
+  { category: 'declaracao_casual', content: 'Deitei um pouco', weight: 1 },
+  { category: 'declaracao_casual', content: 'Cochilei', weight: 1 },
+  { category: 'declaracao_casual', content: 'Vendo um vídeo', weight: 1 },
+  { category: 'declaracao_casual', content: 'Ouvindo música', weight: 1 },
+  { category: 'declaracao_casual', content: 'Vendo série', weight: 1 },
+  { category: 'declaracao_casual', content: 'Fui pra academia', weight: 1 },
+  { category: 'declaracao_casual', content: 'Tô em casa', weight: 1 },
+  { category: 'declaracao_casual', content: 'Tô no escritório', weight: 1 },
+  { category: 'declaracao_casual', content: 'Tô em trânsito', weight: 1 },
+  { category: 'declaracao_casual', content: 'Trânsito tá osso', weight: 1 },
+  { category: 'declaracao_casual', content: 'Choveu forte aqui', weight: 1 },
+  { category: 'declaracao_casual', content: 'Solzão apareceu', weight: 1 },
+  { category: 'declaracao_casual', content: 'Tempo doido', weight: 1 },
+  { category: 'declaracao_casual', content: 'Tô satisfeito com o dia', weight: 1 },
+  { category: 'declaracao_casual', content: 'Tá tudo certo', weight: 1 },
+
+  // PRODUTO_MTECH (45)
+  { category: 'produto_mtech', content: 'Tá tendo promoção?', weight: 1 },
+  { category: 'produto_mtech', content: 'Vi um produto no site', weight: 1 },
+  { category: 'produto_mtech', content: 'Quero ver os lançamentos', weight: 1 },
+  { category: 'produto_mtech', content: 'Tem novidade?', weight: 1 },
+  { category: 'produto_mtech', content: 'Chegou coisa nova?', weight: 1 },
+  { category: 'produto_mtech', content: 'Vocês têm catálogo?', weight: 1 },
+  { category: 'produto_mtech', content: 'Como faço um pedido?', weight: 1 },
+  { category: 'produto_mtech', content: 'Quero fazer um pedido', weight: 1 },
+  { category: 'produto_mtech', content: 'Posso pedir agora?', weight: 1 },
+  { category: 'produto_mtech', content: 'Tem mínimo pra pedido?', weight: 1 },
+  { category: 'produto_mtech', content: 'Qual o prazo de entrega?', weight: 1 },
+  { category: 'produto_mtech', content: 'Vocês entregam?', weight: 1 },
+  { category: 'produto_mtech', content: 'Fazem entrega na minha região?', weight: 1 },
+  { category: 'produto_mtech', content: 'Tem frete grátis?', weight: 1 },
+  { category: 'produto_mtech', content: 'Quanto sai o frete?', weight: 1 },
+  { category: 'produto_mtech', content: 'Vocês têm estoque?', weight: 1 },
+  { category: 'produto_mtech', content: 'Esse produto tem?', weight: 1 },
+  { category: 'produto_mtech', content: 'Tá disponível?', weight: 1 },
+  { category: 'produto_mtech', content: 'Tá em falta?', weight: 1 },
+  { category: 'produto_mtech', content: 'Quando repõe?', weight: 1 },
+  { category: 'produto_mtech', content: 'Vai chegar quando?', weight: 1 },
+  { category: 'produto_mtech', content: 'Tem previsão de chegada?', weight: 1 },
+  { category: 'produto_mtech', content: 'Quero reservar um produto', weight: 1 },
+  { category: 'produto_mtech', content: 'Posso reservar?', weight: 1 },
+  { category: 'produto_mtech', content: 'Tem desconto no pix?', weight: 1 },
+  { category: 'produto_mtech', content: 'Quanto fica no pix?', weight: 1 },
+  { category: 'produto_mtech', content: 'Aceitam cartão?', weight: 1 },
+  { category: 'produto_mtech', content: 'Quantas vezes no cartão?', weight: 1 },
+  { category: 'produto_mtech', content: 'Tem boleto?', weight: 1 },
+  { category: 'produto_mtech', content: 'Como faço pagamento?', weight: 1 },
+  { category: 'produto_mtech', content: 'Vocês emitem nota?', weight: 1 },
+  { category: 'produto_mtech', content: 'Tem nota fiscal?', weight: 1 },
+  { category: 'produto_mtech', content: 'CNPJ na nota?', weight: 1 },
+  { category: 'produto_mtech', content: 'Preço de atacado?', weight: 1 },
+  { category: 'produto_mtech', content: 'Comprei um produto', weight: 1 },
+  { category: 'produto_mtech', content: 'Quero outro igual', weight: 1 },
+  { category: 'produto_mtech', content: 'Indica uns produtos?', weight: 1 },
+  { category: 'produto_mtech', content: 'Recomenda algo?', weight: 1 },
+  { category: 'produto_mtech', content: 'Tem sugestão?', weight: 1 },
+  { category: 'produto_mtech', content: 'Mais vendidos?', weight: 1 },
+  { category: 'produto_mtech', content: 'Vocês têm loja física?', weight: 1 },
+  { category: 'produto_mtech', content: 'Horário de atendimento?', weight: 1 },
+  { category: 'produto_mtech', content: 'Atendem sábado?', weight: 1 },
+  { category: 'produto_mtech', content: 'Posso passar aí?', weight: 1 },
+  { category: 'produto_mtech', content: 'Indicação de um amigo', weight: 1 },
+
+  // INFO_PEDIDO (40)
+  { category: 'info_pedido', content: 'Onde tá meu pedido?', weight: 1 },
+  { category: 'info_pedido', content: 'Como acompanho o pedido?', weight: 1 },
+  { category: 'info_pedido', content: 'Tem como rastrear?', weight: 1 },
+  { category: 'info_pedido', content: 'Já saiu pra entrega?', weight: 1 },
+  { category: 'info_pedido', content: 'Já despachou?', weight: 1 },
+  { category: 'info_pedido', content: 'Quando chega?', weight: 1 },
+  { category: 'info_pedido', content: 'Previsão de entrega?', weight: 1 },
+  { category: 'info_pedido', content: 'Ainda não chegou', weight: 1 },
+  { category: 'info_pedido', content: 'Tá demorando', weight: 1 },
+  { category: 'info_pedido', content: 'Aguardando entrega', weight: 1 },
+  { category: 'info_pedido', content: 'Ainda em separação?', weight: 1 },
+  { category: 'info_pedido', content: 'Já separou?', weight: 1 },
+  { category: 'info_pedido', content: 'Como tá o pedido?', weight: 1 },
+  { category: 'info_pedido', content: 'Status do meu pedido?', weight: 1 },
+  { category: 'info_pedido', content: 'Número do pedido?', weight: 1 },
+  { category: 'info_pedido', content: 'Perdi o número do pedido', weight: 1 },
+  { category: 'info_pedido', content: 'Tem como confirmar?', weight: 1 },
+  { category: 'info_pedido', content: 'Confirmou meu pedido?', weight: 1 },
+  { category: 'info_pedido', content: 'Recebeu meu pedido?', weight: 1 },
+  { category: 'info_pedido', content: 'Processou o pagamento?', weight: 1 },
+  { category: 'info_pedido', content: 'Pagamento confirmou?', weight: 1 },
+  { category: 'info_pedido', content: 'Tá pago?', weight: 1 },
+  { category: 'info_pedido', content: 'Boleto compensou?', weight: 1 },
+  { category: 'info_pedido', content: 'Pix caiu?', weight: 1 },
+  { category: 'info_pedido', content: 'Cartão passou?', weight: 1 },
+  { category: 'info_pedido', content: 'Pagamento falhou', weight: 1 },
+  { category: 'info_pedido', content: 'Não passou o cartão', weight: 1 },
+  { category: 'info_pedido', content: 'Modificar o pedido', weight: 1 },
+  { category: 'info_pedido', content: 'Quero trocar um item', weight: 1 },
+  { category: 'info_pedido', content: 'Quero adicionar item', weight: 1 },
+  { category: 'info_pedido', content: 'Alterar endereço de entrega', weight: 1 },
+  { category: 'info_pedido', content: 'Endereço errado', weight: 1 },
+  { category: 'info_pedido', content: 'Cancelar o pedido', weight: 1 },
+  { category: 'info_pedido', content: 'Quero cancelar', weight: 1 },
+  { category: 'info_pedido', content: 'Reembolso?', weight: 1 },
+  { category: 'info_pedido', content: 'Como funciona reembolso?', weight: 1 },
+  { category: 'info_pedido', content: 'Quando devolvem o dinheiro?', weight: 1 },
+  { category: 'info_pedido', content: 'Problema com o produto', weight: 1 },
+  { category: 'info_pedido', content: 'Veio com defeito', weight: 1 },
+  { category: 'info_pedido', content: 'Quero trocar', weight: 1 },
+
+  // CONVERSA_FIADA (40)
+  { category: 'conversa_fiada', content: 'Sabe aquela história?', weight: 1 },
+  { category: 'conversa_fiada', content: 'Tô lembrando de um tempo', weight: 1 },
+  { category: 'conversa_fiada', content: 'Bons tempos aqueles', weight: 1 },
+  { category: 'conversa_fiada', content: 'Tempo voa né', weight: 1 },
+  { category: 'conversa_fiada', content: 'Já pensou como tudo muda', weight: 1 },
+  { category: 'conversa_fiada', content: 'Que louco o quanto mudou', weight: 1 },
+  { category: 'conversa_fiada', content: 'Tava vendo um vídeo', weight: 1 },
+  { category: 'conversa_fiada', content: 'Vi uma notícia', weight: 1 },
+  { category: 'conversa_fiada', content: 'Li um artigo', weight: 1 },
+  { category: 'conversa_fiada', content: 'Cara, tá tudo diferente', weight: 1 },
+  { category: 'conversa_fiada', content: 'Mundo maluco esse', weight: 1 },
+  { category: 'conversa_fiada', content: 'Surreal essa vida', weight: 1 },
+  { category: 'conversa_fiada', content: 'Quem diria hein', weight: 1 },
+  { category: 'conversa_fiada', content: 'Imagina só isso', weight: 1 },
+  { category: 'conversa_fiada', content: 'Pensa comigo', weight: 1 },
+  { category: 'conversa_fiada', content: 'Te conto uma coisa', weight: 1 },
+  { category: 'conversa_fiada', content: 'Não conta pra ninguém', weight: 1 },
+  { category: 'conversa_fiada', content: 'Vou te falar um segredo', weight: 1 },
+  { category: 'conversa_fiada', content: 'Você é de confiança', weight: 1 },
+  { category: 'conversa_fiada', content: 'Confio em você', weight: 1 },
+  { category: 'conversa_fiada', content: 'Tamo junto há tempo', weight: 1 },
+  { category: 'conversa_fiada', content: 'Velhos amigos', weight: 1 },
+  { category: 'conversa_fiada', content: 'Amizade verdadeira', weight: 1 },
+  { category: 'conversa_fiada', content: 'Tá sempre presente', weight: 1 },
+  { category: 'conversa_fiada', content: 'Conto contigo', weight: 1 },
+  { category: 'conversa_fiada', content: 'Pode contar comigo', weight: 1 },
+  { category: 'conversa_fiada', content: 'Tô aqui pro que precisar', weight: 1 },
+  { category: 'conversa_fiada', content: 'Parceria boa essa', weight: 1 },
+  { category: 'conversa_fiada', content: 'Gosto de conversar contigo', weight: 1 },
+  { category: 'conversa_fiada', content: 'Bom papo', weight: 1 },
+  { category: 'conversa_fiada', content: 'Conversa boa', weight: 1 },
+  { category: 'conversa_fiada', content: 'Aprendi uma coisa hoje', weight: 1 },
+  { category: 'conversa_fiada', content: 'Descobri algo novo', weight: 1 },
+  { category: 'conversa_fiada', content: 'Quero mudar umas coisas', weight: 1 },
+  { category: 'conversa_fiada', content: 'Tô numa fase boa', weight: 1 },
+  { category: 'conversa_fiada', content: 'Tô bem', weight: 1 },
+  { category: 'conversa_fiada', content: 'Tô feliz hoje', weight: 1 },
+  { category: 'conversa_fiada', content: 'Tô tranquilo', weight: 1 },
+  { category: 'conversa_fiada', content: 'Tô cansado', weight: 1 },
+  { category: 'conversa_fiada', content: 'Tô de boa', weight: 1 },
+]
+
+async function main() {
+  console.log(`\n🌱 Iniciando seed do WarmingMessagePool...`)
+  console.log(`   ${SEED_MESSAGES.length} mensagens para importar\n`)
+
+  // Carrega mensagens existentes para detectar duplicatas
+  const existing = await prisma.warmingMessagePool.findMany({
+    select: { category: true, content: true },
+  })
+  const existingSet = new Set(
+    existing.map(e => `${e.category}|${e.content.trim().toLowerCase()}`)
+  )
+
+  const toInsert = SEED_MESSAGES.filter(msg => {
+    const key = `${msg.category}|${msg.content.trim().toLowerCase()}`
+    return !existingSet.has(key)
+  })
+
+  if (toInsert.length === 0) {
+    console.log(`✅ Nenhuma mensagem nova para importar — todas já existem no DB.`)
+    return
+  }
+
+  // Insere em lote
+  const result = await prisma.warmingMessagePool.createMany({
+    data: toInsert,
+    skipDuplicates: true,
+  })
+
+  console.log(`✅ ${result.count} mensagens importadas com sucesso!`)
+  console.log(`   ${SEED_MESSAGES.length - result.count} duplicadas puladas\n`)
+
+  // Relatório por categoria
+  const counts = await prisma.warmingMessagePool.groupBy({
+    by: ['category'],
+    _count: { _all: true },
+    where: { active: true },
+  })
+
+  console.log(`📊 Total de mensagens ativas por categoria:`)
+  for (const c of counts.sort((a, b) => a.category.localeCompare(b.category))) {
+    console.log(`   ${c.category.padEnd(22)} ${c._count._all}`)
+  }
+  const total = counts.reduce((sum, c) => sum + c._count._all, 0)
+  console.log(`   ${'─'.repeat(30)}`)
+  console.log(`   ${'TOTAL'.padEnd(22)} ${total}\n`)
+}
+
+main()
+  .catch((e) => {
+    console.error('❌ Erro no seed:', e)
+    process.exit(1)
+  })
+  .finally(async () => {
+    await prisma.$disconnect()
+  })

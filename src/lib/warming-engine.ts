@@ -45,7 +45,7 @@ interface WarmingMessageTemplate {
   weight: number  // peso relativo para distribuição
 }
 
-interface WarmingChipProgress {
+export interface WarmingChipProgress {
   sent: number
   received: number
   lastSentAt: string | null
@@ -63,7 +63,7 @@ interface MessageTypeDistribution {
   audio: number
 }
 
-interface WarmingBreakWindow {
+export interface WarmingBreakWindow {
   start: number
   end: number
   label: string
@@ -184,7 +184,7 @@ const DEFAULT_WARMING_TEMPLATES: WarmingMessageTemplate[] = [
 // GAUSSIAN UTILITIES (same as sending-engine.ts)
 // ============================================================
 
-function gaussianRandom(mean: number, stddev: number, min: number, max: number): number {
+export function gaussianRandom(mean: number, stddev: number, min: number, max: number): number {
   const u1 = Math.random()
   const u2 = Math.random()
   const z0 = Math.sqrt(-2.0 * Math.log(u1 || 0.0001)) * Math.cos(2.0 * Math.PI * u2)
@@ -200,7 +200,7 @@ function gaussianRandomFloat(mean: number, stddev: number, min: number, max: num
   return Math.max(min, Math.min(max, value))
 }
 
-function randomInt(min: number, max: number): number {
+export function randomInt(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min
 }
 
@@ -279,7 +279,7 @@ function calculateTypingDuration(text: string, antiBanSettings: AntiBanSettings 
  * Normal window (start <= end): current >= start AND current <= end
  * Overnight window (start > end): current >= start OR current <= end
  */
-function isWithinSendingWindow(
+export function isWithinSendingWindow(
   activeHoursStart: number,
   activeHoursEnd: number,
   timezone: string
@@ -301,7 +301,7 @@ function isWithinSendingWindow(
 /**
  * Check if current time is within any break window
  */
-function getActiveBreakWindow(
+export function getActiveBreakWindow(
   breakWindows: WarmingBreakWindow[],
   timezone: string
 ): WarmingBreakWindow | null {
@@ -321,7 +321,7 @@ function getActiveBreakWindow(
  * Rejects auto-generated placeholder values like "auto-1780251167130".
  * A valid phone number must start with a digit and be at least 8 characters long.
  */
-function isValidPhoneNumber(phone: string): boolean {
+export function isValidPhoneNumber(phone: string): boolean {
   if (!phone || typeof phone !== 'string') return false
   const trimmed = phone.trim()
   // Must start with a digit (after optional + prefix)
@@ -334,7 +334,7 @@ function isValidPhoneNumber(phone: string): boolean {
 /**
  * Parse JSON field from WarmingSession, with fallback
  */
-function parseJsonField<T>(jsonStr: string | null | undefined, fallback: T): T {
+export function parseJsonField<T>(jsonStr: string | null | undefined, fallback: T): T {
   if (!jsonStr) return fallback
   try {
     return JSON.parse(jsonStr)
@@ -479,7 +479,7 @@ function selectPair(
  * Delayed offline with jitter — human doesn't go offline instantly after sending.
  * NOW reads from AntiBanSettings (UI) for offline delay config.
  */
-async function delayedOfflineWithJitter(instanceName: string, jid: string, antiBanSettings: AntiBanSettings | null = null): Promise<number> {
+export async function delayedOfflineWithJitter(instanceName: string, jid: string, antiBanSettings: AntiBanSettings | null = null): Promise<number> {
   const pc = getWarmingPresenceConfig(antiBanSettings)
   const delayMs = gaussianRandom(
     (pc.offlineDelayMinMs + pc.offlineDelayMaxMs) / 2,
@@ -506,7 +506,7 @@ async function delayedOfflineWithJitter(instanceName: string, jid: string, antiB
  *
  * NOW reads from AntiBanSettings (UI) instead of hardcoded constants.
  */
-async function performWarmingPresence(
+export async function performWarmingPresence(
   instanceName: string,
   jid: string,
   messageType: 'text' | 'image' | 'audio',
@@ -608,7 +608,7 @@ async function performWarmingPresence(
  * Chips in prewarm: 11-200 msgs/day depending on day
  * Chips ready (aquecido): full daily limit (200 by default)
  */
-async function getChipEffectiveDailyLimit(
+export async function getChipEffectiveDailyLimit(
   chip: { warmingPhase: string | null; warmingEnabled: boolean; dailyLimit: number; warmingStartedAt: string | Date | null; createdAt: string | Date; sentToday: number },
   antiBanSettings: AntiBanSettings | null
 ): Promise<{ limit: number; phase: string; dayInPhase: number; remaining: number }> {
@@ -688,7 +688,7 @@ async function getChipEffectiveDailyLimit(
 /**
  * Load anti-ban settings from DB (cached per invocation)
  */
-async function loadAntiBanSettings(): Promise<AntiBanSettings | null> {
+export async function loadAntiBanSettings(): Promise<AntiBanSettings | null> {
   try {
     const settings = await db.antiBanSettings.findFirst()
     return settings as unknown as AntiBanSettings | null
@@ -1312,6 +1312,10 @@ function generateWarmingMessage(
  * Process all running warming sessions.
  * Called by the cron tick (process-all) every minute.
  *
+ * Ramifica por strategy:
+ *   - "ai_bot" → delega para processAllAIBotSessions() (chips conversam com o Duda)
+ *   - outras (pairs, round_robin, random, group) → processNextWarmingMessage() (chips conversam entre si)
+ *
  * For each running session, attempts to send up to MAX_MESSAGES_PER_TICK messages.
  * Respects the 25-second timeout of the cron function.
  */
@@ -1320,16 +1324,41 @@ export async function processAllWarmingSessions(): Promise<{
   messagesSent: number
   errors: number
 }> {
-  const sessionIds = await getRunningWarmingSessions()
+  // Busca sessions running com strategy para ramificar
+  const runningSessions = await db.warmingSession.findMany({
+    where: { status: 'running' },
+    select: { id: true, strategy: true },
+  })
 
-  if (sessionIds.length === 0) {
+  if (runningSessions.length === 0) {
     return { sessions: 0, messagesSent: 0, errors: 0 }
   }
 
+  // Ramifica: ai_bot vai para o handler dedicado, outros continuam no fluxo antigo
+  const aiBotSessionIds = runningSessions.filter(s => s.strategy === 'ai_bot').map(s => s.id)
+  const legacySessionIds = runningSessions.filter(s => s.strategy !== 'ai_bot').map(s => s.id)
+
   let totalSent = 0
   let totalErrors = 0
+  let totalSessions = 0
 
-  for (const sessionId of sessionIds) {
+  // 1. Processa sessões ai_bot (chips → Duda) — delega para o módulo dedicado
+  if (aiBotSessionIds.length > 0) {
+    try {
+      const { processAllAIBotSessions } = await import('./ai-bot-warming')
+      const aiBotResult = await processAllAIBotSessions()
+      totalSent += aiBotResult.messagesSent
+      totalErrors += aiBotResult.errors
+      totalSessions += aiBotResult.sessions
+    } catch (error: any) {
+      console.error('[WarmingEngine] processAllAIBotSessions failed:', error.message)
+      totalErrors += aiBotSessionIds.length
+      totalSessions += aiBotSessionIds.length
+    }
+  }
+
+  // 2. Processa sessões legacy (pairs, round_robin, random, group) — fluxo original
+  for (const sessionId of legacySessionIds) {
     for (let attempt = 0; attempt < MAX_MESSAGES_PER_TICK; attempt++) {
       try {
         const result = await processNextWarmingMessage(sessionId)
@@ -1373,9 +1402,10 @@ export async function processAllWarmingSessions(): Promise<{
         break
       }
     }
+    totalSessions++
   }
 
-  return { sessions: sessionIds.length, messagesSent: totalSent, errors: totalErrors }
+  return { sessions: totalSessions, messagesSent: totalSent, errors: totalErrors }
 }
 
 /**
@@ -1461,4 +1491,4 @@ export async function autoStartScheduledSessions(): Promise<string[]> {
 
 // Export DEFAULT_WARMING_TEMPLATES for use in the UI
 export { DEFAULT_WARMING_TEMPLATES }
-export type { WarmingMessageTemplate, WarmingChipProgress, MessageTypeDistribution, WarmingBreakWindow }
+export type { WarmingMessageTemplate, MessageTypeDistribution }

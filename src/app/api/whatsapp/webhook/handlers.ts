@@ -1035,6 +1035,21 @@ export async function dispatchWebhookEvent(ctx: WebhookContext): Promise<void> {
               }
             }
 
+            // 🆕 AI Bot Warming: detecta reply do Duda para chips em sessão ai_bot
+            // Quando um chip recebe mensagem de um número que bate com aiBotPhoneNumber
+            // de alguma sessão ai_bot ativa, marca o reply e libera o chip pra próxima msg.
+            // Só roda se a mensagem NÃO for fromMe (ou seja, é recebida, não enviada pelo próprio chip)
+            // e NÃO for chip-to-chip (resposta do Duda é externa, não vem de outro chip do sistema).
+            if (!fromMe && !isCampaignMsg && chip?.id && remotePhone && messageContent) {
+              try {
+                const { handleDudaReply } = await import('@/lib/ai-bot-warming')
+                await handleDudaReply(chip.id, remotePhone, messageContent)
+              } catch (e: any) {
+                console.error('[Webhook] handleDudaReply failed:', e?.message || e)
+                // Non-fatal — não quebra o resto do handler
+              }
+            }
+
             // === v2.0: Handle reaction messages ===
             // Reactions are special — they target an existing message.
             // Instead of creating a new InboxMessage, we add the reaction

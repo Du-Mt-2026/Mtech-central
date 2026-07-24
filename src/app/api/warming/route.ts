@@ -43,6 +43,10 @@ export async function POST(request: NextRequest) {
       timezone,
       messageTypeDistribution = { text: 47, image: 27, audio: 26 },
       scheduledAt,
+      // AI Bot strategy fields (apenas usados quando strategy === 'ai_bot')
+      aiBotPhoneNumber,
+      aiBotReplyTimeoutSec,
+      aiBotMaxMissedReplies,
     } = body
 
     // Inherit defaults from AntiBanSettings (UI) when not explicitly provided.
@@ -67,8 +71,31 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Nome é obrigatório' }, { status: 400 })
     }
 
-    if (!chipIds || chipIds.length < (antiBanDefaults.minChipsForWarming as number ?? 3)) {
-      return NextResponse.json({ error: `Precisa de pelo menos ${antiBanDefaults.minChipsForWarming ?? 3} chips — 2 chips só entre si cria padrão detectável pelo Meta (grafo social artificial)` }, { status: 400 })
+    // Validações específicas por estratégia
+    const minChips = antiBanDefaults.minChipsForWarming as number ?? 3
+
+    if (strategy === 'ai_bot') {
+      // Estratégia ai_bot: chips conversam com o bot Duda (não entre si).
+      // Não exige 3+ chips (grafo social não se aplica — chips falam com um único número externo).
+      // Mínimo de 1 chip; máximo definido pelo usuário.
+      if (!chipIds || chipIds.length < 1) {
+        return NextResponse.json({ error: 'Estratégia ai_bot requer pelo menos 1 chip' }, { status: 400 })
+      }
+
+      if (!aiBotPhoneNumber?.trim()) {
+        return NextResponse.json({ error: 'Estratégia ai_bot requer aiBotPhoneNumber (telefone do bot Duda)' }, { status: 400 })
+      }
+
+      // Limpa o telefone (só dígitos)
+      const cleanedPhone = aiBotPhoneNumber.replace(/\D/g, '')
+      if (cleanedPhone.length < 10 || cleanedPhone.length > 13) {
+        return NextResponse.json({ error: 'aiBotPhoneNumber inválido (esperado: 10-13 dígitos, ex: 48991742716)' }, { status: 400 })
+      }
+    } else {
+      // Estratégias legacy (pairs, round_robin, random, group): exigem 3+ chips
+      if (!chipIds || chipIds.length < minChips) {
+        return NextResponse.json({ error: `Precisa de pelo menos ${minChips} chips — 2 chips só entre si cria padrão detectável pelo Meta (grafo social artificial)` }, { status: 400 })
+      }
     }
 
     // Validate chips exist
@@ -77,9 +104,8 @@ export async function POST(request: NextRequest) {
       select: { id: true, status: true, evolutionInstance: true },
     })
 
-    const minChips = antiBanDefaults.minChipsForWarming as number ?? 3
-    if (chips.length < minChips) {
-      return NextResponse.json({ error: 'Apenas ' + chips.length + ' chips encontrados no banco. Mínimo: ' + minChips + ' chips para grafo social natural' }, { status: 400 })
+    if (chips.length < (strategy === 'ai_bot' ? 1 : minChips)) {
+      return NextResponse.json({ error: 'Apenas ' + chips.length + ' chips encontrados no banco. Mínimo: ' + (strategy === 'ai_bot' ? 1 : minChips) + ' chips' }, { status: 400 })
     }
 
     // Validate that ALL chips are connected and have an Evolution instance
@@ -111,6 +137,10 @@ export async function POST(request: NextRequest) {
         messageTypeDistribution: JSON.stringify(messageTypeDistribution),
         scheduledAt: scheduledAt ? new Date(scheduledAt) : null,
         status: 'draft',
+        // Campos específicos da estratégia ai_bot (null/defaults nas outras)
+        aiBotPhoneNumber: strategy === 'ai_bot' ? aiBotPhoneNumber.replace(/\D/g, '') : null,
+        aiBotReplyTimeoutSec: strategy === 'ai_bot' ? (Number(aiBotReplyTimeoutSec) || 300) : 300,
+        aiBotMaxMissedReplies: strategy === 'ai_bot' ? (Number(aiBotMaxMissedReplies) || 2) : 2,
       },
     })
 

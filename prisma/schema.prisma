@@ -647,11 +647,60 @@ model WarmingSession {
   lastError        String?
   errorCount       Int      @default(0)
 
+  // ============================================================
+  // ESTRATÉGIA "ai_bot" — Chips conversam com o bot Duda
+  // ============================================================
+  // Quando strategy = "ai_bot", os chips enviam mensagens do pool global
+  // (WarmingMessagePool) para o número de telefone do bot, e a chegada da
+  // resposta (via webhook Evolution) dispara a próxima mensagem.
+  // O bot roda externamente (n8n + Meta Official API) e não é modificado.
+  aiBotPhoneNumber       String?                   // Telefone do bot (ex: "48991742716"). Sem o 55.
+  aiBotReplyTimeoutSec   Int      @default(300)    // Segundos máximos esperando resposta antes de considerar "missed"
+  aiBotMaxMissedReplies  Int      @default(2)      // Após N respostas consecutivas sem reply, encerra conversa do dia
+
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
   @@index([status])
   @@index([status, scheduledAt])
+}
+
+// ============================================================
+// WARMING MESSAGE POOL — Pool global de mensagens para ai_bot
+// ============================================================
+// Mensagens pré-cadastradas usadas pela estratégia "ai_bot" do warming.
+// Categorizadas para evitar repetição seguida da mesma categoria.
+// Compartilhada entre todos os chips (cada chip sorteia sua sequência).
+//
+// Categorias (8):
+//   - saudacao           : bom dia, oi, olá, etc.
+//   - emoji_unico        : 1 emoji só
+//   - emoji_combo        : 2-4 emojis juntos (ou emoji + texto curto)
+//   - pergunta_geral     : perguntas casuais que o Duda (IA) pode responder
+//   - declaracao_casual  : frases curtas, declarações cotidianas
+//   - produto_mtech      : perguntas/solicitações sobre produtos Mtech
+//   - info_pedido        : perguntas sobre pedidos/rastreio
+//   - conversa_fiada     : tópicos aleatórios pra gerar resposta natural
+//
+// chipProgress (JSON no WarmingSession) controla por chip:
+//   - aiBotMissedCount: quantas respostas consecutivas sem reply
+//   - aiBotLastCategory: pra não repetir categoria seguida
+//   - aiBotWaitingReplySince: ISO timestamp desde quando esperando resposta
+//   - aiBotLastReplyAt: ISO timestamp do último reply recebido
+//   - aiBotConversationEnded: booleano (encerrada hoje por 2+ misses)
+//   - aiBotConversationEndedAt: ISO timestamp quando encerrou
+
+model WarmingMessagePool {
+  id        String   @id @default(cuid())
+  category  String                          // Uma das 8 categorias
+  content   String                          // Texto da mensagem
+  weight    Int      @default(1)            // Peso para sorteio dentro da categoria
+  active    Boolean  @default(true)         // Soft-delete (false = não é sorteada)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([category, active])
+  @@index([active])
 }
 
 // ============================================================
