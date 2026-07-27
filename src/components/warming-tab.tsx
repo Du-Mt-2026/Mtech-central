@@ -37,6 +37,7 @@ import {
 import { Textarea } from '@/components/ui/textarea'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Separator } from '@/components/ui/separator'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { toast } from 'sonner'
 
 // ============================================================
@@ -77,6 +78,10 @@ interface WarmingSession {
   chipProgress: string
   lastError: string | null
   errorCount: number
+  // ai_bot strategy fields
+  aiBotPhoneNumber: string | null
+  aiBotReplyTimeoutSec: number
+  aiBotMaxMissedReplies: number
   createdAt: string
   updatedAt: string
 }
@@ -113,6 +118,31 @@ interface WarmingStats {
 }
 
 // ============================================================
+// MESSAGE POOL TYPES (estratégia "ai_bot")
+// ============================================================
+
+interface PoolMessage {
+  id: string
+  category: string
+  content: string
+  weight: number
+  active: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+const POOL_CATEGORIES = [
+  { value: 'saudacao', label: 'Saudação', count: 0 },
+  { value: 'emoji_unico', label: 'Emoji Único', count: 0 },
+  { value: 'emoji_combo', label: 'Combo de Emojis', count: 0 },
+  { value: 'pergunta_geral', label: 'Pergunta Geral', count: 0 },
+  { value: 'declaracao_casual', label: 'Declaração Casual', count: 0 },
+  { value: 'produto_mtech', label: 'Produto Mtech', count: 0 },
+  { value: 'info_pedido', label: 'Info de Pedido', count: 0 },
+  { value: 'conversa_fiada', label: 'Conversa Fiada', count: 0 },
+] as const
+
+// ============================================================
 // HELPERS
 // ============================================================
 
@@ -129,6 +159,7 @@ const STRATEGY_LABELS: Record<string, string> = {
   pairs: 'Pares (A↔B, C↔D)',
   random: 'Aleatório',
   group: 'Grupo (rotação livre)',
+  ai_bot: 'AI Bot (chips → Duda)',
 }
 
 const WARMING_PHASE_LABELS: Record<string, string> = {
@@ -177,6 +208,20 @@ export function WarmingTab() {
   const [formActiveStart, setFormActiveStart] = useState(480)
   const [formActiveEnd, setFormActiveEnd] = useState(1260)
 
+  // AI Bot strategy fields
+  const [formAiBotPhone, setFormAiBotPhone] = useState('48991742716')
+  const [formAiBotReplyTimeout, setFormAiBotReplyTimeout] = useState(300)
+  const [formAiBotMaxMissed, setFormAiBotMaxMissed] = useState(2)
+
+  // Message Pool tab state
+  const [poolMessages, setPoolMessages] = useState<PoolMessage[]>([])
+  const [poolCategoryCounts, setPoolCategoryCounts] = useState<Record<string, number>>({})
+  const [poolLoading, setPoolLoading] = useState(false)
+  const [poolFilterCategory, setPoolFilterCategory] = useState<string>('all')
+  const [poolNewCategory, setPoolNewCategory] = useState<string>('saudacao')
+  const [poolNewContent, setPoolNewContent] = useState('')
+  const [poolSeedLoading, setPoolSeedLoading] = useState(false)
+
   // Fetch sessions
   const fetchSessions = useCallback(async () => {
     try {
@@ -222,15 +267,119 @@ export function WarmingTab() {
     }
   }, [])
 
+  // ============================================================
+  // MESSAGE POOL FUNCTIONS (estratégia "ai_bot")
+  // ============================================================
+
+  const fetchPool = useCallback(async () => {
+    setPoolLoading(true)
+    try {
+      const res = await fetch('/api/warming/message-pool?limit=1000')
+      if (res.ok) {
+        const data = await res.json()
+        setPoolMessages(data.messages || [])
+        setPoolCategoryCounts(data.categoryCounts || {})
+      }
+    } catch (error: any) {
+      console.error('Error fetching message pool:', error)
+    } finally {
+      setPoolLoading(false)
+    }
+  }, [])
+
+  const handlePoolCreate = async () => {
+    if (!poolNewContent.trim()) {
+      toast.error('Conteúdo da mensagem é obrigatório')
+      return
+    }
+    try {
+      const res = await fetch('/api/warming/message-pool', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          category: poolNewCategory,
+          content: poolNewContent.trim(),
+        }),
+      })
+      if (res.ok) {
+        toast.success('Mensagem adicionada ao pool')
+        setPoolNewContent('')
+        fetchPool()
+      } else {
+        const data = await res.json()
+        toast.error(data.error || 'Erro ao criar mensagem')
+      }
+    } catch (error: any) {
+      toast.error('Erro ao criar mensagem: ' + error.message)
+    }
+  }
+
+  const handlePoolDelete = async (id: string) => {
+    if (!confirm('Deletar esta mensagem do pool?')) return
+    try {
+      const res = await fetch(`/api/warming/message-pool/${id}`, { method: 'DELETE' })
+      if (res.ok) {
+        toast.success('Mensagem deletada')
+        fetchPool()
+      }
+    } catch (error: any) {
+      toast.error('Erro ao deletar: ' + error.message)
+    }
+  }
+
+  const handlePoolToggleActive = async (msg: PoolMessage) => {
+    try {
+      const res = await fetch(`/api/warming/message-pool/${msg.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ active: !msg.active }),
+      })
+      if (res.ok) {
+        fetchPool()
+      }
+    } catch (error: any) {
+      toast.error('Erro ao alternar status: ' + error.message)
+    }
+  }
+
+  const handlePoolSeed = async (reset: boolean = false) => {
+    if (reset && !confirm('Isso vai APAGAR todas as mensagens atuais e recriar as 568 padrão. Continuar?')) {
+      return
+    }
+    if (!reset && !confirm('Popular o pool com as 568 mensagens padrão?')) {
+      return
+    }
+    setPoolSeedLoading(true)
+    try {
+      const res = await fetch('/api/warming/message-pool/seed', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reset }),
+      })
+      if (res.ok) {
+        const data = await res.json()
+        toast.success(data.message || `${data.seeded} mensagens adicionadas`)
+        fetchPool()
+      } else {
+        const data = await res.json()
+        toast.error(data.error || 'Erro ao popular pool')
+      }
+    } catch (error: any) {
+      toast.error('Erro: ' + error.message)
+    } finally {
+      setPoolSeedLoading(false)
+    }
+  }
+
   // Initial load
   useEffect(() => {
     const load = async () => {
       setLoading(true)
-      await Promise.all([fetchSessions(), fetchChips()])
+      await Promise.all([fetchSessions(), fetchChips(), fetchPool()])
       setLoading(false)
     }
     load()
-  }, [fetchSessions, fetchChips])
+  }, [fetchSessions, fetchChips, fetchPool])
 
   // Auto-refresh running sessions
   useEffect(() => {
@@ -302,6 +451,13 @@ export function WarmingTab() {
           payload.chipIds = formChipIds
           payload.messagesPerChip = formMessagesPerChip
         }
+        // ai_bot fields (always allowed — even on running sessions, since they don't
+        // affect which chips participate, just the behavior)
+        if (formStrategy === 'ai_bot') {
+          payload.aiBotPhoneNumber = formAiBotPhone
+          payload.aiBotReplyTimeoutSec = formAiBotReplyTimeout
+          payload.aiBotMaxMissedReplies = formAiBotMaxMissed
+        }
         const res = await fetch(`/api/warming/${editingSession.id}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
@@ -319,19 +475,25 @@ export function WarmingTab() {
         }
       } else {
         // CREATE new session
+        const createPayload: Record<string, any> = {
+          name: formName,
+          strategy: formStrategy,
+          chipIds: formChipIds,
+          messagesPerChip: formMessagesPerChip,
+          intervalMin: formIntervalMin,
+          intervalMax: formIntervalMax,
+          activeHoursStart: formActiveStart,
+          activeHoursEnd: formActiveEnd,
+        }
+        if (formStrategy === 'ai_bot') {
+          createPayload.aiBotPhoneNumber = formAiBotPhone
+          createPayload.aiBotReplyTimeoutSec = formAiBotReplyTimeout
+          createPayload.aiBotMaxMissedReplies = formAiBotMaxMissed
+        }
         const res = await fetch('/api/warming', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name: formName,
-            strategy: formStrategy,
-            chipIds: formChipIds,
-            messagesPerChip: formMessagesPerChip,
-            intervalMin: formIntervalMin,
-            intervalMax: formIntervalMax,
-            activeHoursStart: formActiveStart,
-            activeHoursEnd: formActiveEnd,
-          }),
+          body: JSON.stringify(createPayload),
         })
         if (res.ok) {
           toast.success(`Sessão criada! "${formName}" pronta para aquecimento`)
@@ -358,6 +520,9 @@ export function WarmingTab() {
     setFormIntervalMax(120)
     setFormActiveStart(480)
     setFormActiveEnd(1260)
+    setFormAiBotPhone('48991742716')
+    setFormAiBotReplyTimeout(300)
+    setFormAiBotMaxMissed(2)
     setEditingSession(null)
   }
 
@@ -496,6 +661,7 @@ export function WarmingTab() {
                     <SelectItem value="pairs">Pares (A↔B, C↔D)</SelectItem>
                     <SelectItem value="random">Aleatório</SelectItem>
                     <SelectItem value="group">Grupo (rotação livre)</SelectItem>
+                    <SelectItem value="ai_bot">AI Bot (chips → Duda)</SelectItem>
                   </SelectContent>
                 </Select>
                 <p className="text-xs text-muted-foreground">
@@ -503,8 +669,58 @@ export function WarmingTab() {
                   {formStrategy === 'pairs' && 'Chips são pareados e conversam entre si — mais natural para diálogos'}
                   {formStrategy === 'random' && 'Pares aleatórios a cada mensagem — mais imprevisível'}
                   {formStrategy === 'group' && 'Rotação livre, chips com menos mensagens enviam primeiro — equilibrado'}
+                  {formStrategy === 'ai_bot' && 'Chips enviam mensagens do pool global para o Duda (operador humano). Ele responde manualmente e o motor dispara a próxima.'}
                 </p>
               </div>
+
+              {/* AI Bot strategy fields — only shown when strategy === 'ai_bot' */}
+              {formStrategy === 'ai_bot' && (
+                <div className="space-y-4 p-4 bg-purple-500/5 border border-purple-500/20 rounded-lg">
+                  <h4 className="font-semibold text-purple-700 dark:text-purple-300">Configuração AI Bot</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="aiBotPhone">Telefone do Duda</Label>
+                      <Input
+                        id="aiBotPhone"
+                        value={formAiBotPhone}
+                        onChange={(e) => setFormAiBotPhone(e.target.value)}
+                        placeholder="48991742716"
+                      />
+                      <p className="text-xs text-muted-foreground">Sem prefixo 55 — a Evolution adiciona</p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="aiBotTimeout">Timeout de Resposta (segundos)</Label>
+                      <Input
+                        id="aiBotTimeout"
+                        type="number"
+                        min={60}
+                        max={3600}
+                        value={formAiBotReplyTimeout}
+                        onChange={(e) => setFormAiBotReplyTimeout(parseInt(e.target.value) || 300)}
+                      />
+                      <p className="text-xs text-muted-foreground">Padrão: 300 (5 minutos)</p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="aiBotMaxMissed">Máx. Respostas Perdidas</Label>
+                      <Input
+                        id="aiBotMaxMissed"
+                        type="number"
+                        min={1}
+                        max={10}
+                        value={formAiBotMaxMissed}
+                        onChange={(e) => setFormAiBotMaxMissed(parseInt(e.target.value) || 2)}
+                      />
+                      <p className="text-xs text-muted-foreground">Após N consecutivas, encerra o dia do chip</p>
+                    </div>
+                  </div>
+                  <div className="text-xs text-purple-700 dark:text-purple-300 bg-purple-500/10 p-3 rounded">
+                    💡 <strong>Como funciona:</strong> Cada chip do warming envia uma mensagem do pool para o Duda.
+                    Ele responde manualmente no WhatsApp. O webhook detecta a resposta e dispara a próxima mensagem
+                    (após um delay humano de 30-120s). Se passarem {formAiBotReplyTimeout}s sem resposta, conta como
+                    "missed reply". Após {formAiBotMaxMissed} consecutivos, o chip para de conversar até a meia-noite.
+                  </div>
+                </div>
+              )}
 
               {/* Chips — disabled when editing running session */}
               <div className="space-y-2">
@@ -953,6 +1169,158 @@ export function WarmingTab() {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Message Pool Section — for AI Bot strategy */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg flex items-center justify-between">
+            <span>Pool de Mensagens (Estratégia AI Bot)</span>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => handlePoolSeed(false)}
+                disabled={poolSeedLoading}
+              >
+                {poolSeedLoading ? 'Carregando...' : 'Popular Padrão (568 msgs)'}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => handlePoolSeed(true)}
+                disabled={poolSeedLoading}
+              >
+                Resetar Pool
+              </Button>
+            </div>
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            Pool global de mensagens categorizadas usado pela estratégia <strong>AI Bot</strong>.
+            Quando um chip está em aquecimento, ele envia mensagens deste pool para o Duda (operador humano),
+            que responde manualmente. O motor evita repetir a mesma categoria seguida e respeita os delays anti-ban.
+          </p>
+
+          {/* Category badges with counts */}
+          <div className="flex flex-wrap gap-2">
+            {POOL_CATEGORIES.map(cat => (
+              <Badge
+                key={cat.value}
+                variant={poolFilterCategory === cat.value ? 'default' : 'outline'}
+                className="cursor-pointer"
+                onClick={() => setPoolFilterCategory(poolFilterCategory === cat.value ? 'all' : cat.value)}
+              >
+                {cat.label}: {poolCategoryCounts[cat.value] || 0}
+              </Badge>
+            ))}
+            {poolFilterCategory !== 'all' && (
+              <Badge
+                variant="outline"
+                className="cursor-pointer text-red-600"
+                onClick={() => setPoolFilterCategory('all')}
+              >
+                ✕ Limpar filtro
+              </Badge>
+            )}
+          </div>
+
+          {/* Add new message */}
+          <div className="border rounded-lg p-3 bg-muted/30 space-y-3">
+            <h4 className="font-semibold text-sm">Adicionar nova mensagem</h4>
+            <div className="flex gap-2 flex-wrap">
+              <Select value={poolNewCategory} onValueChange={setPoolNewCategory}>
+                <SelectTrigger className="w-48">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {POOL_CATEGORIES.map(cat => (
+                    <SelectItem key={cat.value} value={cat.value}>{cat.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Input
+                value={poolNewContent}
+                onChange={(e) => setPoolNewContent(e.target.value)}
+                placeholder="Conteúdo da mensagem..."
+                className="flex-1 min-w-64"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault()
+                    handlePoolCreate()
+                  }
+                }}
+              />
+              <Button onClick={handlePoolCreate} disabled={!poolNewContent.trim()}>
+                + Adicionar
+              </Button>
+            </div>
+          </div>
+
+          {/* Pool messages list */}
+          <div className="border rounded-lg max-h-96 overflow-y-auto">
+            {poolLoading ? (
+              <div className="p-8 text-center text-muted-foreground">Carregando mensagens...</div>
+            ) : poolMessages.length === 0 ? (
+              <div className="p-8 text-center text-muted-foreground">
+                <p>Nenhuma mensagem no pool ainda.</p>
+                <p className="text-xs mt-2">Clique em "Popular Padrão (568 msgs)" para começar, ou adicione manualmente acima.</p>
+              </div>
+            ) : (
+              <table className="w-full text-sm">
+                <thead className="bg-muted sticky top-0">
+                  <tr>
+                    <th className="text-left p-2">Categoria</th>
+                    <th className="text-left p-2">Conteúdo</th>
+                    <th className="text-center p-2">Status</th>
+                    <th className="text-center p-2">Ações</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {poolMessages
+                    .filter(m => poolFilterCategory === 'all' || m.category === poolFilterCategory)
+                    .map(msg => (
+                      <tr key={msg.id} className={`border-t ${!msg.active ? 'opacity-50' : ''}`}>
+                        <td className="p-2">
+                          <Badge variant="outline" className="text-xs">
+                            {POOL_CATEGORIES.find(c => c.value === msg.category)?.label || msg.category}
+                          </Badge>
+                        </td>
+                        <td className="p-2">{msg.content}</td>
+                        <td className="text-center p-2">
+                          <Button
+                            size="sm"
+                            variant={msg.active ? 'default' : 'outline'}
+                            onClick={() => handlePoolToggleActive(msg)}
+                          >
+                            {msg.active ? 'Ativa' : 'Inativa'}
+                          </Button>
+                        </td>
+                        <td className="text-center p-2">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="text-red-600 hover:text-red-700"
+                            onClick={() => handlePoolDelete(msg.id)}
+                          >
+                            ✕
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+
+          <div className="text-xs text-muted-foreground">
+            Total: <strong>{poolMessages.length}</strong> mensagens no pool
+            {poolFilterCategory !== 'all' && (
+              <> • Filtrando por: <strong>{POOL_CATEGORIES.find(c => c.value === poolFilterCategory)?.label}</strong></>
+            )}
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Explanation Section */}
       <Card>

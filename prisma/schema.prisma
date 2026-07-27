@@ -587,7 +587,20 @@ model WarmingSession {
   // "round_robin" — cada chip fala com o próximo em sequência (A→B→C→A)
   // "random"     — pares aleatórios a cada mensagem
   // "group"      — todos os chips conversam em rotação livre
+  // "ai_bot"     — chips mandam mensagens do pool global para o "Duda" (operador humano)
+  //                que responde manualmente; o motor detecta a resposta via webhook e
+  //                dispara a próxima mensagem do pool. Se passar X minutos sem resposta,
+  //                conta como "missed reply"; após Y consecutivos, encerra o dia do chip.
   strategy        String   @default("round_robin")
+
+  // --- Estratégia "ai_bot" ---
+  // Número do operador humano (Duda). Default: 48991742716 (Brasil, sem prefixo 55 —
+  // a Evolution API adiciona o 55 automaticamente via formatPhoneNumber).
+  aiBotPhoneNumber      String?
+  // Tempo máximo (em segundos) esperando resposta do Duda antes de contar como "missed".
+  aiBotReplyTimeoutSec  Int      @default(300)
+  // Máximo de "missed replies" consecutivos antes de encerrar a conversa do dia do chip.
+  aiBotMaxMissedReplies Int      @default(2)
 
   // Pool de chips participantes — JSON array de chip IDs
   // ["chip_id_1", "chip_id_2", ...]
@@ -715,4 +728,38 @@ model AuditLog {
   @@index([category])
   @@index([targetType, targetId])
   @@index([userId])
+}
+
+// ============================================================
+// WARMING MESSAGE POOL (Pool Global de Mensagens — estratégia "ai_bot")
+// ============================================================
+// Pool compartilhado de mensagens categorizadas usadas pela estratégia
+// "ai_bot" do Warming Engine. Todas as sessões e todos os chips leem
+// deste pool — não é por sessão nem por chip.
+//
+// Categorias (8):
+//   - saudacao           — cumprimentos iniciais
+//   - emoji_unico        — um único emoji (😀, ❤️, 👍, etc.)
+//   - emoji_combo        — combinações de 2-4 emojis (😀❤️, 🔥🙌👏, etc.)
+//   - pergunta_geral     — perguntas leves e abertas
+//   - declaracao_casual  — afirmações casuais do dia-a-dia
+//   - produto_mtech      — menções casuais a produtos Mtech
+//   - info_pedido        — perguntas sobre pedidos/entrega
+//   - conversa_fiada     — papo descontraído
+//
+// O motor escolhe a categoria evitando repetir a última usada por cada chip,
+// e dentro da categoria sorteia uma mensagem ponderada por `weight`.
+// Pesos permitem "boostar" mensagens que performam melhor (mais respostas).
+
+model WarmingMessagePool {
+  id        String   @id @default(cuid())
+  category  String                       // uma das 8 categorias listadas acima
+  content   String                       // conteúdo da mensagem (texto ou emoji)
+  weight    Float    @default(1.0)       // peso relativo para sorteio
+  active    Boolean  @default(true)      // permite desativar sem deletar
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([category])
+  @@index([active])
 }

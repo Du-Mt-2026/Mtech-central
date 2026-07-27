@@ -83,6 +83,18 @@ export async function PATCH(
       data.scheduledAt = body.scheduledAt ? new Date(body.scheduledAt) : null
     }
 
+    // ai_bot strategy fields — allowed on both running and non-running sessions
+    // (they affect behavior, not which chips participate)
+    if (body.aiBotPhoneNumber !== undefined) {
+      data.aiBotPhoneNumber = body.aiBotPhoneNumber
+    }
+    if (body.aiBotReplyTimeoutSec !== undefined) {
+      data.aiBotReplyTimeoutSec = body.aiBotReplyTimeoutSec
+    }
+    if (body.aiBotMaxMissedReplies !== undefined) {
+      data.aiBotMaxMissedReplies = body.aiBotMaxMissedReplies
+    }
+
     const updated = await db.warmingSession.update({
       where: { id: sessionId },
       data,
