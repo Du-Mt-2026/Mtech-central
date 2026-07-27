@@ -207,6 +207,7 @@ export function WarmingTab() {
   const [formIntervalMax, setFormIntervalMax] = useState(120)
   const [formActiveStart, setFormActiveStart] = useState(480)
   const [formActiveEnd, setFormActiveEnd] = useState(1260)
+  const [applyingAntiBan, setApplyingAntiBan] = useState(false)
 
   // AI Bot strategy fields
   const [formAiBotPhone, setFormAiBotPhone] = useState('48991742716')
@@ -406,6 +407,32 @@ export function WarmingTab() {
     setFormActiveStart(session.activeHoursStart)
     setFormActiveEnd(session.activeHoursEnd)
     setCreateOpen(true)
+  }
+
+  // Aplicar configurações do Anti-Ban ao formulário atual
+  const applyAntiBanSettings = async () => {
+    setApplyingAntiBan(true)
+    try {
+      const res = await fetch('/api/antiban')
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        throw new Error(err.error || `HTTP ${res.status}`)
+      }
+      const data = await res.json()
+      const s = data.settings || data
+      if (!s || typeof s.messageIntervalMin !== 'number') {
+        throw new Error('Anti-ban não configurado. Configure primeiro na aba Anti-Ban.')
+      }
+      setFormIntervalMin(s.messageIntervalMin)
+      setFormIntervalMax(s.messageIntervalMax)
+      setFormActiveStart(s.sendingWindowStart)
+      setFormActiveEnd(s.sendingWindowEnd)
+      toast.success('🛡️ Configurações do Anti-Ban aplicadas com sucesso!')
+    } catch (e: any) {
+      toast.error(e.message || 'Erro ao aplicar configurações do Anti-Ban')
+    } finally {
+      setApplyingAntiBan(false)
+    }
   }
 
   // Create or update session
@@ -725,6 +752,23 @@ export function WarmingTab() {
                   </div>
                 </div>
               )}
+
+              {/* Aplicar configurações do Anti-Ban */}
+              <div className="flex items-center gap-3 mb-3 p-3 bg-blue-500/5 border border-blue-500/20 rounded-lg">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={applyAntiBanSettings}
+                  disabled={applyingAntiBan}
+                  className="border-blue-500 text-blue-600 hover:bg-blue-500/10"
+                >
+                  {applyingAntiBan ? '⏳ Aplicando...' : '🛡️ Aplicar Anti-Ban'}
+                </Button>
+                <span className="text-xs text-muted-foreground">
+                  Copia intervalo entre mensagens e janela de envio das configurações do Anti-Ban para esta sessão
+                </span>
+              </div>
 
               {/* Chips — disabled when editing running session */}
               <div className="space-y-2">
