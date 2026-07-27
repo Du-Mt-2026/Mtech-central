@@ -414,12 +414,16 @@ export function WarmingTab() {
       toast.error('Nome é obrigatório')
       return
     }
-    if (formChipIds.length < 3 && !editingSession) {
-      toast.error('Selecione pelo menos 3 chips — 2 chips trocando msgs só entre si é detectável pelo Meta (grafo social artificial)')
+    const minChips = formStrategy === 'ai_bot' ? 1 : 3
+    if (formChipIds.length < minChips && !editingSession) {
+      const reason = formStrategy === 'ai_bot'
+        ? 'estratégia ai_bot requer no mínimo 1 chip'
+        : '2 chips trocando msgs só entre si é detectável pelo Meta (grafo social artificial)'
+      toast.error(`Selecione pelo menos ${minChips} chips — ${reason}`)
       return
     }
-    if (formChipIds.length < 3 && editingSession?.status !== 'running') {
-      toast.error('Selecione pelo menos 3 chips')
+    if (formChipIds.length < minChips && editingSession?.status !== 'running') {
+      toast.error(`Selecione pelo menos ${minChips} chips`)
       return
     }
 
@@ -786,12 +790,17 @@ export function WarmingTab() {
                         })
                       )}
                     </div>
-                    {formChipIds.length > 0 && formChipIds.length < 3 && (
+                    {formChipIds.length > 0 && formChipIds.length < 3 && formStrategy !== 'ai_bot' && (
                       <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3 text-xs text-red-700 dark:text-red-400">
                         ⛔ <strong>Risco de ban!</strong> Apenas {formChipIds.length} chip(s) selecionado(s). O Meta detecta quando 2 números só conversam entre si — é um padrão de bot network. Use pelo menos 3 chips para criar um grafo social natural.
                       </div>
                     )}
-                    {formChipIds.length >= 3 && (
+                    {formStrategy === 'ai_bot' && formChipIds.length >= 1 && (
+                      <p className="text-xs text-green-600 dark:text-green-400">
+                        ✓ {formChipIds.length} chip(s) selecionado(s) — estratégia ai_bot (chips → Duda), 1 chip já é suficiente ✓
+                      </p>
+                    )}
+                    {formStrategy !== 'ai_bot' && formChipIds.length >= 3 && (
                       <p className="text-xs text-green-600 dark:text-green-400">
                         ✓ {formChipIds.length} chips selecionados — grafo social natural ✓
                       </p>
@@ -894,7 +903,7 @@ export function WarmingTab() {
                 <Button
                   className="bg-green-600 hover:bg-green-700"
                   onClick={handleSave}
-                  disabled={!formName.trim() || (!editingSession && formChipIds.length < 3)}
+                  disabled={!formName.trim() || (!editingSession && formChipIds.length < (formStrategy === 'ai_bot' ? 1 : 3))}
                 >
                   {editingSession ? 'Salvar Alterações' : 'Criar Sessão'}
                 </Button>

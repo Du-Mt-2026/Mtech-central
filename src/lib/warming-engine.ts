@@ -136,6 +136,16 @@ const OFFLINE_DELAY_MAX_MS = 15000
 // artificial (2 números que SÓ falam entre si = bot network detectável).
 // Com 3+ chips, cada chip conversa com múltiplos contatos = comportamento natural.
 const MIN_CHIPS_FOR_WARMING = 3
+const MIN_CHIPS_FOR_AI_BOT = 1
+
+/**
+ * Returns the minimum number of chips required for a given warming strategy.
+ * - round_robin / random / group / pairs: 3 (grafo social natural — Meta detection)
+ * - ai_bot: 1 (chips → Duda, sem grafo inter-chip)
+ */
+function minChipsFor(strategy: string | null | undefined): number {
+  return strategy === 'ai_bot' ? MIN_CHIPS_FOR_AI_BOT : MIN_CHIPS_FOR_WARMING
+}
 
 // Máximo de mensagens enviadas por tick do cron (para não estourar timeout)
 const MAX_MESSAGES_PER_TICK = 5
@@ -803,8 +813,9 @@ export async function startWarmingSession(sessionId: string): Promise<void> {
   }
 
   const chipIds: string[] = parseJsonField(session.chipIds, [])
-  if (chipIds.length < MIN_CHIPS_FOR_WARMING) {
-    throw new Error(`Precisa de pelo menos ${MIN_CHIPS_FOR_WARMING} chips para aquecimento`)
+  const minChips = minChipsFor(session.strategy)
+  if (chipIds.length < minChips) {
+    throw new Error(`Precisa de pelo menos ${minChips} chips para aquecimento (estratégia: ${session.strategy})`)
   }
 
   // Validate that all chips exist and are connected
@@ -813,13 +824,13 @@ export async function startWarmingSession(sessionId: string): Promise<void> {
   })
 
   const connectedChips = chips.filter(c => c.status === 'connected' && c.evolutionInstance)
-  if (connectedChips.length < MIN_CHIPS_FOR_WARMING) {
+  if (connectedChips.length < minChips) {
     const disconnectedNames = chips
       .filter(c => c.status !== 'connected' || !c.evolutionInstance)
       .map(c => `${c.name} (${c.status}${!c.evolutionInstance ? ', sem instância' : ''})`)
       .join(', ')
     throw new Error(
-      `Apenas ${connectedChips.length} de ${chips.length} chips estão conectados. Mínimo: ${MIN_CHIPS_FOR_WARMING}. ` +
+      `Apenas ${connectedChips.length} de ${chips.length} chips estão conectados. Mínimo: ${minChips} (estratégia: ${session.strategy}). ` +
       `Chips desconectados: ${disconnectedNames}. Conecte-os antes de iniciar.`
     )
   }
@@ -915,11 +926,12 @@ export async function processNextWarmingMessage(
   const distribution: MessageTypeDistribution = parseJsonField(session.messageTypeDistribution, { text: 47, image: 27, audio: 26 })
   const breakWindows: WarmingBreakWindow[] = parseJsonField(session.breakWindows, [])
 
-  // Check if we have enough chips
-  if (chipIds.length < MIN_CHIPS_FOR_WARMING) {
+  // Check if we have enough chips (1 for ai_bot, 3 otherwise)
+  const minChipsRuntime = minChipsFor(session.strategy)
+  if (chipIds.length < minChipsRuntime) {
     await db.warmingSession.update({
       where: { id: sessionId },
-      data: { status: 'cancelled', lastError: 'Chips insuficientes' },
+      data: { status: 'cancelled', lastError: `Chips insuficientes (mínimo ${minChipsRuntime} para estratégia ${session.strategy})` },
     })
     return { processed: false, delayMs: 0, completed: true, reason: 'insufficient_chips' }
   }
@@ -977,7 +989,7 @@ export async function processNextWarmingMessage(
     return chip && chip.status === 'connected' && chip.evolutionInstance && chip.phoneNumber && isValidPhoneNumber(chip.phoneNumber)
   })
 
-  if (validChipIds.length < MIN_CHIPS_FOR_WARMING) {
+  if (validChipIds.length < minChipsRuntime) {
     const invalidChips = chipIds.filter(id => !validChipIds.includes(id)).map(id => {
       const c = chipMap.get(id)
       if (!c) return `${id}: not found`

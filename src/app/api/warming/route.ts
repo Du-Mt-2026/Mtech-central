@@ -71,8 +71,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Nome é obrigatório' }, { status: 400 })
     }
 
-    if (!chipIds || chipIds.length < (antiBanDefaults.minChipsForWarming as number ?? 3)) {
-      return NextResponse.json({ error: `Precisa de pelo menos ${antiBanDefaults.minChipsForWarming ?? 3} chips — 2 chips só entre si cria padrão detectável pelo Meta (grafo social artificial)` }, { status: 400 })
+    const minChips = strategy === 'ai_bot'
+      ? 1
+      : (antiBanDefaults.minChipsForWarming as number ?? 3)
+    if (!chipIds || chipIds.length < minChips) {
+      const reason = strategy === 'ai_bot'
+        ? 'estratégia ai_bot requer no mínimo 1 chip (chips → Duda)'
+        : '2 chips só entre si cria padrão detectável pelo Meta (grafo social artificial)'
+      return NextResponse.json({ error: `Precisa de pelo menos ${minChips} chips — ${reason}` }, { status: 400 })
     }
 
     // Validate chips exist
@@ -81,9 +87,9 @@ export async function POST(request: NextRequest) {
       select: { id: true, status: true, evolutionInstance: true },
     })
 
-    const minChips = antiBanDefaults.minChipsForWarming as number ?? 3
     if (chips.length < minChips) {
-      return NextResponse.json({ error: 'Apenas ' + chips.length + ' chips encontrados no banco. Mínimo: ' + minChips + ' chips para grafo social natural' }, { status: 400 })
+      const reason = strategy === 'ai_bot' ? 'estratégia ai_bot' : 'grafo social natural'
+      return NextResponse.json({ error: 'Apenas ' + chips.length + ' chips encontrados no banco. Mínimo: ' + minChips + ' chips para ' + reason }, { status: 400 })
     }
 
     // Validate that ALL chips are connected and have an Evolution instance
