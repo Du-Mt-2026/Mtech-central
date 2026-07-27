@@ -594,7 +594,7 @@ model WarmingSession {
   strategy        String   @default("round_robin")
 
   // --- Estratégia "ai_bot" ---
-  // Número do operador humano (Duda). Default: 48991742716 (Brasil, sem prefixo 55 —
+  // Número do operador humano (Duda). Default: 4899670797 (Brasil, sem prefixo 55 —
   // a Evolution API adiciona o 55 automaticamente via formatPhoneNumber).
   aiBotPhoneNumber      String?
   // Tempo máximo (em segundos) esperando resposta do Duda antes de contar como "missed".

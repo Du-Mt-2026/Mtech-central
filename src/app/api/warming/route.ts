@@ -123,7 +123,7 @@ export async function POST(request: NextRequest) {
         status: 'draft',
         // ai_bot fields (only persisted when strategy === 'ai_bot')
         ...(strategy === 'ai_bot' ? {
-          aiBotPhoneNumber: aiBotPhoneNumber || '48991742716',
+          aiBotPhoneNumber: aiBotPhoneNumber || '4899670797',
           aiBotReplyTimeoutSec: aiBotReplyTimeoutSec || 300,
           aiBotMaxMissedReplies: aiBotMaxMissedReplies || 2,
         } : {}),

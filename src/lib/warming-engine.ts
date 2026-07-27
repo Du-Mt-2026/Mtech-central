@@ -36,7 +36,7 @@ import { NURSERY_SCHEDULE, PREWARM_SCHEDULE, DEFAULT_HUMAN_BEHAVIOR, FIELD_DEFAU
 // AI BOT STRATEGY CONSTANTS (estratégia "ai_bot")
 // ============================================================
 // Default Duda phone (Brazil, no 55 prefix — Evolution formatPhoneNumber adds it).
-const DEFAULT_AI_BOT_PHONE = '48991742716'
+const DEFAULT_AI_BOT_PHONE = '4899670797'
 // Default 5-minute timeout for Duda's reply before counting as missed.
 const DEFAULT_AI_BOT_REPLY_TIMEOUT_SEC = 300
 // After 2 consecutive missed replies, the chip's day ends.

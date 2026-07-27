@@ -21,7 +21,7 @@ CREATE INDEX "WarmingMessagePool_active_idx" ON "WarmingMessagePool"("active");
 
 -- AddColumn: New ai_bot fields on WarmingSession
 -- strategy aceita um novo valor: "ai_bot" (não precisa de ALTER, é String)
--- aiBotPhoneNumber: número do "operator" (default: número do Duda — 48991742716)
+-- aiBotPhoneNumber: número do "operator" (default: número do Duda — 4899670797)
 ALTER TABLE "WarmingSession" ADD COLUMN "aiBotPhoneNumber" TEXT;
 
 ALTER TABLE "WarmingSession" ADD COLUMN "aiBotReplyTimeoutSec" INTEGER NOT NULL DEFAULT 300;
