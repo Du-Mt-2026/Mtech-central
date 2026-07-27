@@ -36,7 +36,7 @@ import { NURSERY_SCHEDULE, PREWARM_SCHEDULE, DEFAULT_HUMAN_BEHAVIOR, FIELD_DEFAU
 // AI BOT STRATEGY CONSTANTS (estratégia "ai_bot")
 // ============================================================
 // Default Duda phone (Brazil, no 55 prefix — Evolution formatPhoneNumber adds it).
-const DEFAULT_AI_BOT_PHONE = '4899670797'
+const DEFAULT_AI_BOT_PHONE = '48999670797'
 // Default 5-minute timeout for Duda's reply before counting as missed.
 const DEFAULT_AI_BOT_REPLY_TIMEOUT_SEC = 300
 // After 2 consecutive missed replies, the chip's day ends.
@@ -1773,20 +1773,20 @@ export async function processNextAIBotMessage(
     // — mas permite múltiplos chips enviarem no mesmo tick
   }
 
-  // Persiste progresso se houve mudanças
-  if (updatedProgress) {
+  // Verifica timeouts PRIMEIRO (modifica chipProgress em memória)
+  const timeoutResult = await checkAIBotTimeouts(sessionId, chipProgress, today, replyTimeoutSec, maxMissed)
+
+  // Persiste progresso se houve mudanças (envio OU timeout)
+  if (updatedProgress || timeoutResult.missedCount > 0 || timeoutResult.dayEndedCount > 0) {
     await db.warmingSession.update({
       where: { id: sessionId },
       data: {
         messagesSent: { increment: sentCount },
-        lastMessageAt: new Date(),
+        lastMessageAt: sentCount > 0 ? new Date() : undefined,
         chipProgress: JSON.stringify(chipProgress),
       },
     })
   }
-
-  // Verifica timeouts (chips esperando reply há mais de replyTimeoutSec)
-  const timeoutResult = await checkAIBotTimeouts(sessionId, chipProgress, today, replyTimeoutSec, maxMissed)
 
   // Se não enviou nada e não há timeouts, retorna com delay normal
   return {
@@ -1892,7 +1892,9 @@ export async function handleDudaReply(
     const expectedPhone = session.aiBotPhoneNumber || DEFAULT_AI_BOT_PHONE
     // Normaliza ambos para comparação (remove 55 prefix se presente)
     const normalizePhone = (p: string) => p.replace(/^55/, '').replace(/\D/g, '')
-    if (normalizePhone(expectedPhone) !== normalizePhone(dudaPhone)) {
+    const normExpected = normalizePhone(expectedPhone)
+    const normReceived = normalizePhone(dudaPhone)
+    if (normExpected !== normReceived) {
       continue
     }
 

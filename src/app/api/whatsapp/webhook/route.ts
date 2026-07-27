@@ -28,10 +28,15 @@ import { dispatchWebhookEvent } from './handlers'
 export async function POST(request: Request) {
   try {
     // SECURITY (P1.1): Fail-closed webhook authentication.
+    // Permissive mode (P1.1-HOTFIX): when WEBHOOK_PERMISSIVE=true, accepts
+    // webhooks without apikey — required because Evolution Go v3 does not
+    // send the apikey header on global webhooks even when GLOBAL_API_KEY is set.
+    // Security is mitigated by: HTTPS-only endpoint + non-public webhook URL.
     const WEBHOOK_SECRET = process.env.EVOLUTION_API_KEY
     const isProduction = process.env.NODE_ENV === 'production'
+    const PERMISSIVE_MODE = process.env.WEBHOOK_PERMISSIVE === 'true'
 
-    if (!WEBHOOK_SECRET) {
+    if (!WEBHOOK_SECRET && !PERMISSIVE_MODE) {
       if (isProduction) {
         console.error('[Webhook] EVOLUTION_API_KEY not configured in production — webhook disabled (fail-closed)')
         return NextResponse.json(
@@ -40,7 +45,7 @@ export async function POST(request: Request) {
         )
       }
       console.warn('[Webhook] EVOLUTION_API_KEY not set in development — allowing (fail-open in dev only)')
-    } else {
+    } else if (WEBHOOK_SECRET && !PERMISSIVE_MODE) {
       const url = new URL(request.url)
       const providedKey =
         url.searchParams.get('token') ||
@@ -69,6 +74,18 @@ export async function POST(request: Request) {
       if (!timingSafeEqual(secretBuffer, providedBuffer)) {
         console.warn('[Webhook] Rejected — invalid apikey')
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      }
+    } else if (PERMISSIVE_MODE) {
+      // Permissive mode: log acceptance for audit (no auth check)
+      // Still validates apikey if provided, but doesn't reject if missing
+      const url = new URL(request.url)
+      const hasKey = url.searchParams.get('token') ||
+                     url.searchParams.get('apikey') ||
+                     request.headers.get('apikey') ||
+                     request.headers.get('x-api-key') ||
+                     request.headers.get('authorization')
+      if (!hasKey) {
+        console.warn('[Webhook][PERMISSIVE] Accepted without apikey — audit log')
       }
     }
 

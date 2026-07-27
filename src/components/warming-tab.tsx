@@ -210,7 +210,7 @@ export function WarmingTab() {
   const [applyingAntiBan, setApplyingAntiBan] = useState(false)
 
   // AI Bot strategy fields
-  const [formAiBotPhone, setFormAiBotPhone] = useState('4899670797')
+  const [formAiBotPhone, setFormAiBotPhone] = useState('48999670797')
   const [formAiBotReplyTimeout, setFormAiBotReplyTimeout] = useState(300)
   const [formAiBotMaxMissed, setFormAiBotMaxMissed] = useState(2)
 
@@ -551,7 +551,7 @@ export function WarmingTab() {
     setFormIntervalMax(120)
     setFormActiveStart(480)
     setFormActiveEnd(1260)
-    setFormAiBotPhone('4899670797')
+    setFormAiBotPhone('48999670797')
     setFormAiBotReplyTimeout(300)
     setFormAiBotMaxMissed(2)
     setEditingSession(null)
@@ -715,7 +715,7 @@ export function WarmingTab() {
                         id="aiBotPhone"
                         value={formAiBotPhone}
                         onChange={(e) => setFormAiBotPhone(e.target.value)}
-                        placeholder="4899670797"
+                        placeholder="48999670797"
                       />
                       <p className="text-xs text-muted-foreground">Sem prefixo 55 — a Evolution adiciona</p>
                     </div>
