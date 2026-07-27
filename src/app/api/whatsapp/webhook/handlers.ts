@@ -37,6 +37,7 @@ import { enqueueReconnection, markChipReconnected, dequeueReconnection } from '@
 import { setQRCode, clearQRCode } from '@/lib/qr-cache'
 import { parseWhatsAppMessage } from '@/lib/whatsapp-message-parser'
 import { broadcastToChip } from '@/app/api/inbox/events/route'
+import { handleDudaReply } from '@/lib/warming-engine'
 
 // ──────────────────────────────────────────────────────────────────────────
 // Types
@@ -1032,6 +1033,29 @@ export async function dispatchWebhookEvent(ctx: WebhookContext): Promise<void> {
               if (recipientChip) {
                 isCampaignMsg = true // Chip-to-chip = warming, hide from inbox
                 console.log(`[Webhook] Chip-to-chip (warming) message detected: ${chipInstanceName} ↔ ${remotePhone}, hiding from inbox`)
+              }
+            }
+
+            // ============================================================
+            // 🔥 AI BOT STRATEGY: Detect reply from Duda (operator)
+            // ============================================================
+            // If the message is INCOMING (fromMe=false) and the sender is the
+            // configured aiBotPhoneNumber of any running ai_bot session, we
+            // call handleDudaReply() to reset the chip's waiting state and
+            // increment its `received` counter.
+            //
+            // The handler is non-blocking for the inbox — we still save the
+            // message normally so Duda's reply is visible in the inbox.
+            // ============================================================
+            if (!fromMe && remotePhone && chip?.id) {
+              try {
+                const replyResult = await handleDudaReply(chip.id, remotePhone)
+                if (replyResult.matched) {
+                  console.log(`[Webhook] AI bot reply from Duda detected for chip ${chip.id} (session ${replyResult.sessionId})`)
+                }
+              } catch (e: any) {
+                // Non-critical — log and continue (don't break the webhook)
+                console.error(`[Webhook] handleDudaReply error: ${e.message}`)
               }
             }
 

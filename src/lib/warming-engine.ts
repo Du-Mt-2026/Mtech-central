@@ -33,6 +33,30 @@ import { toMins, getCurrentMinutes } from './time-utils'
 import { NURSERY_SCHEDULE, PREWARM_SCHEDULE, DEFAULT_HUMAN_BEHAVIOR, FIELD_DEFAULTS, type ScheduleEntry, type AntiBanSettings, type HumanBehaviorConfig, type TypingSimulationConfig, type PresenceConfig } from './constants'
 
 // ============================================================
+// AI BOT STRATEGY CONSTANTS (estratégia "ai_bot")
+// ============================================================
+// Default Duda phone (Brazil, no 55 prefix — Evolution formatPhoneNumber adds it).
+const DEFAULT_AI_BOT_PHONE = '48991742716'
+// Default 5-minute timeout for Duda's reply before counting as missed.
+const DEFAULT_AI_BOT_REPLY_TIMEOUT_SEC = 300
+// After 2 consecutive missed replies, the chip's day ends.
+const DEFAULT_AI_BOT_MAX_MISSED_REPLIES = 2
+// When Duda replies, wait a random human delay in this range before sending next message.
+const AI_BOT_REPLY_DELAY_MIN_SEC = 30
+const AI_BOT_REPLY_DELAY_MAX_SEC = 120
+// All 8 categories — kept in sync with seed-warming-message-pool.ts
+const AI_BOT_CATEGORIES = [
+  'saudacao',
+  'emoji_unico',
+  'emoji_combo',
+  'pergunta_geral',
+  'declaracao_casual',
+  'produto_mtech',
+  'info_pedido',
+  'conversa_fiada',
+] as const
+
+// ============================================================
 // TYPES
 // ============================================================
 
@@ -50,6 +74,23 @@ interface WarmingChipProgress {
   received: number
   lastSentAt: string | null
   lastReceivedAt: string | null
+  // --- ai_bot strategy fields (only used when session.strategy === 'ai_bot') ---
+  // Consecutive missed replies (Duda didn't answer within aiBotReplyTimeoutSec).
+  // Reset to 0 whenever Duda replies. When reaches aiBotMaxMissedReplies,
+  // the chip's conversation for the day is paused.
+  aiBotMissedCount?: number
+  // Last pool category used by this chip — avoids repeating back-to-back.
+  aiBotLastCategory?: string | null
+  // ISO timestamp of when the chip last sent a message and is now waiting
+  // for Duda's reply. null when not waiting (idle, already answered, etc.).
+  aiBotWaitingReplySince?: string | null
+  // ISO timestamp of Duda's last reply to this chip. Used to compute next
+  // send time (we don't fire next message immediately — we wait a human delay).
+  aiBotLastReplyAt?: string | null
+  // ISO date (YYYY-MM-DD) of the chip's last conversation day. When the
+  // chip hits aiBotMaxMissedReplies, this is set to today. The engine skips
+  // sending to this chip until the date changes (next day).
+  aiBotConversationDayEndedAt?: string | null
 }
 
 interface WarmingLastPair {
@@ -1330,6 +1371,36 @@ export async function processAllWarmingSessions(): Promise<{
   let totalErrors = 0
 
   for (const sessionId of sessionIds) {
+    // Pré-carrega a sessão para determinar a estratégia
+    const session = await db.warmingSession.findUnique({
+      where: { id: sessionId },
+      select: { strategy: true, status: true },
+    })
+
+    if (!session || session.status !== 'running') continue
+
+    // ============================================================
+    // Roteamento por estratégia
+    // ============================================================
+    // "ai_bot" tem seu próprio processador (1 chamada por tick — varre todos os chips)
+    // Outras estratégias usam processNextWarmingMessage com até MAX_MESSAGES_PER_TICK
+    //    tentativas internas (delay entre cada).
+    // ============================================================
+    if (session.strategy === 'ai_bot') {
+      try {
+        const result = await processNextAIBotMessage(sessionId)
+        totalSent += result.sentCount
+        if (result.reason === 'session_not_running') {
+          totalErrors++
+        }
+      } catch (error: any) {
+        console.error(`[WarmingEngine] Error processing ai_bot session ${sessionId}:`, error.message)
+        totalErrors++
+      }
+      continue
+    }
+
+    // Estratégias tradicionais (round_robin, pairs, random, group)
     for (let attempt = 0; attempt < MAX_MESSAGES_PER_TICK; attempt++) {
       try {
         const result = await processNextWarmingMessage(sessionId)
@@ -1457,6 +1528,397 @@ export async function autoStartScheduledSessions(): Promise<string[]> {
   }
 
   return started
+}
+
+// ============================================================
+// AI BOT STRATEGY (estratégia "ai_bot")
+// ============================================================
+// Nesta estratégia, os chips do warming mandam mensagens do pool global
+// (WarmingMessagePool) para um operador humano (Duda). O Duda responde
+// manualmente no WhatsApp; o webhook detecta a resposta e o motor envia
+// a próxima mensagem do pool.
+//
+// Fluxo:
+//   1. Cron tick (a cada 60s) chama processAllWarmingSessions()
+//   2. Para cada sessão running com strategy='ai_bot', chama
+//      processNextAIBotMessage() que:
+//        a. Verifica se algum chip está esperando reply há mais de
+//           aiBotReplyTimeoutSec → checkAIBotTimeouts()
+//        b. Para cada chip elegível (conversa do dia não encerrada),
+//           se não está esperando reply, escolhe uma categoria ≠ da última,
+//           sorteia mensagem ponderada, simula typing, envia para o Duda,
+//           marca aiBotWaitingReplySince = now()
+//   3. Duda responde → webhook (handlers.ts) chama handleDudaReply()
+//      → reseta aiBotWaitingReplySince = null
+//      → reseta aiBotMissedCount = 0
+//      → marca aiBotLastReplyAt = now
+//   4. No próximo tick, o motor vê que aiBotLastReplyAt + humanDelay < now
+//      e dispara a próxima mensagem
+//   5. Se 5min passarem sem reply → aiBotMissedCount++
+//      → se aiBotMissedCount >= aiBotMaxMissedReplies → marca o dia do chip
+//         como encerrado (aiBotConversationDayEndedAt = YYYY-MM-DD hoje)
+//         → chip não recebe novas mensagens até a meia-noite
+
+/**
+ * Sorteia uma categoria do pool, evitando repetir a última usada pelo chip.
+ * Sempre retorna uma categoria válida — fallback para a primeira se algo der errado.
+ */
+function pickNextCategory(lastCategoryUsed: string | null | undefined): string {
+  const available = AI_BOT_CATEGORIES.filter(c => c !== lastCategoryUsed)
+  if (available.length === 0) return AI_BOT_CATEGORIES[0]
+  return available[Math.floor(Math.random() * available.length)]
+}
+
+/**
+ * Sorteia uma mensagem do pool ponderada por `weight`, dentro da categoria.
+ * Retorna null se não houver mensagens ativas nessa categoria.
+ */
+async function pickMessageFromPool(category: string): Promise<{ id: string; content: string } | null> {
+  const messages = await db.warmingMessagePool.findMany({
+    where: { category, active: true },
+    select: { id: true, content: true, weight: true },
+  })
+  if (messages.length === 0) return null
+
+  const totalWeight = messages.reduce((sum, m) => sum + m.weight, 0)
+  if (totalWeight <= 0) {
+    // All weights are zero — pick uniformly
+    const m = messages[Math.floor(Math.random() * messages.length)]
+    return { id: m.id, content: m.content }
+  }
+
+  let roll = Math.random() * totalWeight
+  for (const m of messages) {
+    roll -= m.weight
+    if (roll <= 0) return { id: m.id, content: m.content }
+  }
+  // Fallback (shouldn't happen)
+  const m = messages[messages.length - 1]
+  return { id: m.id, content: m.content }
+}
+
+/**
+ * Helper: retorna a data atual (YYYY-MM-DD) no timezone da sessão.
+ * Usado para verificar se o dia já virou (libera chip para conversar de novo).
+ */
+function getTodayString(timezone: string = 'America/Sao_Paulo'): string {
+  try {
+    const now = new Date()
+    const fmt = new Intl.DateTimeFormat('sv-SE', {
+      timeZone: timezone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    })
+    return fmt.format(now) // "YYYY-MM-DD" (sv-SE locale format)
+  } catch {
+    // Fallback para UTC se timezone inválido
+    return new Date().toISOString().slice(0, 10)
+  }
+}
+
+/**
+ * Processa o próximo tick para uma sessão "ai_bot".
+ *
+ * Diferente da estratégia round_robin (que envia uma mensagem por chamada),
+ * aqui varremos TODOS os chips elegíveis em cada tick e disparamos uma mensagem
+ * para cada um que está pronto para enviar (não está esperando reply e o delay
+ * humano desde a última reply já passou).
+ *
+ * @returns número de mensagens enviadas neste tick
+ */
+export async function processNextAIBotMessage(
+  sessionId: string
+): Promise<{ processed: boolean; delayMs: number; completed: boolean; reason?: string; sentCount: number }> {
+  const session = await db.warmingSession.findUnique({ where: { id: sessionId } })
+  if (!session || session.status !== 'running') {
+    return { processed: false, delayMs: 5000, completed: false, reason: 'session_not_running', sentCount: 0 }
+  }
+
+  if (session.strategy !== 'ai_bot') {
+    // Não é estratégia ai_bot — ignora (deve ser tratado pelo processNextWarmingMessage)
+    return { processed: false, delayMs: 0, completed: false, reason: 'wrong_strategy', sentCount: 0 }
+  }
+
+  const chipIds: string[] = parseJsonField(session.chipIds, [])
+  const chipProgress: Record<string, WarmingChipProgress> = parseJsonField(session.chipProgress, {})
+  const breakWindows: WarmingBreakWindow[] = parseJsonField(session.breakWindows, [])
+
+  // Config ai_bot com defaults
+  const dudaPhone = session.aiBotPhoneNumber || DEFAULT_AI_BOT_PHONE
+  const replyTimeoutSec = session.aiBotReplyTimeoutSec || DEFAULT_AI_BOT_REPLY_TIMEOUT_SEC
+  const maxMissed = session.aiBotMaxMissedReplies || DEFAULT_AI_BOT_MAX_MISSED_REPLIES
+
+  // Verificações de janela (iguais ao round_robin)
+  if (!isWithinSendingWindow(session.activeHoursStart, session.activeHoursEnd, session.timezone)) {
+    return { processed: false, delayMs: 60000, completed: false, reason: 'outside_sending_window', sentCount: 0 }
+  }
+  const activeBreak = getActiveBreakWindow(breakWindows, session.timezone)
+  if (activeBreak) {
+    return { processed: false, delayMs: 60000, completed: false, reason: `break_window_${activeBreak.label}`, sentCount: 0 }
+  }
+
+  // Carrega todos os chips
+  const allChips = await db.chip.findMany({ where: { id: { in: chipIds } } })
+  const today = getTodayString(session.timezone)
+  const antiBanSettings = await loadAntiBanSettings()
+  const now = Date.now()
+
+  let sentCount = 0
+  let updatedProgress = false
+  const sessionUpdates: { messagesSent?: number; lastMessageAt?: Date; chipProgress?: string } = {}
+
+  for (const chip of allChips) {
+    // Validações básicas
+    if (chip.status !== 'connected' || !chip.evolutionInstance || !chip.phoneNumber || !isValidPhoneNumber(chip.phoneNumber)) {
+      continue
+    }
+
+    const progress = chipProgress[chip.id] || {
+      sent: 0, received: 0, lastSentAt: null, lastReceivedAt: null,
+      aiBotMissedCount: 0, aiBotLastCategory: null,
+      aiBotWaitingReplySince: null, aiBotLastReplyAt: null,
+      aiBotConversationDayEndedAt: null,
+    }
+
+    // Verifica se o chip já atingiu a meta de mensagens
+    if ((progress.sent + progress.received) >= session.messagesPerChip) {
+      continue
+    }
+
+    // Verifica se o dia do chip já encerrou
+    if (progress.aiBotConversationDayEndedAt === today) {
+      continue
+    }
+
+    // Se está esperando reply, NÃO enviar (espera o Duda responder ou o timeout)
+    if (progress.aiBotWaitingReplySince) {
+      continue
+    }
+
+    // Verifica o delay humano desde a última reply do Duda (se já houve reply)
+    if (progress.aiBotLastReplyAt) {
+      const lastReplyMs = new Date(progress.aiBotLastReplyAt).getTime()
+      const humanDelaySec = gaussianRandom(
+        (AI_BOT_REPLY_DELAY_MIN_SEC + AI_BOT_REPLY_DELAY_MAX_SEC) / 2,
+        (AI_BOT_REPLY_DELAY_MAX_SEC - AI_BOT_REPLY_DELAY_MIN_SEC) / 6,
+        AI_BOT_REPLY_DELAY_MIN_SEC,
+        AI_BOT_REPLY_DELAY_MAX_SEC
+      )
+      const elapsedSec = (now - lastReplyMs) / 1000
+      if (elapsedSec < humanDelaySec) {
+        continue // Ainda não está na hora de enviar a próxima
+      }
+    } else if (progress.lastSentAt) {
+      // Primeira reply ainda não chegou — respeita o intervalo normal da sessão
+      const lastSentMs = new Date(progress.lastSentAt).getTime()
+      const intervalMin = session.intervalMin || WARMING_INTERVAL_MIN
+      const elapsedSec = (now - lastSentMs) / 1000
+      if (elapsedSec < intervalMin) {
+        continue
+      }
+    }
+
+    // Tudo OK — escolhe categoria e mensagem
+    const category = pickNextCategory(progress.aiBotLastCategory)
+    const message = await pickMessageFromPool(category)
+    if (!message) {
+      console.warn(`[WarmingEngine][ai_bot] Sem mensagens ativas na categoria "${category}" — pulando chip ${chip.name}`)
+      continue
+    }
+
+    // Envia a mensagem com presença humanizada (igual ao round_robin)
+    const instanceName = chip.evolutionInstance
+    const formattedPhone = formatPhoneNumber(dudaPhone)
+    const jid = `${formattedPhone}@s.whatsapp.net`
+
+    try {
+      await performWarmingPresence(instanceName, jid, 'text', message.content, antiBanSettings)
+      await sendTextMessage(instanceName, formattedPhone, message.content, {
+        delay: 0,
+        linkPreview: antiBanSettings?.linkPreviewEnabled ?? false,
+      })
+      await delayedOfflineWithJitter(instanceName, jid, antiBanSettings)
+
+      // Atualiza progresso do chip
+      progress.sent++
+      progress.lastSentAt = new Date().toISOString()
+      progress.aiBotLastCategory = category
+      progress.aiBotWaitingReplySince = new Date().toISOString()
+
+      chipProgress[chip.id] = progress
+      updatedProgress = true
+      sentCount++
+
+      console.debug(`[WarmingEngine][ai_bot] ${chip.name} → Duda (${dudaPhone}): [${category}] "${message.content.substring(0, 50)}..."`)
+    } catch (error: any) {
+      console.error(`[WarmingEngine][ai_bot] Erro enviando de ${chip.name} para Duda: ${error.message}`)
+      // Marca erro na sessão mas continua com próximos chips
+      sessionUpdates.messagesSent = (sessionUpdates.messagesSent || 0) // no-op
+    }
+
+    // Limita a 1 envio por chip por tick (para não saturar)
+    // — mas permite múltiplos chips enviarem no mesmo tick
+  }
+
+  // Persiste progresso se houve mudanças
+  if (updatedProgress) {
+    await db.warmingSession.update({
+      where: { id: sessionId },
+      data: {
+        messagesSent: { increment: sentCount },
+        lastMessageAt: new Date(),
+        chipProgress: JSON.stringify(chipProgress),
+      },
+    })
+  }
+
+  // Verifica timeouts (chips esperando reply há mais de replyTimeoutSec)
+  const timeoutResult = await checkAIBotTimeouts(sessionId, chipProgress, today, replyTimeoutSec, maxMissed)
+
+  // Se não enviou nada e não há timeouts, retorna com delay normal
+  return {
+    processed: sentCount > 0,
+    delayMs: 60000, // próximo tick em 60s
+    completed: false,
+    reason: sentCount > 0 ? undefined : 'no_chips_ready',
+    sentCount,
+  }
+}
+
+/**
+ * Verifica se algum chip está esperando reply do Duda há mais que o timeout.
+ * Se sim, incrementa aiBotMissedCount e, se atingir o limite, encerra o dia do chip.
+ *
+ * @returns número de chips que tiveram missed reply incrementado neste tick
+ */
+export async function checkAIBotTimeouts(
+  sessionId: string,
+  chipProgressOverride?: Record<string, WarmingChipProgress>,
+  todayOverride?: string,
+  replyTimeoutSecOverride?: number,
+  maxMissedOverride?: number
+): Promise<{ missedCount: number; dayEndedCount: number }> {
+  const session = await db.warmingSession.findUnique({ where: { id: sessionId } })
+  if (!session || session.status !== 'running' || session.strategy !== 'ai_bot') {
+    return { missedCount: 0, dayEndedCount: 0 }
+  }
+
+  const chipProgress = chipProgressOverride || parseJsonField(session.chipProgress, {})
+  const today = todayOverride || getTodayString(session.timezone)
+  const replyTimeoutSec = replyTimeoutSecOverride || session.aiBotReplyTimeoutSec || DEFAULT_AI_BOT_REPLY_TIMEOUT_SEC
+  const maxMissed = maxMissedOverride || session.aiBotMaxMissedReplies || DEFAULT_AI_BOT_MAX_MISSED_REPLIES
+
+  const now = Date.now()
+  let missedCount = 0
+  let dayEndedCount = 0
+  let changed = false
+
+  for (const chipId of Object.keys(chipProgress)) {
+    const progress = chipProgress[chipId]
+    if (!progress.aiBotWaitingReplySince) continue
+
+    const waitingSinceMs = new Date(progress.aiBotWaitingReplySince).getTime()
+    const elapsedSec = (now - waitingSinceMs) / 1000
+
+    if (elapsedSec >= replyTimeoutSec) {
+      // Timeout expirado — conta como missed
+      progress.aiBotMissedCount = (progress.aiBotMissedCount || 0) + 1
+      progress.aiBotWaitingReplySince = null // para de esperar
+      missedCount++
+      changed = true
+
+      if (progress.aiBotMissedCount >= maxMissed) {
+        // Encerra a conversa do dia do chip
+        progress.aiBotConversationDayEndedAt = today
+        dayEndedCount++
+        console.warn(`[WarmingEngine][ai_bot] Chip ${chipId} atingiu ${maxMissed} missed replies consecutivos — conversa do dia encerrada (${today})`)
+      } else {
+        console.warn(`[WarmingEngine][ai_bot] Chip ${chipId} — missed reply ${progress.aiBotMissedCount}/${maxMissed}`)
+      }
+    }
+  }
+
+  if (changed && !chipProgressOverride) {
+    // Só persiste se não foi passado override (caso contrário, quem chamou persiste)
+    await db.warmingSession.update({
+      where: { id: sessionId },
+      data: { chipProgress: JSON.stringify(chipProgress) },
+    })
+  }
+
+  return { missedCount, dayEndedCount }
+}
+
+/**
+ * Handler chamado pelo webhook quando uma mensagem é recebida do Duda.
+ *
+ * Identifica qual chip estava esperando essa reply e:
+ *   - reseta aiBotWaitingReplySince = null
+ *   - reseta aiBotMissedCount = 0
+ *   - marca aiBotLastReplyAt = now
+ *   - incrementa received no progress
+ *
+ * @param recipientChipId — ID do chip que recebeu a reply (DEVE estar na sessão ai_bot)
+ * @param dudaPhone — telefone do Duda (já normalizado, sem 55)
+ */
+export async function handleDudaReply(
+  recipientChipId: string,
+  dudaPhone: string
+): Promise<{ matched: boolean; sessionId?: string }> {
+  // Busca todas as sessões ai_bot running que incluem esse chip
+  const sessions = await db.warmingSession.findMany({
+    where: { status: 'running', strategy: 'ai_bot' },
+    select: { id: true, chipIds: true, chipProgress: true, aiBotPhoneNumber: true },
+  })
+
+  for (const session of sessions) {
+    const chipIds: string[] = parseJsonField(session.chipIds, [])
+    if (!chipIds.includes(recipientChipId)) continue
+
+    // Verifica se o telefone do remetente bate com o aiBotPhoneNumber configurado
+    const expectedPhone = session.aiBotPhoneNumber || DEFAULT_AI_BOT_PHONE
+    // Normaliza ambos para comparação (remove 55 prefix se presente)
+    const normalizePhone = (p: string) => p.replace(/^55/, '').replace(/\D/g, '')
+    if (normalizePhone(expectedPhone) !== normalizePhone(dudaPhone)) {
+      continue
+    }
+
+    const chipProgress: Record<string, WarmingChipProgress> = parseJsonField(session.chipProgress, {})
+    const progress = chipProgress[recipientChipId]
+    if (!progress) continue
+
+    // Só processa se estava realmente esperando reply
+    if (!progress.aiBotWaitingReplySince) {
+      // Mesmo assim, atualiza lastReplyAt (pode ser reply atrasada, ainda conta)
+      progress.aiBotLastReplyAt = new Date().toISOString()
+      progress.received = (progress.received || 0) + 1
+      chipProgress[recipientChipId] = progress
+      await db.warmingSession.update({
+        where: { id: session.id },
+        data: { chipProgress: JSON.stringify(chipProgress) },
+      })
+      return { matched: true, sessionId: session.id }
+    }
+
+    // Reseta estado de espera + missed count
+    progress.aiBotWaitingReplySince = null
+    progress.aiBotMissedCount = 0
+    progress.aiBotLastReplyAt = new Date().toISOString()
+    progress.received = (progress.received || 0) + 1
+    progress.lastReceivedAt = new Date().toISOString()
+    chipProgress[recipientChipId] = progress
+
+    await db.warmingSession.update({
+      where: { id: session.id },
+      data: { chipProgress: JSON.stringify(chipProgress) },
+    })
+
+    console.log(`[WarmingEngine][ai_bot] Reply do Duda recebida para chip ${recipientChipId} — resetando estado de espera`)
+    return { matched: true, sessionId: session.id }
+  }
+
+  return { matched: false }
 }
 
 // Export DEFAULT_WARMING_TEMPLATES for use in the UI

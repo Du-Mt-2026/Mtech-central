@@ -43,6 +43,10 @@ export async function POST(request: NextRequest) {
       timezone,
       messageTypeDistribution = { text: 47, image: 27, audio: 26 },
       scheduledAt,
+      // ai_bot strategy fields
+      aiBotPhoneNumber,
+      aiBotReplyTimeoutSec,
+      aiBotMaxMissedReplies,
     } = body
 
     // Inherit defaults from AntiBanSettings (UI) when not explicitly provided.
@@ -111,6 +115,12 @@ export async function POST(request: NextRequest) {
         messageTypeDistribution: JSON.stringify(messageTypeDistribution),
         scheduledAt: scheduledAt ? new Date(scheduledAt) : null,
         status: 'draft',
+        // ai_bot fields (only persisted when strategy === 'ai_bot')
+        ...(strategy === 'ai_bot' ? {
+          aiBotPhoneNumber: aiBotPhoneNumber || '48991742716',
+          aiBotReplyTimeoutSec: aiBotReplyTimeoutSec || 300,
+          aiBotMaxMissedReplies: aiBotMaxMissedReplies || 2,
+        } : {}),
       },
     })
 
