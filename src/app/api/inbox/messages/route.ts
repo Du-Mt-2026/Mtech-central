@@ -1,107 +1,54 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { db } from '@/lib/db'
-import { markChatAsRead } from '@/lib/evolution-api'
+import { NextRequest, NextResponse } from "next/server"
+import { db } from "@/lib/db"
+import { markChatAsRead } from "@/lib/evolution-api"
 
-/**
- * GET /api/inbox/messages
- * Returns messages for a specific conversation (chipId + remoteJid)
- *
- * v2.2: Also searches by remotePhone to find LID-variant messages.
- * When a conversation uses canonicalJid (s.whatsapp.net), we also
- * fetch messages where remotePhone matches but remoteJid is @lid.
- *
- * Query params:
- * - chipId: required - the chip ID
- * - remoteJid: required - the contact's JID (canonical)
- * - before: cursor for pagination (message createdAt)
- * - limit: number of messages to return (default 50)
- */
-export async function GET(request: NextRequest) {
+export async function GET(req: NextRequest) {
   try {
-    const { searchParams } = new URL(request.url)
-    const chipId = searchParams.get('chipId')
-    const remoteJid = searchParams.get('remoteJid')
-    const before = searchParams.get('before')
-    const limit = parseInt(searchParams.get('limit') || '50')
+    const s = new URL(req.url).searchParams
+    const chipId = s.get("chipId"), remoteJid = s.get("remoteJid"), before = s.get("before"), limit = parseInt(s.get("limit") || "50")
+    if (!chipId || !remoteJid) return NextResponse.json({ error: "Erro" }, { status: 400 })
 
-    if (!chipId || !remoteJid) {
-      return NextResponse.json(
-        { error: 'chipId e remoteJid são obrigatórios' },
-        { status: 400 }
-      )
+    const p = remoteJid.split("@")[0]
+
+    // Gerar variações de telefone (com 9, sem 9, com 55, sem 55)
+    function phoneVariants(phone: string): string[] {
+      const variants = new Set<string>([phone])
+      const withoutCountry = phone.replace(/^55/, "")
+      if (withoutCountry !== phone) variants.add(withoutCountry)
+      if (withoutCountry.length === 11 && withoutCountry[2] === "9") {
+        const without9 = withoutCountry.slice(0, 2) + withoutCountry.slice(3)
+        variants.add(without9)
+        variants.add("55" + without9)
+      } else if (withoutCountry.length === 10) {
+        const with9 = withoutCountry.slice(0, 2) + "9" + withoutCountry.slice(2)
+        variants.add(with9)
+        variants.add("55" + with9)
+      }
+      return Array.from(variants)
     }
 
-    const phonePart = remoteJid.split('@')[0]
-
-    // Build OR conditions to match ALL JID variants for this contact
-    // This ensures messages from both @lid and @s.whatsapp.net are included
-    const orConditions: Record<string, unknown>[] = [
-      { remoteJid },  // Exact JID match
+    const variants = phoneVariants(p)
+    const conds: any[] = [
+      { remoteJid },
+      ...variants.map(v => ({ remoteJid: `${v}@s.whatsapp.net` })),
+      { remotePhone: { in: variants } },
+      { remoteJid: { startsWith: p } },
     ]
 
-    // Also match by same phone prefix (handles LID ↔ s.whatsapp.net)
-    if (phonePart) {
-      orConditions.push({ remoteJid: { startsWith: phonePart } })
-      // Also match by remotePhone (for cases where remotePhone differs from JID prefix)
-      orConditions.push({ remotePhone: phonePart })
-      // Try without country code
-      const withoutCountryCode = phonePart.replace(/^55/, '')
-      if (withoutCountryCode !== phonePart) {
-        orConditions.push({ remotePhone: { startsWith: withoutCountryCode } })
-      }
-    }
+    const conv = await db.conversation.findUnique({ where: { chipId_remoteJid: { chipId, remoteJid } } }).catch(() => null)
+    if (conv?.contactName) conds.push({ contactName: conv.contactName })
 
-    const where: Record<string, unknown> = {
-      chipId,
-      OR: orConditions,
-    }
+    const where: any = { chipId, OR: conds }
+    if (before) where.createdAt = { lt: new Date(before) }
 
-    if (before) {
-      where.createdAt = { lt: new Date(before) }
-    }
+    const msgs = await db.inboxMessage.findMany({ where, orderBy: { createdAt: "desc" }, take: limit })
+    await db.inboxMessage.updateMany({ where: { chipId, OR: conds, isRead: false, fromMe: false }, data: { isRead: true } }).catch(() => null)
 
-    const messages = await db.inboxMessage.findMany({
-      where,
-      orderBy: { createdAt: 'desc' },
-      take: limit,
-    })
-
-    // Mark unread messages as read (for ALL JID variants)
-    await db.inboxMessage.updateMany({
-      where: {
-        chipId,
-        OR: orConditions,
-        isRead: false,
-        fromMe: false,
-      },
-      data: { isRead: true },
-    })
-
-    // v2.1: Mark chat as read on WhatsApp side (so sender sees blue ✓✓)
     try {
-      const chip = await db.chip.findUnique({
-        where: { id: chipId },
-        select: { evolutionInstance: true, status: true },
-      })
-      if (chip?.evolutionInstance && chip.status === 'connected') {
-        await markChatAsRead(chip.evolutionInstance, remoteJid)
-      }
-    } catch {
-      // Non-critical — best effort. If this fails, the DB is still marked as read.
-    }
+      const c = await db.chip.findUnique({ where: { id: chipId }, select: { evolutionInstance: true, status: true } })
+      if (c?.evolutionInstance && c.status === "connected") await markChatAsRead(c.evolutionInstance, remoteJid)
+    } catch {}
 
-    // Return in chronological order (oldest first)
-    const sorted = [...messages].reverse()
-
-    return NextResponse.json({
-      messages: sorted,
-      hasMore: messages.length === limit,
-    })
-  } catch (error) {
-    console.error('Inbox messages error:', error)
-    return NextResponse.json(
-      { error: 'Erro ao buscar mensagens' },
-      { status: 500 }
-    )
-  }
+    return NextResponse.json({ messages: msgs.reverse(), hasMore: msgs.length === limit })
+  } catch (e) { console.error(e); return NextResponse.json({ error: "Erro" }, { status: 500 }) }
 }

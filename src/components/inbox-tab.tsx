@@ -22,6 +22,7 @@ import {
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
+import { ExtractMembersDialog } from '@/components/inbox/extract-members-dialog'
 
 // ===== Types =====
 interface InboxChip {
@@ -330,6 +331,7 @@ export function InboxTab() {
   const [convStatus, setConvStatus] = useState<string>('open')
   // Status filter for conversations
   const [statusFilter, setStatusFilter] = useState<string>('all')
+  const [extractDialogOpen, setExtractDialogOpen] = useState(false)
 
   // ===== Data fetching callbacks (same logic as before) =====
   const fetchChips = useCallback(async () => {
@@ -1049,6 +1051,16 @@ export function InboxTab() {
                         <TooltipContent>Atualizar mensagens</TooltipContent>
                       </Tooltip>
                     </TooltipProvider>
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button variant="ghost" size="icon" className="size-8" onClick={() => setExtractDialogOpen(true)} disabled={!selectedConversation?.isGroup}>
+                            <Users className="size-3.5" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>Extrair membros do grupo</TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
                   </div>
                 </div>
 
@@ -1438,6 +1450,20 @@ export function InboxTab() {
           </div>
         </ResizablePanel>
       </ResizablePanelGroup>
+      {selectedConversation?.isGroup && selectedChipId && (
+        <ExtractMembersDialog
+          open={extractDialogOpen}
+          onOpenChange={setExtractDialogOpen}
+          chipId={selectedChipId}
+          chipName={chips.find(c => c.id === selectedChipId)?.name || ''}
+          groupJid={selectedConversation.remoteJid}
+          groupName={selectedConversation.groupName || selectedConversation.contactName || 'Grupo'}
+          onExtracted={() => {
+            toast.success('Lista criada! Acesse pela aba Lista de Contatos.')
+          }}
+        />
+      )}
+
     </div>
   )
 }

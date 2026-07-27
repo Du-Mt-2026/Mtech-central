@@ -244,6 +244,8 @@ model ContactList {
   id        String   @id @default(cuid())
   name      String
   columns   String?  @default("{}")  // JSON: {"Empresa":"empresa","Vendedora Responsável":"vendedora_responsável"} — original header → variable key mapping
+  source      String?  // "manual" | "group_extract" | "gmn" | "csv_import" | "linvix_sync"
+  sourceMeta  String?  @default("{}") // JSON com metadados da origem
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   contacts  Contact[]

@@ -844,6 +844,7 @@ export async function dispatchWebhookEvent(ctx: WebhookContext): Promise<void> {
       }
 
       // ===== Incoming/Outgoing Messages =====
+      case 'SendMessage':
       case 'Message': {
         try {
           // v3 format: data.Info.Chat, data.Info.ID, data.Info.IsFromMe, data.Message
@@ -1195,7 +1196,7 @@ export async function dispatchWebhookEvent(ctx: WebhookContext): Promise<void> {
           if (linkedChip?.id) {
             try {
               await db.conversation.upsert({
-                where: { chipId_remoteJid: { chipId: linkedChip.id, remoteJid: chatJid } },
+                where: { chipId_remoteJid: { chipId: linkedChip.id, remoteJid: remoteJid } },
                 update: {
                   lastMessageAt: new Date(),
                   lastMessagePreview: (messageContent || '').substring(0, 200),
@@ -1209,8 +1210,8 @@ export async function dispatchWebhookEvent(ctx: WebhookContext): Promise<void> {
                 },
                 create: {
                   chipId: linkedChip.id,
-                  remoteJid: chatJid,
-                  remotePhone: chatJid.split('@')[0],
+                  remoteJid: remoteJid,
+                  remotePhone: remoteJid.split('@')[0],
                   contactName: pushName || null,
                   pushName: pushName || null,
                   isGroup,

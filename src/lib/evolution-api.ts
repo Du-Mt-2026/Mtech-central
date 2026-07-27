@@ -1192,6 +1192,126 @@ export async function fetchGroupMetadata(
   }
 }
 
+/**
+ * Fetch group participants (full list) from Evolution API.
+ * Returns array of participants with jid, lid, admin status, and display name.
+ *
+ * Uses same endpoint as fetchGroupMetadata but preserves the participants array
+ * (the existing fetchGroupMetadata only returns the count, discarding the actual list).
+ *
+ * Evolution API endpoint: GET /group/fetchMetadata?groupJid=...
+ * Response: { subject, participants: [{ id, jid, lid, admin, displayName, phoneNumber }], ... }
+ */
+/**
+
+ * Fetch group participants (full list) from Evolution API v3.7.2.
+
+ * Uses POST /group/info (NOT /group/fetchMetadata which doesn't exist in v3).
+
+ * Returns array of participants with jid, lid, phone, admin status, and display name.
+
+ */
+
+export async function fetchGroupParticipants(
+
+  instanceIdOrName: string,
+
+  groupJid: string
+
+): Promise<{
+
+  subject: string;
+
+  participants: Array<{
+
+    jid: string;
+
+    lid?: string;
+
+    phoneNumber?: string;
+
+    displayName?: string;
+
+    isAdmin: boolean;
+
+    isSuperAdmin: boolean;
+
+  }>;
+
+} | null> {
+
+  const { id: instanceId, token: instanceToken } = await resolveInstance(instanceIdOrName);
+
+
+
+  try {
+
+    const res = await evolutionFetch(
+
+      `/group/info`,
+
+      {
+
+        method: 'POST',
+
+        headers: { 'Content-Type': 'application/json' },
+
+        body: JSON.stringify({ groupJid }),
+
+      },
+
+      instanceId,
+
+      instanceToken
+
+    );
+
+
+
+
+
+    const data = await res.json();
+
+    const groupData = data?.data || data;
+
+    const rawParticipants = Array.isArray(groupData?.Participants) ? groupData.Participants : [];
+
+
+
+    const participants = rawParticipants.map((p: any) => ({
+
+      jid: p?.PhoneNumber || p?.JID || p?.LID || '',
+
+      lid: p?.LID || p?.JID,
+
+      phoneNumber: p?.PhoneNumber ? p.PhoneNumber.replace('@s.whatsapp.net', '') : undefined,
+
+      displayName: p?.DisplayName || undefined,
+
+      isAdmin: p?.IsAdmin === true,
+
+      isSuperAdmin: p?.IsSuperAdmin === true,
+
+    }));
+
+
+
+    return {
+
+      subject: groupData?.Name || groupData?.Subject || groupJid,
+
+      participants,
+
+    };
+
+  } catch {
+
+    return null;
+
+  }
+
+}
+
 // ============ Chat Management ============
 
 /**
