@@ -4,7 +4,7 @@ import { useState, useCallback } from 'react'
 import {
   Search, Phone, Globe, Star, MapPin, Loader2, Filter, X,
   CheckCircle, AlertCircle, Upload, ChevronDown, ChevronUp,
-} from 'lucide-react'
+FileText } from 'lucide-react'
 
 interface PlaceResult {
   id: string
@@ -20,6 +20,8 @@ interface PlaceResult {
   lat?: number
   lng?: number
   isOpenNow?: boolean
+  cnpj?: string | null
+  cnpjStatus?: 'idle' | 'fetching' | 'found' | 'not_found' | 'manual'
 }
 
 interface SearchFilters {
@@ -61,6 +63,7 @@ export default function LeadsTab() {
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [importing, setImporting] = useState<string | null>(null)
   const [importedIds, setImportedIds] = useState<Set<string>>(new Set())
+  const [cnpjStates, setCnpjStates] = useState<Map<string, { cnpj: string | null; status: string; formatted?: string }>>(new Map())
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [stats, setStats] = useState<{ total: number; new: number; duplicate: number } | null>(null)
 
@@ -122,6 +125,55 @@ export default function LeadsTab() {
       setImporting(null)
     }
   }, [])
+
+
+  const fetchCnpj = useCallback(async (placeId: string) => {
+    setCnpjStates(prev => {
+      const next = new Map(prev)
+      next.set(placeId, { cnpj: null, status: 'fetching' })
+      return next
+    })
+    try {
+      // Buscar o ID interno do lead via API
+      const listRes = await fetch(`/api/leads?placeId=${placeId}`)
+      if (!listRes.ok) throw new Error('Lead não encontrado')
+      const leadData = await listRes.json()
+      // API retorna { leads: [...] } — pegar o primeiro
+      const lead = Array.isArray(leadData.leads) ? leadData.leads[0] : (leadData.lead || leadData)
+      const leadId = lead?.id
+      if (!leadId) throw new Error('Lead não encontrado na resposta')
+      
+      const res = await fetch(`/api/leads/${leadId}/fetch-cnpj`, { method: 'POST' })
+      const data = await res.json()
+      
+      setCnpjStates(prev => {
+        const next = new Map(prev)
+        if (data.cnpj) {
+          next.set(placeId, { 
+            cnpj: data.cnpj, 
+            status: data.valid ? 'found' : 'not_found',
+            formatted: data.cnpjFormatted 
+          })
+        } else {
+          next.set(placeId, { cnpj: null, status: 'not_found' })
+        }
+        return next
+      })
+    } catch (err: any) {
+      setCnpjStates(prev => {
+        const next = new Map(prev)
+        next.set(placeId, { cnpj: null, status: 'not_found' })
+        return next
+      })
+    }
+  }, [])
+
+  const fetchAllCnpj = useCallback(async () => {
+    const withWebsite = results.filter(r => r.website && !cnpjStates.get(r.id)?.cnpj)
+    for (const r of withWebsite) {
+      await fetchCnpj(r.id)
+    }
+  }, [results, cnpjStates, fetchCnpj])
 
   const toggleSelect = (id: string) => {
     setSelected(prev => {
@@ -319,6 +371,15 @@ export default function LeadsTab() {
             {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
             {loading ? 'Buscando...' : 'Buscar'}
           </button>
+          {results.length > 0 && (
+            <button
+              onClick={fetchAllCnpj}
+              className="px-3 py-2 rounded-md border text-sm hover:bg-muted/30 flex items-center gap-2"
+            >
+              <FileText className="w-4 h-4" />
+              Buscar CNPJ (todos)
+            </button>
+          )}
           {selected.size > 0 && (
             <button
               onClick={() => handleImport(Array.from(selected))}
@@ -400,6 +461,7 @@ export default function LeadsTab() {
                   <th className="p-2 text-left">Nome</th>
                   <th className="p-2 text-left">Telefone</th>
                   <th className="p-2 text-left">Website</th>
+                  <th className="p-2 text-left">CNPJ</th>
                   <th className="p-2 text-left">Avaliação</th>
                   <th className="p-2 text-left">Endereço</th>
                   <th className="p-2 text-center">Status</th>
@@ -452,7 +514,44 @@ export default function LeadsTab() {
                         ) : (
                           <span className="text-muted-foreground text-xs">—</span>
                         )}
+                      </td>                      <td className="p-2">
+                        {(() => {
+                          const st = cnpjStates.get(place.id)
+                          if (st?.status === 'fetching') {
+                            return <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />
+                          }
+                          if (st?.cnpj) {
+                            return (
+                              <div className="flex flex-col gap-0.5">
+                                <span className="font-mono text-xs">{st.formatted}</span>
+                                {st.status === 'found' && (
+                                  <span className="text-[10px] text-green-600">válido</span>
+                                )}
+                              </div>
+                            )
+                          }
+                          if (st?.status === 'not_found') {
+                            return (
+                              <span className="text-xs text-muted-foreground" title="CNPJ não encontrado no site">
+                                —
+                              </span>
+                            )
+                          }
+                          if (place.website) {
+                            return (
+                              <button
+                                onClick={() => fetchCnpj(place.id)}
+                                className="text-xs text-primary hover:underline flex items-center gap-1"
+                              >
+                                <FileText className="w-3 h-3" />
+                                Buscar
+                              </button>
+                            )
+                          }
+                          return <span className="text-muted-foreground text-xs">—</span>
+                        })()}
                       </td>
+
                       <td className="p-2">
                         {place.rating ? (
                           <div className="flex items-center gap-1">

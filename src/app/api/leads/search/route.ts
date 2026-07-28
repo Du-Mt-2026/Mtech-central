@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { searchTextWithPagination, geocodeAddress } from '@/lib/places-client'
+import { searchTextWithPagination, geocodeAddress, extractCnpjFromWebsite } from '@/lib/places-client'
 
 interface SearchRequest {
   keyword: string
@@ -147,6 +147,29 @@ export async function POST(req: NextRequest) {
     // Remover campo interno
     results = results.map(({ _distance, ...rest }) => rest)
 
+
+    // 6.5. Buscar CNPJ automaticamente (async, não bloqueia resposta)
+    // Apenas para leads novos com website
+    const newLeadsWithWebsite = results.filter(
+      r => r.status === 'new' && r.website && r.id
+    )
+    
+    // Disparar buscas em paralelo (sem await — não bloqueia a resposta HTTP)
+    // Limita a 5 simultâneas para não estourar
+    Promise.all(
+      newLeadsWithWebsite.slice(0, 20).map(async r => {
+        try {
+          const cnpj = await extractCnpjFromWebsite(r.website!, 5000)
+          if (cnpj) {
+            await db.lead.update({
+              where: { placeId: r.id },
+              data: { cnpj },
+            })
+          }
+        } catch {}
+      })
+    ).catch(() => {}) // swallow errors — não afeta a resposta
+    
     // 7. Salvar/atualizar SearchQuery + Leads no banco
     const searchQuery = await db.searchQuery.create({
       data: {

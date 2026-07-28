@@ -776,6 +776,7 @@ model Lead {
   name            String
   phone           String?  // E.164 normalizado: 5548999670797
   phoneRaw        String?  // original do Google: +55 48 3204-4785
+  cnpj            String?                     // CNPJ extraído do site (14 dígitos)
   website         String?
   address         String?
   city            String?

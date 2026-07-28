@@ -141,3 +141,104 @@ export async function searchTextWithPagination(
 
   return all.slice(0, maxResults)
 }
+
+/**
+ * Extrai CNPJ do HTML de um website.
+ *
+ * Lei brasileira (CDC art. 31) exige CNPJ no rodapé de sites comerciais.
+ * Padrões suportados:
+ *   - XX.XXX.XXX/XXXX-XX (formatado)
+ *   - 14 dígitos seguidos (após "CNPJ:" ou similar)
+ *
+ * @returns CNPJ com 14 dígitos (sem formatação) ou null se não encontrar
+ */
+export async function extractCnpjFromWebsite(
+  websiteUrl: string,
+  timeoutMs = 6000
+): Promise<string | null> {
+  try {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), timeoutMs)
+
+    const res = await fetch(websiteUrl, {
+      signal: controller.signal,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; OctupusZap-CNPJ-Bot/1.0)',
+        'Accept': 'text/html,application/xhtml+xml',
+        'Accept-Language': 'pt-BR,pt;q=0.9',
+      },
+      redirect: 'follow',
+    })
+    clearTimeout(timeout)
+
+    if (!res.ok) return null
+
+    const html = await res.text()
+    if (html.length < 100) return null
+
+    // Padrão 1: XX.XXX.XXX/XXXX-XX (formatado)
+    const formatted = html.match(/\b(\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2})\b/)
+    if (formatted) {
+      const cnpj = formatted[1].replace(/\D/g, '')
+      if (cnpj.length === 14) return cnpj
+    }
+
+    // Padrão 2: "CNPJ: XXXXXXXXXXXXXX" (14 dígitos após label)
+    const labeled = html.match(/CNPJ[:\s]+(\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2})/i)
+    if (labeled) {
+      const cnpj = labeled[1].replace(/\D/g, '')
+      if (cnpj.length === 14) return cnpj
+    }
+
+    // Padrão 3: 14 dígitos isolados (menos confiável, pode pegar CPF)
+    // Só usa se tiver "CNPJ" nas proximidades (janela de 200 chars)
+    const cnpjPositions: number[] = []
+    const cnpjRegex = /(\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}|\b\d{14}\b)/g
+    let m
+    while ((m = cnpjRegex.exec(html)) !== null) {
+      const start = Math.max(0, m.index - 200)
+      const window = html.substring(start, m.index + m[0].length + 200)
+      if (/CNPJ/i.test(window)) {
+        const cnpj = m[0].replace(/\D/g, '')
+        if (cnpj.length === 14) return cnpj
+      }
+    }
+
+    return null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Valida CNPJ (algoritmo oficial DV).
+ */
+export function validateCnpj(cnpj: string): boolean {
+  const clean = cnpj.replace(/\D/g, '')
+  if (clean.length !== 14) return false
+  if (/^(\d)\1+$/.test(clean)) return false // todos iguais
+
+  const calc = (slice: string, weights: number[]): number => {
+    let sum = 0
+    for (let i = 0; i < slice.length; i++) {
+      sum += parseInt(slice[i]) * weights[i]
+    }
+    const rest = sum % 11
+    return rest < 2 ? 0 : 11 - rest
+  }
+
+  const w1 = [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]
+  const w2 = [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]
+  const d1 = calc(clean.substring(0, 12), w1)
+  const d2 = calc(clean.substring(0, 12) + d1, w2)
+  return d1 === parseInt(clean[12]) && d2 === parseInt(clean[13])
+}
+
+/**
+ * Formata CNPJ: 12345678000190 → 12.345.678/0001-90
+ */
+export function formatCnpj(cnpj: string): string {
+  const clean = cnpj.replace(/\D/g, '')
+  if (clean.length !== 14) return cnpj
+  return clean.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5')
+}
