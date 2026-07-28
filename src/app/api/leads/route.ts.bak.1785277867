@@ -7,14 +7,12 @@ export async function GET(request: NextRequest) {
     const status = searchParams.get('status')
     const searchQueryId = searchParams.get('searchQueryId')
     const search = searchParams.get('search')
-    const placeId = searchParams.get('placeId')
     const page = parseInt(searchParams.get('page') || '1')
     const limit = parseInt(searchParams.get('limit') || '50')
 
     const where: Record<string, unknown> = {}
     if (status) where.status = status
     if (searchQueryId) where.searchQueryId = searchQueryId
-    if (placeId) where.placeId = placeId
     if (search) {
       where.OR = [
         { name: { contains: search, mode: 'insensitive' } },

@@ -127,47 +127,42 @@ export default function LeadsTab() {
   }, [])
 
 
-  const fetchCnpj = useCallback(async (leadIdOrPlaceId: string) => {
-    if (!leadIdOrPlaceId) {
-      console.error('[fetchCnpj] id is required')
-      return
-    }
+  const fetchCnpj = useCallback(async (placeId: string) => {
     setCnpjStates(prev => {
       const next = new Map(prev)
-      next.set(leadIdOrPlaceId, { cnpj: null, status: 'fetching' })
+      next.set(placeId, { cnpj: null, status: 'fetching' })
       return next
     })
     try {
-      // Se for Place ID (comeca com ChIJ), resolver para Prisma cuid primeiro
-      let leadId = leadIdOrPlaceId
-      if (leadIdOrPlaceId.startsWith('ChIJ') || leadIdOrPlaceId.length < 25) {
-        const listRes = await fetch(`/api/leads?placeId=${encodeURIComponent(leadIdOrPlaceId)}`)
-        if (listRes.ok) {
-          const leadData = await listRes.json()
-          const lead = Array.isArray(leadData.leads) ? leadData.leads[0] : null
-          if (lead?.id) leadId = lead.id
-        }
-      }
-
+      // Buscar o ID interno do lead via API
+      const listRes = await fetch(`/api/leads?placeId=${placeId}`)
+      if (!listRes.ok) throw new Error('Lead não encontrado')
+      const leadData = await listRes.json()
+      // API retorna { leads: [...] } — pegar o primeiro
+      const lead = Array.isArray(leadData.leads) ? leadData.leads[0] : (leadData.lead || leadData)
+      const leadId = lead?.id
+      if (!leadId) throw new Error('Lead não encontrado na resposta')
+      
       const res = await fetch(`/api/leads/${leadId}/fetch-cnpj`, { method: 'POST' })
       const data = await res.json()
+      
       setCnpjStates(prev => {
         const next = new Map(prev)
         if (data.cnpj) {
-          next.set(leadIdOrPlaceId, {
-            cnpj: data.cnpj,
-            status: data.valid === false ? 'not_found' : 'found',
-            formatted: data.cnpjFormatted
+          next.set(placeId, { 
+            cnpj: data.cnpj, 
+            status: data.valid ? 'found' : 'not_found',
+            formatted: data.cnpjFormatted 
           })
         } else {
-          next.set(leadIdOrPlaceId, { cnpj: null, status: 'not_found' })
+          next.set(placeId, { cnpj: null, status: 'not_found' })
         }
         return next
       })
     } catch (err: any) {
       setCnpjStates(prev => {
         const next = new Map(prev)
-        next.set(leadIdOrPlaceId, { cnpj: null, status: 'not_found' })
+        next.set(placeId, { cnpj: null, status: 'not_found' })
         return next
       })
     }
