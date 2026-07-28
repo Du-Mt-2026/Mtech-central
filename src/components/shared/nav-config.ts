@@ -2,7 +2,8 @@
 // Role hierarchy: master > admin > operador
 // Extracted verbatim from src/app/page.tsx (P2.1-split-4).
 import {
-  BarChart3, Smartphone, Inbox, Users, ShieldCheck, Send, FileText,
+  BarChart3,
+  Search, Smartphone, Inbox, Users, ShieldCheck, Send, FileText,
   Key, Flame, MessageSquare, UserPlus, Server, Settings, Shield,
 } from 'lucide-react'
 
@@ -13,6 +14,7 @@ export const NAV_ITEMS = [
   { id: 'chips', label: 'Chips', icon: Smartphone, minRole: 'operador' },
   { id: 'inbox', label: 'Caixa de Entrada', icon: Inbox, minRole: 'operador' },
   { id: 'contatos', label: 'Lista de Contatos', icon: Users, minRole: 'operador' },
+  { id: 'leads', label: 'Prospecção', icon: Search, minRole: 'operador' },
   { id: 'verificar', label: 'Verificar Números', icon: ShieldCheck, minRole: 'operador' },
   { id: 'campanhas', label: 'Campanhas', icon: Send, minRole: 'operador' },
   { id: 'templates', label: 'Templates', icon: FileText, minRole: 'operador' },

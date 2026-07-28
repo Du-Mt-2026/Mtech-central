@@ -763,3 +763,56 @@ model WarmingMessagePool {
   @@index([category])
   @@index([active])
 }
+
+
+// ============================================================
+// PROSPECÇÃO DE LEADS — Google Places API
+// ============================================================
+
+model Lead {
+  id              String   @id @default(cuid())
+  source          String   @default("google_places")  // google_places | outro provedor
+  placeId         String   @unique                     // Google place_id (dedup)
+  name            String
+  phone           String?  // E.164 normalizado: 5548999670797
+  phoneRaw        String?  // original do Google: +55 48 3204-4785
+  website         String?
+  address         String?
+  city            String?
+  state           String?
+  lat             Float?
+  lng             Float?
+  rating          Float?
+  reviewsCount    Int?
+  categories      String   @default("[]")              // JSON array: ["restaurant", "food"]
+  status          String   @default("new")              // new | imported | duplicate | rejected
+  importedToContactId String?
+  searchQueryId   String?
+  searchQuery     SearchQuery? @relation(fields: [searchQueryId], references: [id])
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([phone])
+  @@index([searchQueryId])
+  @@index([status])
+  @@index([source])
+}
+
+model SearchQuery {
+  id              String   @id @default(cuid())
+  keyword         String   // ex: "pizzaria"
+  location        String   // ex: "Florianópolis, SC"
+  lat             Float?
+  lng             Float?
+  radiusKm        Int      @default(10)
+  filters         String   @default("{}")               // JSON: {hasPhone, hasWebsite, minRating, minReviews}
+  resultCount     Int      @default(0)                  // total leads salvos
+  newCount        Int      @default(0)                  // leads novos (não duplicados)
+  duplicateCount  Int      @default(0)
+  costEstimate    Float    @default(0)                  // USD
+  lastRunAt       DateTime?
+  createdAt       DateTime @default(now())
+  leads           Lead[]
+
+  @@index([keyword, location])
+}

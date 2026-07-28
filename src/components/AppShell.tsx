@@ -44,6 +44,7 @@ const VerificarSection = dynamic(() => import('@/components/verificar-section').
 const KeysSection = dynamic(() => import('@/components/keys-section').then(m => ({ default: m.KeysSection })), { loading: () => <div className="flex items-center justify-center py-20"><RefreshCw className="size-6 animate-spin text-muted-foreground" /></div> })
 const VendedoresSection = dynamic(() => import('@/components/vendedores-section').then(m => ({ default: m.VendedoresSection })), { loading: () => <div className="flex items-center justify-center py-20"><RefreshCw className="size-6 animate-spin text-muted-foreground" /></div> })
 const AntiBanTab = dynamic(() => import('@/components/antiban').then(m => ({ default: m.AntiBanTab })), { loading: () => <div className="flex items-center justify-center py-20"><RefreshCw className="size-6 animate-spin text-muted-foreground" /></div> })
+const LeadsTab = dynamic(() => import('./tabs/LeadsTab'), { ssr: false })
 const WarmingTab = dynamic(() => import('@/components/warming-tab').then(m => ({ default: m.WarmingTab })), { loading: () => <div className="flex items-center justify-center py-20"><RefreshCw className="size-6 animate-spin text-muted-foreground" /></div> })
 const CampanhasTab = dynamic(() => import('@/components/campanhas').then(m => ({ default: m.CampanhasTab })), { loading: () => <div className="flex items-center justify-center py-20"><RefreshCw className="size-6 animate-spin text-muted-foreground" /></div> })
 const InboxTab = dynamic(() => import('@/components/inbox-tab').then(m => ({ default: m.InboxTab })), { loading: () => <div className="flex items-center justify-center py-20"><RefreshCw className="size-6 animate-spin text-muted-foreground" /></div> })
@@ -277,6 +278,7 @@ export function AppShell() {
       case 'chips': return <ChipsTab />
       case 'inbox': return <InboxTab />
       case 'contatos': return <ContatosTab />
+    case 'leads': return <LeadsTab />
       case 'verificar': return <VerificarSection />
       case 'campanhas': return <CampanhasTab />
       case 'templates': return <TemplatesTab />
