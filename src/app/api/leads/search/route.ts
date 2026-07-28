@@ -180,7 +180,7 @@ export async function POST(req: NextRequest) {
           address: r.address,
           rating: r.rating,
           reviewsCount: r.reviewsCount,
-          categories: r.categories,
+          categories: JSON.stringify(r.categories || []),
           lat: r.lat,
           lng: r.lng,
           status: r.status === 'new' ? 'new' : 'duplicate',

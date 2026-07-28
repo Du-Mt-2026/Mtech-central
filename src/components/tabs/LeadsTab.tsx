@@ -104,7 +104,7 @@ export default function LeadsTab() {
       const res = await fetch('/api/leads/import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ placeIds }),
+        body: JSON.stringify({ leadIds: placeIds }),
       })
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))

@@ -1,14 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 
-/**
- * Importa leads selecionados para uma ContactList.
- *
- * Body:
- *   - leadIds: string[]                  IDs dos leads a importar
- *   - contactListId: string              ID da lista existente
- *   - createNewList?: { name: string }   cria nova lista se contactListId não informado
- */
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
@@ -18,54 +10,48 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'leadIds é obrigatório' }, { status: 400 })
     }
 
-    if (!contactListId && !createNewList?.name) {
-      return NextResponse.json(
-        { error: 'Informe contactListId ou createNewList.name' },
-        { status: 400 }
-      )
-    }
-
-    // Busca leads
     const leads = await db.lead.findMany({
-      where: { id: { in: leadIds } },
+      where: { placeId: { in: leadIds } },
     })
 
     if (leads.length === 0) {
-      return NextResponse.json({ error: 'Nenhum lead encontrado' }, { status: 404 })
+      return NextResponse.json(
+        { error: 'Nenhum lead encontrado com esses placeIds', leadIds },
+        { status: 404 }
+      )
     }
 
-    // Filtra apenas leads com telefone (sem telefone não dá pra importar p/ WhatsApp)
     const leadsWithPhone = leads.filter((l) => l.phone)
     const skippedNoPhone = leads.length - leadsWithPhone.length
 
-    // Cria nova lista se necessário
     let finalContactListId = contactListId
-    if (!finalContactListId && createNewList?.name) {
-      const newList = await db.contactList.create({
+    let createdList: any = null
+    if (!finalContactListId) {
+      const listName = createNewList?.name ||
+        `Leads - ${new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`
+      createdList = await db.contactList.create({
         data: {
-          name: createNewList.name,
+          name: listName,
           columns: JSON.stringify({
             empresa: 'Empresa',
             telefone: 'Telefone',
             site: 'Site',
-            endereco: 'Endereço',
+            endereco: 'Endereco',
             cidade: 'Cidade',
             rating: 'Rating',
             categorias: 'Categorias',
           }),
         },
       })
-      finalContactListId = newList.id
+      finalContactListId = createdList.id
     }
 
-    // Pega a maior position atual da lista
     const maxPosition = await db.contact.aggregate({
       where: { contactListId: finalContactListId },
       _max: { position: true },
     })
     let nextPosition = (maxPosition._max.position || 0) + 1
 
-    // Cria contatos
     const created: any[] = []
     const errors: any[] = []
 
@@ -93,7 +79,6 @@ export async function POST(request: NextRequest) {
           },
         })
 
-        // Marca lead como importado
         await db.lead.update({
           where: { id: lead.id },
           data: {
@@ -114,10 +99,14 @@ export async function POST(request: NextRequest) {
       errors: errors.length,
       errorDetails: errors.slice(0, 10),
       contactListId: finalContactListId,
+      contactListName: createdList?.name || null,
       contacts: created,
     }, { status: 201 })
   } catch (error) {
     console.error('Leads import error:', error)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    return NextResponse.json(
+      { error: 'Internal server error', detail: String(error) },
+      { status: 500 }
+    )
   }
 }
