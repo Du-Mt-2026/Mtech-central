@@ -1,605 +1,521 @@
 'use client'
 
-import { useState } from 'react'
-import { Search, Phone, Globe, Star, MapPin, Trash2, Download, Filter, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react'
+import { useState, useCallback } from 'react'
+import {
+  Search, Phone, Globe, Star, MapPin, Loader2, Filter, X,
+  CheckCircle, AlertCircle, Upload, ChevronDown, ChevronUp,
+} from 'lucide-react'
 
-interface Lead {
-  id: string
-  source: string
-  placeId: string
-  name: string
-  phone: string | null
-  phoneRaw: string | null
-  website: string | null
-  address: string | null
-  city: string | null
-  state: string | null
-  rating: number | null
-  reviewsCount: number | null
-  categories: string
-  status: string
-  searchQueryId?: string
-  searchQuery?: { id: string; keyword: string; location: string }
-  createdAt: string
-}
-
-interface ContactList {
+interface PlaceResult {
   id: string
   name: string
-  _count?: { contacts: number }
+  phone?: string | null
+  phoneRaw?: string | null
+  website?: string | null
+  address?: string | null
+  rating?: number
+  reviewsCount?: number
+  categories?: string[]
+  status?: 'new' | 'duplicate' | 'imported'
+  lat?: number
+  lng?: number
+  isOpenNow?: boolean
 }
+
+interface SearchFilters {
+  keyword: string
+  location: string
+  radiusKm: number
+  minRating: number
+  minReviews: number
+  hasWebsite: 'any' | 'yes' | 'no'
+  hasPhoneOnly: boolean
+  openNow: boolean
+  maxResults: number
+  sortBy: 'relevance' | 'rating' | 'reviews' | 'distance'
+  excludeImported: boolean
+}
+
+const DEFAULT_FILTERS: SearchFilters = {
+  keyword: '',
+  location: '',
+  radiusKm: 10,
+  minRating: 0,
+  minReviews: 0,
+  hasWebsite: 'any',
+  hasPhoneOnly: true,
+  openNow: false,
+  maxResults: 20,
+  sortBy: 'relevance',
+  excludeImported: true,
+}
+
+const inputCls = 'w-full px-3 py-2 rounded-md border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30'
+const labelCls = 'text-xs font-medium text-muted-foreground mb-1 block'
 
 export default function LeadsTab() {
-  const [keyword, setKeyword] = useState('')
-  const [location, setLocation] = useState('')
-  const [radiusKm, setRadiusKm] = useState(10)
-  const [hasPhone, setHasPhone] = useState(true)
-  const [hasWebsite, setHasWebsite] = useState(false)
-  const [minRating, setMinRating] = useState('')
-  const [minReviews, setMinReviews] = useState('')
-  const [onlyOperational, setOnlyOperational] = useState(true)
-
-  const [searching, setSearching] = useState(false)
-  const [leads, setLeads] = useState<Lead[]>([])
-  const [selected, setSelected] = useState<Set<string>>(new Set())
-  const [searchMeta, setSearchMeta] = useState<{ newCount: number; duplicateCount: number; costEstimate: number; searchQueryId?: string } | null>(null)
+  const [filters, setFilters] = useState<SearchFilters>(DEFAULT_FILTERS)
+  const [results, setResults] = useState<PlaceResult[]>([])
+  const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [importing, setImporting] = useState<string | null>(null)
+  const [importedIds, setImportedIds] = useState<Set<string>>(new Set())
+  const [showAdvanced, setShowAdvanced] = useState(false)
+  const [stats, setStats] = useState<{ total: number; new: number; duplicate: number } | null>(null)
 
-  const [contactLists, setContactLists] = useState<ContactList[]>([])
-  const [showImportModal, setShowImportModal] = useState(false)
-  const [selectedListId, setSelectedListId] = useState('')
-  const [newListName, setNewListName] = useState('')
-  const [importing, setImporting] = useState(false)
-  const [importResult, setImportResult] = useState<any>(null)
-
-  const [showHistory, setShowHistory] = useState(false)
-  const [history, setHistory] = useState<any[]>([])
-
-  async function handleSearch() {
-    if (!keyword || !location) {
-      setError('Preencha palavra-chave e localização')
+  const handleSearch = useCallback(async () => {
+    if (!filters.keyword.trim() || !filters.location.trim()) {
+      setError('Informe a palavra-chave e a localização')
       return
     }
-    setSearching(true)
+    setLoading(true)
     setError(null)
     setSelected(new Set())
-    setLeads([])
-    setSearchMeta(null)
-
+    setStats(null)
     try {
       const res = await fetch('/api/leads/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          keyword,
-          location,
-          radiusKm,
-          filters: {
-            hasPhone,
-            hasWebsite,
-            minRating: minRating ? parseFloat(minRating) : undefined,
-            minReviews: minReviews ? parseInt(minReviews) : undefined,
-            onlyOperational,
-          },
-        }),
+        body: JSON.stringify(filters),
       })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'Erro na busca')
-      setLeads(data.places || [])
-      setSearchMeta({
-        newCount: data.newCount || 0,
-        duplicateCount: data.duplicateCount || 0,
-        costEstimate: data.costEstimate || 0,
-        searchQueryId: data.searchQueryId,
-      })
-    } catch (e: any) {
-      setError(e.message)
-    } finally {
-      setSearching(false)
-    }
-  }
-
-  function toggleSelect(id: string) {
-    const next = new Set(selected)
-    if (next.has(id)) next.delete(id)
-    else next.add(id)
-    setSelected(next)
-  }
-
-  function selectAll() {
-    const importable = leads.filter((l) => l.status === 'new' && l.phone)
-    if (selected.size === importable.length) {
-      setSelected(new Set())
-    } else {
-      setSelected(new Set(importable.map((l) => l.id)))
-    }
-  }
-
-  async function openImportModal() {
-    if (selected.size === 0) {
-      setError('Selecione ao menos um lead para importar')
-      return
-    }
-    setError(null)
-    setImportResult(null)
-    setShowImportModal(true)
-    // Carrega listas existentes
-    try {
-      const res = await fetch('/api/contact-lists')
-      const data = await res.json()
-      setContactLists(Array.isArray(data) ? data : [])
-    } catch (e) {
-      console.error('Erro ao carregar listas:', e)
-    }
-  }
-
-  async function handleImport() {
-    setImporting(true)
-    setError(null)
-    setImportResult(null)
-
-    try {
-      const body: any = { leadIds: Array.from(selected) }
-      if (selectedListId) {
-        body.contactListId = selectedListId
-      } else if (newListName) {
-        body.createNewList = { name: newListName }
-      } else {
-        setError('Selecione uma lista existente ou informe o nome de uma nova')
-        setImporting(false)
-        return
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.error || `Erro ${res.status}`)
       }
+      const data = await res.json()
+      setResults(data.leads || [])
+      setStats({
+        total: data.total || 0,
+        new: data.newCount || 0,
+        duplicate: data.duplicateCount || 0,
+      })
+    } catch (err: any) {
+      setError(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }, [filters])
 
+  const handleImport = useCallback(async (placeIds: string[]) => {
+    const batchId = placeIds.length > 1 ? 'batch' : placeIds[0]
+    setImporting(batchId)
+    try {
       const res = await fetch('/api/leads/import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ placeIds }),
       })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'Erro ao importar')
-
-      setImportResult(data)
-
-      // Atualiza status dos leads na UI
-      setLeads((prev) =>
-        prev.map((l) =>
-          selected.has(l.id)
-            ? { ...l, status: 'imported' }
-            : l
-        )
-      )
-      setSelected(new Set())
-    } catch (e: any) {
-      setError(e.message)
-    } finally {
-      setImporting(false)
-    }
-  }
-
-  async function loadHistory() {
-    setShowHistory(!showHistory)
-    if (!showHistory) {
-      try {
-        const res = await fetch('/api/leads/search-queries')
-        const data = await res.json()
-        setHistory(Array.isArray(data) ? data : [])
-      } catch (e) {
-        console.error('Erro ao carregar histórico:', e)
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.error || `Erro ${res.status}`)
       }
+      setImportedIds(prev => new Set([...prev, ...placeIds]))
+      setSelected(prev => {
+        const next = new Set(prev)
+        placeIds.forEach(id => next.delete(id))
+        return next
+      })
+    } catch (err: any) {
+      setError(err.message)
+    } finally {
+      setImporting(null)
+    }
+  }, [])
+
+  const toggleSelect = (id: string) => {
+    setSelected(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const toggleSelectAll = () => {
+    const importable = results.filter(r => !importedIds.has(r.id))
+    if (selected.size === importable.length) {
+      setSelected(new Set())
+    } else {
+      setSelected(new Set(importable.map(r => r.id)))
     }
   }
 
-  async function deleteLead(id: string) {
-    if (!confirm('Excluir este lead?')) return
-    try {
-      await fetch(`/api/leads?id=${id}`, { method: 'DELETE' })
-      setLeads((prev) => prev.filter((l) => l.id !== id))
-    } catch (e) {
-      console.error('Erro ao deletar:', e)
-    }
-  }
-
-  const statusBadge = (status: string) => {
-    const map: Record<string, { label: string; class: string }> = {
-      new: { label: 'Novo', class: 'bg-green-100 text-green-700 border-green-200' },
-      duplicate: { label: 'Duplicado', class: 'bg-yellow-100 text-yellow-700 border-yellow-200' },
-      imported: { label: 'Importado', class: 'bg-blue-100 text-blue-700 border-blue-200' },
-      rejected: { label: 'Rejeitado', class: 'bg-red-100 text-red-700 border-red-200' },
-    }
-    const s = map[status] || map.new
-    return (
-      <span className={`text-xs px-2 py-0.5 rounded border ${s.class}`}>{s.label}</span>
-    )
-  }
-
-  const parseCategories = (json: string): string[] => {
-    try { return JSON.parse(json) } catch { return [] }
+  const updateFilter = <K extends keyof SearchFilters>(key: K, value: SearchFilters[K]) => {
+    setFilters(f => ({ ...f, [key]: value }))
   }
 
   return (
-    <div className="space-y-6 p-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold">Prospecção de Leads</h1>
-          <p className="text-sm text-muted-foreground">
-            Busque empresas no Google Maps e importe para suas listas de contato
-          </p>
-        </div>
-        <button
-          onClick={loadHistory}
-          className="flex items-center gap-2 px-3 py-2 text-sm border rounded hover:bg-muted"
-        >
-          {showHistory ? <ChevronUp className="size-4" /> : <ChevronDown className="size-4" />}
-          Histórico de buscas
-        </button>
+    <div className="space-y-4 p-4 max-w-7xl mx-auto">
+      {/* Header */}
+      <div>
+        <h1 className="text-2xl font-bold">Prospecção de Leads</h1>
+        <p className="text-sm text-muted-foreground">
+          Pesquise empresas no Google Places e importe para suas listas de contato
+        </p>
       </div>
 
-      {/* Formulário de busca */}
-      <div className="border rounded-lg p-4 bg-card space-y-4">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      {/* Search Form */}
+      <div className="rounded-lg border bg-card p-4 space-y-4">
+        {/* Linha principal */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <div>
-            <label className="block text-sm font-medium mb-1">Palavra-chave</label>
+            <label className={labelCls}>Palavra-chave *</label>
             <input
               type="text"
-              value={keyword}
-              onChange={(e) => setKeyword(e.target.value)}
-              placeholder="ex: pizzaria, dentista, salão de beleza"
-              className="w-full px-3 py-2 border rounded text-sm"
-              onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
+              value={filters.keyword}
+              onChange={e => updateFilter('keyword', e.target.value)}
+              placeholder="Ex: pizzaria, dentista, academia..."
+              className={inputCls}
+              onKeyDown={e => e.key === 'Enter' && handleSearch()}
             />
           </div>
           <div>
-            <label className="block text-sm font-medium mb-1">Localização</label>
+            <label className={labelCls}>Localização *</label>
             <input
               type="text"
-              value={location}
-              onChange={(e) => setLocation(e.target.value)}
-              placeholder="ex: Florianópolis, SC"
-              className="w-full px-3 py-2 border rounded text-sm"
-              onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
+              value={filters.location}
+              onChange={e => updateFilter('location', e.target.value)}
+              placeholder="Ex: Florianópolis, SC"
+              className={inputCls}
+              onKeyDown={e => e.key === 'Enter' && handleSearch()}
+            />
+          </div>
+          <div>
+            <label className={labelCls}>Raio (km)</label>
+            <input
+              type="number"
+              min={1}
+              max={50}
+              value={filters.radiusKm}
+              onChange={e => updateFilter('radiusKm', Number(e.target.value) || 10)}
+              className={inputCls}
             />
           </div>
         </div>
 
-        <details className="text-sm">
-          <summary className="cursor-pointer flex items-center gap-2 text-muted-foreground hover:text-foreground">
-            <Filter className="size-4" /> Filtros avançados
-          </summary>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3 p-3 bg-muted/30 rounded">
-            <label className="flex items-center gap-2">
-              <input type="checkbox" checked={hasPhone} onChange={(e) => setHasPhone(e.target.checked)} />
-              Com telefone
-            </label>
-            <label className="flex items-center gap-2">
-              <input type="checkbox" checked={hasWebsite} onChange={(e) => setHasWebsite(e.target.checked)} />
-              Com site
-            </label>
-            <label className="flex items-center gap-2">
-              <input type="checkbox" checked={onlyOperational} onChange={(e) => setOnlyOperational(e.target.checked)} />
-              Só abertos
-            </label>
+        {/* Toggle filtros avançados */}
+        <button
+          onClick={() => setShowAdvanced(s => !s)}
+          className="flex items-center gap-2 text-sm text-primary hover:underline"
+        >
+          <Filter className="w-4 h-4" />
+          {showAdvanced ? 'Ocultar filtros avançados' : 'Mostrar filtros avançados'}
+          {showAdvanced ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+        </button>
+
+        {/* Filtros avançados */}
+        {showAdvanced && (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 pt-3 border-t">
             <div>
-              <label className="block text-xs text-muted-foreground mb-1">Raio (km)</label>
+              <label className={labelCls}>Avaliação mínima</label>
+              <select
+                value={filters.minRating}
+                onChange={e => updateFilter('minRating', Number(e.target.value))}
+                className={inputCls}
+              >
+                <option value={0}>Qualquer</option>
+                <option value={3}>3.0+</option>
+                <option value={3.5}>3.5+</option>
+                <option value={4}>4.0+</option>
+                <option value={4.5}>4.5+</option>
+              </select>
+            </div>
+            <div>
+              <label className={labelCls}>Avaliações mínimas</label>
               <input
                 type="number"
-                value={radiusKm}
-                onChange={(e) => setRadiusKm(parseInt(e.target.value) || 10)}
-                className="w-full px-2 py-1 border rounded text-sm"
-                min={1}
-                max={100}
+                min={0}
+                value={filters.minReviews}
+                onChange={e => updateFilter('minReviews', Number(e.target.value) || 0)}
+                className={inputCls}
+                placeholder="0"
               />
             </div>
             <div>
-              <label className="block text-xs text-muted-foreground mb-1">Rating mínimo</label>
-              <input
-                type="number"
-                value={minRating}
-                onChange={(e) => setMinRating(e.target.value)}
-                placeholder="ex: 4.0"
-                step={0.1}
-                min={0}
-                max={5}
-                className="w-full px-2 py-1 border rounded text-sm"
-              />
+              <label className={labelCls}>Website</label>
+              <select
+                value={filters.hasWebsite}
+                onChange={e => updateFilter('hasWebsite', e.target.value as any)}
+                className={inputCls}
+              >
+                <option value="any">Qualquer</option>
+                <option value="yes">Com site</option>
+                <option value="no">Sem site</option>
+              </select>
             </div>
             <div>
-              <label className="block text-xs text-muted-foreground mb-1">Reviews mínimas</label>
+              <label className={labelCls}>Máx. resultados</label>
+              <select
+                value={filters.maxResults}
+                onChange={e => updateFilter('maxResults', Number(e.target.value))}
+                className={inputCls}
+              >
+                <option value={10}>10</option>
+                <option value={20}>20</option>
+                <option value={40}>40</option>
+                <option value={60}>60 (máx)</option>
+              </select>
+            </div>
+            <div>
+              <label className={labelCls}>Ordenar por</label>
+              <select
+                value={filters.sortBy}
+                onChange={e => updateFilter('sortBy', e.target.value as any)}
+                className={inputCls}
+              >
+                <option value="relevance">Relevância</option>
+                <option value="rating">Avaliação</option>
+                <option value="reviews">Nº avaliações</option>
+                <option value="distance">Distância</option>
+              </select>
+            </div>
+            <div className="flex items-center gap-2 pt-5">
               <input
-                type="number"
-                value={minReviews}
-                onChange={(e) => setMinReviews(e.target.value)}
-                placeholder="ex: 50"
-                min={0}
-                className="w-full px-2 py-1 border rounded text-sm"
+                type="checkbox"
+                id="hasPhoneOnly"
+                checked={filters.hasPhoneOnly}
+                onChange={e => updateFilter('hasPhoneOnly', e.target.checked)}
+                className="w-4 h-4"
               />
+              <label htmlFor="hasPhoneOnly" className="text-sm cursor-pointer">
+                Apenas com telefone
+              </label>
+            </div>
+            <div className="flex items-center gap-2 pt-5">
+              <input
+                type="checkbox"
+                id="openNow"
+                checked={filters.openNow}
+                onChange={e => updateFilter('openNow', e.target.checked)}
+                className="w-4 h-4"
+              />
+              <label htmlFor="openNow" className="text-sm cursor-pointer">
+                Aberto agora
+              </label>
+            </div>
+            <div className="flex items-center gap-2 pt-5">
+              <input
+                type="checkbox"
+                id="excludeImported"
+                checked={filters.excludeImported}
+                onChange={e => updateFilter('excludeImported', e.target.checked)}
+                className="w-4 h-4"
+              />
+              <label htmlFor="excludeImported" className="text-sm cursor-pointer">
+                Ocultar já importados
+              </label>
             </div>
           </div>
-        </details>
+        )}
 
-        <div className="flex items-center gap-3">
+        {/* Action buttons */}
+        <div className="flex flex-wrap gap-2 items-center">
           <button
             onClick={handleSearch}
-            disabled={searching || !keyword || !location}
-            className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded text-sm font-medium hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled={loading || !filters.keyword.trim() || !filters.location.trim()}
+            className="px-4 py-2 rounded-md bg-primary text-primary-foreground text-sm hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
           >
-            {searching ? <RefreshCw className="size-4 animate-spin" /> : <Search className="size-4" />}
-            {searching ? 'Buscando...' : 'Buscar empresas'}
+            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+            {loading ? 'Buscando...' : 'Buscar'}
           </button>
-          <span className="text-xs text-muted-foreground">
-            Custo estimado: ~$0.032 por busca
-          </span>
+          {selected.size > 0 && (
+            <button
+              onClick={() => handleImport(Array.from(selected))}
+              disabled={importing === 'batch'}
+              className="px-4 py-2 rounded-md bg-green-600 text-white text-sm hover:bg-green-700 disabled:opacity-50 flex items-center gap-2"
+            >
+              {importing === 'batch' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+              Importar {selected.size} selecionados
+            </button>
+          )}
+          {(results.length > 0 || stats) && !loading && (
+            <button
+              onClick={() => {
+                setResults([])
+                setSelected(new Set())
+                setStats(null)
+                setError(null)
+              }}
+              className="px-3 py-2 rounded-md border text-sm hover:bg-muted/30"
+            >
+              Limpar
+            </button>
+          )}
         </div>
 
         {error && (
-          <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded p-2">
-            ⚠️ {error}
-          </div>
-        )}
-
-        {searchMeta && (
-          <div className="text-sm bg-muted/50 rounded p-3 grid grid-cols-2 md:grid-cols-4 gap-3">
-            <div>
-              <div className="text-xs text-muted-foreground">Encontrados</div>
-              <div className="font-semibold">{leads.length}</div>
-            </div>
-            <div>
-              <div className="text-xs text-muted-foreground">Novos</div>
-              <div className="font-semibold text-green-600">{searchMeta.newCount}</div>
-            </div>
-            <div>
-              <div className="text-xs text-muted-foreground">Duplicados</div>
-              <div className="font-semibold text-yellow-600">{searchMeta.duplicateCount}</div>
-            </div>
-            <div>
-              <div className="text-xs text-muted-foreground">Custo</div>
-              <div className="font-semibold">${searchMeta.costEstimate.toFixed(4)}</div>
-            </div>
+          <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-md p-3">
+            <AlertCircle className="w-4 h-4 flex-shrink-0" />
+            <span>{error}</span>
+            <button onClick={() => setError(null)} className="ml-auto">
+              <X className="w-4 h-4" />
+            </button>
           </div>
         )}
       </div>
 
-      {/* Histórico */}
-      {showHistory && (
-        <div className="border rounded-lg p-4 bg-card">
-          <h3 className="font-semibold mb-3">Buscas anteriores</h3>
-          {history.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Nenhuma busca anterior</p>
-          ) : (
-            <div className="space-y-2 max-h-64 overflow-y-auto">
-              {history.map((q) => (
-                <div key={q.id} className="flex items-center justify-between border-b pb-2 text-sm">
-                  <div>
-                    <span className="font-medium">{q.keyword}</span>
-                    <span className="text-muted-foreground"> em {q.location}</span>
-                    <span className="ml-2 text-xs px-2 py-0.5 rounded bg-muted">
-                      {q._count?.leads || 0} leads
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-muted-foreground">
-                      {q.lastRunAt ? new Date(q.lastRunAt).toLocaleString('pt-BR') : '-'}
-                    </span>
-                  </div>
-                </div>
-              ))}
+      {/* Stats bar */}
+      {stats && !loading && (
+        <div className="flex gap-4 text-sm">
+          <div className="px-3 py-2 rounded-md bg-blue-50 border border-blue-200">
+            <span className="font-semibold text-blue-700">{stats.total}</span>
+            <span className="text-blue-600 ml-1">resultados</span>
+          </div>
+          <div className="px-3 py-2 rounded-md bg-green-50 border border-green-200">
+            <span className="font-semibold text-green-700">{stats.new}</span>
+            <span className="text-green-600 ml-1">novos</span>
+          </div>
+          {stats.duplicate > 0 && (
+            <div className="px-3 py-2 rounded-md bg-yellow-50 border border-yellow-200">
+              <span className="font-semibold text-yellow-700">{stats.duplicate}</span>
+              <span className="text-yellow-600 ml-1">duplicados</span>
             </div>
           )}
         </div>
       )}
 
-      {/* Resultados */}
-      {leads.length > 0 && (
-        <div className="border rounded-lg bg-card">
-          <div className="flex items-center justify-between p-3 border-b">
+      {/* Results */}
+      {results.length > 0 && (
+        <div className="rounded-lg border bg-card overflow-hidden">
+          <div className="flex items-center justify-between p-3 border-b bg-muted/30">
             <div className="flex items-center gap-3">
-              <button
-                onClick={selectAll}
-                className="text-sm px-2 py-1 border rounded hover:bg-muted"
-              >
-                {selected.size === leads.filter((l) => l.status === 'new' && l.phone).length
-                  ? 'Desmarcar todos'
-                  : 'Selecionar novos'}
-              </button>
-              <span className="text-sm text-muted-foreground">
-                {selected.size} selecionados
+              <input
+                type="checkbox"
+                checked={selected.size > 0 && selected.size === results.filter(r => !importedIds.has(r.id)).length}
+                onChange={toggleSelectAll}
+                className="w-4 h-4"
+              />
+              <span className="text-sm font-medium">
+                {results.length} resultados
+                {selected.size > 0 && ` · ${selected.size} selecionados`}
               </span>
             </div>
-            <button
-              onClick={openImportModal}
-              disabled={selected.size === 0}
-              className="flex items-center gap-2 px-3 py-1.5 bg-primary text-primary-foreground rounded text-sm hover:bg-primary/90 disabled:opacity-50"
-            >
-              <Download className="size-4" />
-              Importar para lista
-            </button>
           </div>
-
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="bg-muted/50 text-left">
+              <thead className="bg-muted/30 border-b text-xs uppercase">
                 <tr>
-                  <th className="p-2 w-8"></th>
-                  <th className="p-2">Empresa</th>
-                  <th className="p-2">Telefone</th>
-                  <th className="p-2">Site</th>
-                  <th className="p-2">Endereço</th>
-                  <th className="p-2">Rating</th>
-                  <th className="p-2">Status</th>
                   <th className="p-2 w-10"></th>
+                  <th className="p-2 text-left">Nome</th>
+                  <th className="p-2 text-left">Telefone</th>
+                  <th className="p-2 text-left">Website</th>
+                  <th className="p-2 text-left">Avaliação</th>
+                  <th className="p-2 text-left">Endereço</th>
+                  <th className="p-2 text-center">Status</th>
+                  <th className="p-2 text-center">Ação</th>
                 </tr>
               </thead>
               <tbody>
-                {leads.map((lead) => (
-                  <tr key={lead.id} className="border-b hover:bg-muted/30">
-                    <td className="p-2">
-                      <input
-                        type="checkbox"
-                        checked={selected.has(lead.id)}
-                        onChange={() => toggleSelect(lead.id)}
-                        disabled={lead.status === 'imported'}
-                      />
-                    </td>
-                    <td className="p-2">
-                      <div className="font-medium">{lead.name}</div>
-                      {parseCategories(lead.categories).length > 0 && (
-                        <div className="text-xs text-muted-foreground">
-                          {parseCategories(lead.categories).slice(0, 3).join(', ')}
-                        </div>
-                      )}
-                    </td>
-                    <td className="p-2">
-                      {lead.phoneRaw ? (
-                        <a href={`tel:${lead.phoneRaw}`} className="flex items-center gap-1 text-blue-600 hover:underline">
-                          <Phone className="size-3" />
-                          {lead.phoneRaw}
-                        </a>
-                      ) : (
-                        <span className="text-muted-foreground text-xs">sem telefone</span>
-                      )}
-                    </td>
-                    <td className="p-2">
-                      {lead.website ? (
-                        <a href={lead.website} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
-                          <Globe className="size-4" />
-                        </a>
-                      ) : (
-                        <span className="text-muted-foreground text-xs">-</span>
-                      )}
-                    </td>
-                    <td className="p-2 text-xs">
-                      {lead.address && (
-                        <div className="flex items-start gap-1">
-                          <MapPin className="size-3 mt-0.5 text-muted-foreground" />
-                          <span className="text-muted-foreground">{lead.address}</span>
-                        </div>
-                      )}
-                    </td>
-                    <td className="p-2">
-                      {lead.rating !== null && (
-                        <div className="flex items-center gap-1 text-xs">
-                          <Star className="size-3 fill-yellow-400 text-yellow-400" />
-                          <span>{lead.rating.toFixed(1)}</span>
-                          <span className="text-muted-foreground">({lead.reviewsCount})</span>
-                        </div>
-                      )}
-                    </td>
-                    <td className="p-2">{statusBadge(lead.status)}</td>
-                    <td className="p-2">
-                      <button
-                        onClick={() => deleteLead(lead.id)}
-                        className="text-muted-foreground hover:text-red-600"
-                        title="Excluir"
-                      >
-                        <Trash2 className="size-3" />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                {results.map(place => {
+                  const isImported = importedIds.has(place.id)
+                  return (
+                    <tr key={place.id} className="border-b hover:bg-muted/20">
+                      <td className="p-2 text-center">
+                        <input
+                          type="checkbox"
+                          checked={selected.has(place.id)}
+                          onChange={() => toggleSelect(place.id)}
+                          disabled={isImported}
+                          className="w-4 h-4"
+                        />
+                      </td>
+                      <td className="p-2 font-medium">
+                        {place.name}
+                        {place.isOpenNow !== undefined && (
+                          <span className={`ml-2 inline-block w-2 h-2 rounded-full ${place.isOpenNow ? 'bg-green-500' : 'bg-gray-300'}`} title={place.isOpenNow ? 'Aberto' : 'Fechado'} />
+                        )}
+                      </td>
+                      <td className="p-2">
+                        {place.phone ? (
+                          <div className="flex items-center gap-1">
+                            <Phone className="w-3 h-3 text-muted-foreground" />
+                            <span className="font-mono text-xs">{place.phone}</span>
+                          </div>
+                        ) : (
+                          <span className="text-muted-foreground text-xs">—</span>
+                        )}
+                      </td>
+                      <td className="p-2">
+                        {place.website ? (
+                          <a
+                            href={place.website}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex items-center gap-1 text-primary hover:underline max-w-[150px]"
+                          >
+                            <Globe className="w-3 h-3 flex-shrink-0" />
+                            <span className="text-xs truncate">
+                              {(() => { try { return new URL(place.website).hostname.replace(/^www\./, '') } catch { return place.website } })()}
+                            </span>
+                          </a>
+                        ) : (
+                          <span className="text-muted-foreground text-xs">—</span>
+                        )}
+                      </td>
+                      <td className="p-2">
+                        {place.rating ? (
+                          <div className="flex items-center gap-1">
+                            <Star className="w-3 h-3 fill-yellow-400 text-yellow-400" />
+                            <span className="font-mono text-xs">{place.rating.toFixed(1)}</span>
+                            <span className="text-xs text-muted-foreground">({place.reviewsCount || 0})</span>
+                          </div>
+                        ) : (
+                          <span className="text-muted-foreground text-xs">—</span>
+                        )}
+                      </td>
+                      <td className="p-2 text-xs text-muted-foreground max-w-[200px]">
+                        {place.address ? (
+                          <div className="flex items-center gap-1">
+                            <MapPin className="w-3 h-3 flex-shrink-0" />
+                            <span className="truncate">{place.address}</span>
+                          </div>
+                        ) : '—'}
+                      </td>
+                      <td className="p-2 text-center">
+                        {isImported ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-green-100 text-green-700">
+                            <CheckCircle className="w-3 h-3" />
+                            Importado
+                          </span>
+                        ) : place.status === 'duplicate' ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-yellow-100 text-yellow-700">
+                            Duplicado
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-blue-100 text-blue-700">
+                            Novo
+                          </span>
+                        )}
+                      </td>
+                      <td className="p-2 text-center">
+                        <button
+                          onClick={() => handleImport([place.id])}
+                          disabled={isImported || importing === place.id}
+                          className="px-2 py-1 rounded text-xs bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1 mx-auto"
+                        >
+                          {importing === place.id ? (
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                          ) : (
+                            <Upload className="w-3 h-3" />
+                          )}
+                          {isImported ? 'OK' : 'Importar'}
+                        </button>
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>
         </div>
       )}
 
-      {/* Modal de importação */}
-      {showImportModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-background border rounded-lg shadow-lg w-full max-w-md p-6 space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="font-semibold text-lg">Importar leads</h3>
-              <button
-                onClick={() => setShowImportModal(false)}
-                className="text-muted-foreground hover:text-foreground"
-              >
-                ✕
-              </button>
-            </div>
-
-            {importResult ? (
-              <div className="space-y-3">
-                <div className="bg-green-50 border border-green-200 rounded p-3 text-sm">
-                  ✅ {importResult.imported} leads importados com sucesso!
-                </div>
-                {importResult.skippedNoPhone > 0 && (
-                  <div className="text-xs text-muted-foreground">
-                    {importResult.skippedNoPhone} leads sem telefone foram pulados
-                  </div>
-                )}
-                {importResult.errors > 0 && (
-                  <div className="text-xs text-red-600">
-                    {importResult.errors} erros durante a importação
-                  </div>
-                )}
-                <button
-                  onClick={() => {
-                    setShowImportModal(false)
-                    setImportResult(null)
-                  }}
-                  className="w-full px-4 py-2 bg-primary text-primary-foreground rounded text-sm"
-                >
-                  Fechar
-                </button>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                <div>
-                  <label className="block text-sm font-medium mb-1">Lista existente</label>
-                  <select
-                    value={selectedListId}
-                    onChange={(e) => setSelectedListId(e.target.value)}
-                    className="w-full px-3 py-2 border rounded text-sm"
-                  >
-                    <option value="">— criar nova —</option>
-                    {contactLists.map((l) => (
-                      <option key={l.id} value={l.id}>
-                        {l.name} ({l._count?.contacts || 0} contatos)
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {!selectedListId && (
-                  <div>
-                    <label className="block text-sm font-medium mb-1">Nome da nova lista</label>
-                    <input
-                      type="text"
-                      value={newListName}
-                      onChange={(e) => setNewListName(e.target.value)}
-                      placeholder={`ex: Leads ${keyword} ${location}`}
-                      className="w-full px-3 py-2 border rounded text-sm"
-                    />
-                  </div>
-                )}
-
-                <div className="text-xs text-muted-foreground bg-muted/50 rounded p-2">
-                  Serão importados <strong>{selected.size}</strong> leads como contatos.
-                  Campos personalizados (empresa, site, rating, etc) serão salvos em customFields.
-                </div>
-
-                {error && (
-                  <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded p-2">
-                    {error}
-                  </div>
-                )}
-
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => setShowImportModal(false)}
-                    className="flex-1 px-4 py-2 border rounded text-sm hover:bg-muted"
-                  >
-                    Cancelar
-                  </button>
-                  <button
-                    onClick={handleImport}
-                    disabled={importing || (!selectedListId && !newListName)}
-                    className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded text-sm hover:bg-primary/90 disabled:opacity-50"
-                  >
-                    {importing ? 'Importando...' : 'Importar'}
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
+      {!loading && results.length === 0 && !error && (
+        <div className="text-center py-16 text-muted-foreground">
+          <Search className="w-12 h-12 mx-auto mb-3 opacity-30" />
+          <p className="font-medium">Faça uma busca para encontrar leads</p>
+          <p className="text-xs mt-1">Use palavra-chave + localização para começar</p>
         </div>
       )}
     </div>
