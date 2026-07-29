@@ -70,7 +70,7 @@ export async function POST(req: NextRequest) {
         locationBias: {
           circle: {
             center: coords,
-            radius: Math.min(radiusKm, 50) * 1000, // metros (max 50km - Places API limit)
+            radius: radiusKm * 1000, // metros
           },
         },
         isOpenNow: openNow,
