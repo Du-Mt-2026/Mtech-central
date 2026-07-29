@@ -110,3 +110,8 @@ infra/traefik/certs/origin.crt
 # === Generated audit documents ===
 *.audit.pdf
 *.auditoria.pdf
+
+# Backup files
+*.bak.*
+*.bak
+/tmp/fix_cnpj*.sh
