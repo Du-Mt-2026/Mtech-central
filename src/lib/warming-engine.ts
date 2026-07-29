@@ -938,14 +938,12 @@ export async function processNextWarmingMessage(
 
   // Check sending window
   if (!isWithinSendingWindow(session.activeHoursStart, session.activeHoursEnd, session.timezone)) {
-    console.log(`[WarmingEngine] Session "${session.name}" outside sending window (start=${session.activeHoursStart}, end=${session.activeHoursEnd}, tz=${session.timezone})`)
     return { processed: false, delayMs: 60000, completed: false, reason: 'outside_sending_window' }
   }
 
   // Check break windows
   const activeBreak = getActiveBreakWindow(breakWindows, session.timezone)
   if (activeBreak) {
-    console.log(`[WarmingEngine] Session "${session.name}" in break window: ${activeBreak.label}`)
     return {
       processed: false,
       delayMs: 60000,
@@ -1033,7 +1031,6 @@ export async function processNextWarmingMessage(
   const mappedLastSenderIdx = validChipIdToIdx.has(lastSenderChipId) ? validChipIdToIdx.get(lastSenderChipId)! : -1
   const mappedLastRecipientIdx = validChipIdToIdx.has(lastRecipientChipId) ? validChipIdToIdx.get(lastRecipientChipId)! : -1
 
-  console.log(`[WarmingEngine] Session "${session.name}" pair selection: validChips=${validChipIds.length}, strategy=${session.strategy}, lastPair=(${lastPair.lastSenderIdx},${lastPair.lastRecipientIdx})→mapped(${mappedLastSenderIdx},${mappedLastRecipientIdx}), chipIds=[${chipIds.map((id, i) => { const c = chipMap.get(id); return `${i}:${c?.name || '?'}` }).join(',')}]`)
 
   for (let pairAttempt = 0; pairAttempt < validChipIds.length; pairAttempt++) {
     const [trySenderIdx, tryRecipientIdx] = selectPair(session.strategy, validChipIds, {
@@ -1087,7 +1084,6 @@ export async function processNextWarmingMessage(
     senderIdx = chipIds.indexOf(trySenderChipId)
     recipientIdx = chipIds.indexOf(tryRecipientChipId)
     senderProgress = trySenderProgress
-    console.log(`[WarmingEngine] Session "${session.name}" found valid pair: ${trySenderChip.name} → ${tryRecipientChip.name} (attempt ${pairAttempt})`)
     break
   }
 
@@ -1096,7 +1092,6 @@ export async function processNextWarmingMessage(
     // Check if ALL chips have hit their limits (session should pause for today)
     const allChipsAtLimit = await checkAllChipsAtDailyLimit(chipIds, antiBanSettings)
     if (allChipsAtLimit) {
-      console.log(`[WarmingEngine] All chips hit their daily phase limits. Pausing session "${session.name}" until tomorrow.`)
       await db.warmingSession.update({
         where: { id: sessionId },
         data: { lastError: `Todos os chips atingiram o limite diário da fase. Retoma amanhã automaticamente.` },
@@ -1130,7 +1125,6 @@ export async function processNextWarmingMessage(
     }
 
     // Generic — no valid pair available right now
-    console.log(`[WarmingEngine] Session "${session.name}" no valid sender→recipient pair found this tick (validChips=${validChipIds.length}/${chipIds.length})`)
     return { processed: false, delayMs: 15000, completed: false, reason: 'no_valid_pair' }
   }
 
@@ -1149,7 +1143,6 @@ export async function processNextWarmingMessage(
 
     if (elapsed < minInterval) {
       const waitSeconds = Math.ceil(minInterval - elapsed)
-      console.log(`[WarmingEngine] Session "${session.name}" sender ${sender.name} min interval not reached (elapsed=${Math.round(elapsed)}s, need=${minInterval}s, wait=${waitSeconds}s)`)
       return {
         processed: false,
         delayMs: waitSeconds * 1000,
@@ -1239,7 +1232,6 @@ export async function processNextWarmingMessage(
       },
     })
 
-    console.debug(`[WarmingEngine] ${sender.name} → ${recipient.name}: [${messageType}] "${messageContent.content.substring(0, 50)}..." (sent: ${senderProgress.sent}, received: ${recipientProgress.received})`)
 
     // Calculate next delay (gaussian)
     // Use session interval if set, otherwise fall back to anti-ban settings,
@@ -1762,7 +1754,6 @@ export async function processNextAIBotMessage(
       updatedProgress = true
       sentCount++
 
-      console.debug(`[WarmingEngine][ai_bot] ${chip.name} → Duda (${dudaPhone}): [${category}] "${message.content.substring(0, 50)}..."`)
     } catch (error: any) {
       console.error(`[WarmingEngine][ai_bot] Erro enviando de ${chip.name} para Duda: ${error.message}`)
       // Marca erro na sessão mas continua com próximos chips
