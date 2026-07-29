@@ -1042,7 +1042,6 @@ export async function processNextWarmingMessage(
 
     // Must be different chips
     if (trySenderChipId === tryRecipientChipId) {
-      console.log(`[WarmingEngine] Session "${session.name}" attempt ${pairAttempt}: sender===recipient (${trySenderChipId}), skipping`)
       continue
     }
 
@@ -1051,27 +1050,23 @@ export async function processNextWarmingMessage(
 
     // Sender must be connected with instance (should always pass since validChipIds filters this, but double-check)
     if (!trySenderChip?.evolutionInstance || trySenderChip.status !== 'connected') {
-      console.log(`[WarmingEngine] Session "${session.name}" attempt ${pairAttempt}: sender ${trySenderChip?.name || trySenderChipId} not connected (status=${trySenderChip?.status}, instance=${trySenderChip?.evolutionInstance || 'none'}), skipping`)
       continue
     }
 
     // Sender must not have reached target
     const trySenderProgress = chipProgress[trySenderChipId] || { sent: 0, received: 0, lastSentAt: null, lastReceivedAt: null }
     if (trySenderProgress.sent >= session.messagesPerChip / 2) {
-      console.log(`[WarmingEngine] Session "${session.name}" attempt ${pairAttempt}: sender ${trySenderChip.name} reached target (${trySenderProgress.sent}/${session.messagesPerChip / 2}), skipping`)
       continue
     }
 
     // Sender must not have hit daily limit
     const senderLimitInfo = await getChipEffectiveDailyLimit(trySenderChip, antiBanSettings)
     if (senderLimitInfo.remaining <= 0) {
-      console.log(`[WarmingEngine] Session "${session.name}" attempt ${pairAttempt}: sender ${trySenderChip.name} hit daily limit (sent=${trySenderChip.sentToday}, limit=${senderLimitInfo.limit}, remaining=${senderLimitInfo.remaining}, phase=${senderLimitInfo.phase}, day=${senderLimitInfo.dayInPhase}), skipping`)
       continue
     }
 
     // Recipient phone validation (should always pass since validChipIds filters this, but double-check)
     if (!tryRecipientChip?.phoneNumber || !isValidPhoneNumber(tryRecipientChip.phoneNumber)) {
-      console.log(`[WarmingEngine] Session "${session.name}" attempt ${pairAttempt}: recipient ${tryRecipientChip?.name || tryRecipientChipId} invalid phone (${tryRecipientChip?.phoneNumber || 'none'}), skipping`)
       continue
     }
 
