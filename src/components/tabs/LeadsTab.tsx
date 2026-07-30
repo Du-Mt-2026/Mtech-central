@@ -54,6 +54,7 @@ export default function LeadsTab() {
   const [error, setError] = useState<string | null>(null);
   const [searchInput, setSearchInput] = useState('');
   const [searching, setSearching] = useState(false);
+  const [searchTab, setSearchTab] = useState<'places' | 'saved'>('places');
   const [filterCity, setFilterCity] = useState('');
   const [filterState, setFilterState] = useState('');
   const [filterCnpjStatus, setFilterCnpjStatus] = useState('all');
@@ -189,10 +190,27 @@ export default function LeadsTab() {
       )}
 
       <div className="rounded-lg border border-border bg-card p-4">
+        <div className="mb-3 flex gap-1 border-b border-border">
+          <button
+            type="button"
+            onClick={() => setSearchTab('places')}
+            className={`px-3 py-1.5 text-sm font-medium border-b-2 -mb-px ${searchTab === 'places' ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
+          >
+            <Search className="inline h-3.5 w-3.5 mr-1" /> Buscar no Places
+          </button>
+          <button
+            type="button"
+            onClick={() => setSearchTab('saved')}
+            className={`px-3 py-1.5 text-sm font-medium border-b-2 -mb-px ${searchTab === 'saved' ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
+          >
+            <Filter className="inline h-3.5 w-3.5 mr-1" /> Buscar salvos
+          </button>
+        </div>
+        {searchTab === 'places' && (
         <div className="flex gap-2">
           <input
             type="text"
-            placeholder='Buscar empresas... (ex: padarias, mecânicas, distribuidoras)'
+            placeholder="buscar no places…"
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
@@ -207,9 +225,9 @@ export default function LeadsTab() {
             Buscar no Places
           </button>
         </div>
-      </div>
-
-      <div className="rounded-lg border border-border bg-card p-4">
+        )}
+        {searchTab === 'saved' && (
+        <>
         <div className="mb-3 flex items-center gap-2 text-sm font-medium text-foreground">
           <Filter className="h-4 w-4 text-primary" />
           Busca Avançada
@@ -230,6 +248,8 @@ export default function LeadsTab() {
             <RefreshCw className="h-4 w-4" /> Atualizar
           </button>
         </div>
+        </>
+        )}
       </div>
 
       {error && (
@@ -335,7 +355,7 @@ function LeadCard({ lead, onSelect, onFetchCnpj, fetching }: { lead: Lead; onSel
       {lead.cnaePrincipalTexto && (<p className="mt-2 text-xs text-muted-foreground/80">CNAE: {lead.cnaePrincipalTexto}</p>)}
       <div className="mt-3 flex gap-2">
         <button onClick={() => onFetchCnpj(false)} disabled={fetching} className="flex-1 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted/50 disabled:opacity-50">
-          {fetching ? <Loader2 className="mx-auto h-3 w-3 animate-spin" /> : lead.cnpj ? 'Reenriquecer' : 'Buscar CNPJ'}
+          {fetching ? <Loader2 className="mx-auto h-3 w-3 animate-spin" /> : 'Buscar CNPJ'}
         </button>
         <button onClick={onSelect} className="rounded-md border border-border px-3 py-1.5 text-xs text-foreground hover:bg-muted/50">Detalhes</button>
       </div>
