@@ -3,23 +3,23 @@ generator client {
 }
 
 datasource db {
-  provider          = "postgresql"
-  url               = env("DATABASE_URL")
-  relationMode      = "prisma"
+  provider     = "postgresql"
+  url          = env("DATABASE_URL")
+  relationMode = "prisma"
 }
 
 model Chip {
-  id               String   @id @default(cuid())
+  id               String           @id @default(cuid())
   name             String
-  phoneNumber      String   @unique
-  wireguardIp      String   @default("")
-  wireguardPrivKey String   @default("")
-  wireguardPubKey  String   @default("")
-  socksPort        Int      @default(1080)
-  status           String   @default("disconnected")
+  phoneNumber      String           @unique
+  wireguardIp      String           @default("")
+  wireguardPrivKey String           @default("")
+  wireguardPubKey  String           @default("")
+  socksPort        Int              @default(1080)
+  status           String           @default("disconnected")
   lastSeen         DateTime?
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
   contacts         Contact[]
   messages         Message[]
   campaigns        CampaignChip[]
@@ -29,45 +29,45 @@ model Chip {
   conversations    Conversation[]
 
   // Anti-ban fields
-  dailyLimit       Int      @default(200)
-  sentToday        Int      @default(0)
-  lastResetAt      DateTime @default(now())
+  dailyLimit       Int       @default(200)
+  sentToday        Int       @default(0)
+  lastResetAt      DateTime  @default(now())
   cooldownUntil    DateTime?
-  nextSendAt       DateTime?                     // Anti-ban: próxima vez que este chip pode enviar (persiste intervalo entre invocações serverless)
-  warmingEnabled   Boolean  @default(true)
-  warmingPhase     String   @default("nursery")   // "nursery" (berçário) | "prewarm" (pré-aquecido) | "ready" (pronto)
-  warmingStartedAt DateTime?                      // When warming actually started (first send or manual). Null = never sent, always Day 1
-  prewarmStartedAt DateTime?                      // When prewarm phase started
-  warmingStage     Int      @default(0)            // Legacy compat: 0=new, 5=prewarm, 6=ready
-  isQrPaired       Boolean  @default(false)
+  nextSendAt       DateTime? // Anti-ban: próxima vez que este chip pode enviar (persiste intervalo entre invocações serverless)
+  warmingEnabled   Boolean   @default(true)
+  warmingPhase     String    @default("nursery") // "nursery" (berçário) | "prewarm" (pré-aquecido) | "ready" (pronto)
+  warmingStartedAt DateTime? // When warming actually started (first send or manual). Null = never sent, always Day 1
+  prewarmStartedAt DateTime? // When prewarm phase started
+  warmingStage     Int       @default(0) // Legacy compat: 0=new, 5=prewarm, 6=ready
+  isQrPaired       Boolean   @default(false)
   qrPairingCode    String?
-  proxyMode        String   @default("none")
-  socks5Host       String   @default("")
-  socks5Port       Int      @default(0)
-  socks5User       String   @default("")
-  socks5Pass       String   @default("")
+  proxyMode        String    @default("none")
+  socks5Host       String    @default("")
+  socks5Port       Int       @default(0)
+  socks5User       String    @default("")
+  socks5Pass       String    @default("")
 
   // Evolution API integration
-  evolutionInstance         String?  @unique
-  profileName              String?
-  profilePicUrl            String?
-  disconnectionReasonCode  Int?
+  evolutionInstance       String? @unique
+  profileName             String?
+  profilePicUrl           String?
+  disconnectionReasonCode Int?
 
   // Verification anti-ban fields
   verifiedToday       Int      @default(0)
   lastVerifiedResetAt DateTime @default(now())
 
   // Hourly limit tracking
-  hourlySent          Int      @default(0)
-  lastHourlyResetAt   DateTime @default(now())
+  hourlySent        Int      @default(0)
+  lastHourlyResetAt DateTime @default(now())
 
   // Pausa individual de chip — quando true, o chip não recebe novas mensagens
   // de campanha, mas continua conectado ao WhatsApp. Mensagens pendentes
   // atribuídas a ele ficam aguardando (não são redistribuídas).
-  paused              Boolean  @default(false)
-  pausedAt            DateTime?
-  pauseReason         String?
-  pausedUntil         DateTime?   // Circuit breaker: quando null = pausa manual indefinida; quando preenchido = auto-retoma nesta data
+  paused      Boolean   @default(false)
+  pausedAt    DateTime?
+  pauseReason String?
+  pausedUntil DateTime? // Circuit breaker: quando null = pausa manual indefinida; quando preenchido = auto-retoma nesta data
 
   // Vendedor association — each chip can belong to a vendedor
   vendedorId String?
@@ -75,124 +75,124 @@ model Chip {
 
   @@index([status])
   @@index([evolutionInstance])
-  @@index([paused, pausedUntil])     // Circuit breaker auto-unpause queries
-  @@index([vendedorId])             // Vendedor filter in dashboard
-  @@index([warmingPhase, status])   // UI filter for warming chips
+  @@index([paused, pausedUntil]) // Circuit breaker auto-unpause queries
+  @@index([vendedorId]) // Vendedor filter in dashboard
+  @@index([warmingPhase, status]) // UI filter for warming chips
 }
 
 model AntiBanSettings {
-  id                    String   @id @default(cuid())
-  typingMinDelay        Int      @default(5100)    // 5.1s minimum typing delay
-  typingMaxDelay        Int      @default(24900)   // 24.9s maximum typing delay
-  messageIntervalMin    Int      @default(59)      // 59s minimum interval (matches production config)
-  messageIntervalMax    Int      @default(148)     // 148s maximum interval (matches production config)
-  dailyLimitPerChip     Int      @default(200)
-  warmingEnabled        Boolean  @default(true)
-  cooldownMinutes       Int      @default(8)       // Cooldown variável: mínimo de minutos de pausa
-  cooldownMinutesMax    Int      @default(13)      // Cooldown variável: máximo de minutos de pausa (range min-max)
-  cooldownAfterMessages Int      @default(5)       // Cooldown após N mensagens: mínimo
-  cooldownAfterMessagesMax Int   @default(9)       // Cooldown após N mensagens: máximo (range min-max)
+  id                       String  @id @default(cuid())
+  typingMinDelay           Int     @default(5100) // 5.1s minimum typing delay
+  typingMaxDelay           Int     @default(24900) // 24.9s maximum typing delay
+  messageIntervalMin       Int     @default(59) // 59s minimum interval (matches production config)
+  messageIntervalMax       Int     @default(148) // 148s maximum interval (matches production config)
+  dailyLimitPerChip        Int     @default(200)
+  warmingEnabled           Boolean @default(true)
+  cooldownMinutes          Int     @default(8) // Cooldown variável: mínimo de minutos de pausa
+  cooldownMinutesMax       Int     @default(13) // Cooldown variável: máximo de minutos de pausa (range min-max)
+  cooldownAfterMessages    Int     @default(5) // Cooldown após N mensagens: mínimo
+  cooldownAfterMessagesMax Int     @default(9) // Cooldown após N mensagens: máximo (range min-max)
 
   // Break windows — pausas dentro da janela de envio (JSON array)
   // Format: [{"start":720,"end":810,"label":"Almoço"}, {"start":930,"end":960,"label":"Reunião"}]
   // start/end = minutos desde meia-noite (720 = 12:00, 810 = 13:30)
-  breakWindows          String   @default("[]")
-  stopOnWarning         Boolean  @default(true)
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
+  breakWindows  String   @default("[]")
+  stopOnWarning Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   // New fields for sending window
-  sendingWindowStart    Int      @default(540)     // Minutes from midnight (default 540 = 9:00)
-  sendingWindowEnd      Int      @default(1020)    // Minutes from midnight (default 1020 = 17:00)
-  timezone              String   @default("America/Sao_Paulo")
+  sendingWindowStart Int    @default(540) // Minutes from midnight (default 540 = 9:00)
+  sendingWindowEnd   Int    @default(1020) // Minutes from midnight (default 1020 = 17:00)
+  timezone           String @default("America/Sao_Paulo")
 
   // Editable warming schedules (JSON strings)
-  nurserySchedule       String   @default("[{\"dayRange\":\"1-2\",\"days\":[1,2],\"limit\":10},{\"dayRange\":\"3-4\",\"days\":[3,4],\"limit\":20},{\"dayRange\":\"5-6\",\"days\":[5,6],\"limit\":30},{\"dayRange\":\"7-8\",\"days\":[7,8],\"limit\":40},{\"dayRange\":\"9-10\",\"days\":[9,10],\"limit\":50},{\"dayRange\":\"11-12\",\"days\":[11,12],\"limit\":60},{\"dayRange\":\"13-14\",\"days\":[13,14],\"limit\":80}]")
-  prewarmSchedule       String   @default("[{\"dayRange\":\"1\",\"days\":[1,1],\"limit\":11},{\"dayRange\":\"2\",\"days\":[2,2],\"limit\":15},{\"dayRange\":\"3\",\"days\":[3,3],\"limit\":20},{\"dayRange\":\"4\",\"days\":[4,4],\"limit\":25},{\"dayRange\":\"5\",\"days\":[5,5],\"limit\":30},{\"dayRange\":\"6\",\"days\":[6,6],\"limit\":35},{\"dayRange\":\"7\",\"days\":[7,7],\"limit\":40},{\"dayRange\":\"8\",\"days\":[8,8],\"limit\":45},{\"dayRange\":\"9\",\"days\":[9,9],\"limit\":50},{\"dayRange\":\"10\",\"days\":[10,10],\"limit\":60},{\"dayRange\":\"11\",\"days\":[11,11],\"limit\":70},{\"dayRange\":\"12\",\"days\":[12,12],\"limit\":80},{\"dayRange\":\"13\",\"days\":[13,13],\"limit\":90},{\"dayRange\":\"14\",\"days\":[14,14],\"limit\":100},{\"dayRange\":\"15\",\"days\":[15,15],\"limit\":120},{\"dayRange\":\"16\",\"days\":[16,16],\"limit\":140},{\"dayRange\":\"17\",\"days\":[17,17],\"limit\":160},{\"dayRange\":\"18\",\"days\":[18,18],\"limit\":180},{\"dayRange\":\"19\",\"days\":[19,19],\"limit\":190},{\"dayRange\":\"20\",\"days\":[20,20],\"limit\":200}]")
-  readyDailyLimit       Int      @default(200)     // Phase 3 (Aquecido) daily limit per chip
-  hourlyLimit           Int      @default(30)      // Max messages per hour per chip
-  linkPreviewEnabled    Boolean  @default(false)   // Whether to allow link previews in sent messages (default OFF — link previews in bulk are detectable)
+  nurserySchedule    String  @default("[{\"dayRange\":\"1-2\",\"days\":[1,2],\"limit\":10},{\"dayRange\":\"3-4\",\"days\":[3,4],\"limit\":20},{\"dayRange\":\"5-6\",\"days\":[5,6],\"limit\":30},{\"dayRange\":\"7-8\",\"days\":[7,8],\"limit\":40},{\"dayRange\":\"9-10\",\"days\":[9,10],\"limit\":50},{\"dayRange\":\"11-12\",\"days\":[11,12],\"limit\":60},{\"dayRange\":\"13-14\",\"days\":[13,14],\"limit\":80}]")
+  prewarmSchedule    String  @default("[{\"dayRange\":\"1\",\"days\":[1,1],\"limit\":11},{\"dayRange\":\"2\",\"days\":[2,2],\"limit\":15},{\"dayRange\":\"3\",\"days\":[3,3],\"limit\":20},{\"dayRange\":\"4\",\"days\":[4,4],\"limit\":25},{\"dayRange\":\"5\",\"days\":[5,5],\"limit\":30},{\"dayRange\":\"6\",\"days\":[6,6],\"limit\":35},{\"dayRange\":\"7\",\"days\":[7,7],\"limit\":40},{\"dayRange\":\"8\",\"days\":[8,8],\"limit\":45},{\"dayRange\":\"9\",\"days\":[9,9],\"limit\":50},{\"dayRange\":\"10\",\"days\":[10,10],\"limit\":60},{\"dayRange\":\"11\",\"days\":[11,11],\"limit\":70},{\"dayRange\":\"12\",\"days\":[12,12],\"limit\":80},{\"dayRange\":\"13\",\"days\":[13,13],\"limit\":90},{\"dayRange\":\"14\",\"days\":[14,14],\"limit\":100},{\"dayRange\":\"15\",\"days\":[15,15],\"limit\":120},{\"dayRange\":\"16\",\"days\":[16,16],\"limit\":140},{\"dayRange\":\"17\",\"days\":[17,17],\"limit\":160},{\"dayRange\":\"18\",\"days\":[18,18],\"limit\":180},{\"dayRange\":\"19\",\"days\":[19,19],\"limit\":190},{\"dayRange\":\"20\",\"days\":[20,20],\"limit\":200}]")
+  readyDailyLimit    Int     @default(200) // Phase 3 (Aquecido) daily limit per chip
+  hourlyLimit        Int     @default(30) // Max messages per hour per chip
+  linkPreviewEnabled Boolean @default(false) // Whether to allow link previews in sent messages (default OFF — link previews in bulk are detectable)
 
   // Human behavior simulation — makes bot patterns undetectable
   // JSON config with cluster sending, cooldown presence, day rhythm, nonlinear pauses
-  humanBehaviorEnabled  Boolean  @default(true)    // Master toggle for human behavior features
-  humanBehaviorConfig   String   @default("{\"cluster\":{\"enabled\":true,\"minSize\":2,\"maxSize\":4,\"microPauseMinSec\":10,\"microPauseMaxSec\":25,\"afterClusterPauseMinSec\":59,\"afterClusterPauseMaxSec\":148},\"cooldownPresence\":{\"enabled\":true,\"chancePercent\":40,\"durationMinSec\":5,\"durationMaxSec\":25,\"intervalMinMin\":2,\"intervalMaxMin\":5},\"dayRhythm\":{\"enabled\":true,\"morningFactor\":130,\"middayFactor\":80,\"afternoonFactor\":100},\"nonlinearPauses\":{\"enabled\":true,\"short\":{\"weight\":40,\"minMin\":2,\"maxMin\":5},\"medium\":{\"weight\":40,\"minMin\":8,\"maxMin\":15},\"long\":{\"weight\":20,\"minMin\":20,\"maxMin\":35}},\"typingSimulation\":{\"speedMin\":6,\"speedMax\":14,\"pauseChance\":30,\"pauseMinMs\":1000,\"pauseMaxMs\":4000,\"longMsgThreshold\":100,\"longMsgPauseChance\":40,\"segmentsMin\":2,\"segmentsMax\":3},\"presence\":{\"offlineDelayMinMs\":3000,\"offlineDelayMaxMs\":15000,\"idleReadingChance\":25,\"idleReadingDurationMinMs\":2000,\"idleReadingDurationMaxMs\":8000,\"idleReadingMinIntervalSec\":60,\"preSendOnlineMs\":1000,\"preComposePauseMinMs\":800,\"preComposePauseMaxMs\":3000,\"mediaRecordingMinMs\":2000,\"mediaRecordingMaxMs\":4000},\"deliveryRate\":{\"normalThreshold\":60,\"mediumThreshold\":40,\"mediumMultiplier\":1.5,\"lowThreshold\":20,\"lowMultiplier\":2.5,\"criticalMultiplier\":4.0,\"minSample\":10}}")
+  humanBehaviorEnabled Boolean @default(true) // Master toggle for human behavior features
+  humanBehaviorConfig  String  @default("{\"cluster\":{\"enabled\":true,\"minSize\":2,\"maxSize\":4,\"microPauseMinSec\":10,\"microPauseMaxSec\":25,\"afterClusterPauseMinSec\":59,\"afterClusterPauseMaxSec\":148},\"cooldownPresence\":{\"enabled\":true,\"chancePercent\":40,\"durationMinSec\":5,\"durationMaxSec\":25,\"intervalMinMin\":2,\"intervalMaxMin\":5},\"dayRhythm\":{\"enabled\":true,\"morningFactor\":130,\"middayFactor\":80,\"afternoonFactor\":100},\"nonlinearPauses\":{\"enabled\":true,\"short\":{\"weight\":40,\"minMin\":2,\"maxMin\":5},\"medium\":{\"weight\":40,\"minMin\":8,\"maxMin\":15},\"long\":{\"weight\":20,\"minMin\":20,\"maxMin\":35}},\"typingSimulation\":{\"speedMin\":6,\"speedMax\":14,\"pauseChance\":30,\"pauseMinMs\":1000,\"pauseMaxMs\":4000,\"longMsgThreshold\":100,\"longMsgPauseChance\":40,\"segmentsMin\":2,\"segmentsMax\":3},\"presence\":{\"offlineDelayMinMs\":3000,\"offlineDelayMaxMs\":15000,\"idleReadingChance\":25,\"idleReadingDurationMinMs\":2000,\"idleReadingDurationMaxMs\":8000,\"idleReadingMinIntervalSec\":60,\"preSendOnlineMs\":1000,\"preComposePauseMinMs\":800,\"preComposePauseMaxMs\":3000,\"mediaRecordingMinMs\":2000,\"mediaRecordingMaxMs\":4000},\"deliveryRate\":{\"normalThreshold\":60,\"mediumThreshold\":40,\"mediumMultiplier\":1.5,\"lowThreshold\":20,\"lowMultiplier\":2.5,\"criticalMultiplier\":4.0,\"minSample\":10}}")
 
   // ============================================================
   // RECONNECTION QUEUE — UI-configurable (was hardcoded in reconnection-queue.ts)
   // ============================================================
-  reconnectMaxConcurrent      Int      @default(2)       // Max simultaneous reconnections
-  reconnectMaxAttempts        Int      @default(10)      // Max reconnection attempts before giving up
-  reconnectRespectWindow      Boolean  @default(false)   // Respect sending window for reconnections
-  reconnectRateLimit          Int      @default(5)       // Max reconnections per rate window
-  reconnectRateWindowMin      Int      @default(10)      // Rate window in minutes
-  reconnectBackoffMs          String   @default("[5000,15000,45000,120000,300000,600000]") // JSON: backoff schedule in ms
-  reconnectInterDelayMs       Int      @default(15000)   // Delay between consecutive reconnection starts (ms)
-  reconnectConnectTimeoutMs   Int      @default(60000)   // Timeout for chip to connect (ms)
-  circuitBreakerThreshold     Int      @default(3)       // Consecutive API failures before circuit breaker opens
+  reconnectMaxConcurrent    Int     @default(2) // Max simultaneous reconnections
+  reconnectMaxAttempts      Int     @default(10) // Max reconnection attempts before giving up
+  reconnectRespectWindow    Boolean @default(false) // Respect sending window for reconnections
+  reconnectRateLimit        Int     @default(5) // Max reconnections per rate window
+  reconnectRateWindowMin    Int     @default(10) // Rate window in minutes
+  reconnectBackoffMs        String  @default("[5000,15000,45000,120000,300000,600000]") // JSON: backoff schedule in ms
+  reconnectInterDelayMs     Int     @default(15000) // Delay between consecutive reconnection starts (ms)
+  reconnectConnectTimeoutMs Int     @default(60000) // Timeout for chip to connect (ms)
+  circuitBreakerThreshold   Int     @default(3) // Consecutive API failures before circuit breaker opens
 
   // ============================================================
   // VERIFIER — UI-configurable (was hardcoded in verifier/check/route.ts)
   // ============================================================
-  verifyDailyLimit            Int      @default(300)     // Daily verification limit per chip
+  verifyDailyLimit Int @default(300) // Daily verification limit per chip
 
   // ============================================================
   // EVOLUTION API — UI-configurable (was hardcoded in evolution-api.ts)
   // ============================================================
-  evolutionApiTimeoutMs       Int      @default(15000)   // Evolution API request timeout (ms)
-  autoRejectCalls             Boolean  @default(true)    // Auto-reject incoming calls
-  autoRejectCallMessage       String   @default("Desculpa, não posso atender agora.") // Auto-reject message text
+  evolutionApiTimeoutMs Int     @default(15000) // Evolution API request timeout (ms)
+  autoRejectCalls       Boolean @default(true) // Auto-reject incoming calls
+  autoRejectCallMessage String  @default("Desculpa, não posso atender agora.") // Auto-reject message text
 
   // ============================================================
   // BAN DETECTION — UI-configurable (was hardcoded in sending-engine.ts + webhook)
   // ============================================================
-  banCodes                    String   @default("[401,403,428,440]")       // JSON: disconnection codes indicating ban
-  restrictionKeywords         String   @default("[\"sua conta foi banida\",\"sua conta foi suspensa\",\"não está autorizada\",\"violação dos termos\",\"atividade incomum\",\"conta restrita\",\"conta temporariamente suspensa\",\"uso não autorizado\",\"comportamento viola\",\"não está disponível\",\"registro foi removido\",\"encerramos sua conta\",\"sua conta foi desativada\",\"não pode usar este serviço\",\"restrição de segurança\",\"violou nossos termos\"]") // JSON: keywords for temp-ban detection
-  warningKeywords            String   @default("[\"aviso\",\"advertência\",\"warn\",\"spam\",\"suspeita\",\"irregular\",\"verificação\",\"confirme\",\"restrição\",\"bloqueio\",\"suspensão\",\"desative\"]") // JSON: keywords for warning detection
-  banLookbackHours           Int      @default(24)       // Hours to look back for ban detection
-  banKeywordThreshold        Int      @default(2)        // Min keyword matches to trigger ban detection
-  banMaxMessagesCheck        Int      @default(50)       // Max recent messages to scan for ban keywords
-  warningMaxMessagesCheck    Int      @default(20)       // Max recent messages to scan for warning keywords
+  banCodes                String @default("[401,403,428,440]") // JSON: disconnection codes indicating ban
+  restrictionKeywords     String @default("[\"sua conta foi banida\",\"sua conta foi suspensa\",\"não está autorizada\",\"violação dos termos\",\"atividade incomum\",\"conta restrita\",\"conta temporariamente suspensa\",\"uso não autorizado\",\"comportamento viola\",\"não está disponível\",\"registro foi removido\",\"encerramos sua conta\",\"sua conta foi desativada\",\"não pode usar este serviço\",\"restrição de segurança\",\"violou nossos termos\"]") // JSON: keywords for temp-ban detection
+  warningKeywords         String @default("[\"aviso\",\"advertência\",\"warn\",\"spam\",\"suspeita\",\"irregular\",\"verificação\",\"confirme\",\"restrição\",\"bloqueio\",\"suspensão\",\"desative\"]") // JSON: keywords for warning detection
+  banLookbackHours        Int    @default(24) // Hours to look back for ban detection
+  banKeywordThreshold     Int    @default(2) // Min keyword matches to trigger ban detection
+  banMaxMessagesCheck     Int    @default(50) // Max recent messages to scan for ban keywords
+  warningMaxMessagesCheck Int    @default(20) // Max recent messages to scan for warning keywords
 
   // ============================================================
   // SENDING ENGINE — UI-configurable (was hardcoded in sending-engine.ts)
   // ============================================================
-  nurseryMinIntervalSec      Int      @default(120)      // Min interval between sends for nursery chips (sec)
-  prewarmMinIntervalSec      Int      @default(60)       // Min interval between sends for prewarm chips (sec)
-  functionTimeoutMs          Int      @default(50000)    // Serverless function timeout (ms)
-  maxMessagesPerInvocation   Int      @default(10)       // Max messages per execute/process invocation
-  minRemainingTimeMs         Int      @default(3000)     // Min remaining time before breaking loop (ms)
-  presenceStaggerMinMs       Int      @default(500)      // Min random delay before setting presence (ms)
-  presenceStaggerMaxMs       Int      @default(2000)     // Max random delay before setting presence (ms)
-  mediaCheckTimeoutMs        Int      @default(5000)     // Timeout for media URL HEAD check (ms)
+  nurseryMinIntervalSec    Int @default(120) // Min interval between sends for nursery chips (sec)
+  prewarmMinIntervalSec    Int @default(60) // Min interval between sends for prewarm chips (sec)
+  functionTimeoutMs        Int @default(50000) // Serverless function timeout (ms)
+  maxMessagesPerInvocation Int @default(10) // Max messages per execute/process invocation
+  minRemainingTimeMs       Int @default(3000) // Min remaining time before breaking loop (ms)
+  presenceStaggerMinMs     Int @default(500) // Min random delay before setting presence (ms)
+  presenceStaggerMaxMs     Int @default(2000) // Max random delay before setting presence (ms)
+  mediaCheckTimeoutMs      Int @default(5000) // Timeout for media URL HEAD check (ms)
 
   // ============================================================
   // VERIFIER EXTENDED — UI-configurable (was hardcoded in verificar-section.tsx)
   // ============================================================
-  verifierDelayMin           Int      @default(8)        // Min delay between verification batches (sec)
-  verifierDelayMax           Int      @default(15)       // Max delay between verification batches (sec)
-  verifierBatchSize          Int      @default(5)        // Numbers per chip per verification round
-  verifierCooldownAfter      Int      @default(50)       // Verifications before cooldown
-  verifierCooldownMinutes    Int      @default(5)        // Cooldown duration (min)
-  verifierQuotaCooldownMs    Int      @default(86400000) // Cooldown when chip quota exhausted (ms)
-  verifierRateLimitCooldownMs Int     @default(86400000) // Cooldown after 429 response (ms)
-  verifierRateLimitRetryMs   Int      @default(2000)     // Delay after 429 error (ms)
+  verifierDelayMin            Int @default(8) // Min delay between verification batches (sec)
+  verifierDelayMax            Int @default(15) // Max delay between verification batches (sec)
+  verifierBatchSize           Int @default(5) // Numbers per chip per verification round
+  verifierCooldownAfter       Int @default(50) // Verifications before cooldown
+  verifierCooldownMinutes     Int @default(5) // Cooldown duration (min)
+  verifierQuotaCooldownMs     Int @default(86400000) // Cooldown when chip quota exhausted (ms)
+  verifierRateLimitCooldownMs Int @default(86400000) // Cooldown after 429 response (ms)
+  verifierRateLimitRetryMs    Int @default(2000) // Delay after 429 error (ms)
 
   // ============================================================
   // CAMPAIGN DEFAULTS — UI-configurable (was hardcoded in campaigns/route.ts + page.tsx)
   // ============================================================
-  defaultSendIntervalMin     Int      @default(30)       // Default campaign send interval min (sec)
-  defaultSendIntervalMax     Int      @default(90)       // Default campaign send interval max (sec)
-  defaultAntiBanEnabled      Boolean  @default(true)     // Default anti-ban enabled for new campaigns
-  defaultWarmingMode         String   @default("normal") // Default warming mode for new campaigns
+  defaultSendIntervalMin Int     @default(30) // Default campaign send interval min (sec)
+  defaultSendIntervalMax Int     @default(90) // Default campaign send interval max (sec)
+  defaultAntiBanEnabled  Boolean @default(true) // Default anti-ban enabled for new campaigns
+  defaultWarmingMode     String  @default("normal") // Default warming mode for new campaigns
 
   // ============================================================
   // WARMING ENGINE — UI-configurable (was hardcoded in warming-engine.ts)
   // ============================================================
-  minChipsForWarming         Int      @default(3)        // Min chips to start a warming session
-  warmingAutoPauseErrors     Int      @default(10)       // Error count to auto-pause warming
-  warmingErrorRetryMinSec    Int      @default(15)       // Min retry delay after error (sec)
-  warmingErrorRetryMaxSec    Int      @default(60)       // Max retry delay after error (sec)
+  minChipsForWarming      Int @default(3) // Min chips to start a warming session
+  warmingAutoPauseErrors  Int @default(10) // Error count to auto-pause warming
+  warmingErrorRetryMinSec Int @default(15) // Min retry delay after error (sec)
+  warmingErrorRetryMaxSec Int @default(60) // Max retry delay after error (sec)
 }
 
 model MessageTemplate {
@@ -200,70 +200,70 @@ model MessageTemplate {
   name             String
   content          String
   category         String   @default("geral")
-  mediatype        String   @default("text")    // text | image | video | audio | document | contact | location | link
-  mediaDescription String   @default("")         // Dica de qual mídia anexar (ex: "Foto do monitor 27\"")
-  linkUrl          String   @default("")         // URL para tipo link
-  linkPreview      Boolean  @default(true)       // Link com visualização?
-  steps            String?                       // JSON: array of step objects for multi-step campaign templates
+  mediatype        String   @default("text") // text | image | video | audio | document | contact | location | link
+  mediaDescription String   @default("") // Dica de qual mídia anexar (ex: "Foto do monitor 27\"")
+  linkUrl          String   @default("") // URL para tipo link
+  linkPreview      Boolean  @default(true) // Link com visualização?
+  steps            String? // JSON: array of step objects for multi-step campaign templates
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 }
 
 model MessageKey {
   id             String   @id @default(cuid())
-  name           String   @unique          // "SAUDACAO_MANHA"
-  label          String                    // "Saudação - Bom dia" (nome amigável)
+  name           String   @unique // "SAUDACAO_MANHA"
+  label          String // "Saudação - Bom dia" (nome amigável)
   category       String   @default("geral") // "saudacao", "apresentacao", "pergunta", "encerramento", "emoji", "geral"
-  variations     String                     // JSON array: ["Oi, bom dia...", "Olá, tudo bem?...", ...]
+  variations     String // JSON array: ["Oi, bom dia...", "Olá, tudo bem?...", ...]
   resolutionType String   @default("random") // "random" | "time_based"
-  timeSlots      String?                    // JSON: [{"key":"BOM_DIA","start":"06:01","end":"12:00"}, ...]
-  isDefault      Boolean  @default(false)   // Keys pré-definidas do sistema
+  timeSlots      String? // JSON: [{"key":"BOM_DIA","start":"06:01","end":"12:00"}, ...]
+  isDefault      Boolean  @default(false) // Keys pré-definidas do sistema
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
-  userId         String?                    // null = global, string = criada por usuário específico
+  userId         String? // null = global, string = criada por usuário específico
 }
 
 model Vendedor {
-  id              String   @id @default(cuid())
-  nome            String                    // "Renato"
-  empresa         String?                   // "Mtech Distribuidora"
-  cargo           String?                   // "Gerente de Contas"
-  genero          String?                   // "masculino" | "feminino"
-  treatAs         String?                   // "o" (sou o Renato) | "a" (sou a Carla)
-  whatsapp        String?                   // Número do chip do vendedor (pra receber respostas)
-  ativo           Boolean  @default(true)
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  id        String   @id @default(cuid())
+  nome      String // "Renato"
+  empresa   String? // "Mtech Distribuidora"
+  cargo     String? // "Gerente de Contas"
+  genero    String? // "masculino" | "feminino"
+  treatAs   String? // "o" (sou o Renato) | "a" (sou a Carla)
+  whatsapp  String? // Número do chip do vendedor (pra receber respostas)
+  ativo     Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   // Relations
-  chips     Chip[]          // Chips associados a este vendedor
-  campaigns Campaign[]      // Campanhas atribuídas a este vendedor
+  chips     Chip[] // Chips associados a este vendedor
+  campaigns Campaign[] // Campanhas atribuídas a este vendedor
 }
 
 model ContactList {
-  id        String   @id @default(cuid())
-  name      String
-  columns   String?  @default("{}")  // JSON: {"Empresa":"empresa","Vendedora Responsável":"vendedora_responsável"} — original header → variable key mapping
-  source      String?  // "manual" | "group_extract" | "gmn" | "csv_import" | "linvix_sync"
-  sourceMeta  String?  @default("{}") // JSON com metadados da origem
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  contacts  Contact[]
-  campaigns Campaign[]
+  id         String     @id @default(cuid())
+  name       String
+  columns    String?    @default("{}") // JSON: {"Empresa":"empresa","Vendedora Responsável":"vendedora_responsável"} — original header → variable key mapping
+  source     String? // "manual" | "group_extract" | "gmn" | "csv_import" | "linvix_sync"
+  sourceMeta String?    @default("{}") // JSON com metadados da origem
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+  contacts   Contact[]
+  campaigns  Campaign[]
 }
 
 model Contact {
-  id            String      @id @default(cuid())
+  id            String       @id @default(cuid())
   name          String
   phone         String
-  position      Int         @default(0)
+  position      Int          @default(0)
   chipId        String?
-  chip          Chip?       @relation(fields: [chipId], references: [id], onDelete: Cascade)
+  chip          Chip?        @relation(fields: [chipId], references: [id], onDelete: Cascade)
   contactListId String?
   contactList   ContactList? @relation(fields: [contactListId], references: [id], onDelete: SetNull)
   messages      Message[]
-  createdAt     DateTime    @default(now())
-  updatedAt     DateTime    @updatedAt
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
 
   // Blocked contact relation (if this contact blocked a chip)
   blockedRecords BlockedContact[]
@@ -271,37 +271,37 @@ model Contact {
   // Dynamic custom fields from spreadsheet (JSON string)
   // Stores all extra columns: empresa, vendedor, nota, etc.
   // Accessed via {{column_name}} in message templates
-  customFields      String?    // JSON: {"empresa":"Tech Corp","vendedor":"Renato","nota":"VIP"}
+  customFields String? // JSON: {"empresa":"Tech Corp","vendedor":"Renato","nota":"VIP"}
 
-  @@index([contactListId, position])  // Contact list queries with ordering
+  @@index([contactListId, position]) // Contact list queries with ordering
   @@index([chipId])
 }
 
 model Campaign {
-  id               String   @id @default(cuid())
-  name             String
-  status           String   @default("draft")
-  sendIntervalMin  Int      @default(59)     // Anti-ban safety floor (was 30 — too fast)
-  sendIntervalMax  Int      @default(148)    // Anti-ban safety floor (was 90 — too fast)
-  contactListId    String?
-  contactList      ContactList? @relation(fields: [contactListId], references: [id], onDelete: SetNull)
-  scheduledAt      DateTime?
-  startedAt        DateTime?
-  completedAt      DateTime?
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
-  chips            CampaignChip[]
-  messages         Message[]
-  sequenceSteps    SequenceStep[]
+  id              String         @id @default(cuid())
+  name            String
+  status          String         @default("draft")
+  sendIntervalMin Int            @default(59) // Anti-ban safety floor (was 30 — too fast)
+  sendIntervalMax Int            @default(148) // Anti-ban safety floor (was 90 — too fast)
+  contactListId   String?
+  contactList     ContactList?   @relation(fields: [contactListId], references: [id], onDelete: SetNull)
+  scheduledAt     DateTime?
+  startedAt       DateTime?
+  completedAt     DateTime?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  chips           CampaignChip[]
+  messages        Message[]
+  sequenceSteps   SequenceStep[]
 
   // Anti-ban campaign fields
-  antiBanEnabled   Boolean  @default(true)
-  warmingMode      String   @default("normal")  // "normal" | "agressive" | "stealth"
+  antiBanEnabled Boolean @default(true)
+  warmingMode    String  @default("normal") // "normal" | "agressive" | "stealth"
 
   // Status reason — explains why a campaign was paused/stopped (e.g., chip banned, chip disconnected)
-  statusReason     String?
-  pausedAt         DateTime?
-  nextSendAt       DateTime?                     // Anti-ban: próxima vez que esta campanha pode enviar QUALQUER mensagem (persiste intervalo entre invocações serverless)
+  statusReason String?
+  pausedAt     DateTime?
+  nextSendAt   DateTime? // Anti-ban: próxima vez que esta campanha pode enviar QUALQUER mensagem (persiste intervalo entre invocações serverless)
 
   // Vendedor association — this campaign sends on behalf of this vendedor
   vendedorId String?
@@ -318,10 +318,10 @@ model SequenceStep {
   stepOrder    Int
   content      String
   delayMinutes Int      @default(0)
-  delayUnit    String   @default("minutes")  // 'minutes' | 'seconds'
+  delayUnit    String   @default("minutes") // 'minutes' | 'seconds'
   mediaUrl     String?
-  mediatype    String?   // 'image' | 'document' | 'video' | 'audio'
-  variations   String   @default("[]")  // JSON: [{content, mediaUrl?, mediatype?}]
+  mediatype    String? // 'image' | 'document' | 'video' | 'audio'
+  variations   String   @default("[]") // JSON: [{content, mediaUrl?, mediatype?}]
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -329,12 +329,12 @@ model SequenceStep {
 }
 
 model CampaignChip {
-  id           String   @id @default(cuid())
-  campaignId   String
-  chipId       String
-  campaign     Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  chip         Chip     @relation(fields: [chipId], references: [id], onDelete: Cascade)
-  assignedAt   DateTime @default(now())
+  id         String   @id @default(cuid())
+  campaignId String
+  chipId     String
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  chip       Chip     @relation(fields: [chipId], references: [id], onDelete: Cascade)
+  assignedAt DateTime @default(now())
 
   // Distribution control — how many contacts this chip should handle in the campaign
   // 0 or null = auto (round-robin equal split), >0 = exact number of contacts assigned
@@ -344,31 +344,31 @@ model CampaignChip {
 }
 
 model Message {
-  id                  String    @id @default(cuid())
-  campaignId          String?
-  chipId              String
-  contactId           String
-  content             String
-  status              String    @default("pending")
-  stepOrder           Int       @default(1)  // Which step in the campaign sequence (1, 2, 3...)
-  sentAt              DateTime?
-  deliveredAt         DateTime?
-  readAt              DateTime?
-  error               String?
-  evolutionMessageId  String?   @unique
-  mediaUrl            String?
-  mediatype           String?   // 'image' | 'document' | 'video' | 'audio'
-  createdAt           DateTime  @default(now())
-  updatedAt           DateTime  @updatedAt
-  campaign            Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
-  chip                Chip      @relation(fields: [chipId], references: [id], onDelete: Cascade)
-  contact             Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  id                 String    @id @default(cuid())
+  campaignId         String?
+  chipId             String
+  contactId          String
+  content            String
+  status             String    @default("pending")
+  stepOrder          Int       @default(1) // Which step in the campaign sequence (1, 2, 3...)
+  sentAt             DateTime?
+  deliveredAt        DateTime?
+  readAt             DateTime?
+  error              String?
+  evolutionMessageId String?   @unique
+  mediaUrl           String?
+  mediatype          String? // 'image' | 'document' | 'video' | 'audio'
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  campaign           Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  chip               Chip      @relation(fields: [chipId], references: [id], onDelete: Cascade)
+  contact            Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
 
   // Prevent duplicate messages: one message per contact per step per campaign
   @@unique([campaignId, contactId, stepOrder])
   @@index([campaignId, status])
   @@index([chipId, status])
-  @@index([chipId, sentAt])          // Delivery rate queries (recent messages by chip)
+  @@index([chipId, sentAt]) // Delivery rate queries (recent messages by chip)
   @@index([status])
 }
 
@@ -381,38 +381,38 @@ model Settings {
 }
 
 model AdminUser {
-  id               String   @id @default(cuid())
-  name             String
-  email            String   @unique
-  password         String   // bcrypt hashed
-  role             String   @default("operador") // 'master' | 'admin' | 'operador'
-  active           Boolean  @default(true)
-  twoFactorSecret  String?
-  twoFactorEnabled Boolean  @default(false)
-  imagem           String   @default("")
-  isSystemUser     Boolean  @default(false)
-  mustChangePassword Boolean @default(true)
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  id                 String   @id @default(cuid())
+  name               String
+  email              String   @unique
+  password           String // bcrypt hashed
+  role               String   @default("operador") // 'master' | 'admin' | 'operador'
+  active             Boolean  @default(true)
+  twoFactorSecret    String?
+  twoFactorEnabled   Boolean  @default(false)
+  imagem             String   @default("")
+  isSystemUser       Boolean  @default(false)
+  mustChangePassword Boolean  @default(true)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 }
 
 model InboxMessage {
-  id              String   @id @default(cuid())
-  instanceName    String
-  chipId          String?
-  remoteJid       String
-  remotePhone     String   @default("")   // Extracted from remoteJid (without @s.whatsapp.net)
-  fromMe          Boolean  @default(false)
-  messageContent  String   @db.Text
-  messageType     String   @default("text")
-  mediaUrl        String?                 // URL da mídia (imagem, vídeo, etc.)
-  pushName        String?
-  contactName     String?                 // Nome do contato (do pushName ou tabela Contact)
-  evolutionMsgId  String?  @unique
-  isRead          Boolean  @default(false)
-  isGroup         Boolean  @default(false) // Se a mensagem veio de um grupo
-  isCampaign      Boolean  @default(false) // Se a mensagem foi enviada por campanha (não é conversa real)
-  createdAt       DateTime @default(now())
+  id             String   @id @default(cuid())
+  instanceName   String
+  chipId         String?
+  remoteJid      String
+  remotePhone    String   @default("") // Extracted from remoteJid (without @s.whatsapp.net)
+  fromMe         Boolean  @default(false)
+  messageContent String   @db.Text
+  messageType    String   @default("text")
+  mediaUrl       String? // URL da mídia (imagem, vídeo, etc.)
+  pushName       String?
+  contactName    String? // Nome do contato (do pushName ou tabela Contact)
+  evolutionMsgId String?  @unique
+  isRead         Boolean  @default(false)
+  isGroup        Boolean  @default(false) // Se a mensagem veio de um grupo
+  isCampaign     Boolean  @default(false) // Se a mensagem foi enviada por campanha (não é conversa real)
+  createdAt      DateTime @default(now())
 
   // ============================================================
   // DELIVERY RECEIPT TRACKING (Chatwoot-like)
@@ -427,10 +427,10 @@ model InboxMessage {
   //
   // Status is MONOTONIC — only upgrades, never downgrades.
   // This prevents race conditions where "delivered" arrives before "sent".
-  ack             Int      @default(0)     // Raw ack value from Evolution API (0-5)
-  status          String   @default("pending")  // "pending" | "sent" | "delivered" | "read" | "failed"
-  deliveredAt     DateTime?                     // When the message was delivered (double tick)
-  readAt          DateTime?                     // When the message was read (blue tick)
+  ack         Int       @default(0) // Raw ack value from Evolution API (0-5)
+  status      String    @default("pending") // "pending" | "sent" | "delivered" | "read" | "failed"
+  deliveredAt DateTime? // When the message was delivered (double tick)
+  readAt      DateTime? // When the message was read (blue tick)
 
   // ============================================================
   // QUOTED MESSAGE / REPLY (Chatwoot-like content_attributes)
@@ -438,10 +438,10 @@ model InboxMessage {
   // When someone replies to a message, WhatsApp includes contextInfo
   // with the original message's stanzaId. We store a reference so
   // the UI can render the quoted message preview (WhatsApp-style).
-  quotedMsgId     String?                       // evolutionMsgId of the message being replied to
-  quotedContent   String?  @db.Text             // Preview text of the quoted message (for quick display)
-  quotedType      String?                       // Type of quoted message (text, image, etc.)
-  quotedPushName  String?                       // pushName of the sender of the quoted message
+  quotedMsgId    String? // evolutionMsgId of the message being replied to
+  quotedContent  String? @db.Text // Preview text of the quoted message (for quick display)
+  quotedType     String? // Type of quoted message (text, image, etc.)
+  quotedPushName String? // pushName of the sender of the quoted message
 
   // ============================================================
   // REACTIONS (WhatsApp-style emoji reactions)
@@ -450,28 +450,28 @@ model InboxMessage {
   // When we receive a reactionMessage, we find the target message and
   // add the emoji to its reactionEmoji field.
   // Format: JSON array of { "emoji": "👍", "from": "pushName", "fromJid": "remoteJid" }
-  reactionEmoji   String?                       // JSON array of reaction objects
+  reactionEmoji String? // JSON array of reaction objects
 
   // ============================================================
   // ENRICHED MEDIA METADATA
   // ============================================================
-  fileName        String?                       // Original file name for documents
-  mimeType        String?                       // MIME type of media
-  mediaCaption    String?  @db.Text             // Caption separate from messageContent (for images/videos)
-  mediaDuration   Int?                          // Duration in seconds (for audio/video)
+  fileName      String? // Original file name for documents
+  mimeType      String? // MIME type of media
+  mediaCaption  String? @db.Text // Caption separate from messageContent (for images/videos)
+  mediaDuration Int? // Duration in seconds (for audio/video)
 
-  chip            Chip?    @relation(fields: [chipId], references: [id], onDelete: Cascade)
+  chip Chip? @relation(fields: [chipId], references: [id], onDelete: Cascade)
 
   // v2.1: Link to Conversation (Chatwoot-like) — null for old messages before migration
-  conversationId  String?
-  conversation    Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  conversationId String?
+  conversation   Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
 
   @@index([chipId, remoteJid, createdAt])
   @@index([chipId, isRead])
   @@index([instanceName, createdAt])
   @@index([isCampaign])
-  @@index([status])                    // For delivery rate queries
-  @@index([evolutionMsgId])            // For fast ack updates from webhook
+  @@index([status]) // For delivery rate queries
+  @@index([evolutionMsgId]) // For fast ack updates from webhook
 }
 
 // ============================================================
@@ -484,22 +484,22 @@ model InboxMessage {
 // This follows Chatwoot's pattern of storing group info as
 // Contact metadata, but in a dedicated table for efficiency.
 model GroupMetadata {
-  id              String   @id @default(cuid())
-  groupJid        String   @unique             // Full JID: 123456789-1234567890@g.us
-  subject         String                       // Group name (social name)
-  subjectOwner    String?                      // JID of who set the name
-  subjectAt       DateTime?                    // When the name was last changed
-  participantCount Int     @default(0)          // Number of participants
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  id               String    @id @default(cuid())
+  groupJid         String    @unique // Full JID: 123456789-1234567890@g.us
+  subject          String // Group name (social name)
+  subjectOwner     String? // JID of who set the name
+  subjectAt        DateTime? // When the name was last changed
+  participantCount Int       @default(0) // Number of participants
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
   // Link to chip — group metadata is per-chip because different
   // chips may see different group info (e.g., if one was removed)
-  chipId          String?
-  chip            Chip?    @relation(fields: [chipId], references: [id], onDelete: Cascade)
+  chipId String?
+  chip   Chip?   @relation(fields: [chipId], references: [id], onDelete: Cascade)
 
   @@index([chipId])
-  @@index([subject])                // For search
+  @@index([subject]) // For search
 }
 
 // ============================================================
@@ -516,44 +516,44 @@ model GroupMetadata {
 //   - Agent assignment and routing
 //   - Real-time conversation updates via WebSocket
 model Conversation {
-  id              String   @id @default(cuid())
-  chipId          String                            // FK to Chip (= Inbox in Chatwoot)
-  remoteJid       String                            // WhatsApp JID (phone@s.whatsapp.net or group@g.us)
-  remotePhone     String   @default("")             // Extracted phone number
-  contactName     String?                           // Display name (contact or group)
-  pushName        String?                           // WhatsApp push name
-  groupName       String?                           // Group subject (official/social name)
-  isGroup         Boolean  @default(false)          // Whether this is a group conversation
-  isArchived      Boolean  @default(false)          // Soft archive (WhatsApp archive or manual)
+  id          String  @id @default(cuid())
+  chipId      String // FK to Chip (= Inbox in Chatwoot)
+  remoteJid   String // WhatsApp JID (phone@s.whatsapp.net or group@g.us)
+  remotePhone String  @default("") // Extracted phone number
+  contactName String? // Display name (contact or group)
+  pushName    String? // WhatsApp push name
+  groupName   String? // Group subject (official/social name)
+  isGroup     Boolean @default(false) // Whether this is a group conversation
+  isArchived  Boolean @default(false) // Soft archive (WhatsApp archive or manual)
 
   // Chatwoot-like conversation status
-  status          String   @default("open")         // "open" | "resolved" | "pending" | "snoozed"
+  status String @default("open") // "open" | "resolved" | "pending" | "snoozed"
 
   // Last activity tracking (for conversation list sorting)
-  lastMessageAt   DateTime @default(now())          // Timestamp of last message
-  lastMessagePreview String? @db.Text               // Preview text of last message
-  lastMessageType String?                           // Type of last message
-  lastMessageFromMe Boolean @default(false)         // Whether last message was from us
-  lastMessageStatus String?                         // Status of last message (for check marks)
+  lastMessageAt      DateTime @default(now()) // Timestamp of last message
+  lastMessagePreview String?  @db.Text // Preview text of last message
+  lastMessageType    String? // Type of last message
+  lastMessageFromMe  Boolean  @default(false) // Whether last message was from us
+  lastMessageStatus  String? // Status of last message (for check marks)
 
   // Unread tracking
-  unreadCount     Int      @default(0)              // Number of unread incoming messages
+  unreadCount Int @default(0) // Number of unread incoming messages
 
   // Contact metadata (cached for fast list queries)
-  profilePicUrl   String?                           // Contact profile picture URL
-  participantCount Int?                             // Group participant count
+  profilePicUrl    String? // Contact profile picture URL
+  participantCount Int? // Group participant count
 
   // Timestamps
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   // Relations
-  chip            Chip     @relation(fields: [chipId], references: [id], onDelete: Cascade)
-  messages        InboxMessage[]                    // Messages in this conversation
+  chip     Chip           @relation(fields: [chipId], references: [id], onDelete: Cascade)
+  messages InboxMessage[] // Messages in this conversation
 
-  @@unique([chipId, remoteJid])                    // One conversation per chip+contact
-  @@index([chipId, lastMessageAt])                 // For sorted conversation list queries
-  @@index([chipId, status])                        // For filtering by status
+  @@unique([chipId, remoteJid]) // One conversation per chip+contact
+  @@index([chipId, lastMessageAt]) // For sorted conversation list queries
+  @@index([chipId, status]) // For filtering by status
   @@index([isArchived])
 }
 
@@ -576,11 +576,11 @@ model Conversation {
 // começa a operar na esteira de vendas.
 
 model WarmingSession {
-  id              String   @id @default(cuid())
-  name            String
+  id   String @id @default(cuid())
+  name String
 
   // Status: draft | running | paused | completed | cancelled
-  status          String   @default("draft")
+  status String @default("draft")
 
   // Estratégia de conversação
   // "pairs"      — chips são pareados (A↔B, C↔D)
@@ -591,20 +591,20 @@ model WarmingSession {
   //                que responde manualmente; o motor detecta a resposta via webhook e
   //                dispara a próxima mensagem do pool. Se passar X minutos sem resposta,
   //                conta como "missed reply"; após Y consecutivos, encerra o dia do chip.
-  strategy        String   @default("round_robin")
+  strategy String @default("round_robin")
 
   // --- Estratégia "ai_bot" ---
   // Número do operador humano (Duda). Default: 4899670797 (Brasil, sem prefixo 55 —
   // a Evolution API adiciona o 55 automaticamente via formatPhoneNumber).
   aiBotPhoneNumber      String?
   // Tempo máximo (em segundos) esperando resposta do Duda antes de contar como "missed".
-  aiBotReplyTimeoutSec  Int      @default(300)
+  aiBotReplyTimeoutSec  Int     @default(300)
   // Máximo de "missed replies" consecutivos antes de encerrar a conversa do dia do chip.
-  aiBotMaxMissedReplies Int      @default(2)
+  aiBotMaxMissedReplies Int     @default(2)
 
   // Pool de chips participantes — JSON array de chip IDs
   // ["chip_id_1", "chip_id_2", ...]
-  chipIds         String   @default("[]")
+  chipIds String @default("[]")
 
   // Templates de mensagens para o aquecimento
   // JSON array de objetos:
@@ -626,44 +626,44 @@ model WarmingSession {
   //     "weight": 0.5
   //   }
   // ]
-  messageTemplates String  @default("[]")
+  messageTemplates String @default("[]")
 
   // Configuração do aquecimento
-  messagesPerChip  Int      @default(150)       // Meta de mensagens por chip (envio + recebimento)
-  messagesSent     Int      @default(0)          // Total de mensagens enviadas na sessão
-  messagesFailed   Int      @default(0)          // Total de falhas
-  intervalMin      Int      @default(45)         // Segundos mínimos entre mensagens (mais conservador que campanhas)
-  intervalMax      Int      @default(120)        // Segundos máximos entre mensagens
-  activeHoursStart Int      @default(480)        // Início da janela de envio (minutos desde meia-noite, 480=8:00)
-  activeHoursEnd   Int      @default(1260)       // Fim da janela de envio (1260=21:00)
-  breakWindows     String   @default("[]")       // JSON: [{"start":720,"end":810,"label":"Almoço"}]
-  timezone         String   @default("America/Sao_Paulo")
+  messagesPerChip  Int    @default(150) // Meta de mensagens por chip (envio + recebimento)
+  messagesSent     Int    @default(0) // Total de mensagens enviadas na sessão
+  messagesFailed   Int    @default(0) // Total de falhas
+  intervalMin      Int    @default(45) // Segundos mínimos entre mensagens (mais conservador que campanhas)
+  intervalMax      Int    @default(120) // Segundos máximos entre mensagens
+  activeHoursStart Int    @default(480) // Início da janela de envio (minutos desde meia-noite, 480=8:00)
+  activeHoursEnd   Int    @default(1260) // Fim da janela de envio (1260=21:00)
+  breakWindows     String @default("[]") // JSON: [{"start":720,"end":810,"label":"Almoço"}]
+  timezone         String @default("America/Sao_Paulo")
 
   // Distribuição de tipos de mensagem (percentuais)
   // JSON: {"text": 47, "image": 27, "audio": 26}  → 70+40+40 = 150 por chip
   messageTypeDistribution String @default("{\"text\":47,\"image\":27,\"audio\":26}")
 
   // Agendamento
-  scheduledAt      DateTime?
-  startedAt        DateTime?
-  completedAt      DateTime?
-  pausedAt         DateTime?
-  lastMessageAt    DateTime?
+  scheduledAt   DateTime?
+  startedAt     DateTime?
+  completedAt   DateTime?
+  pausedAt      DateTime?
+  lastMessageAt DateTime?
 
   // Controle de progresso por chip — JSON
   // {"chip_id_1": {"sent": 30, "received": 28, "lastSentAt": "..."}, ...}
-  chipProgress     String   @default("{}")
+  chipProgress String @default("{}")
 
   // Último par que conversou — para round_robin continuar de onde parou
   // {"lastSenderIdx": 2, "lastRecipientIdx": 5}
-  lastPair         String   @default("{}")
+  lastPair String @default("{}")
 
   // Erros e diagnóstico
-  lastError        String?
-  errorCount       Int      @default(0)
+  lastError  String?
+  errorCount Int     @default(0)
 
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([status])
   @@index([status, scheduledAt])
@@ -683,46 +683,46 @@ model WarmingSession {
 // (ex: telefone desligado por muitos dias por bateria).
 
 model BlockedContact {
-  id            String   @id @default(cuid())
-  chipId        String                            // Chip que tentou enviar
-  chip          Chip     @relation(fields: [chipId], references: [id], onDelete: Cascade)
-  contactPhone  String                            // Phone number of blocked contact (for quick lookup)
-  contactId     String?                           // Optional link to Contact record
-  contact       Contact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  id           String   @id @default(cuid())
+  chipId       String // Chip que tentou enviar
+  chip         Chip     @relation(fields: [chipId], references: [id], onDelete: Cascade)
+  contactPhone String // Phone number of blocked contact (for quick lookup)
+  contactId    String? // Optional link to Contact record
+  contact      Contact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
 
   // Detection details
-  reason        String   @default("undelivered")  // "undelivered" | "manual" | "profile_pic_gone"
-  confidence    String   @default("medium")       // "low" | "medium" | "high"
-  undeliveredCount Int   @default(0)              // How many messages were never delivered to this contact
-  lastSentAt    DateTime?                         // When the last undelivered message was sent
-  detectedAt    DateTime  @default(now())         // When we detected the block
+  reason           String    @default("undelivered") // "undelivered" | "manual" | "profile_pic_gone"
+  confidence       String    @default("medium") // "low" | "medium" | "high"
+  undeliveredCount Int       @default(0) // How many messages were never delivered to this contact
+  lastSentAt       DateTime? // When the last undelivered message was sent
+  detectedAt       DateTime  @default(now()) // When we detected the block
 
   // User management
-  autoBlocked   Boolean  @default(true)           // true = detected by system, false = manual
-  unblockedAt   DateTime?                         // When user manually unblocked
-  unblockReason String?                           // Why user unblocked (e.g., "false positive — battery was dead")
+  autoBlocked   Boolean   @default(true) // true = detected by system, false = manual
+  unblockedAt   DateTime? // When user manually unblocked
+  unblockReason String? // Why user unblocked (e.g., "false positive — battery was dead")
 
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  @@unique([chipId, contactPhone])                // One block record per chip+phone
+  @@unique([chipId, contactPhone]) // One block record per chip+phone
   @@index([chipId])
   @@index([contactPhone])
-  @@index([unblockedAt])                          // Filter active blocks (unblockedAt = null)
+  @@index([unblockedAt]) // Filter active blocks (unblockedAt = null)
 }
 
 model AuditLog {
-  id        String   @id @default(cuid())
-  userId    String?
-  userName  String?
-  userRole  String?
-  action    String
-  category  String   @default("general")
-  targetId  String?
+  id         String   @id @default(cuid())
+  userId     String?
+  userName   String?
+  userRole   String?
+  action     String
+  category   String   @default("general")
+  targetId   String?
   targetType String?
-  details   Json?
-  ipAddress String?
-  timestamp DateTime @default(now())
+  details    Json?
+  ipAddress  String?
+  timestamp  DateTime @default(now())
 
   @@index([timestamp])
   @@index([category])
@@ -753,10 +753,10 @@ model AuditLog {
 
 model WarmingMessagePool {
   id        String   @id @default(cuid())
-  category  String                       // uma das 8 categorias listadas acima
-  content   String                       // conteúdo da mensagem (texto ou emoji)
-  weight    Float    @default(1.0)       // peso relativo para sorteio
-  active    Boolean  @default(true)      // permite desativar sem deletar
+  category  String // uma das 8 categorias listadas acima
+  content   String // conteúdo da mensagem (texto ou emoji)
+  weight    Float    @default(1.0) // peso relativo para sorteio
+  active    Boolean  @default(true) // permite desativar sem deletar
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -764,56 +764,174 @@ model WarmingMessagePool {
   @@index([active])
 }
 
-
 // ============================================================
 // PROSPECÇÃO DE LEADS — Google Places API
 // ============================================================
 
-model Lead {
-  id              String   @id @default(cuid())
-  source          String   @default("google_places")  // google_places | outro provedor
-  placeId         String   @unique                     // Google place_id (dedup)
-  name            String
-  phone           String?  // E.164 normalizado: 5548999670797
-  phoneRaw        String?  // original do Google: +55 48 3204-4785
-  cnpj            String?                     // CNPJ extraído do site (14 dígitos)
-  website         String?
-  address         String?
-  city            String?
-  state           String?
-  lat             Float?
-  lng             Float?
-  rating          Float?
-  reviewsCount    Int?
-  categories      String   @default("[]")              // JSON array: ["restaurant", "food"]
-  status          String   @default("new")              // new | imported | duplicate | rejected
-  importedToContactId String?
-  searchQueryId   String?
-  searchQuery     SearchQuery? @relation(fields: [searchQueryId], references: [id])
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+// ============================================================
+// Cole este bloco NO FINAL do seu prisma/schema.prisma existente.
+// Não remova nenhum model existente (User, Contato, etc.)
+// ============================================================
 
-  @@index([phone])
-  @@index([searchQueryId])
-  @@index([status])
-  @@index([source])
+model Lead {
+  id               String  @id @default(cuid())
+  placeId          String  @unique
+  name             String?
+  formattedAddress String?
+  website          String?
+  phone            String?
+  rating           Float?
+  userRatingCount  Int?
+  googleMapsUri    String?
+  businessStatus   String?
+
+  streetNumber       String?
+  route              String?
+  sublocality        String?
+  locality           String?
+  administrativeArea String?
+  postalCode         String?
+  country            String?
+
+  cnpj            String?
+  cnpjFormatted   String?
+  cnpjSource      String?
+  cnpjConfidence  Int?
+  cnpjFetchStatus String    @default("pending")
+  cnpjFetchedAt   DateTime?
+
+  razaoSocial             String?
+  nomeFantasia            String?
+  situacaoCadastral       String?
+  dataSituacaoCadastral   String?
+  motivoSituacaoCadastral String?
+  naturezaJuridica        String?
+  dataAbertura            String?
+  capitalSocial           Float?
+  porte                   String?
+  tipoEmpresa             String?
+
+  emailReceita    String?
+  telefoneReceita String?
+
+  enderecoBairro         String?
+  enderecoCep            String?
+  enderecoMunicipio      String?
+  enderecoUf             String?
+  enderecoNumero         String?
+  enderecoComplemento    String?
+  enderecoLogradouro     String?
+  enderecoTipoLogradouro String?
+
+  cnaePrincipalCodigo String?
+  cnaePrincipalTexto  String?
+  cnafeSecundarioJson Json?
+
+  receitawsJson      Json?
+  receitawsFetchedAt DateTime?
+  receitawsStatus    String    @default("pending")
+
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+  searchQueryId       String?
+  searchQuery         SearchQuery? @relation("SearchQueryLeads", fields: [searchQueryId], references: [id])
+  status              String       @default("novo") // novo | importing | imported | error
+  importedToContactId String?
+
+  @@index([cnpj])
+  @@index([cnpjFetchStatus])
+  @@index([receitawsStatus])
+  @@index([locality, administrativeArea])
+  score            Int?
+  pipelineStatus   String  @default("novo")
+  duplicateOfId    String?
+  notes            LeadNote[]
+  tagAssignments   LeadTagAssignment[]
+  listMemberships  LeadListMember[]
+
+  @@index([score])
+  @@index([pipelineStatus])
+  @@index([duplicateOfId])
+  @@index([createdAt])
 }
 
 model SearchQuery {
-  id              String   @id @default(cuid())
-  keyword         String   // ex: "pizzaria"
-  location        String   // ex: "Florianópolis, SC"
-  lat             Float?
-  lng             Float?
-  radiusKm        Int      @default(10)
-  filters         String   @default("{}")               // JSON: {hasPhone, hasWebsite, minRating, minReviews}
-  resultCount     Int      @default(0)                  // total leads salvos
-  newCount        Int      @default(0)                  // leads novos (não duplicados)
-  duplicateCount  Int      @default(0)
-  costEstimate    Float    @default(0)                  // USD
-  lastRunAt       DateTime?
-  createdAt       DateTime @default(now())
-  leads           Lead[]
+  id             String    @id @default(cuid())
+  keyword        String // ex: "pizzaria"
+  location       String // ex: "Florianópolis, SC"
+  lat            Float?
+  lng            Float?
+  radiusKm       Int       @default(10)
+  filters        String    @default("{}") // JSON: {hasPhone, hasWebsite, minRating, minReviews}
+  resultCount    Int       @default(0) // total leads salvos
+  newCount       Int       @default(0) // leads novos (não duplicados)
+  duplicateCount Int       @default(0)
+  costEstimate   Float     @default(0) // USD
+  lastRunAt      DateTime?
+  createdAt      DateTime  @default(now())
+  leads          Lead[]    @relation("SearchQueryLeads")
 
   @@index([keyword, location])
+}
+
+model SavedFilter {
+  id        String   @id @default(cuid())
+  name      String
+  config    Json
+  isShared  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([name])
+}
+
+model LeadTag {
+  id        String              @id @default(cuid())
+  name      String              @unique
+  color     String              @default("zinc")
+  createdAt DateTime            @default(now())
+  assignments LeadTagAssignment[]
+}
+
+model LeadTagAssignment {
+  leadId String
+  tagId  String
+  lead   Lead   @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  tag    LeadTag @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  addedAt DateTime @default(now())
+
+  @@id([leadId, tagId])
+  @@index([tagId])
+}
+
+model LeadList {
+  id          String            @id @default(cuid())
+  name        String
+  description String?
+  color       String            @default("zinc")
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  members     LeadListMember[]
+}
+
+model LeadListMember {
+  leadId String
+  listId String
+  addedAt DateTime @default(now())
+  lead   Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  list   LeadList @relation(fields: [listId], references: [id], onDelete: Cascade)
+
+  @@id([leadId, listId])
+  @@index([listId])
+}
+
+model LeadNote {
+  id        String   @id @default(cuid())
+  leadId    String
+  body      String
+  author    String   @default("sistema")
+  createdAt DateTime @default(now())
+  lead      Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([leadId])
 }

@@ -59,22 +59,26 @@ export async function POST(request: NextRequest) {
       try {
         const contact = await db.contact.create({
           data: {
-            name: lead.name,
-            phone: lead.phone!,
+            name: lead.name || 'Sem nome',
+            phone: lead.phone || '',
             contactListId: finalContactListId,
             position: nextPosition++,
             customFields: JSON.stringify({
               empresa: lead.name,
-              telefone: lead.phoneRaw || lead.phone,
+              telefone: lead.phone || '',
               site: lead.website || '',
-              endereco: lead.address || '',
-              cidade: lead.city || '',
-              estado: lead.state || '',
+              endereco: lead.formattedAddress || '',
+              cidade: lead.locality || '',
+              estado: lead.administrativeArea || '',
               rating: lead.rating?.toString() || '',
-              reviews: lead.reviewsCount?.toString() || '',
-              categorias: lead.categories || '[]',
+              reviews: lead.userRatingCount?.toString() || '',
+              categorias: '[]',
               fonte: 'google_places',
               placeId: lead.placeId,
+              cnpj: lead.cnpj || '',
+              razaoSocial: lead.razaoSocial || '',
+              cnae: lead.cnaePrincipalTexto || '',
+              situacao: lead.situacaoCadastral || '',
             }),
           },
         })
@@ -89,7 +93,7 @@ export async function POST(request: NextRequest) {
 
         created.push(contact)
       } catch (err: any) {
-        errors.push({ leadId: lead.id, name: lead.name, error: err.message })
+        errors.push({ leadId: lead.id, name: lead.name || 'Sem nome', error: err.message })
       }
     }
 

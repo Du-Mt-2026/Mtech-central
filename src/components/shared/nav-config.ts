@@ -1,13 +1,7 @@
 // ===== Navigation Items =====
 // Role hierarchy: master > admin > operador
 // Extracted verbatim from src/app/page.tsx (P2.1-split-4).
-import {
-  BarChart3,
-  Search, Smartphone, Inbox, Users, ShieldCheck, Send, FileText,
-  Key, Flame, MessageSquare, UserPlus, Server, Settings, Shield,
-} from 'lucide-react'
-
-export const ROLE_LEVELS: Record<string, number> = { master: 3, admin: 2, operador: 1 }
+import { BarChart3, Search, Smartphone, Inbox, Users, ShieldCheck, Send, FileText, Key, Flame, MessageSquare, UserPlus, Server, Settings, Shield, Building2 } from 'lucide-react';export const ROLE_LEVELS: Record<string, number> = { master: 3, admin: 2, operador: 1 }
 
 export const NAV_ITEMS = [
   { id: 'dashboard', label: 'Dashboard', icon: BarChart3, minRole: 'operador' },

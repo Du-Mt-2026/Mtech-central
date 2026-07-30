@@ -1,49 +1,22 @@
-# ============================================
-# OctupusZap - Docker Compose (isolado)
-# ============================================
-# Roda completamente separado dos outros serviços da VPS.
-# Usa a rede Traefik existente para roteamento.
-#
-# Para iniciar:  docker compose up -d
-# Para parar:    docker compose down
-# Para logs:     docker compose logs -f app
-# Para rebuild:  docker compose up -d --build
-#
-# IMPORTANTE: Antes de usar, edite o .env com suas configurações!
-
 services:
-  # ==========================================
-  # Migrations - Roda prisma db push antes do app
-  # ==========================================
-  # Usa uma imagem com todas as deps (inclusive prisma CLI)
-  # para criar/atualizar o schema do banco.
   migrate:
     build:
       context: .
       dockerfile: Dockerfile
-      target: builder  # Para no estágio builder (tem todas as deps)
+      target: builder
     container_name: octupuszap-migrate
     environment:
-      - DATABASE_URL=postgresql://octupuszap:${DB_PASSWORD:-octupuszap123}@db:5432/octupuszap?schema=public
+    - "DATABASE_URL=postgresql://octupuszap:${DB_PASSWORD:-octupuszap123}@db:5432/octupuszap?schema=public"
     depends_on:
       db:
         condition: service_healthy
     networks:
-      - internal
-    command: ["sh", "-c", "npx prisma@6 migrate deploy && echo 'Migrations done!'"]
-    restart: "no"  # Roda uma vez e sai
-
-  # ==========================================
-  # App - Next.js (OctupusZap)
-  # ==========================================
-  # SECURITY (P0.6): docker.sock is NOT mounted here.
-  # The app container has zero host access. Any RCE in any of the 101 API
-  # routes is contained to the app container — cannot escalate to host root.
-  #
-  # Deploy is done manually via SSH (see docs/manual-deploy.md).
-  # No auto-deploy mechanism is in use — the previous webhook tool on
-  # port 9000 was broken (config mismatch) and the deploy-receiver
-  # experiment was redundant. Both have been removed.
+    - internal
+    command:
+    - sh
+    - -c
+    - npx prisma@6 migrate deploy && echo 'Migrations done!'
+    restart: 'no'
   app:
     build:
       context: .
@@ -52,55 +25,51 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      - DATABASE_URL=postgresql://octupuszap:${DB_PASSWORD:-octupuszap123}@db:5432/octupuszap?schema=public
-      # Evolution Go local (mesma VPS, rede Traefik)
-      # Usa o hostname do container evolution-go na rede Traefik
-      - EVOLUTION_API_URL=${EVOLUTION_API_URL:-http://evolution-go:8080}
-      # A URL pública do app (para webhooks)
-      - NEXT_PUBLIC_APP_URL=${APP_PUBLIC_URL:-https://octupuszap.seudominio.com}
-      - NODE_ENV=production
+      DATABASE_URL: "postgresql://octupuszap:${DB_PASSWORD:-octupuszap123}@db:5432/octupuszap?schema=public"
+      EVOLUTION_API_URL: "${EVOLUTION_API_URL:-http://evolution-go:8080}"
+      NEXT_PUBLIC_APP_URL: "${APP_PUBLIC_URL:-https://octupuszap.seudominio.com}"
+      NODE_ENV: production
+      GOOGLE_PLACES_API_KEY: "${GOOGLE_PLACES_API_KEY}"
+    volumes:
+      - ./bigquery-service-account.json:/app/bigquery-service-account.json:ro
     depends_on:
       migrate:
         condition: service_completed_successfully
       db:
         condition: service_healthy
     networks:
-      - internal
-      - traefik
+    - internal
+    - traefik
     labels:
-      # Traefik routing
-      - "traefik.enable=true"
-      - "traefik.http.routers.octupuszap.rule=Host(`${APP_DOMAIN:-octupuszap.localhost}`)"
-      - "traefik.http.routers.octupuszap.entrypoints=websecure"
-      - "traefik.http.routers.octupuszap.tls=true"
-      - "traefik.http.routers.octupuszap.tls.certresolver=letsencrypt"
-      - "traefik.http.services.octupuszap.loadbalancer.server.port=3000"
-      # HTTP → HTTPS redirect
-      - "traefik.http.routers.octupuszap-http.rule=Host(`${APP_DOMAIN:-octupuszap.localhost}`)"
-      - "traefik.http.routers.octupuszap-http.entrypoints=web"
-      - "traefik.http.routers.octupuszap-http.middlewares=redirect-to-https"
+    - traefik.enable=true
+    - "traefik.http.routers.octupuszap.rule=Host(`${APP_DOMAIN:-octupuszap.localhost}`)"
+    - traefik.http.routers.octupuszap.entrypoints=websecure
+    - traefik.http.routers.octupuszap.tls=true
+    - traefik.http.routers.octupuszap.tls.certresolver=letsencrypt
+    - traefik.http.services.octupuszap.loadbalancer.server.port=3000
+    - "traefik.http.routers.octupuszap-http.rule=Host(`${APP_DOMAIN:-octupuszap.localhost}`)"
+    - traefik.http.routers.octupuszap-http.entrypoints=web
+    - traefik.http.routers.octupuszap-http.middlewares=redirect-to-https
     deploy:
       resources:
         limits:
           memory: 768M
-
-  # ==========================================
-  # Database - PostgreSQL (isolado do restante)
-  # ==========================================
   db:
     image: postgres:16-alpine
     container_name: octupuszap-db
     restart: unless-stopped
     environment:
-      - POSTGRES_USER=octupuszap
-      - POSTGRES_PASSWORD=${DB_PASSWORD:-octupuszap123}
-      - POSTGRES_DB=octupuszap
+    - POSTGRES_USER=octupuszap
+    - "POSTGRES_PASSWORD=${DB_PASSWORD:-octupuszap123}"
+    - POSTGRES_DB=octupuszap
     volumes:
-      - octupuszap-db-data:/var/lib/postgresql/data
+    - octupuszap-db-data:/var/lib/postgresql/data
     networks:
-      - internal
+    - internal
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U octupuszap"]
+      test:
+      - CMD-SHELL
+      - pg_isready -U octupuszap
       interval: 5s
       timeout: 5s
       retries: 5
@@ -108,101 +77,50 @@ services:
       resources:
         limits:
           memory: 256M
-
-  # ==========================================
-  # Campaign Cron - Processa campanhas a cada 1 minuto
-  # ==========================================
-  # Substitui o cron-job.org (Vercel) por um loop nativo no Docker.
-  # Na VPS não tem limite de frequência nem timeout de 30s!
   campaign-cron:
     image: curlimages/curl:latest
     container_name: octupuszap-campaigns
     restart: unless-stopped
     environment:
-      - CRON_SECRET=${CRON_SECRET:-}
+    - "CRON_SECRET=${CRON_SECRET:-}"
     depends_on:
-      - app
+    - app
     networks:
-      - internal
-    entrypoint: ["sh", "-c"]
+    - internal
+    entrypoint:
+    - sh
+    - -c
     command:
-      - |
-        echo "📋 Campaign cron started (every 60 seconds)..."
-        # Wait for app to be ready
-        sleep 15
-        while true; do
-          if [ -n "$$CRON_SECRET" ]; then
-            curl -sf -X POST http://app:3000/api/campaigns/process-all \
-              -H "x-cron-secret: $$CRON_SECRET" \
-              || echo "[$(date)] Campaign cron request failed"
-          else
-            curl -sf -X POST http://app:3000/api/campaigns/process-all \
-              || echo "[$(date)] Campaign cron request failed"
-          fi
-          sleep 60
-        done
+    - "echo \"\U0001F4CB Campaign cron started (every 60 seconds)...\"\n# Wait for app to be ready\nsleep 15\nwhile true; do\n  if [ -n \"$$CRON_SECRET\" ]; then\n    curl -sf -X POST http://app:3000/api/campaigns/process-all \\\n      -H \"x-cron-secret: $$CRON_SECRET\" \\\n      || echo \"[$(date)] Campaign cron request failed\"\n  else\n    curl -sf -X POST http://app:3000/api/campaigns/process-all \\\n      || echo \"[$(date)] Campaign cron request failed\"\n  fi\n  sleep 60\ndone\n"
     deploy:
       resources:
         limits:
           memory: 32M
-
-  # ==========================================
-  # Health Check Cron - Monitora instâncias a cada 5 minutos
-  # ==========================================
-  # Detecta instâncias presas em "Reconnecting" e tenta recuperar.
-  # Usa imagem leve (curl) ao invés do Next.js inteiro.
   health-cron:
     image: curlimages/curl:latest
     container_name: octupuszap-health
     restart: unless-stopped
     environment:
-      - CRON_SECRET=${CRON_SECRET:-}
+    - "CRON_SECRET=${CRON_SECRET:-}"
     depends_on:
-      - app
+    - app
     networks:
-      - internal
-    entrypoint: ["sh", "-c"]
+    - internal
+    entrypoint:
+    - sh
+    - -c
     command:
-      - |
-        echo "⏰ Health check cron started (every 5 minutes)..."
-        # Wait for app to be ready
-        sleep 30
-        while true; do
-          if [ -n "$$CRON_SECRET" ]; then
-            curl -sf -X POST http://app:3000/api/cron/health-check \
-              -H "Authorization: Bearer $$CRON_SECRET" \
-              || echo "[$(date)] Health check request failed"
-          else
-            curl -sf -X POST http://app:3000/api/cron/health-check \
-              || echo "[$(date)] Health check request failed"
-          fi
-          sleep 300
-        done
+    - "echo \"⏰ Health check cron started (every 5 minutes)...\"\n# Wait for app to be ready\nsleep 30\nwhile true; do\n  if [ -n \"$$CRON_SECRET\" ]; then\n    curl -sf -X POST http://app:3000/api/cron/health-check \\\n      -H \"Authorization: Bearer $$CRON_SECRET\" \\\n      || echo \"[$(date)] Health check request failed\"\n  else\n    curl -sf -X POST http://app:3000/api/cron/health-check \\\n      || echo \"[$(date)] Health check request failed\"\n  fi\n  sleep 300\ndone\n"
     deploy:
       resources:
         limits:
           memory: 32M
-
-# ==========================================
-# Networks
-# ==========================================
 networks:
-  # Rede interna (app ↔ banco ↔ crons) — isolada do resto
   internal:
     driver: bridge
-
-  # Rede do Traefik (existente na VPS) — para roteamento + acesso ao evolution-go
-  # IMPORTANTE: O nome deve ser o mesmo da rede Traefik que já existe!
-  # Descubra com: docker network ls | grep traefik
-  # O container evolution-go DEVE estar nesta rede para que o app
-  # consiga acessá-lo via http://evolution-go:8080
   traefik:
     external: true
-    name: ${TRAEFIK_NETWORK:-duda-bot_duda-network}
-
-# ==========================================
-# Volumes
-# ==========================================
+    name: "${TRAEFIK_NETWORK:-duda-bot_duda-network}"
 volumes:
   octupuszap-db-data:
     driver: local

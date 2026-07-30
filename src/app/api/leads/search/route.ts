@@ -1,241 +1,191 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { db } from '@/lib/db'
-import { searchTextWithPagination, geocodeAddress, extractCnpjFromWebsite } from '@/lib/places-client'
+import { NextRequest, NextResponse } from 'next/server';
+import { PrismaClient } from '@prisma/client';
+import { searchPlaces, extractCnpjFromWebsite, formatCnpj, validateCnpj } from '@/lib/places-client';
+import { findCnpjByName, findCnpjByNameNoUF, isBigQueryConfigured } from '@/lib/bigquery-cnpj-finder';
+import { consultarReceitaWS, receitawsToDBFields } from '@/lib/receitaws-client';
 
-interface SearchRequest {
-  keyword: string
-  location: string
-  radiusKm?: number
-  minRating?: number
-  minReviews?: number
-  hasWebsite?: 'any' | 'yes' | 'no'
-  hasPhoneOnly?: boolean
-  openNow?: boolean
-  maxResults?: number
-  sortBy?: 'relevance' | 'rating' | 'reviews' | 'distance'
-  excludeImported?: boolean
-}
+const prisma = new PrismaClient();
 
-function normalizePhone(intl?: string, national?: string): string | null {
-  const raw = intl || national || ''
-  if (!raw) return null
-  // Remove tudo que não for dígito
-  const digits = raw.replace(/\D/g, '')
-  if (digits.length < 10) return null
-  // Garante prefixo 55 (Brasil)
-  if (digits.startsWith('55')) return digits
-  if (digits.length === 10 || digits.length === 11) return `55${digits}`
-  return digits
-}
+/**
+ * Pipeline automático de CNPJ para um lead.
+ * Camadas: scraper do site → BigQuery fuzzy match → ReceitaWS enrichment.
+ * Atualiza o lead no banco com os campos encontrados.
+ */
+async function fillCnpjForLead(leadId: string): Promise<void> {
+  const lead = await prisma.lead.findUnique({ where: { id: leadId } });
+  if (!lead) return;
+  if (lead.cnpj && lead.cnpjFetchStatus === 'ok') return; // já preenchido
 
-export async function POST(req: NextRequest) {
-  try {
-    const body: SearchRequest = await req.json()
-    const {
-      keyword,
-      location,
-      radiusKm = 10,
-      minRating = 0,
-      minReviews = 0,
-      hasWebsite = 'any',
-      hasPhoneOnly = true,
-      openNow = false,
-      maxResults = 20,
-      sortBy = 'relevance',
-      excludeImported = true,
-    } = body
+  let cnpjFound: string | null = null;
+  let cnpjSource: 'scraper' | 'bigquery' = 'scraper';
+  let bigQueryScore: number | null = null;
 
-    if (!keyword?.trim() || !location?.trim()) {
-      return NextResponse.json(
-        { error: 'keyword e location são obrigatórios' },
-        { status: 400 }
-      )
+  // CAMADA 1: Scraper do site
+  if (lead.website) {
+    try {
+      const { cnpj, sourceUrl } = await extractCnpjFromWebsite(lead.website);
+      if (cnpj && validateCnpj(cnpj)) {
+        cnpjFound = cnpj;
+        cnpjSource = 'scraper';
+        console.log(`[auto-cnpj] lead ${leadId} scraper:found via ${sourceUrl}`);
+      }
+    } catch (e) {
+      console.log(`[auto-cnpj] lead ${leadId} scraper:error`, e);
     }
+  }
 
-    const apiKey = process.env.GOOGLE_PLACES_API_KEY
-    if (!apiKey) {
-      return NextResponse.json(
-        { error: 'GOOGLE_PLACES_API_KEY não configurada' },
-        { status: 500 }
-      )
-    }
-
-    // 1. Geocodificar localização
-    const coords = await geocodeAddress(location, apiKey)
-
-    // 2. Buscar no Places (com paginação até maxResults)
-    const places = await searchTextWithPagination(
-      {
-        textQuery: `${keyword} em ${location}`,
-        locationBias: {
-          circle: {
-            center: coords,
-            radius: Math.min(radiusKm, 50) * 1000, // metros (max 50km - Places API limit)
+  // CAMADA 2: BigQuery fuzzy match
+  if (!cnpjFound && isBigQueryConfigured() && lead.name) {
+    try {
+      const uf = lead.administrativeArea || '';
+      let matches = uf
+        ? await findCnpjByName(lead.name, uf, { limit: 5, minScore: 60, cidade: lead.locality ?? undefined })
+        : [];
+      if (matches.length === 0) {
+        matches = await findCnpjByNameNoUF(lead.name, { limit: 5, minScore: 70, cidade: lead.locality ?? undefined });
+      }
+      if (matches.length > 0) {
+        const best = matches[0];
+        cnpjFound = best.cnpj;
+        cnpjSource = 'bigquery';
+        bigQueryScore = best.score;
+        console.log(`[auto-cnpj] lead ${leadId} bigquery:found score=${best.score}`);
+        await prisma.lead.update({
+          where: { id: leadId },
+          data: {
+            cnpj: best.cnpj,
+            cnpjFormatted: formatCnpj(best.cnpj),
+            cnpjSource: `bigquery:${best.matchedBy}`,
+            cnpjConfidence: best.score,
+            cnpjFetchStatus: 'ok',
+            cnpjFetchedAt: new Date(),
+            razaoSocial: best.razaoSocial,
+            nomeFantasia: best.nomeFantasia,
+            situacaoCadastral: best.situacaoCadastral,
+            cnaePrincipalCodigo: best.cnaeCodigo,
+            cnaePrincipalTexto: best.cnaeTexto,
+            enderecoMunicipio: best.municipio,
+            enderecoUf: best.uf,
+            capitalSocial: best.capitalSocial,
           },
-        },
-        isOpenNow: openNow,
-        pageSize: 20,
-      },
-      apiKey,
-      Math.min(maxResults, 60)
-    )
-
-    // 3. Buscar leads já importados (para marcar duplicados)
-    const placeIds = places.map(p => p.id).filter(Boolean) as string[]
-    const existingLeads = excludeImported
-      ? await db.lead.findMany({
-          where: { placeId: { in: placeIds } },
-          select: { placeId: true, status: true, importedToContactId: true },
-        })
-      : await db.lead.findMany({
-          where: { placeId: { in: placeIds }, importedToContactId: { not: null } },
-          select: { placeId: true, status: true, importedToContactId: true },
-        })
-
-    const existingMap = new Map(existingLeads.map(l => [l.placeId, l]))
-
-    // 4. Normalizar e filtrar
-    let results: any[] = places
-      .map(p => {
-        const phone = normalizePhone(p.internationalPhoneNumber, p.nationalPhoneNumber)
-        const status = existingMap.get(p.id || '')
-        return {
-          id: p.id,
-          name: p.displayName?.text || 'Sem nome',
-          phone,
-          phoneRaw: p.internationalPhoneNumber || p.nationalPhoneNumber || null,
-          website: p.websiteUri || null,
-          address: p.formattedAddress || null,
-          rating: p.rating || 0,
-          reviewsCount: p.userRatingCount || 0,
-          lat: p.location?.latitude,
-          lng: p.location?.longitude,
-          categories: p.types || [],
-          isOpenNow: p.currentOpeningHours?.openNow,
-          status: status
-            ? status.importedToContactId
-              ? 'imported'
-              : 'duplicate'
-            : 'new',
-          // Para ordenação por distância
-          _distance: coords.latitude && coords.longitude && p.location
-            ? haversine(coords.latitude, coords.longitude, p.location.latitude!, p.location.longitude!)
-            : 0,
-        }
-      })
-
-    // 5. Aplicar filtros
-    results = results.filter(r => {
-      if (hasPhoneOnly && !r.phone) return false
-      if (minRating > 0 && r.rating < minRating) return false
-      if (minReviews > 0 && r.reviewsCount < minReviews) return false
-      if (hasWebsite === 'yes' && !r.website) return false
-      if (hasWebsite === 'no' && r.website) return false
-      if (excludeImported && r.status === 'imported') return false
-      return true
-    })
-
-    // 6. Ordenar
-    if (sortBy === 'rating') {
-      results.sort((a, b) => b.rating - a.rating)
-    } else if (sortBy === 'reviews') {
-      results.sort((a, b) => b.reviewsCount - a.reviewsCount)
-    } else if (sortBy === 'distance') {
-      results.sort((a, b) => (a._distance || 0) - (b._distance || 0))
+        });
+      }
+    } catch (e) {
+      console.log(`[auto-cnpj] lead ${leadId} bigquery:error`, e);
     }
+  }
 
-    // Remover campo interno
-    results = results.map(({ _distance, ...rest }) => rest)
-
-
-    // 6.5. Buscar CNPJ automaticamente (async, não bloqueia resposta)
-    // Apenas para leads novos com website
-    const newLeadsWithWebsite = results.filter(
-      r => r.status === 'new' && r.website && r.id
-    )
-    
-    // Disparar buscas em paralelo (sem await — não bloqueia a resposta HTTP)
-    // Limita a 5 simultâneas para não estourar
-    Promise.all(
-      newLeadsWithWebsite.slice(0, 20).map(async r => {
-        try {
-          const cnpj = await extractCnpjFromWebsite(r.website!, 5000)
-          if (cnpj) {
-            await db.lead.update({
-              where: { placeId: r.id },
-              data: { cnpj },
-            })
-          }
-        } catch {}
-      })
-    ).catch(() => {}) // swallow errors — não afeta a resposta
-    
-    // 7. Salvar/atualizar SearchQuery + Leads no banco
-    const searchQuery = await db.searchQuery.create({
-      data: {
-        keyword,
-        location,
-        lat: coords.latitude,
-        lng: coords.longitude,
-        radiusKm,
-        filters: JSON.stringify({
-          minRating, minReviews, hasWebsite, hasPhoneOnly, openNow, maxResults, sortBy,
-        }),
-        resultCount: results.length,
-        newCount: results.filter(r => r.status === 'new').length,
-        duplicateCount: results.filter(r => r.status === 'duplicate').length,
-        lastRunAt: new Date(),
-      },
-    })
-
-    // Upsert leads (não recria se já existe)
-    for (const r of results) {
-      if (!r.id) continue
-      await db.lead.upsert({
-        where: { placeId: r.id },
-        create: {
-          source: 'google_places',
-          placeId: r.id,
-          name: r.name,
-          phone: r.phone,
-          phoneRaw: r.phoneRaw,
-          website: r.website,
-          address: r.address,
-          rating: r.rating,
-          reviewsCount: r.reviewsCount,
-          categories: JSON.stringify(r.categories || []),
-          lat: r.lat,
-          lng: r.lng,
-          status: r.status === 'new' ? 'new' : 'duplicate',
-          searchQueryId: searchQuery.id,
-        },
-        update: {}, // não sobrescreve dados existentes
-      })
+  // CAMADA 3: ReceitaWS enrichment (se CNPJ foi encontrado)
+  if (cnpjFound) {
+    try {
+      const receitaws = await consultarReceitaWS(cnpjFound, { force: false });
+      if (receitaws) {
+        const fields = receitawsToDBFields(receitaws);
+        await prisma.lead.update({
+          where: { id: leadId },
+          data: {
+            ...fields,
+            cnpj: cnpjFound,
+            cnpjFormatted: formatCnpj(cnpjFound),
+            cnpjSource: cnpjSource === 'bigquery' ? 'bigquery+receitaws' : `${cnpjSource}+receitaws`,
+          },
+        });
+        console.log(`[auto-cnpj] lead ${leadId} receitaws:ok`);
+      } else {
+        await prisma.lead.update({
+          where: { id: leadId },
+          data: {
+            cnpj: cnpjFound,
+            cnpjFormatted: formatCnpj(cnpjFound),
+            cnpjSource,
+            cnpjFetchStatus: 'ok',
+            cnpjFetchedAt: new Date(),
+            receitawsStatus: 'error',
+          },
+        });
+      }
+    } catch (e) {
+      console.log(`[auto-cnpj] lead ${leadId} receitaws:error`, e);
     }
-
-    return NextResponse.json({
-      leads: results,
-      searchQueryId: searchQuery.id,
-      total: results.length,
-      newCount: results.filter(r => r.status === 'new').length,
-      duplicateCount: results.filter(r => r.status === 'duplicate').length,
-    })
-  } catch (err: any) {
-    console.error('[Leads][search] Error:', err)
-    return NextResponse.json(
-      { error: err.message || 'Erro interno' },
-      { status: 500 }
-    )
+  } else {
+    // Nenhuma camada encontrou CNPJ
+    await prisma.lead.update({
+      where: { id: leadId },
+      data: { cnpjFetchStatus: 'not_found', cnpjFetchedAt: new Date() },
+    });
+    console.log(`[auto-cnpj] lead ${leadId} all:not_found`);
   }
 }
 
-function haversine(lat1: number, lng1: number, lat2: number, lng2: number): number {
-  const R = 6371 // km
-  const toRad = (d: number) => (d * Math.PI) / 180
-  const dLat = toRad(lat2 - lat1)
-  const dLng = toRad(lng2 - lng1)
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+export async function POST(req: NextRequest) {
+  const body = await req.json();
+  const { query, pageSize, city, state } = body;
+  if (!query || typeof query !== 'string') {
+    return NextResponse.json({ error: 'query é obrigatório' }, { status: 400 });
+  }
+  try {
+    // 1. Busca no Google Places (com localizacao se city/state fornecidos)
+    const results = await searchPlaces(query, { pageSize, city, state });
+
+    // 2. Upsert de cada lugar no banco
+    const leadIds: string[] = [];
+    for (const place of results) {
+      const existing = await prisma.lead.findUnique({ where: { placeId: place.placeId } });
+      if (existing && existing.cnpj && existing.cnpjFetchStatus === 'ok') {
+        // já tem CNPJ — não precisa reprocessar
+        leadIds.push(existing.id);
+        continue;
+      }
+      const lead = await prisma.lead.upsert({
+        where: { placeId: place.placeId },
+        create: {
+          placeId: place.placeId,
+          name: place.name ?? null,
+          formattedAddress: place.formattedAddress ?? null,
+          website: place.website ?? null,
+          phone: place.phone ?? null,
+          rating: place.rating ?? null,
+          userRatingCount: place.userRatingCount ?? null,
+          googleMapsUri: place.googleMapsUri ?? null,
+          businessStatus: place.businessStatus ?? null,
+          status: 'novo',
+          cnpjFetchStatus: 'pending',
+        },
+        update: {
+          name: place.name ?? undefined,
+          formattedAddress: place.formattedAddress ?? undefined,
+          website: place.website ?? undefined,
+          phone: place.phone ?? undefined,
+          rating: place.rating ?? undefined,
+          userRatingCount: place.userRatingCount ?? undefined,
+        },
+      });
+      leadIds.push(lead.id);
+    }
+
+    // 3. Pipeline CNPJ automático em paralelo (com limite de concorrência)
+    const CONCURRENCY = 3;
+    const chunks: string[][] = [];
+    for (let i = 0; i < leadIds.length; i += CONCURRENCY) {
+      chunks.push(leadIds.slice(i, i + CONCURRENCY));
+    }
+    for (const chunk of chunks) {
+      await Promise.allSettled(chunk.map(id => fillCnpjForLead(id)));
+    }
+
+    // 4. Retorna os leads atualizados (com CNPJ preenchido)
+    const leads = await prisma.lead.findMany({
+      where: { id: { in: leadIds } },
+      orderBy: [{ cnpj: 'desc' }, { rating: 'desc' }],
+    });
+
+    return NextResponse.json({
+      leads,
+      count: leads.length,
+      withCnpj: leads.filter(l => l.cnpj).length,
+    });
+  } catch (e: any) {
+    console.error('[leads/search] erro:', e);
+    return NextResponse.json({ error: e.message || 'erro interno' }, { status: 500 });
+  }
 }

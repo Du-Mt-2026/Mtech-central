@@ -1,0 +1,72 @@
+// ============================================================
+// Cole este bloco NO FINAL do seu prisma/schema.prisma existente.
+// Não remova nenhum model existente (User, Contato, etc.)
+// ============================================================
+
+model Lead {
+  id                String   @id @default(cuid())
+  placeId           String   @unique
+  name              String?
+  formattedAddress  String?
+  website           String?
+  phone             String?
+  rating            Float?
+  userRatingCount   Int?
+  googleMapsUri     String?
+  businessStatus    String?
+
+  streetNumber         String?
+  route                String?
+  sublocality          String?
+  locality             String?
+  administrativeArea   String?
+  postalCode           String?
+  country              String?
+
+  cnpj              String?
+  cnpjFormatted     String?
+  cnpjSource        String?
+  cnpjConfidence    Int?
+  cnpjFetchStatus   String   @default("pending")
+  cnpjFetchedAt     DateTime?
+
+  razaoSocial             String?
+  nomeFantasia            String?
+  situacaoCadastral       String?
+  dataSituacaoCadastral   String?
+  motivoSituacaoCadastral String?
+  naturezaJuridica        String?
+  dataAbertura            String?
+  capitalSocial           Float?
+  porte                   String?
+  tipoEmpresa             String?
+
+  emailReceita     String?
+  telefoneReceita  String?
+
+  enderecoBairro         String?
+  enderecoCep            String?
+  enderecoMunicipio      String?
+  enderecoUf             String?
+  enderecoNumero         String?
+  enderecoComplemento    String?
+  enderecoLogradouro     String?
+  enderecoTipoLogradouro String?
+
+  cnaePrincipalCodigo String?
+  cnaePrincipalTexto  String?
+  cnafeSecundarioJson Json?
+
+  receitawsJson       Json?
+  receitawsFetchedAt  DateTime?
+  receitawsStatus     String  @default("pending")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([cnpj])
+  @@index([cnpjFetchStatus])
+  @@index([receitawsStatus])
+  @@index([locality, administrativeArea])
+  @@index([createdAt])
+}

@@ -1,261 +1,430 @@
 /**
- * Google Places API (New) Client
- * Docs: https://developers.google.com/maps/documentation/places/web-service/text-search
+ * Google Places API (New) client — Places Text Search v1
+ * Env: GOOGLE_PLACES_API_KEY
  */
+import { PrismaClient } from '@prisma/client';
+const prisma = new PrismaClient();
+const PLACES_ENDPOINT = 'https://places.googleapis.com/v1/places:searchText';
+const PLACE_DETAILS_ENDPOINT = (id: string) => `https://places.googleapis.com/v1/places/${id}`;
 
-const PLACES_API_BASE = 'https://places.googleapis.com/v1'
-
-interface PlacesTextSearchResponse {
-  places?: PlaceResult[]
-  nextPageToken?: string
-  error?: { code: number; message: string; status: string }
+export interface PlaceSearchResult {
+  placeId: string;
+  name: string;
+  formattedAddress: string;
+  website?: string;
+  phone?: string;
+  rating?: number;
+  userRatingCount?: number;
+  googleMapsUri?: string;
+  businessStatus?: string;
+  internationalPhoneNumber?: string;
+  addressParts?: {
+    streetNumber?: string;
+    route?: string;
+    sublocality?: string;
+    locality?: string;
+    administrativeArea?: string;
+    postalCode?: string;
+    country?: string;
+  };
 }
 
-export interface PlaceResult {
-  id?: string
-  displayName?: { text?: string; languageCode?: string }
-  formattedAddress?: string
-  internationalPhoneNumber?: string
-  nationalPhoneNumber?: string
-  websiteUri?: string
-  rating?: number
-  userRatingCount?: number
-  location?: { latitude?: number; longitude?: number }
-  types?: string[]
-  currentOpeningHours?: { openNow?: boolean }
-  businessStatus?: string
+export interface PlaceDetails extends PlaceSearchResult {
+  openingHours?: string[];
+  primaryType?: string;
+  types?: string[];
 }
 
-export interface TextSearchParams {
-  textQuery: string
-  locationBias?: {
-    circle: {
-      center: { latitude: number; longitude: number }
-      radius: number  // meters
+function getApiKey(): string {
+  const key = process.env.GOOGLE_PLACES_API_KEY;
+  if (!key || key === 'sua_chave_aqui' || key.startsWith('sua_chave') || key.length < 20) {
+    throw new Error(
+      'GOOGLE_PLACES_API_KEY não configurada ou inválida. Defina uma chave real do Google Cloud no .env e reinicie o container.'
+    );
+  }
+  return key;
+}
+
+export async function searchPlaces(
+  query: string,
+  opts: { languageCode?: string; regionCode?: string; pageSize?: number; city?: string; state?: string } = {}
+): Promise<PlaceSearchResult[]> {
+  const apiKey = getApiKey();
+  const { languageCode = 'pt-BR', regionCode = 'BR', pageSize = 20, city, state } = opts;
+  // Construir textQuery com localizacao - Google Places e inteligente pra geolocalizar
+  let textQuery = query.trim();
+  const locParts: string[] = [];
+  if (city && city.trim()) locParts.push(city.trim());
+  if (state && state.trim()) locParts.push(state.trim().toUpperCase());
+  if (locParts.length > 0) {
+    // Se o usuario nao incluiu "em <cidade>" na query, append "in <cidade UF>"
+    if (!/\b(em|in|no|na)\b/i.test(textQuery)) {
+      textQuery = `${textQuery} in ${locParts.join(' ')}`;
     }
   }
-  isOpenNow?: boolean
-  languageCode?: string
-  regionCode?: string
-  pageSize?: number
-  pageToken?: string
-}
-
-export async function searchText(
-  params: TextSearchParams,
-  apiKey: string
-): Promise<{ places: PlaceResult[]; nextPageToken?: string }> {
-  const body: any = {
-    textQuery: params.textQuery,
-    languageCode: params.languageCode || 'pt-BR',
-    regionCode: params.regionCode || 'br',
-    pageSize: Math.min(params.pageSize || 20, 20),
-  }
-  if (params.locationBias) body.locationBias = params.locationBias
-  if (params.isOpenNow) body.isOpenNow = true
-  if (params.pageToken) body.pageToken = params.pageToken
-
-  // FieldMask — controla quais campos retornar (e custo)
-  const fieldMask = [
-    'places.id',
-    'places.displayName',
-    'places.formattedAddress',
-    'places.internationalPhoneNumber',
-    'places.nationalPhoneNumber',
-    'places.websiteUri',
-    'places.rating',
-    'places.userRatingCount',
-    'places.location',
-    'places.types',
-    'places.currentOpeningHours',
-    'places.businessStatus',
-    'nextPageToken',
-  ].join(',')
-
-  const res = await fetch(`${PLACES_API_BASE}/places:searchText`, {
+  const body = {
+    textQuery,
+    languageCode,
+    regionCode,
+    pageSize: Math.min(Math.max(pageSize, 1), 20),
+  };
+  const res = await fetch(PLACES_ENDPOINT, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'X-Goog-Api-Key': apiKey,
-      'X-Goog-FieldMask': fieldMask,
+      'X-Goog-FieldMask': [
+        'places.id','places.displayName','places.formattedAddress',
+        'places.websiteUri','places.internationalPhoneNumber',
+        'places.nationalPhoneNumber','places.rating','places.userRatingCount',
+        'places.googleMapsUri','places.businessStatus','places.addressComponents',
+      ].join(','),
     },
     body: JSON.stringify(body),
-  })
-
-  const data: PlacesTextSearchResponse = await res.json()
-
-  if (!res.ok || data.error) {
-    const msg = data.error?.message || `HTTP ${res.status}`
-    throw new Error(`Places API error: ${msg}`)
+  });
+  if (!res.ok) {
+    const txt = await res.text();
+    throw new Error(`Places API ${res.status}: ${txt}`);
   }
-
-  return {
-    places: data.places || [],
-    nextPageToken: data.nextPageToken,
-  }
-}
-
-/**
- * Geocodificar um endereço livre ("Florianópolis, SC") em lat/lng
- * usando a mesma API key do Places.
- */
-export async function geocodeAddress(
-  address: string,
-  apiKey: string
-): Promise<{ latitude: number; longitude: number }> {
-  const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}&key=${apiKey}&region=br`
-  const res = await fetch(url)
-  const data = await res.json()
-
-  if (data.status !== 'OK' || !data.results?.length) {
-    throw new Error(`Geocode falhou para "${address}": ${data.status} ${data.error_message || ''}`)
-  }
-
-  const loc = data.results[0].geometry.location
-  return { latitude: loc.lat, longitude: loc.lng }
-}
-
-/**
- * Buscar múltiplas páginas para atingir maxResults (até 60).
- * Cada página custa 1 request ($0.032).
- */
-export async function searchTextWithPagination(
-  params: TextSearchParams,
-  apiKey: string,
-  maxResults: number
-): Promise<PlaceResult[]> {
-  const all: PlaceResult[] = []
-  let pageToken: string | undefined
-
-  for (let page = 0; page < 3 && all.length < maxResults; page++) {
-    const result = await searchText(
-      { ...params, pageToken },
-      apiKey
-    )
-    all.push(...result.places)
-    pageToken = result.nextPageToken
-    if (!pageToken) break
-    // Pequeno delay entre páginas (Google requer isso)
-    if (pageToken) await new Promise(r => setTimeout(r, 300))
-  }
-
-  return all.slice(0, maxResults)
-}
-
-/**
- * Extrai CNPJ do HTML de um website.
- *
- * Lei brasileira (CDC art. 31) exige CNPJ no rodapé de sites comerciais.
- * Padrões suportados:
- *   - XX.XXX.XXX/XXXX-XX (formatado)
- *   - 14 dígitos seguidos (após "CNPJ:" ou similar)
- *
- * @returns CNPJ com 14 dígitos (sem formatação) ou null se não encontrar
- */
-export async function extractCnpjFromWebsite(websiteUrl: string, timeoutMs = 12000): Promise<string | null> {
-  if (!websiteUrl) return null
-
-  let baseUrl: URL
-  try {
-    baseUrl = new URL(websiteUrl)
-  } catch {
-    return null
-  }
-
-  const paths = ['', '/contato', '/sobre', '/sobre-nos', '/quem-somos', '/institucional', '/footer', '/rodape']
-  const candidates = paths.map(pp => new URL(pp, baseUrl).toString())
-
-  const cnpjPatterns = [
-    /\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}/g,
-    /\d{14}/g,
-  ]
-
-  const findCnpjInText = (text: string): string | null => {
-    for (const pattern of cnpjPatterns) {
-      const matches = text.match(pattern) || []
-      for (const m of matches) {
-        if (validateCnpj(m)) return m
-      }
-    }
-    return null
-  }
-
-  const fetchWithTimeout = async (url: string): Promise<string | null> => {
+  const json = await res.json();
+  const places = (json.places ?? []) as any[];
+  const results: PlaceSearchResult[] = places.map((p) => ({
+    placeId: p.id,
+    name: p.displayName?.text ?? '',
+    formattedAddress: p.formattedAddress ?? '',
+    website: p.websiteUri,
+    phone: p.internationalPhoneNumber ?? p.nationalPhoneNumber,
+    rating: p.rating,
+    userRatingCount: p.userRatingCount,
+    googleMapsUri: p.googleMapsUri,
+    businessStatus: p.businessStatus,
+    addressParts: extractAddressParts(p.addressComponents ?? []),
+  }));
+  for (const r of results) {
     try {
-      const controller = new AbortController()
-      const timer = setTimeout(() => controller.abort(), timeoutMs)
-      const res = await fetch(url, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36',
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-          'Accept-Language': 'pt-BR,pt;q=0.9,en;q=0.8',
+      await prisma.lead.upsert({
+        where: { placeId: r.placeId },
+        create: {
+          placeId: r.placeId, name: r.name, formattedAddress: r.formattedAddress,
+          website: r.website, phone: r.phone, rating: r.rating,
+          userRatingCount: r.userRatingCount, googleMapsUri: r.googleMapsUri,
+          businessStatus: r.businessStatus,
+          streetNumber: r.addressParts?.streetNumber,
+          route: r.addressParts?.route,
+          sublocality: r.addressParts?.sublocality,
+          locality: r.addressParts?.locality,
+          administrativeArea: r.addressParts?.administrativeArea,
+          postalCode: r.addressParts?.postalCode,
+          country: r.addressParts?.country,
+          cnpjFetchStatus: 'pending', receitawsStatus: 'pending',
         },
-        signal: controller.signal,
-        redirect: 'follow',
-      })
-      clearTimeout(timer)
-      if (!res.ok) return null
-      return await res.text()
-    } catch {
-      return null
+        update: {
+          name: r.name, formattedAddress: r.formattedAddress,
+          website: r.website, phone: r.phone, rating: r.rating,
+          userRatingCount: r.userRatingCount, googleMapsUri: r.googleMapsUri,
+          businessStatus: r.businessStatus,
+          streetNumber: r.addressParts?.streetNumber,
+          route: r.addressParts?.route,
+          sublocality: r.addressParts?.sublocality,
+          locality: r.addressParts?.locality,
+          administrativeArea: r.addressParts?.administrativeArea,
+          postalCode: r.addressParts?.postalCode,
+          country: r.addressParts?.country,
+        },
+      });
+    } catch (e) {
+      console.error('Upsert place failed:', r.placeId, e);
     }
   }
+  return results;
+}
 
-  for (const url of candidates) {
-    const html = await fetchWithTimeout(url)
-    if (!html) continue
-
-    const found = findCnpjInText(html)
-    if (found) return formatCnpj(found)
-
-    const jsonLdMatches = html.match(/<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi) || []
-    for (const block of jsonLdMatches) {
-      const content = block.replace(/<script[^>]*>/i, '').replace(/<\/script>/i, '')
-      try {
-        const data = JSON.parse(content)
-        const found2 = findCnpjInText(JSON.stringify(data))
-        if (found2) return formatCnpj(found2)
-      } catch {}
-    }
-
-    const lowerHtml = html.toLowerCase()
-    const cnpjIdx = lowerHtml.indexOf('cnpj')
-    if (cnpjIdx !== -1) {
-      const excerpt = html.substring(cnpjIdx, cnpjIdx + 200)
-      const found3 = findCnpjInText(excerpt)
-      if (found3) return formatCnpj(found3)
-    }
+export async function getPlaceDetails(placeId: string): Promise<PlaceDetails> {
+  const apiKey = getApiKey();
+  const res = await fetch(PLACE_DETAILS_ENDPOINT(placeId), {
+    method: 'GET',
+    headers: {
+      'X-Goog-Api-Key': apiKey,
+      'X-Goog-FieldMask': [
+        'id','displayName','formattedAddress','websiteUri',
+        'internationalPhoneNumber','nationalPhoneNumber','rating',
+        'userRatingCount','googleMapsUri','businessStatus',
+        'addressComponents','currentOpeningHours',
+        'primaryTypeDisplayName','types',
+      ].join(','),
+    },
+  });
+  if (!res.ok) {
+    const txt = await res.text();
+    throw new Error(`Place Details ${res.status}: ${txt}`);
   }
+  const p = await res.json();
+  return {
+    placeId: p.id,
+    name: p.displayName?.text ?? '',
+    formattedAddress: p.formattedAddress ?? '',
+    website: p.websiteUri,
+    phone: p.internationalPhoneNumber ?? p.nationalPhoneNumber,
+    rating: p.rating,
+    userRatingCount: p.userRatingCount,
+    googleMapsUri: p.googleMapsUri,
+    businessStatus: p.businessStatus,
+    internationalPhoneNumber: p.internationalPhoneNumber,
+    addressParts: extractAddressParts(p.addressComponents ?? []),
+    openingHours: p.currentOpeningHours?.weekdayDescriptions ?? [],
+    primaryType: p.primaryTypeDisplayName?.text,
+    types: p.types ?? [],
+  };
+}
 
-  return null
+export function extractAddressParts(components: any[]) {
+  const out: any = {};
+  for (const c of components) {
+    const types: string[] = c.types ?? [];
+    const val = c.longText ?? c.shortText;
+    if (!val) continue;
+    if (types.includes('street_number')) out.streetNumber = val;
+    else if (types.includes('route')) out.route = val;
+    else if (types.includes('sublocality') || types.includes('sublocality_level_1')) out.sublocality = val;
+    else if (types.includes('locality')) out.locality = val;
+    else if (types.includes('administrative_area_level_1')) out.administrativeArea = val;
+    else if (types.includes('postal_code')) out.postalCode = val;
+    else if (types.includes('country')) out.country = val;
+  }
+  return out;
 }
 
 export function validateCnpj(cnpj: string): boolean {
-  const clean = cnpj.replace(/\D/g, '')
-  if (clean.length !== 14) return false
-  if (/^(\d)\1+$/.test(clean)) return false // todos iguais
-
+  const clean = cnpj.replace(/\D/g, '');
+  if (clean.length !== 14) return false;
+  if (/^(\d)\1{13}$/.test(clean)) return false;
   const calc = (slice: string, weights: number[]): number => {
-    let sum = 0
-    for (let i = 0; i < slice.length; i++) {
-      sum += parseInt(slice[i]) * weights[i]
-    }
-    const rest = sum % 11
-    return rest < 2 ? 0 : 11 - rest
-  }
-
-  const w1 = [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]
-  const w2 = [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]
-  const d1 = calc(clean.substring(0, 12), w1)
-  const d2 = calc(clean.substring(0, 12) + d1, w2)
-  return d1 === parseInt(clean[12]) && d2 === parseInt(clean[13])
+    let sum = 0;
+    for (let i = 0; i < slice.length; i++) sum += parseInt(slice[i], 10) * weights[i];
+    const rest = sum % 11;
+    return rest < 2 ? 0 : 11 - rest;
+  };
+  const w1 = [5,4,3,2,9,8,7,6,5,4,3,2];
+  const w2 = [6,5,4,3,2,9,8,7,6,5,4,3,2];
+  const d1 = calc(clean.slice(0, 12), w1);
+  const d2 = calc(clean.slice(0, 12) + d1, w2);
+  return clean.slice(-2) === `${d1}${d2}`;
 }
 
-/**
- * Formata CNPJ: 12345678000190 → 12.345.678/0001-90
- */
 export function formatCnpj(cnpj: string): string {
-  const clean = cnpj.replace(/\D/g, '')
-  if (clean.length !== 14) return cnpj
-  return clean.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5')
+  const c = cnpj.replace(/\D/g, '');
+  if (c.length !== 14) return cnpj;
+  return c.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5');
+}
+
+const CNPJ_PATTERNS = [
+  /\b\d{2}\.\d{3}\.\d{3}[\\/]\d{4}-\d{2}\b/g,  // aceita / ou \\
+  /\b\d{14}\b/g,
+  /CNPJ[:\s]*\d{2}\.?\d{3}\.?\d{3}[\\/]?\d{4}-?\d{2}/gi,
+];
+
+/**
+ * Decodifica escapes Unicode/HTML que impedem match do CNPJ.
+ * Sites Next.js/React escapam "/" como \u002F dentro de <script> JSON
+ * para prevenir </script> injection. O scraper precisa decodificar antes
+ * de aplicar os padroes.
+ *
+ * Cobertura:
+ *   \u00XX  -> char (Unicode escape JS)
+ *   \xXX    -> char (hex escape JS)
+ *   &#47;   -> "/" (HTML decimal entity)
+ *   &#x2F;  -> "/" (HTML hex entity)
+ *   &sol;   -> "/" (HTML named entity, raro)
+ *   \/     -> "/" (escape JS simples)
+ */
+function decodeEscapes(s: string): string {
+  return s
+    .replace(/\\u00([0-9a-fA-F]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16)))
+    .replace(/\\x([0-9a-fA-F]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16)))
+    .replace(/&#x2F;/gi, '/')
+    .replace(/&#47;/g, '/')
+    .replace(/&sol;/gi, '/')
+    .replace(/\\\//g, '/');
+}
+
+const SCRAPE_PATHS = [
+  '', '/contato', '/sobre', '/quem-somos', '/about', '/empresa', '/institucional',
+  '/sobre-nos', '/fale-conosco', '/contact', '/who-we-are',
+  '/politica-de-privacidade', '/privacy-policy', '/politica',
+  '/termos-de-uso', '/termos', '/terms',
+  '/faq', '/perguntas-frequentes',
+  '/rodape', '/footer',
+  '/cnpj', '/dados-empresa', '/dados-cadastrais',
+];
+
+async function fetchWithTimeout(url: string, timeoutMs = 8000): Promise<{ text: string; status: number } | null> {
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36',
+        Accept: 'text/html,application/json,*/*',
+        'Accept-Language': 'pt-BR,pt;q=0.9,en;q=0.8',
+      },
+      signal: controller.signal,
+      redirect: 'follow',
+    });
+    const text = decodeEscapes(await res.text());
+    return { text, status: res.status };
+  } catch { return null; } finally { clearTimeout(t); }
+}
+
+async function tryExtractFromUrl(url: string): Promise<string | null> {
+  const fetched = await fetchWithTimeout(url);
+  if (!fetched || fetched.status >= 400) return null;
+  const html = fetched.text;
+  const jsonLdMatch = html.match(/<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi);
+  if (jsonLdMatch) {
+    for (const m of jsonLdMatch) {
+      const inner = m.replace(/<[^>]+>/g, '').trim();
+      try {
+        const parsed = JSON.parse(inner);
+        const found = findCnpjInJsonLd(parsed);
+        if (found) return found;
+      } catch {}
+    }
+  }
+  const idx = html.toUpperCase().indexOf('CNPJ');
+  if (idx !== -1) {
+    const slice = html.slice(idx, idx + 80);
+    for (const re of CNPJ_PATTERNS) {
+      const match = slice.match(re);
+      if (match && match[0]) {
+        const digits = match[0].replace(/\D/g, '');
+        if (validateCnpj(digits)) return digits;
+      }
+    }
+  }
+  for (const re of CNPJ_PATTERNS) {
+    re.lastIndex = 0;
+    const matches = html.match(re);
+    if (matches && matches.length > 0) {
+      for (const m of matches) {
+        const digits = m.replace(/\D/g, '');
+        if (digits.length === 14 && validateCnpj(digits)) return digits;
+      }
+    }
+  }
+  return null;
+}
+
+function findCnpjInJsonLd(obj: any): string | null {
+  if (!obj) return null;
+  if (typeof obj === 'string') {
+    const matches = obj.match(/\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}/);
+    if (matches && validateCnpj(matches[0])) return matches[0].replace(/\D/g, '');
+    return null;
+  }
+  if (Array.isArray(obj)) {
+    for (const it of obj) { const r = findCnpjInJsonLd(it); if (r) return r; }
+    return null;
+  }
+  if (typeof obj === 'object') {
+    const keys = ['cnpj', 'taxID', 'taxId', 'registrationNumber', 'vatID'];
+    for (const k of keys) {
+      if (obj[k] && typeof obj[k] === 'string') {
+        const digits = obj[k].replace(/\D/g, '');
+        if (digits.length === 14 && validateCnpj(digits)) return digits;
+      }
+    }
+    for (const v of Object.values(obj)) { const r = findCnpjInJsonLd(v); if (r) return r; }
+  }
+  return null;
+}
+
+export async function extractCnpjFromWebsite(website?: string): Promise<{ cnpj: string | null; sourceUrl: string | null }> {
+  if (!website) return { cnpj: null, sourceUrl: null };
+  let base: string;
+  try {
+    const u = new URL(website);
+    base = `${u.protocol}//${u.host}`;
+  } catch { return { cnpj: null, sourceUrl: null }; }
+  const allPaths = SCRAPE_PATHS.map((p) => (p ? base + p : website));
+  for (let i = 0; i < allPaths.length; i += 3) {
+    const batch = allPaths.slice(i, i + 3);
+    const results = await Promise.all(batch.map(async (url) => ({ url, cnpj: await tryExtractFromUrl(url) })));
+    for (const r of results) { if (r.cnpj) return { cnpj: r.cnpj, sourceUrl: r.url }; }
+  }
+  return { cnpj: null, sourceUrl: null };
+}
+
+// === v20: Web Search + Cache CEP ===
+export async function webSearchCnpj(name: string, city?: string | null): Promise<string | null> {
+  if (!name) return null;
+  const q = encodeURIComponent(`CNPJ ${name}${city ? ` ${city}` : ''}`);
+  const url = `https://www.google.com/search?q=${q}&hl=pt-BR&gl=BR`;
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10000);
+    const res = await fetch(url, {
+      signal: controller.signal,
+      headers: { 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' },
+    });
+    clearTimeout(timeout);
+    if (!res.ok) return null;
+    const text = await res.text();
+    const patterns = [
+      /\b\d{2}\.\d{3}\.\d{3}[\\\/]\d{4}-\d{2}\b/g,
+      /\b\d{14}\b/g,
+      /CNPJ[:\s]*\d{2}\.?\d{3}\.?\d{3}[\\\/]?\d{4}-?\d{2}/gi,
+    ];
+    const found: string[] = [];
+    for (const p of patterns) {
+      const m = text.match(p);
+      if (m) found.push(...m);
+    }
+    for (const c of found) {
+      const digits = c.replace(/\D/g, '');
+      if (digits.length === 14 && !/^(\d)\1{13}$/.test(digits)) return digits;
+    }
+  } catch (e) {
+    console.error('[webSearchCnpj] error:', e);
+  }
+  return null;
+}
+
+export async function findCnpjByCep(
+  prisma: any,
+  cep?: string | null,
+  street?: string | null,
+  name?: string | null
+): Promise<{ cnpj: string; source: string } | null> {
+  if (!cep || cep.length < 8) return null;
+  const cleanCep = cep.replace(/\D/g, '');
+  try {
+    const siblings = await prisma.lead.findMany({
+      where: {
+        postalCode: { contains: cleanCep.substring(0, 5) },
+        cnpj: { not: null },
+      },
+      select: { cnpj: true, name: true, streetNumber: true, route: true },
+      take: 10,
+    });
+    if (siblings.length === 0) return null;
+    if (name) {
+      const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '').substring(0, 30);
+      const n = norm(name);
+      for (const s of siblings) {
+        if (s.name && norm(s.name) === n) return { cnpj: s.cnpj!, source: 'cache_cep_name' };
+      }
+    }
+    if (street) {
+      const ns = street.toLowerCase().trim();
+      for (const s of siblings) {
+        const sa = `${s.route || ''} ${s.streetNumber || ''}`.toLowerCase().trim();
+        if (sa && ns && (sa.includes(ns) || ns.includes(sa))) {
+          return { cnpj: s.cnpj!, source: 'cache_cep_endereco' };
+        }
+      }
+    }
+  } catch (e) {
+    console.error('[findCnpjByCep] error:', e);
+  }
+  return null;
 }

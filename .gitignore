@@ -1,117 +1,47 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
-
 # dependencies
-node_modules
-/.pnp
-.pnp.*
-.yarn/*
-!.yarn/patches
-!.yarn/plugins
-!.yarn/releases
-!.yarn/versions
-
-# testing
-/coverage
+node_modules/
+.pnp
+.pnp.js
 
 # next.js
-/.next/
-/out/
+.next/
+out/
+build/
+dist/
 
-# production
-/build
+# env
+.env
+.env.*
+!.env.example
+
+# docker
+docker-compose.override.yml
+
+# backups locais
+src/components/tabs/*.bak*
+**/*.bak.*
+**/*.bak
 
 # misc
 .DS_Store
 *.pem
-
-# debug
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-.pnpm-debug.log*
-
-# env files
-.env*
-!.env.example
-
-# vercel
-.vercel
-
-
-# typescript
+*.log
+.vscode/
+.idea/
 *.tsbuildinfo
 next-env.d.ts
-local-*
-.claude
-.z-ai-config
-*.log
-dev.log
-dev.out.log
-test
-prompt
 
-server.log
+# prisma generated
+prisma/migrations/dev.db*
 
-# SQLite local database
-/db/
-*.db
-*.db-journal
+# cache
+.eslintcache
+.turbo/
 
-# Skills directory
-/skills/
+# credenciais Google Cloud
+bigquery-service-account.json
+*.service-account.json
 
-# Mini services
-/mini-services/
-
-# Worklog
-worklog.md
-
-# Examples
-/examples/
-.env*.local
-
-# Backup files
-*.bak
-
-# === Secrets (NUNCA commitar) ===
-.env
-*.env.*
-.env.backup
-.env.*.backup
-secrets-inventory.md
-*.backup
-*.key
-*.pem
-*.p12
-*.pfx
-
-# === Infra: backups locais ===
-infra/backups/*.sql
-infra/backups/*.sql.gz
-infra/backups/*.dump
-evolution-go.env
-instances-memory-backup.json
-*.local.sh
-
-# === Dev artifacts (P3 cleanup - commit 7279c95) ===
-# Multi-agent dev logs (16 markdowns, not user-facing)
-/agent-ctx/
-# Ad-hoc screenshots, patches, scripts (downloaded during development)
-/download/
-# Generated PDF analysis
-*.analysis.pdf
-
-# === TLS private keys (P0.1 mitigation) ===
-# Even though infra/traefik/certs/*.key is already covered by *.key above,
-# this explicit rule ensures we never commit Traefik origin keys.
+# chaves privadas TLS
 infra/traefik/certs/origin.key
-infra/traefik/certs/origin.crt
-
-# === Generated audit documents ===
-*.audit.pdf
-*.auditoria.pdf
-
-# Backup files
-*.bak.*
-*.bak
-/tmp/fix_cnpj*.sh
+infra/traefik/certs/*.key

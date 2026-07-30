@@ -1,627 +1,412 @@
-'use client'
+'use client';
 
-import { useState, useCallback } from 'react'
+import { useCallback, useEffect, useState } from 'react';
 import {
-  Search, Phone, Globe, Star, MapPin, Loader2, Filter, X,
-  CheckCircle, AlertCircle, Upload, ChevronDown, ChevronUp,
-FileText } from 'lucide-react'
+  Building2, Search, Loader2, RefreshCw, MapPin, Phone, Globe,
+  ExternalLink, BadgeCheck, AlertCircle, X, Filter,
+} from 'lucide-react';
+import { toast } from 'sonner';
 
-interface PlaceResult {
-  id: string
-  name: string
-  phone?: string | null
-  phoneRaw?: string | null
-  website?: string | null
-  address?: string | null
-  rating?: number
-  reviewsCount?: number
-  categories?: string[]
-  status?: 'new' | 'duplicate' | 'imported'
-  lat?: number
-  lng?: number
-  isOpenNow?: boolean
-  cnpj?: string | null
-  cnpjStatus?: 'idle' | 'fetching' | 'found' | 'not_found' | 'manual'
+interface Lead {
+  id: string; placeId: string; name: string | null;
+  formattedAddress: string | null; website: string | null;
+  phone: string | null; rating: number | null;
+  userRatingCount: number | null; googleMapsUri: string | null;
+  businessStatus: string | null; locality: string | null;
+  administrativeArea: string | null; postalCode: string | null;
+  cnpj: string | null; cnpjFormatted: string | null;
+  cnpjSource: string | null; cnpjConfidence: number | null;
+  cnpjFetchStatus: string; cnpjFetchedAt: string | null;
+  razaoSocial: string | null; nomeFantasia: string | null;
+  situacaoCadastral: string | null; dataSituacaoCadastral: string | null;
+  motivoSituacaoCadastral: string | null; naturezaJuridica: string | null;
+  dataAbertura: string | null; capitalSocial: number | null;
+  porte: string | null; tipoEmpresa: string | null;
+  emailReceita: string | null; telefoneReceita: string | null;
+  enderecoBairro: string | null; enderecoCep: string | null;
+  enderecoMunicipio: string | null; enderecoUf: string | null;
+  enderecoNumero: string | null; enderecoComplemento: string | null;
+  enderecoLogradouro: string | null;
+  cnaePrincipalCodigo: string | null; cnaePrincipalTexto: string | null;
+  receitawsStatus: string; receitawsFetchedAt: string | null;
+  createdAt: string;
 }
 
-interface SearchFilters {
-  keyword: string
-  location: string
-  radiusKm: number
-  minRating: number
-  minReviews: number
-  hasWebsite: 'any' | 'yes' | 'no'
-  hasPhoneOnly: boolean
-  openNow: boolean
-  maxResults: number
-  sortBy: 'relevance' | 'rating' | 'reviews' | 'distance'
-  excludeImported: boolean
+interface Stats {
+  total: number; withCnpj: number; withoutCnpj: number;
+  receitawsOk: number; receitawsPending: number;
 }
 
-const DEFAULT_FILTERS: SearchFilters = {
-  keyword: '',
-  location: '',
-  radiusKm: 10,
-  minRating: 0,
-  minReviews: 0,
-  hasWebsite: 'any',
-  hasPhoneOnly: true,
-  openNow: false,
-  maxResults: 20,
-  sortBy: 'relevance',
-  excludeImported: true,
-}
+const PAGE_SIZE = 20;
 
-const inputCls = 'w-full px-3 py-2 rounded-md border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30'
-const labelCls = 'text-xs font-medium text-muted-foreground mb-1 block'
+const STAT_VARIANTS: Record<string, string> = {
+  muted: 'bg-zinc-800/60 text-zinc-300 border border-zinc-700/50',
+  success: 'bg-emerald-900/40 text-emerald-300 border border-emerald-700/50',
+  warning: 'bg-amber-900/40 text-amber-300 border border-amber-700/50',
+  info: 'bg-blue-900/40 text-blue-300 border border-blue-700/50',
+  purple: 'bg-purple-900/40 text-purple-300 border border-purple-700/50',
+};
 
 export default function LeadsTab() {
-  const [filters, setFilters] = useState<SearchFilters>(DEFAULT_FILTERS)
-  const [results, setResults] = useState<PlaceResult[]>([])
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [selected, setSelected] = useState<Set<string>>(new Set())
-  const [importing, setImporting] = useState<string | null>(null)
-  const [importedIds, setImportedIds] = useState<Set<string>>(new Set())
-  const [cnpjStates, setCnpjStates] = useState<Map<string, { cnpj: string | null; status: string; formatted?: string }>>(new Map())
-  const [showAdvanced, setShowAdvanced] = useState(false)
-  const [stats, setStats] = useState<{ total: number; new: number; duplicate: number } | null>(null)
+  const [leads, setLeads] = useState<Lead[]>([]);
+  const [stats, setStats] = useState<Stats | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [searchInput, setSearchInput] = useState('');
+  const [searching, setSearching] = useState(false);
+  const [filterCity, setFilterCity] = useState('');
+  const [filterState, setFilterState] = useState('');
+  const [filterCnpjStatus, setFilterCnpjStatus] = useState('all');
+  const [filterReceitaws, setFilterReceitaws] = useState('all');
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
+  const [fetchingCnpjFor, setFetchingCnpjFor] = useState<string | null>(null);
 
-  const handleSearch = useCallback(async () => {
-    if (!filters.keyword.trim() || !filters.location.trim()) {
-      setError('Informe a palavra-chave e a localização')
-      return
-    }
-    setLoading(true)
-    setError(null)
-    setSelected(new Set())
-    setStats(null)
+  const fetchLeads = useCallback(async () => {
+    setLoading(true); setError(null);
+    try {
+      const params = new URLSearchParams({
+        page: String(page), pageSize: String(PAGE_SIZE),
+        cnpjStatus: filterCnpjStatus, receitawsStatus: filterReceitaws,
+      });
+      if (searchInput.trim()) params.set('query', searchInput.trim());
+      if (filterCity) params.set('city', filterCity);
+      if (filterState) params.set('state', filterState);
+      const res = await fetch(`/api/leads?${params.toString()}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setLeads(data.leads || []);
+      setTotal(data.total || 0);
+      setStats(data.stats || null);
+    } catch (e: any) {
+      setError(e.message || 'Erro ao carregar leads');
+    } finally { setLoading(false); }
+  }, [page, searchInput, filterCity, filterState, filterCnpjStatus, filterReceitaws]);
+
+  useEffect(() => { fetchLeads(); }, [fetchLeads]);
+
+  const handleSearch = async () => {
+    if (!searchInput.trim()) return;
+    setSearching(true); setError(null);
     try {
       const res = await fetch('/api/leads/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(filters),
-      })
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}))
-        throw new Error(data.error || `Erro ${res.status}`)
+        body: JSON.stringify({ query: searchInput, pageSize: 20, city: filterCity || undefined, state: filterState || undefined }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      await fetchLeads();
+      if (data.count > 0) {
+        toast.success(`${data.count} leads encontrados no Google Places!`, { duration: 4000 });
+      } else {
+        toast.warning('Nenhum resultado encontrado no Google Places.', { duration: 5000 });
+        setError('Nenhum resultado encontrado no Google Places.');
       }
-      const data = await res.json()
-      setResults(data.leads || [])
-      setStats({
-        total: data.total || 0,
-        new: data.newCount || 0,
-        duplicate: data.duplicateCount || 0,
-      })
-    } catch (err: any) {
-      setError(err.message)
-    } finally {
-      setLoading(false)
-    }
-  }, [filters])
+    } catch (e: any) {
+      setError(e.message || 'Erro ao buscar no Google Places');
+    } finally { setSearching(false); }
+  };
 
-  const handleImport = useCallback(async (placeIds: string[]) => {
-    const batchId = placeIds.length > 1 ? 'batch' : placeIds[0]
-    setImporting(batchId)
+  const handleFetchCnpj = async (lead: Lead, force = false) => {
+    setFetchingCnpjFor(lead.id);
+    const leadName = lead.name || lead.razaoSocial || 'Lead';
+    const toastId = toast.loading(`Buscando CNPJ para "${leadName}"...`, {
+      description: force ? 'Forçando reprocessamento (scraper + receitaws)' : 'Consultando scraper e ReceitaWS',
+    });
     try {
-      const res = await fetch('/api/leads/import', {
+      const res = await fetch(`/api/leads/${lead.id}/fetch-cnpj`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ leadIds: placeIds }),
-      })
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}))
-        throw new Error(data.error || `Erro ${res.status}`)
+        body: JSON.stringify({ force }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      if (selectedLead?.id === lead.id) setSelectedLead(data.lead);
+      await fetchLeads();
+
+      // Feedback contextual
+      if (data.ok && data.cnpj) {
+        const sourceLabel = {
+          'scraper': 'encontrado no site',
+          'bigquery': 'encontrado via BigQuery',
+          'existing': 'CNPJ existente',
+        }[data.cnpjSource] || data.cnpjSource;
+        const razao = data.lead?.razaoSocial ? ` - ${data.lead.razaoSocial}` : '';
+        toast.success(`CNPJ ${data.cnpj}${razao}`, {
+          id: toastId,
+          description: `Fonte: ${sourceLabel}${data.lead?.situacaoCadastral ? ` | Situação: ${data.lead.situacaoCadastral}` : ''}`,
+          duration: 6000,
+        });
+      } else if (data.steps?.includes('scraper:not_found') && data.steps?.includes('all:not_found')) {
+        toast.warning('CNPJ não encontrado', {
+          id: toastId,
+          description: 'Scraper não localizou CNPJ no site. BigQuery não configurado.',
+          duration: 7000,
+        });
+      } else if (data.cached) {
+        toast.info('CNPJ já estava enriquecido', {
+          id: toastId,
+          description: 'Use "Reprocessar (force)" para buscar novamente.',
+          duration: 5000,
+        });
+      } else {
+        toast.warning('CNPJ não encontrado', {
+          id: toastId,
+          description: `Etapas: ${(data.steps || []).join(', ')}`,
+          duration: 6000,
+        });
       }
-      setImportedIds(prev => new Set([...prev, ...placeIds]))
-      setSelected(prev => {
-        const next = new Set(prev)
-        placeIds.forEach(id => next.delete(id))
-        return next
-      })
-    } catch (err: any) {
-      setError(err.message)
-    } finally {
-      setImporting(null)
-    }
-  }, [])
-
-
-  const fetchCnpj = useCallback(async (leadIdOrPlaceId: string) => {
-    if (!leadIdOrPlaceId) {
-      console.error('[fetchCnpj] id is required')
-      return
-    }
-    setCnpjStates(prev => {
-      const next = new Map(prev)
-      next.set(leadIdOrPlaceId, { cnpj: null, status: 'fetching' })
-      return next
-    })
-    try {
-      // Se for Place ID (comeca com ChIJ), resolver para Prisma cuid primeiro
-      let leadId = leadIdOrPlaceId
-      if (leadIdOrPlaceId.startsWith('ChIJ') || leadIdOrPlaceId.length < 25) {
-        const listRes = await fetch(`/api/leads?placeId=${encodeURIComponent(leadIdOrPlaceId)}`)
-        if (listRes.ok) {
-          const leadData = await listRes.json()
-          const lead = Array.isArray(leadData.leads) ? leadData.leads[0] : null
-          if (lead?.id) leadId = lead.id
-        }
-      }
-
-      const res = await fetch(`/api/leads/${leadId}/fetch-cnpj`, { method: 'POST' })
-      const data = await res.json()
-      setCnpjStates(prev => {
-        const next = new Map(prev)
-        if (data.cnpj) {
-          next.set(leadIdOrPlaceId, {
-            cnpj: data.cnpj,
-            status: data.valid === false ? 'not_found' : 'found',
-            formatted: data.cnpjFormatted
-          })
-        } else {
-          next.set(leadIdOrPlaceId, { cnpj: null, status: 'not_found' })
-        }
-        return next
-      })
-    } catch (err: any) {
-      setCnpjStates(prev => {
-        const next = new Map(prev)
-        next.set(leadIdOrPlaceId, { cnpj: null, status: 'not_found' })
-        return next
-      })
-    }
-  }, [])
-
-  const fetchAllCnpj = useCallback(async () => {
-    const withWebsite = results.filter(r => r.website && !cnpjStates.get(r.id)?.cnpj)
-    for (const r of withWebsite) {
-      await fetchCnpj(r.id)
-    }
-  }, [results, cnpjStates, fetchCnpj])
-
-  const toggleSelect = (id: string) => {
-    setSelected(prev => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }
-
-  const toggleSelectAll = () => {
-    const importable = results.filter(r => !importedIds.has(r.id))
-    if (selected.size === importable.length) {
-      setSelected(new Set())
-    } else {
-      setSelected(new Set(importable.map(r => r.id)))
-    }
-  }
-
-  const updateFilter = <K extends keyof SearchFilters>(key: K, value: SearchFilters[K]) => {
-    setFilters(f => ({ ...f, [key]: value }))
-  }
+    } catch (e: any) {
+      toast.error('Erro ao buscar CNPJ', {
+        id: toastId,
+        description: e.message || 'Erro desconhecido',
+        duration: 7000,
+      });
+      setError(e.message || 'Erro ao buscar CNPJ');
+    } finally { setFetchingCnpjFor(null); }
+  };
 
   return (
-    <div className="space-y-4 p-4 max-w-7xl mx-auto">
-      {/* Header */}
-      <div>
-        <h1 className="text-2xl font-bold">Prospecção de Leads</h1>
-        <p className="text-sm text-muted-foreground">
-          Pesquise empresas no Google Places e importe para suas listas de contato
-        </p>
+    <div className="space-y-6">
+      <div className="flex items-center gap-3">
+        <div className="rounded-lg bg-primary/10 p-2.5">
+          <Building2 className="h-6 w-6 text-primary" />
+        </div>
+        <div>
+          <h1 className="text-2xl font-bold text-foreground">Leads &amp; CNPJ</h1>
+          <p className="text-sm text-muted-foreground">Busca de empresas no Google Places + descoberta de CNPJ</p>
+        </div>
       </div>
 
-      {/* Search Form */}
-      <div className="rounded-lg border bg-card p-4 space-y-4">
-        {/* Linha principal */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <div>
-            <label className={labelCls}>Palavra-chave *</label>
-            <input
-              type="text"
-              value={filters.keyword}
-              onChange={e => updateFilter('keyword', e.target.value)}
-              placeholder="Ex: pizzaria, dentista, academia..."
-              className={inputCls}
-              onKeyDown={e => e.key === 'Enter' && handleSearch()}
-            />
-          </div>
-          <div>
-            <label className={labelCls}>Localização *</label>
-            <input
-              type="text"
-              value={filters.location}
-              onChange={e => updateFilter('location', e.target.value)}
-              placeholder="Ex: Florianópolis, SC"
-              className={inputCls}
-              onKeyDown={e => e.key === 'Enter' && handleSearch()}
-            />
-          </div>
-          <div>
-            <label className={labelCls}>Raio (km)</label>
-            <input
-              type="number"
-              min={1}
-              max={50}
-              value={filters.radiusKm}
-              onChange={e => updateFilter('radiusKm', Number(e.target.value) || 10)}
-              className={inputCls}
-            />
-          </div>
+      {stats && (
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+          <StatCard label="Total" value={stats.total} variant="muted" />
+          <StatCard label="Com CNPJ" value={stats.withCnpj} variant="success" />
+          <StatCard label="Sem CNPJ" value={stats.withoutCnpj} variant="warning" />
         </div>
+      )}
 
-        {/* Toggle filtros avançados */}
-        <button
-          onClick={() => setShowAdvanced(s => !s)}
-          className="flex items-center gap-2 text-sm text-primary hover:underline"
-        >
-          <Filter className="w-4 h-4" />
-          {showAdvanced ? 'Ocultar filtros avançados' : 'Mostrar filtros avançados'}
-          {showAdvanced ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-        </button>
-
-        {/* Filtros avançados */}
-        {showAdvanced && (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 pt-3 border-t">
-            <div>
-              <label className={labelCls}>Avaliação mínima</label>
-              <select
-                value={filters.minRating}
-                onChange={e => updateFilter('minRating', Number(e.target.value))}
-                className={inputCls}
-              >
-                <option value={0}>Qualquer</option>
-                <option value={3}>3.0+</option>
-                <option value={3.5}>3.5+</option>
-                <option value={4}>4.0+</option>
-                <option value={4.5}>4.5+</option>
-              </select>
-            </div>
-            <div>
-              <label className={labelCls}>Avaliações mínimas</label>
-              <input
-                type="number"
-                min={0}
-                value={filters.minReviews}
-                onChange={e => updateFilter('minReviews', Number(e.target.value) || 0)}
-                className={inputCls}
-                placeholder="0"
-              />
-            </div>
-            <div>
-              <label className={labelCls}>Website</label>
-              <select
-                value={filters.hasWebsite}
-                onChange={e => updateFilter('hasWebsite', e.target.value as any)}
-                className={inputCls}
-              >
-                <option value="any">Qualquer</option>
-                <option value="yes">Com site</option>
-                <option value="no">Sem site</option>
-              </select>
-            </div>
-            <div>
-              <label className={labelCls}>Máx. resultados</label>
-              <select
-                value={filters.maxResults}
-                onChange={e => updateFilter('maxResults', Number(e.target.value))}
-                className={inputCls}
-              >
-                <option value={10}>10</option>
-                <option value={20}>20</option>
-                <option value={40}>40</option>
-                <option value={60}>60 (máx)</option>
-              </select>
-            </div>
-            <div>
-              <label className={labelCls}>Ordenar por</label>
-              <select
-                value={filters.sortBy}
-                onChange={e => updateFilter('sortBy', e.target.value as any)}
-                className={inputCls}
-              >
-                <option value="relevance">Relevância</option>
-                <option value="rating">Avaliação</option>
-                <option value="reviews">Nº avaliações</option>
-                <option value="distance">Distância</option>
-              </select>
-            </div>
-            <div className="flex items-center gap-2 pt-5">
-              <input
-                type="checkbox"
-                id="hasPhoneOnly"
-                checked={filters.hasPhoneOnly}
-                onChange={e => updateFilter('hasPhoneOnly', e.target.checked)}
-                className="w-4 h-4"
-              />
-              <label htmlFor="hasPhoneOnly" className="text-sm cursor-pointer">
-                Apenas com telefone
-              </label>
-            </div>
-            <div className="flex items-center gap-2 pt-5">
-              <input
-                type="checkbox"
-                id="openNow"
-                checked={filters.openNow}
-                onChange={e => updateFilter('openNow', e.target.checked)}
-                className="w-4 h-4"
-              />
-              <label htmlFor="openNow" className="text-sm cursor-pointer">
-                Aberto agora
-              </label>
-            </div>
-            <div className="flex items-center gap-2 pt-5">
-              <input
-                type="checkbox"
-                id="excludeImported"
-                checked={filters.excludeImported}
-                onChange={e => updateFilter('excludeImported', e.target.checked)}
-                className="w-4 h-4"
-              />
-              <label htmlFor="excludeImported" className="text-sm cursor-pointer">
-                Ocultar já importados
-              </label>
-            </div>
-          </div>
-        )}
-
-        {/* Action buttons */}
-        <div className="flex flex-wrap gap-2 items-center">
+      <div className="rounded-lg border border-border bg-card p-4">
+        <div className="flex gap-2">
+          <input
+            type="text"
+            placeholder='Buscar empresas... (ex: padarias, mecânicas, distribuidoras)'
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+            className="flex-1 rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+          />
           <button
             onClick={handleSearch}
-            disabled={loading || !filters.keyword.trim() || !filters.location.trim()}
-            className="px-4 py-2 rounded-md bg-primary text-primary-foreground text-sm hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            disabled={searching || !searchInput.trim()}
+            className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
           >
-            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
-            {loading ? 'Buscando...' : 'Buscar'}
+            {searching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+            Buscar no Places
           </button>
-          {results.length > 0 && (
-            <button
-              onClick={fetchAllCnpj}
-              className="px-3 py-2 rounded-md border text-sm hover:bg-muted/30 flex items-center gap-2"
-            >
-              <FileText className="w-4 h-4" />
-              Buscar CNPJ (todos)
-            </button>
-          )}
-          {selected.size > 0 && (
-            <button
-              onClick={() => handleImport(Array.from(selected))}
-              disabled={importing === 'batch'}
-              className="px-4 py-2 rounded-md bg-green-600 text-white text-sm hover:bg-green-700 disabled:opacity-50 flex items-center gap-2"
-            >
-              {importing === 'batch' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-              Importar {selected.size} selecionados
-            </button>
-          )}
-          {(results.length > 0 || stats) && !loading && (
-            <button
-              onClick={() => {
-                setResults([])
-                setSelected(new Set())
-                setStats(null)
-                setError(null)
-              }}
-              className="px-3 py-2 rounded-md border text-sm hover:bg-muted/30"
-            >
-              Limpar
-            </button>
-          )}
         </div>
-
-        {error && (
-          <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-md p-3">
-            <AlertCircle className="w-4 h-4 flex-shrink-0" />
-            <span>{error}</span>
-            <button onClick={() => setError(null)} className="ml-auto">
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-        )}
       </div>
 
-      {/* Stats bar */}
-      {stats && !loading && (
-        <div className="flex gap-4 text-sm">
-          <div className="px-3 py-2 rounded-md bg-blue-50 border border-blue-200">
-            <span className="font-semibold text-blue-700">{stats.total}</span>
-            <span className="text-blue-600 ml-1">resultados</span>
-          </div>
-          <div className="px-3 py-2 rounded-md bg-green-50 border border-green-200">
-            <span className="font-semibold text-green-700">{stats.new}</span>
-            <span className="text-green-600 ml-1">novos</span>
-          </div>
-          {stats.duplicate > 0 && (
-            <div className="px-3 py-2 rounded-md bg-yellow-50 border border-yellow-200">
-              <span className="font-semibold text-yellow-700">{stats.duplicate}</span>
-              <span className="text-yellow-600 ml-1">duplicados</span>
-            </div>
-          )}
+      <div className="rounded-lg border border-border bg-card p-4">
+        <div className="mb-3 flex items-center gap-2 text-sm font-medium text-foreground">
+          <Filter className="h-4 w-4 text-primary" />
+          Busca Avançada
+          <span className="text-xs font-normal text-muted-foreground">(filtra leads existentes no banco)</span>
+        </div>
+        <div className="flex flex-wrap items-end gap-3">
+          <FilterInput label="Cidade" value={filterCity} onChange={setFilterCity} placeholder="Cidade" />
+          <FilterInput label="UF" value={filterState} onChange={(v) => setFilterState(v.toUpperCase().slice(0, 2))} placeholder="UF" maxLength={2} />
+          <FilterSelect label="CNPJ" value={filterCnpjStatus} onChange={setFilterCnpjStatus} options={[
+            { value: 'all', label: 'Todos' }, { value: 'with', label: 'Com CNPJ' },
+            { value: 'without', label: 'Sem CNPJ' }, { value: 'error', label: 'Erro' },
+          ]} />
+          <FilterSelect label="ReceitaWS" value={filterReceitaws} onChange={setFilterReceitaws} options={[
+            { value: 'all', label: 'Todos' }, { value: 'ok', label: 'OK' },
+            { value: 'pending', label: 'Pendente' }, { value: 'error', label: 'Erro' },
+          ]} />
+          <button onClick={fetchLeads} className="inline-flex items-center gap-2 rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground hover:bg-muted/50">
+            <RefreshCw className="h-4 w-4" /> Atualizar
+          </button>
+        </div>
+      </div>
+
+      {error && (
+        <div className="flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+          <AlertCircle className="h-4 w-4" />{error}
         </div>
       )}
 
-      {/* Results */}
-      {results.length > 0 && (
-        <div className="rounded-lg border bg-card overflow-hidden">
-          <div className="flex items-center justify-between p-3 border-b bg-muted/30">
-            <div className="flex items-center gap-3">
-              <input
-                type="checkbox"
-                checked={selected.size > 0 && selected.size === results.filter(r => !importedIds.has(r.id)).length}
-                onChange={toggleSelectAll}
-                className="w-4 h-4"
-              />
-              <span className="text-sm font-medium">
-                {results.length} resultados
-                {selected.size > 0 && ` · ${selected.size} selecionados`}
-              </span>
-            </div>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-muted/30 border-b text-xs uppercase">
-                <tr>
-                  <th className="p-2 w-10"></th>
-                  <th className="p-2 text-left">Nome</th>
-                  <th className="p-2 text-left">Telefone</th>
-                  <th className="p-2 text-left">Website</th>
-                  <th className="p-2 text-left">CNPJ</th>
-                  <th className="p-2 text-left">Avaliação</th>
-                  <th className="p-2 text-left">Endereço</th>
-                  <th className="p-2 text-center">Status</th>
-                  <th className="p-2 text-center">Ação</th>
-                </tr>
-              </thead>
-              <tbody>
-                {results.map(place => {
-                  const isImported = importedIds.has(place.id)
-                  return (
-                    <tr key={place.id} className="border-b hover:bg-muted/20">
-                      <td className="p-2 text-center">
-                        <input
-                          type="checkbox"
-                          checked={selected.has(place.id)}
-                          onChange={() => toggleSelect(place.id)}
-                          disabled={isImported}
-                          className="w-4 h-4"
-                        />
-                      </td>
-                      <td className="p-2 font-medium">
-                        {place.name}
-                        {place.isOpenNow !== undefined && (
-                          <span className={`ml-2 inline-block w-2 h-2 rounded-full ${place.isOpenNow ? 'bg-green-500' : 'bg-gray-300'}`} title={place.isOpenNow ? 'Aberto' : 'Fechado'} />
-                        )}
-                      </td>
-                      <td className="p-2">
-                        {place.phone ? (
-                          <div className="flex items-center gap-1">
-                            <Phone className="w-3 h-3 text-muted-foreground" />
-                            <span className="font-mono text-xs">{place.phone}</span>
-                          </div>
-                        ) : (
-                          <span className="text-muted-foreground text-xs">—</span>
-                        )}
-                      </td>
-                      <td className="p-2">
-                        {place.website ? (
-                          <a
-                            href={place.website}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="flex items-center gap-1 text-primary hover:underline max-w-[150px]"
-                          >
-                            <Globe className="w-3 h-3 flex-shrink-0" />
-                            <span className="text-xs truncate">
-                              {(() => { try { return new URL(place.website).hostname.replace(/^www\./, '') } catch { return place.website } })()}
-                            </span>
-                          </a>
-                        ) : (
-                          <span className="text-muted-foreground text-xs">—</span>
-                        )}
-                      </td>                      <td className="p-2">
-                        {(() => {
-                          const st = cnpjStates.get(place.id)
-                          if (st?.status === 'fetching') {
-                            return <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />
-                          }
-                          if (st?.cnpj) {
-                            return (
-                              <div className="flex flex-col gap-0.5">
-                                <span className="font-mono text-xs">{st.formatted}</span>
-                                {st.status === 'found' && (
-                                  <span className="text-[10px] text-green-600">válido</span>
-                                )}
-                              </div>
-                            )
-                          }
-                          if (st?.status === 'not_found') {
-                            return (
-                              <span className="text-xs text-muted-foreground" title="CNPJ não encontrado no site">
-                                —
-                              </span>
-                            )
-                          }
-                          if (place.website) {
-                            return (
-                              <button
-                                onClick={() => fetchCnpj(place.id)}
-                                className="text-xs text-primary hover:underline flex items-center gap-1"
-                              >
-                                <FileText className="w-3 h-3" />
-                                Buscar
-                              </button>
-                            )
-                          }
-                          return <span className="text-muted-foreground text-xs">—</span>
-                        })()}
-                      </td>
+      {loading ? (
+        <div className="flex justify-center py-10">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        </div>
+      ) : leads.length === 0 ? (
+        <div className="rounded-lg border border-border bg-card py-12 text-center text-muted-foreground">
+          Nenhum lead encontrado. Faça uma busca acima para começar.
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
+          {leads.map((lead) => (
+            <LeadCard key={lead.id} lead={lead} onSelect={() => setSelectedLead(lead)} onFetchCnpj={(force) => handleFetchCnpj(lead, force)} fetching={fetchingCnpjFor === lead.id} />
+          ))}
+        </div>
+      )}
 
-                      <td className="p-2">
-                        {place.rating ? (
-                          <div className="flex items-center gap-1">
-                            <Star className="w-3 h-3 fill-yellow-400 text-yellow-400" />
-                            <span className="font-mono text-xs">{place.rating.toFixed(1)}</span>
-                            <span className="text-xs text-muted-foreground">({place.reviewsCount || 0})</span>
-                          </div>
-                        ) : (
-                          <span className="text-muted-foreground text-xs">—</span>
-                        )}
-                      </td>
-                      <td className="p-2 text-xs text-muted-foreground max-w-[200px]">
-                        {place.address ? (
-                          <div className="flex items-center gap-1">
-                            <MapPin className="w-3 h-3 flex-shrink-0" />
-                            <span className="truncate">{place.address}</span>
-                          </div>
-                        ) : '—'}
-                      </td>
-                      <td className="p-2 text-center">
-                        {isImported ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-green-100 text-green-700">
-                            <CheckCircle className="w-3 h-3" />
-                            Importado
-                          </span>
-                        ) : place.status === 'duplicate' ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-yellow-100 text-yellow-700">
-                            Duplicado
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-blue-100 text-blue-700">
-                            Novo
-                          </span>
-                        )}
-                      </td>
-                      <td className="p-2 text-center">
-                        <button
-                          onClick={() => handleImport([place.id])}
-                          disabled={isImported || importing === place.id}
-                          className="px-2 py-1 rounded text-xs bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1 mx-auto"
-                        >
-                          {importing === place.id ? (
-                            <Loader2 className="w-3 h-3 animate-spin" />
-                          ) : (
-                            <Upload className="w-3 h-3" />
-                          )}
-                          {isImported ? 'OK' : 'Importar'}
-                        </button>
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
+      {total > PAGE_SIZE && (
+        <div className="flex items-center justify-between">
+          <p className="text-sm text-muted-foreground">
+            Mostrando {(page - 1) * PAGE_SIZE + 1}-{Math.min(page * PAGE_SIZE, total)} de {total}
+          </p>
+          <div className="flex gap-2">
+            <button onClick={() => setPage(Math.max(1, page - 1))} disabled={page === 1} className="rounded border border-border px-3 py-1 text-sm text-foreground disabled:opacity-50 hover:bg-muted/50">Anterior</button>
+            <button onClick={() => setPage(page + 1)} disabled={page * PAGE_SIZE >= total} className="rounded border border-border px-3 py-1 text-sm text-foreground disabled:opacity-50 hover:bg-muted/50">Próximo</button>
           </div>
         </div>
       )}
 
-      {!loading && results.length === 0 && !error && (
-        <div className="text-center py-16 text-muted-foreground">
-          <Search className="w-12 h-12 mx-auto mb-3 opacity-30" />
-          <p className="font-medium">Faça uma busca para encontrar leads</p>
-          <p className="text-xs mt-1">Use palavra-chave + localização para começar</p>
-        </div>
+      {selectedLead && (
+        <LeadDetailDialog lead={selectedLead} onClose={() => setSelectedLead(null)} onFetchCnpj={(force) => handleFetchCnpj(selectedLead, force)} fetching={fetchingCnpjFor === selectedLead.id} />
       )}
     </div>
-  )
+  );
+}
+
+function StatCard({ label, value, variant = 'muted' }: { label: string; value: number; variant?: keyof typeof STAT_VARIANTS; }) {
+  return (
+    <div className={`rounded-lg p-3 ${STAT_VARIANTS[variant]}`}>
+      <div className="text-2xl font-bold">{value}</div>
+      <div className="text-xs uppercase tracking-wide opacity-70">{label}</div>
+    </div>
+  );
+}
+
+function FilterInput({ label, value, onChange, placeholder, maxLength }: { label: string; value: string; onChange: (v: string) => void; placeholder?: string; maxLength?: number; }) {
+  return (
+    <div className="flex flex-col gap-1">
+      <label className="text-xs text-muted-foreground">{label}</label>
+      <input type="text" value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} maxLength={maxLength} className="w-32 rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none" />
+    </div>
+  );
+}
+
+function FilterSelect({ label, value, onChange, options }: { label: string; value: string; onChange: (v: string) => void; options: { value: string; label: string }[]; }) {
+  return (
+    <div className="flex flex-col gap-1">
+      <label className="text-xs text-muted-foreground">{label}</label>
+      <select value={value} onChange={(e) => onChange(e.target.value)} className="rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground focus:border-primary focus:outline-none">
+        {options.map((o) => (<option key={o.value} value={o.value}>{o.label}</option>))}
+      </select>
+    </div>
+  );
+}
+
+function CnpjStatusBadge({ lead }: { lead: Lead }) {
+  if (!lead.cnpj) {
+    if (lead.cnpjFetchStatus === 'not_found') return (<span className="inline-flex items-center gap-1 rounded bg-zinc-700/60 px-2 py-0.5 text-xs text-zinc-300"><X className="h-3 w-3" /> não encontrado</span>);
+    if (lead.cnpjFetchStatus === 'error') return (<span className="inline-flex items-center gap-1 rounded bg-red-900/50 px-2 py-0.5 text-xs text-red-300"><AlertCircle className="h-3 w-3" /> erro</span>);
+    return (<span className="inline-flex items-center gap-1 rounded bg-amber-900/50 px-2 py-0.5 text-xs text-amber-300">pendente</span>);
+  }
+  const isBigQuery = lead.cnpjSource?.startsWith('bigquery');
+  const isScraper = lead.cnpjSource?.startsWith('scraper');
+  return (
+    <span className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs ${isScraper ? 'bg-emerald-900/50 text-emerald-300' : isBigQuery ? 'bg-blue-900/50 text-blue-300' : 'bg-zinc-700/60 text-zinc-300'}`}>
+      <BadgeCheck className="h-3 w-3" />{lead.cnpjFormatted || lead.cnpj}
+      {lead.cnpjConfidence != null && (<span className="opacity-70">({lead.cnpjConfidence}%)</span>)}
+    </span>
+  );
+}
+
+function LeadCard({ lead, onSelect, onFetchCnpj, fetching }: { lead: Lead; onSelect: () => void; onFetchCnpj: (force: boolean) => void; fetching: boolean; }) {
+  return (
+    <div className="rounded-lg border border-border bg-card p-4 shadow-sm transition hover:shadow-md">
+      <div className="flex items-start justify-between gap-2">
+        <button onClick={onSelect} className="flex-1 text-left font-semibold text-foreground hover:text-primary">{lead.name || lead.razaoSocial || '(sem nome)'}</button>
+        <CnpjStatusBadge lead={lead} />
+      </div>
+      {lead.nomeFantasia && lead.nomeFantasia !== lead.name && (<p className="mt-0.5 text-sm text-muted-foreground">{lead.nomeFantasia}</p>)}
+      {lead.formattedAddress && (<p className="mt-2 flex items-start gap-1 text-xs text-muted-foreground"><MapPin className="mt-0.5 h-3 w-3 shrink-0" />{lead.formattedAddress}</p>)}
+      <div className="mt-2 flex flex-wrap gap-2 text-xs">
+        {lead.phone && (<span className="inline-flex items-center gap-1 text-muted-foreground"><Phone className="h-3 w-3" /> {lead.phone}</span>)}
+        {lead.website && (<a href={lead.website} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-primary hover:underline"><Globe className="h-3 w-3" /> site</a>)}
+        {lead.googleMapsUri && (<a href={lead.googleMapsUri} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-primary hover:underline"><ExternalLink className="h-3 w-3" /> maps</a>)}
+      </div>
+      {lead.cnaePrincipalTexto && (<p className="mt-2 text-xs text-muted-foreground/80">CNAE: {lead.cnaePrincipalTexto}</p>)}
+      <div className="mt-3 flex gap-2">
+        <button onClick={() => onFetchCnpj(false)} disabled={fetching} className="flex-1 rounded-md border border-border px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted/50 disabled:opacity-50">
+          {fetching ? <Loader2 className="mx-auto h-3 w-3 animate-spin" /> : lead.cnpj ? 'Reenriquecer' : 'Buscar CNPJ'}
+        </button>
+        <button onClick={onSelect} className="rounded-md border border-border px-3 py-1.5 text-xs text-foreground hover:bg-muted/50">Detalhes</button>
+      </div>
+    </div>
+  );
+}
+
+function LeadDetailDialog({ lead, onClose, onFetchCnpj, fetching }: { lead: Lead; onClose: () => void; onFetchCnpj: (force: boolean) => void; fetching: boolean; }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
+      <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-lg border border-border bg-card p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <div className="mb-4 flex items-start justify-between">
+          <div>
+            <h2 className="text-xl font-bold text-foreground">{lead.name || lead.razaoSocial || '(sem nome)'}</h2>
+            {lead.nomeFantasia && (<p className="text-sm text-muted-foreground">{lead.nomeFantasia}</p>)}
+          </div>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="h-5 w-5" /></button>
+        </div>
+        <div className="mb-4 flex flex-wrap gap-2">
+          <CnpjStatusBadge lead={lead} />
+          {lead.situacaoCadastral && (<span className="rounded bg-zinc-700/60 px-2 py-0.5 text-xs text-zinc-300">Situação: {lead.situacaoCadastral}</span>)}
+          {lead.porte && (<span className="rounded bg-zinc-700/60 px-2 py-0.5 text-xs text-zinc-300">Porte: {lead.porte}</span>)}
+        </div>
+        <div className="grid grid-cols-2 gap-4 text-sm">
+          <DetailRow label="CNPJ" value={lead.cnpjFormatted || lead.cnpj} />
+          <DetailRow label="Source" value={lead.cnpjSource} />
+          <DetailRow label="Confiança" value={lead.cnpjConfidence != null ? `${lead.cnpjConfidence}%` : null} />
+          <DetailRow label="Razão Social" value={lead.razaoSocial} />
+          <DetailRow label="Nome Fantasia" value={lead.nomeFantasia} />
+          <DetailRow label="Natureza Jurídica" value={lead.naturezaJuridica} />
+          <DetailRow label="Data Abertura" value={lead.dataAbertura} />
+          <DetailRow label="Capital Social" value={lead.capitalSocial != null ? `R$ ${lead.capitalSocial}` : null} />
+          <DetailRow label="Telefone (Receita)" value={lead.telefoneReceita} />
+          <DetailRow label="Email (Receita)" value={lead.emailReceita} />
+          <DetailRow label="CNAE" value={`${lead.cnaePrincipalCodigo || ''} ${lead.cnaePrincipalTexto || ''}`.trim() || null} />
+          <DetailRow label="Situação Cadastral" value={lead.situacaoCadastral} />
+          <DetailRow label="Data Situação" value={lead.dataSituacaoCadastral} />
+          <DetailRow label="Motivo" value={lead.motivoSituacaoCadastral} />
+        </div>
+        {(lead.enderecoLogradouro || lead.enderecoBairro) && (
+          <div className="mt-4 rounded-md bg-zinc-800/60 p-3 text-sm">
+            <p className="font-medium text-foreground">Endereço (Receita)</p>
+            <p className="mt-1 text-muted-foreground">{[lead.enderecoLogradouro, lead.enderecoNumero, lead.enderecoComplemento, lead.enderecoBairro, lead.enderecoMunicipio, lead.enderecoUf, lead.enderecoCep].filter(Boolean).join(', ')}</p>
+          </div>
+        )}
+        {lead.formattedAddress && (
+          <div className="mt-3 rounded-md bg-primary/10 p-3 text-sm">
+            <p className="font-medium text-foreground">Endereço (Google Places)</p>
+            <p className="mt-1 text-muted-foreground">{lead.formattedAddress}</p>
+          </div>
+        )}
+        <div className="mt-4 flex gap-2">
+          <button onClick={() => onFetchCnpj(true)} disabled={fetching} className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50">
+            {fetching ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            {lead.cnpj ? 'Reprocessar (force)' : 'Buscar CNPJ'}
+          </button>
+          {lead.website && (
+            <a href={lead.website} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-md border border-border px-4 py-2 text-sm text-foreground hover:bg-muted/50"><Globe className="h-4 w-4" /> Abrir site</a>
+          )}
+        </div>
+        <p className="mt-4 text-xs text-muted-foreground/80">placeId: {lead.placeId} | criado em {new Date(lead.createdAt).toLocaleString('pt-BR')}</p>
+      </div>
+    </div>
+  );
+}
+
+function DetailRow({ label, value }: { label: string; value: string | null | undefined; }) {
+  return (
+    <div>
+      <p className="text-xs uppercase tracking-wide text-muted-foreground/70">{label}</p>
+      <p className="text-foreground">{value || '—'}</p>
+    </div>
+  );
 }
