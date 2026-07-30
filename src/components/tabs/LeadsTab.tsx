@@ -54,7 +54,7 @@ export default function LeadsTab() {
   const [error, setError] = useState<string | null>(null);
   const [searchInput, setSearchInput] = useState('');
   const [searching, setSearching] = useState(false);
-  const [searchTab, setSearchTab] = useState<'places' | 'saved'>('places');
+  const [savedSearchInput, setSavedSearchInput] = useState('');
   const [filterCity, setFilterCity] = useState('');
   const [filterState, setFilterState] = useState('');
   const [filterCnpjStatus, setFilterCnpjStatus] = useState('all');
@@ -71,7 +71,7 @@ export default function LeadsTab() {
         page: String(page), pageSize: String(PAGE_SIZE),
         cnpjStatus: filterCnpjStatus, receitawsStatus: filterReceitaws,
       });
-      if (searchInput.trim()) params.set('query', searchInput.trim());
+      if (savedSearchInput.trim()) params.set('query', savedSearchInput.trim());
       if (filterCity) params.set('city', filterCity);
       if (filterState) params.set('state', filterState);
       const res = await fetch(`/api/leads?${params.toString()}`);
@@ -83,7 +83,7 @@ export default function LeadsTab() {
     } catch (e: any) {
       setError(e.message || 'Erro ao carregar leads');
     } finally { setLoading(false); }
-  }, [page, searchInput, filterCity, filterState, filterCnpjStatus, filterReceitaws]);
+  }, [page, savedSearchInput, filterCity, filterState, filterCnpjStatus, filterReceitaws]);
 
   useEffect(() => { fetchLeads(); }, [fetchLeads]);
 
@@ -110,6 +110,12 @@ export default function LeadsTab() {
     } finally { setSearching(false); }
   };
 
+  const handleSearchSaved = async () => {
+    if (!savedSearchInput.trim()) return;
+    setPage(1);
+    await fetchLeads();
+  };
+
   const handleFetchCnpj = async (lead: Lead, force = false) => {
     setFetchingCnpjFor(lead.id);
     const leadName = lead.name || lead.razaoSocial || 'Lead';
@@ -127,7 +133,6 @@ export default function LeadsTab() {
       if (selectedLead?.id === lead.id) setSelectedLead(data.lead);
       await fetchLeads();
 
-      // Feedback contextual
       if (data.ok && data.cnpj) {
         const sourceLabel = {
           'scraper': 'encontrado no site',
@@ -169,6 +174,16 @@ export default function LeadsTab() {
     } finally { setFetchingCnpjFor(null); }
   };
 
+  // AUTO-FETCH: quando abrir o dialog de detalhes, se o lead tem CNPJ mas
+  // receitawsStatus !== 'ok', busca automaticamente os dados do ReceitaWS
+  useEffect(() => {
+    if (!selectedLead) return;
+    if (selectedLead.cnpj && selectedLead.receitawsStatus !== 'ok' && !fetchingCnpjFor) {
+      handleFetchCnpj(selectedLead, false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedLead?.id]);
+
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3">
@@ -189,24 +204,8 @@ export default function LeadsTab() {
         </div>
       )}
 
-      <div className="rounded-lg border border-border bg-card p-4">
-        <div className="mb-3 flex gap-1 border-b border-border">
-          <button
-            type="button"
-            onClick={() => setSearchTab('places')}
-            className={`px-3 py-1.5 text-sm font-medium border-b-2 -mb-px ${searchTab === 'places' ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
-          >
-            <Search className="inline h-3.5 w-3.5 mr-1" /> Buscar no Places
-          </button>
-          <button
-            type="button"
-            onClick={() => setSearchTab('saved')}
-            className={`px-3 py-1.5 text-sm font-medium border-b-2 -mb-px ${searchTab === 'saved' ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
-          >
-            <Filter className="inline h-3.5 w-3.5 mr-1" /> Buscar salvos
-          </button>
-        </div>
-        {searchTab === 'places' && (
+      {/* Container 1: Buscar no Places + Filtros (sempre visivel) */}
+      <div className="rounded-lg border border-border bg-card p-4 space-y-3">
         <div className="flex gap-2">
           <input
             type="text"
@@ -225,15 +224,8 @@ export default function LeadsTab() {
             Buscar no Places
           </button>
         </div>
-        )}
-        {searchTab === 'saved' && (
-        <>
-        <div className="mb-3 flex items-center gap-2 text-sm font-medium text-foreground">
-          <Filter className="h-4 w-4 text-primary" />
-          Busca Avançada
-          <span className="text-xs font-normal text-muted-foreground">(filtra leads existentes no banco)</span>
-        </div>
-        <div className="flex flex-wrap items-end gap-3">
+
+        <div className="flex flex-wrap items-end gap-3 border-t border-border pt-3">
           <FilterInput label="Cidade" value={filterCity} onChange={setFilterCity} placeholder="Cidade" />
           <FilterInput label="UF" value={filterState} onChange={(v) => setFilterState(v.toUpperCase().slice(0, 2))} placeholder="UF" maxLength={2} />
           <FilterSelect label="CNPJ" value={filterCnpjStatus} onChange={setFilterCnpjStatus} options={[
@@ -248,8 +240,33 @@ export default function LeadsTab() {
             <RefreshCw className="h-4 w-4" /> Atualizar
           </button>
         </div>
-        </>
-        )}
+      </div>
+
+      {/* Container 2: Buscar nos leads salvos (NOVO) */}
+      <div className="rounded-lg border border-border bg-card p-4">
+        <div className="mb-2 flex items-center gap-2 text-sm font-medium text-foreground">
+          <Filter className="h-4 w-4 text-primary" />
+          Buscar nos leads salvos
+          <span className="text-xs font-normal text-muted-foreground">(filtra por nome, CNPJ, razão social ou endereço)</span>
+        </div>
+        <div className="flex gap-2">
+          <input
+            type="text"
+            placeholder="buscar nos salvos…"
+            value={savedSearchInput}
+            onChange={(e) => setSavedSearchInput(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleSearchSaved()}
+            className="flex-1 rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+          />
+          <button
+            onClick={handleSearchSaved}
+            disabled={loading || !savedSearchInput.trim()}
+            className="inline-flex items-center gap-2 rounded-md border border-border bg-background px-4 py-2 text-sm font-medium text-foreground hover:bg-muted/50 disabled:opacity-50"
+          >
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+            Buscar
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -368,7 +385,7 @@ function LeadDetailDialog({ lead, onClose, onFetchCnpj, fetching }: { lead: Lead
         <div className="mb-4 flex items-start justify-between">
           <div>
             <h2 className="text-xl font-bold text-foreground">{lead.name || lead.razaoSocial || '(sem nome)'}</h2>
-            {lead.nomeFantasia && (<p className="text-sm text-muted-foreground">{lead.nomeFantasia}</p>)}
+            {lead.nomeFantasia && lead.nomeFantasia !== lead.name && (<p className="text-sm text-muted-foreground">{lead.nomeFantasia}</p>)}
           </div>
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="h-5 w-5" /></button>
         </div>
@@ -376,6 +393,11 @@ function LeadDetailDialog({ lead, onClose, onFetchCnpj, fetching }: { lead: Lead
           <CnpjStatusBadge lead={lead} />
           {lead.situacaoCadastral && (<span className="rounded bg-zinc-700/60 px-2 py-0.5 text-xs text-zinc-300">Situação: {lead.situacaoCadastral}</span>)}
           {lead.porte && (<span className="rounded bg-zinc-700/60 px-2 py-0.5 text-xs text-zinc-300">Porte: {lead.porte}</span>)}
+          {lead.receitawsStatus && lead.receitawsStatus !== 'ok' && (
+            <span className="inline-flex items-center gap-1 rounded bg-amber-900/50 px-2 py-0.5 text-xs text-amber-300">
+              <Loader2 className="h-3 w-3 animate-spin" /> ReceitaWS: {lead.receitawsStatus}
+            </span>
+          )}
         </div>
         <div className="grid grid-cols-2 gap-4 text-sm">
           <DetailRow label="CNPJ" value={lead.cnpjFormatted || lead.cnpj} />
