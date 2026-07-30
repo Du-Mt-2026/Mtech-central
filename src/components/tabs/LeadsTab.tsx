@@ -328,12 +328,10 @@ function CnpjStatusBadge({ lead }: { lead: Lead }) {
     if (lead.cnpjFetchStatus === 'error') return (<span className="inline-flex items-center gap-1 rounded bg-red-900/50 px-2 py-0.5 text-xs text-red-300"><AlertCircle className="h-3 w-3" /> erro</span>);
     return (<span className="inline-flex items-center gap-1 rounded bg-amber-900/50 px-2 py-0.5 text-xs text-amber-300">pendente</span>);
   }
-  const isBigQuery = lead.cnpjSource?.startsWith('bigquery');
-  const isScraper = lead.cnpjSource?.startsWith('scraper');
   return (
-    <span className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs ${isScraper ? 'bg-emerald-900/50 text-emerald-300' : isBigQuery ? 'bg-blue-900/50 text-blue-300' : 'bg-zinc-700/60 text-zinc-300'}`}>
+    <span className="inline-flex items-center gap-1 rounded bg-emerald-900 px-2 py-0.5 text-xs font-medium text-white">
       <BadgeCheck className="h-3 w-3" />{lead.cnpjFormatted || lead.cnpj}
-      {lead.cnpjConfidence != null && (<span className="opacity-70">({lead.cnpjConfidence}%)</span>)}
+      {lead.cnpjConfidence != null && (<span className="opacity-80">({lead.cnpjConfidence}%)</span>)}
     </span>
   );
 }
@@ -349,8 +347,8 @@ function LeadCard({ lead, onSelect, onFetchCnpj, fetching }: { lead: Lead; onSel
       {lead.formattedAddress && (<p className="mt-2 flex items-start gap-1 text-xs text-muted-foreground"><MapPin className="mt-0.5 h-3 w-3 shrink-0" />{lead.formattedAddress}</p>)}
       <div className="mt-2 flex flex-wrap gap-2 text-xs">
         {lead.phone && (<span className="inline-flex items-center gap-1 text-muted-foreground"><Phone className="h-3 w-3" /> {lead.phone}</span>)}
-        {lead.website && (<a href={lead.website} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-primary hover:underline"><Globe className="h-3 w-3" /> site</a>)}
-        {lead.googleMapsUri && (<a href={lead.googleMapsUri} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-primary hover:underline"><ExternalLink className="h-3 w-3" /> maps</a>)}
+        {lead.website && (<a href={lead.website} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground hover:underline"><Globe className="h-3 w-3" /> site</a>)}
+        {lead.googleMapsUri && (<a href={lead.googleMapsUri} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground hover:underline"><ExternalLink className="h-3 w-3" /> maps</a>)}
       </div>
       {lead.cnaePrincipalTexto && (<p className="mt-2 text-xs text-muted-foreground/80">CNAE: {lead.cnaePrincipalTexto}</p>)}
       <div className="mt-3 flex gap-2">
