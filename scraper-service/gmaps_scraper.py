@@ -710,8 +710,16 @@ def _is_category_line(line: str) -> bool:
     # Category lines are short-ish
     if len(line) > 120:
         return False
-    # First segment should look like a category
+    # First segment should look like a category — NOT a status keyword
     first = line.split(" · ")[0].strip().lower()
+    # Reject if first segment is a status word (Aberto, Fechado, etc.)
+    status_words = {"aberto", "fechado", "abre", "fecha", "open", "closed",
+                    "horário", "horario", "horas", "hoje", "amanhã", "amanha"}
+    if first in status_words:
+        return False
+    # Reject if first segment starts with a status word
+    if any(first.startswith(w + " ") or first.startswith(w + ",") for w in status_words):
+        return False
     return any(cat in first for cat in KNOWN_CATEGORIES) or len(first) < 50
 
 
@@ -801,15 +809,40 @@ def _parse_card_text(text: str) -> Dict[str, Any]:
                 except ValueError:
                     pass
 
-    # Phase 2: Find category (line with " · " that's NOT an address)
+    # Phase 2: Find category
+    # Look for: (a) a pure category line "Restaurante · $$"
+    #        or (b) a combined category+address line "Restaurante ·  · Av. do Batel, 1440"
+    # In case (b), extract just the category part but DON'T consume the line
+    # (Phase 3 still needs it for address extraction).
     for i, line in enumerate(lines):
         if i in consumed:
             continue
-        if _is_category_line(line):
-            first = line.split(" · ")[0].strip().lower()
-            out["category"] = first
+        if " · " not in line:
+            continue
+        # Skip status lines
+        lower = line.lower()
+        if any(kw in lower for kw in STATUS_OPEN_KEYWORDS):
+            continue
+        if any(kw in lower for kw in STATUS_CLOSED_KEYWORDS):
+            continue
+        first = line.split(" · ")[0].strip().lower()
+        # Skip if first segment is a status word
+        status_words = {"aberto", "fechado", "abre", "fecha", "open", "closed",
+                        "horário", "horario", "horas", "hoje", "amanhã", "amanha"}
+        if first in status_words or any(first.startswith(w + " ") for w in status_words):
+            continue
+        # Skip if first segment is a number (e.g. "1.550 Rua Manoel..." from sponsored)
+        if re.match(r"^\d", first):
+            continue
+        # Skip if first segment is too long (probably a description, not a category)
+        if len(first) > 50:
+            continue
+        # Looks like a category — accept it.
+        # If the line is ALSO an address line, don't consume it (Phase 3 needs it).
+        out["category"] = first
+        if not _is_address_line(line):
             consumed.add(i)
-            break
+        break
 
     # Phase 3: Find address — scan ALL lines, run _parse_address_from_text
     # on each address-like candidate, pick the one with most non-null fields.
@@ -831,7 +864,28 @@ def _parse_card_text(text: str) -> Dict[str, Any]:
             best_addr_parts = parts
 
     if best_addr_line and best_addr_parts:
-        out["formattedAddress"] = best_addr_line
+        # If the best address line is combined with category (e.g.
+        # "Restaurante ·  · Av. do Batel, 1440"), strip the category prefix
+        # to get just the address part for formattedAddress.
+        addr_for_display = best_addr_line
+        if " · " in best_addr_line:
+            segments = best_addr_line.split(" · ")
+            # Find the first segment that contains a street pattern or CEP
+            for seg in segments:
+                seg_stripped = seg.strip()
+                if not seg_stripped:
+                    continue
+                if (re.search(
+                    r"(?:Rua|R\.?|Avenida|Av\.?|Travessa|Trav\.?|Alameda|Al\.?|Praça|Pc\.?|Rod\.?|Estrada|Est\.?|Viela|Beco)\s+",
+                    seg_stripped, re.IGNORECASE,
+                ) or CEP_RE.search(seg_stripped)):
+                    addr_for_display = seg_stripped
+                    # Re-parse to get fresh parts from the cleaner address
+                    re_parts = _parse_address_from_text(seg_stripped)
+                    if re_parts:
+                        best_addr_parts = re_parts
+                    break
+        out["formattedAddress"] = addr_for_display
         out["addressParts"] = best_addr_parts
         # Mark the consumed line so we don't re-use it
         for i, line in enumerate(lines):
@@ -842,49 +896,228 @@ def _parse_card_text(text: str) -> Dict[str, Any]:
     return out
 
 
-def _get_card_text(entry) -> str:
+def _slice_card_from_feed(
+    feed_text: str,
+    aria_label: str,
+    all_aria_labels: List[str],
+) -> str:
+    """
+    Fallback: extract one card's text from the entire feed text by locating
+    the aria_label followed by a rating pattern (X,Y or X.Y on its own line).
+
+    Google Maps cards have a consistent shape:
+        <name>
+        <name>                      (often duplicated)
+        <rating>                    (e.g. "4,7")
+        <category> ·  · <address>
+        <description>
+        <status> · <hours>
+
+    We find the first aria_label position that's followed by a rating line
+    within 500 chars, then slice until the next DIFFERENT aria_label that's
+    ALSO followed by a rating line (to skip action links like "Reservar").
+    """
+    if not feed_text or not aria_label:
+        return ""
+
+    # Find ALL positions where aria_label appears in feed_text
+    positions: List[int] = []
+    start = 0
+    while True:
+        p = feed_text.find(aria_label, start)
+        if p < 0:
+            break
+        positions.append(p)
+        start = p + 1
+
+    if not positions:
+        return ""
+
+    # Rating pattern: newline + digit.digit + newline (e.g. "\n4,7\n")
+    RATING_LINE_RE = re.compile(r"\n\d+[.,]\d\n")
+
+    # For each candidate position, check if there's a rating within 500 chars
+    # AND no OTHER aria_label appears between the name and the rating.
+    best_start = -1
+    for p in positions:
+        snippet = feed_text[p : p + 500]
+        rating_m = RATING_LINE_RE.search(snippet)
+        if not rating_m:
+            continue
+        # Check that no OTHER aria_label appears before the rating in this snippet
+        snippet_before_rating = snippet[: rating_m.start()]
+        other_label_intercepts = False
+        for l in all_aria_labels:
+            if not l or l == aria_label or len(l) < 4:
+                continue
+            if l in snippet_before_rating:
+                other_label_intercepts = True
+                break
+        if not other_label_intercepts:
+            best_start = p
+            break
+
+    if best_start < 0:
+        # Fallback: just use first occurrence
+        best_start = positions[0]
+
+    # Find next card start: next DIFFERENT aria_label that's followed by a rating
+    next_pos = len(feed_text)
+    # Skip past this card's content (aria_label may appear again as title)
+    search_from = best_start + len(aria_label) * 2 + 30
+    for l in all_aria_labels:
+        if not l or l == aria_label or len(l) < 4:
+            continue
+        # Find occurrences of this other label after search_from
+        sp = feed_text.find(l, search_from)
+        while sp >= 0 and sp < next_pos:
+            # Check if this label is followed by a rating (i.e., it's a real card start)
+            snippet = feed_text[sp : sp + 500]
+            if RATING_LINE_RE.search(snippet):
+                # Verify no other aria_label (other than this one) intercepts before rating
+                rating_m = RATING_LINE_RE.search(snippet)
+                if rating_m:
+                    between = snippet[: rating_m.start()]
+                    intercept = False
+                    for l2 in all_aria_labels:
+                        if not l2 or l2 == l or l2 == aria_label or len(l2) < 4:
+                            continue
+                        if l2 in between:
+                            intercept = True
+                            break
+                    if not intercept:
+                        next_pos = sp
+                        break
+            sp = feed_text.find(l, sp + 1)
+
+    return feed_text[best_start:next_pos].strip()
+
+
+def _get_card_text(
+    entry,
+    page: Optional[Page] = None,
+    all_aria_labels: Optional[List[str]] = None,
+) -> str:
     """
     Get the full text of a Google Maps result card from an <a> element.
 
     Strategy:
-    1. Try entry.inner_text() — sometimes the <a> itself has all the card text
-    2. Try parent.inner_text() via evaluate_handle — go up to find the card container
-    3. Try grandparent.inner_text() — one more level up
-    Returns whichever has the most lines (most info).
-    """
-    candidates: List[str] = []
-    try:
-        t = entry.inner_text() or ""
-        if t:
-            candidates.append(t)
-    except Exception:
-        pass
+    1. Walk up the DOM via JS, collecting innerText from each ancestor.
+    2. For each candidate, validate it looks like a single card (3-25 lines,
+       contains the place name, doesn't contain feed navigation markers,
+       has ≤8 middle dots — single cards have 1-3, multi-card feeds have 10+).
+    3. Among valid candidates, prefer the one with the most lines.
+    4. FALLBACK: If no valid candidate (ancestors are either too small or the
+       entire feed), slice the feed text using the aria_label to extract just
+       this card's text. This is robust to DOM structure changes.
 
-    # Use evaluate to walk up the DOM via JS — more reliable than evaluate_handle
+    A Google Maps card usually has 5-15 lines:
+        Name
+        Rating
+        Reviews
+        Category
+        Status
+        Address (maybe 1-3 lines)
+    """
+    # Get aria_label first (we need it to validate candidates)
     try:
-        # Walk up parent chain, collect inner_text from each level up to 5 ancestors
+        aria_label = (entry.get_attribute("aria-label") or "").strip()
+    except Exception:
+        aria_label = ""
+
+    # Collect innerText from entry + up to 6 ancestors
+    try:
         texts = entry.evaluate("""
             (el) => {
               const texts = [];
               let node = el;
-              for (let i = 0; i < 5 && node; i++) {
+              for (let i = 0; i < 7 && node; i++) {
                 try {
-                  texts.push(node.innerText || '');
+                  texts.push({
+                    level: i,
+                    text: node.innerText || '',
+                    childCount: node.children ? node.children.length : 0
+                  });
                 } catch (e) {}
                 node = node.parentElement;
               }
               return texts;
             }
         """)
-        if isinstance(texts, list):
-            candidates.extend([t for t in texts if t])
     except Exception:
-        pass
+        texts = []
 
-    if not candidates:
-        return ""
-    # Pick the candidate with the most newlines (most info)
-    return max(candidates, key=lambda t: t.count("\n"))
+    if not isinstance(texts, list) or not texts:
+        # Fallback: just entry.inner_text()
+        try:
+            return entry.inner_text() or ""
+        except Exception:
+            return ""
+
+    # Validate each candidate
+    candidates: List[str] = []
+    for item in texts:
+        if not isinstance(item, dict):
+            continue
+        t = (item.get("text") or "").strip()
+        if not t:
+            continue
+        line_count = t.count("\n") + 1
+        # Skip if too short (just the link itself, 1-2 lines)
+        if line_count < 3:
+            continue
+        # Skip if too long (likely the entire feed)
+        if line_count > 25:
+            continue
+        # Skip if doesn't contain the aria-label (card name) somewhere
+        if aria_label and aria_label not in t:
+            continue
+        # Skip if contains feed-navigation markers (means we went too high)
+        feed_markers = [
+            "Ver mais", "Ver tudo", "Mostrar mais", "Show more", "Ver resultados",
+            "Atualizar resultados", "Aproveite ao máximo", "Fazer login",
+            "visualização limitada",
+        ]
+        if any(m in t for m in feed_markers):
+            continue
+        # Skip if it contains the names of OTHER place entries (multiple cards)
+        # Heuristic: count "·" — single card has 1-5, multi-card feed has 10+
+        if t.count("·") > 8:
+            continue
+        candidates.append(t)
+
+    if candidates:
+        return max(candidates, key=lambda t: t.count("\n"))
+
+    # FALLBACK: slice feed text using aria_label
+    # This handles cases where the DOM has no intermediate container between
+    # the <a> and the entire feed (Google Maps sometimes does this).
+    if page and aria_label and all_aria_labels:
+        try:
+            feed_text = page.evaluate("""
+                () => {
+                  const el = document.querySelector('div[role="feed"]');
+                  return el ? el.innerText : '';
+                }
+            """)
+            if feed_text and aria_label in feed_text:
+                sliced = _slice_card_from_feed(feed_text, aria_label, all_aria_labels)
+                if sliced and 3 <= (sliced.count("\n") + 1) <= 30:
+                    logger.debug(
+                        f"Used feed-slice fallback for '{aria_label}' "
+                        f"({sliced.count(chr(10))+1} lines)"
+                    )
+                    return sliced
+        except Exception as e:
+            logger.debug(f"feed-slice fallback failed: {e}")
+
+    # Last resort: return the longest text we got (even if invalid)
+    # so we can debug it via the card dump
+    all_texts = [item.get("text", "") for item in texts if isinstance(item, dict)]
+    all_texts = [t for t in all_texts if t]
+    if all_texts:
+        return max(all_texts, key=len)
+    return ""
 
 
 # Counter for dumping cards (debug only)
@@ -914,6 +1147,16 @@ def _extract_dom_entries(page: Page) -> List[Dict[str, Any]]:
     except Exception:
         return results
 
+    # Pre-compute all aria_labels for the _get_card_text fallback (feed slicing)
+    all_aria_labels: List[str] = []
+    try:
+        for e in entries:
+            l = (e.get_attribute("aria-label") or "").strip()
+            if l and l not in all_aria_labels:
+                all_aria_labels.append(l)
+    except Exception:
+        pass
+
     seen_hrefs: Set[str] = set()
     for entry in entries:
         try:
@@ -938,7 +1181,7 @@ def _extract_dom_entries(page: Page) -> List[Dict[str, Any]]:
             place_id = parsed.get("placeId") or f"dom:{abs(hash(href)) & 0xFFFFFFFF:08x}"
 
             # Parse card text for rating/reviews/address/category
-            card_text = _get_card_text(entry)
+            card_text = _get_card_text(entry, page=page, all_aria_labels=all_aria_labels)
             card_data = _parse_card_text(card_text)
 
             # Debug: dump first 5 cards for inspection
