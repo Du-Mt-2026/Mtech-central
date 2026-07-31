@@ -30,12 +30,17 @@ services:
       NEXT_PUBLIC_APP_URL: "${APP_PUBLIC_URL:-https://octupuszap.seudominio.com}"
       NODE_ENV: production
       GOOGLE_PLACES_API_KEY: "${GOOGLE_PLACES_API_KEY}"
+      # URL interna do microsserviço scraper (rede Docker)
+      # Substitui a Google Places API — scraping direto do Google Maps
+      SCRAPER_URL: "http://scraper:5000"
     volumes:
       - ./bigquery-service-account.json:/app/bigquery-service-account.json:ro
     depends_on:
       migrate:
         condition: service_completed_successfully
       db:
+        condition: service_healthy
+      scraper:
         condition: service_healthy
     networks:
     - internal
@@ -54,6 +59,36 @@ services:
       resources:
         limits:
           memory: 768M
+
+  # ==========================================
+  # Scraper - Microsserviço Python (Playwright)
+  # ==========================================
+  # Substitui a Google Places API. Faz scraping direto do Google Maps.
+  # O Next.js (app) fala com este serviço via rede interna do Docker:
+  #   POST http://scraper:5000/scrape  { query, city, uf, ... }
+  # Não exponha a porta 5000 publicamente.
+  scraper:
+    build:
+      context: ./scraper-service
+      dockerfile: Dockerfile
+    container_name: octupuszap-scraper
+    restart: unless-stopped
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:5000/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 20s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+  # ==========================================
+  # Database - PostgreSQL (isolado do restante)
+  # ==========================================
   db:
     image: postgres:16-alpine
     container_name: octupuszap-db
