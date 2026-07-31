@@ -143,6 +143,10 @@ def _parse_address_from_text(text: str) -> Dict[str, Any]:
     Expected BR format from Google Maps:
       "Rua dos Pinheiros, 123 - Centro, Curitiba - PR, 80000-000, Brasil"
       <route>, <number> - <sublocality>, <locality> - <UF>, <CEP>, <country>
+
+    Also handles partial formats like:
+      "Shopping Crystal, R. Comendador Araújo, 731 - Sala 321"
+      "R. Comendador Araújo, 731 - Sala 321, Curitiba - PR"
     """
     out: Dict[str, Any] = {
         "streetNumber": None,
@@ -160,20 +164,28 @@ def _parse_address_from_text(text: str) -> Dict[str, Any]:
     if cep_m:
         out["postalCode"] = cep_m.group(0)
 
-    uf_m = re.search(r"(?:^|[\s,\-])([A-Z]{2})(?:\s*,\s*|\s*$|\s+Brasil)", text)
-    if uf_m:
-        out["administrativeArea"] = uf_m.group(1)
-
+    # City + UF pattern: "<city> - <UF>" near end (e.g. "Curitiba - PR, Brasil")
     city_m = re.search(
-        r",\s*([^,\n]+?)\s*-\s*([A-Z]{2})(?:\s*,|\s*$|\s+Brasil)",
+        r",?\s*([^,\-\n]{2,60}?)\s*-\s*([A-Z]{2})(?:\s*,|\s*$|\s+Brasil)",
         text,
     )
     if city_m:
-        out["locality"] = city_m.group(1).strip()
-        out["administrativeArea"] = city_m.group(2)
+        candidate_city = city_m.group(1).strip()
+        # Reject if it's a number or too short
+        if candidate_city and not re.match(r"^\d+$", candidate_city) and len(candidate_city) >= 2:
+            out["locality"] = candidate_city
+            out["administrativeArea"] = city_m.group(2)
+    else:
+        # Just UF (e.g. "PR" alone at end)
+        uf_m = re.search(r"(?:^|[\s,\-])([A-Z]{2})(?:\s*,\s*|\s*$|\s+Brasil)", text)
+        if uf_m:
+            out["administrativeArea"] = uf_m.group(1)
 
+    # Street pattern — search ANYWHERE in text (not just anchored at start).
+    # Handles "Shopping Crystal, R. Comendador Araújo, 731 - Sala 321"
+    # where the street is not at the beginning.
     street_m = re.search(
-        r"((?:Rua|Avenida|Av\.?|Travessa|Trav\.?|Alameda|Al\.?|Praça|Pc\.?|Rod\.?|Estrada|Est\.?|Viela|Beco)\s+[^,]+?)\s*,\s*(\d+)?",
+        r"((?:Rua|R\.?|Avenida|Av\.?|Travessa|Trav\.?|Alameda|Al\.?|Praça|Pc\.?|Rod\.?|Estrada|Est\.?|Viela|Beco)\s+[^,]+?)\s*,\s*(\d+)",
         text,
         re.IGNORECASE,
     )
@@ -181,13 +193,27 @@ def _parse_address_from_text(text: str) -> Dict[str, Any]:
         out["route"] = street_m.group(1).strip()
         if street_m.group(2):
             out["streetNumber"] = street_m.group(2)
+    else:
+        # Try without trailing number — just street name
+        street_m = re.search(
+            r"((?:Rua|R\.?|Avenida|Av\.?|Travessa|Trav\.?|Alameda|Al\.?|Praça|Pc\.?|Rod\.?|Estrada|Est\.?|Viela|Beco)\s+[^,\n]{3,60})",
+            text,
+            re.IGNORECASE,
+        )
+        if street_m:
+            out["route"] = street_m.group(1).strip()
 
+    # Sublocality (bairro): between " - " and "," — but skip if it's the city
     bairro_m = re.search(r"\s-\s([^,\-\n]{3,40}?)\s*,", text)
     if bairro_m:
         candidate = bairro_m.group(1).strip()
-        if candidate and (not out.get("locality") or candidate.lower() != out["locality"].lower()):
-            if not re.match(r"^\d+$", candidate):
-                out["sublocality"] = candidate
+        # Skip pure numbers (e.g. "Sala 321" → no, "321" alone yes)
+        if candidate and not re.match(r"^\d+$", candidate):
+            # Skip if it matches the city
+            if not out.get("locality") or candidate.lower() != out["locality"].lower():
+                # Skip common suite/room indicators
+                if not re.match(r"^(Sala|Loja|Apto|Ap\.?|Casa|Bloco|Andar|Km)\s", candidate, re.IGNORECASE):
+                    out["sublocality"] = candidate
 
     return out
 
@@ -554,6 +580,30 @@ class RpcCollector:
             return self.places.get(key)
         return None
 
+    def find_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+        """
+        Find an RPC place by close name match.
+        Tries exact (case-insensitive) first, then substring match.
+        Used as last-resort fallback when feature_id/place_id don't match.
+        """
+        if not name:
+            return None
+        name_lower = name.lower().strip()
+        # Exact match
+        for p in self.places.values():
+            n = p.get("name")
+            if n and n.lower().strip() == name_lower:
+                return p
+        # Substring match (DOM name contains RPC name, or vice-versa)
+        for p in self.places.values():
+            n = p.get("name")
+            if not n:
+                continue
+            n_lower = n.lower().strip()
+            if len(n_lower) >= 5 and (n_lower in name_lower or name_lower in n_lower):
+                return p
+        return None
+
 
 # ---------------------------------------------------------------------------
 # DOM extraction — source of truth for "what places exist"
@@ -561,6 +611,12 @@ class RpcCollector:
 
 # Regex for rating in BR format: "4,7" or "4.7" (decimal separator , or .)
 RATING_RE = re.compile(r"^\d+[.,]\d$")
+# Combined rating+reviews format: "4,7(1.234)" or "4.7 (1.234)" or "4,7 (1.234) opiniões"
+# Google often renders them on a single line with NO space between rating and parens.
+RATING_REVIEWS_RE = re.compile(
+    r"^(\d+[.,]\d)\s*\(([\d.,]+)\)\s*(?:opiniões|reviews|avaliações)?$",
+    re.IGNORECASE,
+)
 # Regex for review count in BR format. Google uses several variants:
 #   "(1.234)"
 #   "(1.234) opiniões"
@@ -594,15 +650,18 @@ def _is_address_line(line: str) -> bool:
       "Av. do Batel, 1440 - Batel, Curitiba - PR"
       "Rua dos Pinheiros, 123 - Centro, Curitiba - PR, 80000-000"
       "Shopping Crystal, R. Comendador Araújo, 731 - Sala 321"
+      "R. Comendador Araújo, 731 - Sala 321"
     Returns False for:
-      "Curitiba - PR, Brasil" (too short, only city/UF)
+      "Curitiba - PR, Brasil" (too short, only city/UF — no street)
       "Restaurante de frutos do mar · $$ · Shopping Crystal, R. ..."
       "Aberto · Fecha 23h"
     """
     if not line or len(line) < 15:
         return False
-    # Must have a comma
-    if "," not in line:
+    # Must have a comma OR a CEP
+    has_comma = "," in line
+    has_cep = bool(CEP_RE.search(line))
+    if not has_comma and not has_cep:
         return False
     # Skip status lines
     lower = line.lower()
@@ -613,23 +672,32 @@ def _is_address_line(line: str) -> bool:
     # Skip pure rating/reviews
     if RATING_RE.match(line):
         return False
+    if RATING_REVIEWS_RE.match(line):
+        return False
     if REVIEWS_PAREN_RE.match(line) or REVIEWS_BARE_RE.match(line):
         return False
-    # Must have either:
-    # (a) a street prefix (Rua, Av., etc.)
-    # (b) a CEP (XXXXX-XXX)
-    # (c) a UF code (XX) at end or near end
-    # AND must be reasonably long (> 20 chars typically)
-    if len(line) < 20:
-        return False
-    has_street = bool(re.match(
-        r"^(Rua|Avenida|Av\.?|Travessa|Trav\.?|Alameda|Al\.?|Praça|Pc\.?|Rod\.?|Estrada|Est\.?|Viela|Beco|R\.?)\s",
+    # Skip category lines (contain " · " separator with category words)
+    if " · " in line and not has_cep:
+        # But still accept if there's a clear street pattern after the ·
+        if not re.search(
+            r"(?:Rua|R\.?|Avenida|Av\.?|Travessa|Trav\.?|Alameda|Al\.?|Praça|Pc\.?|Rod\.?|Estrada|Est\.?|Viela|Beco)\s+[^,]+?,\s*\d+",
+            line,
+            re.IGNORECASE,
+        ):
+            return False
+
+    # Street pattern ANYWHERE in the line (not just at start)
+    has_street = bool(re.search(
+        r"(?:Rua|R\.?|Avenida|Av\.?|Travessa|Trav\.?|Alameda|Al\.?|Praça|Pc\.?|Rod\.?|Estrada|Est\.?|Viela|Beco)\s+[^,]+?,?\s*\d*",
         line,
         re.IGNORECASE,
     ))
-    has_cep = bool(CEP_RE.search(line))
-    has_uf = bool(re.search(r"\b[A-Z]{2}\b\s*[,]\s*\d{5}-\d{3}|\b[A-Z]{2}\b\s*$|\b[A-Z]{2}\b\s+Brasil", line))
-    return has_street or has_cep or has_uf
+    # UF code at end (e.g. "PR", "SP") or followed by "Brasil"
+    has_uf = bool(re.search(r"\b[A-Z]{2}\b\s*[,]\s*\d{5}-\d{3}|\b[A-Z]{2}\b\s*$|\b[A-Z]{2}\b\s+Brasil|\b[A-Z]{2}\b\s*,\s*Brasil", line))
+    # City - UF pattern
+    has_city_uf = bool(re.search(r"[^,\-\n]{2,60}?\s*-\s*[A-Z]{2}\b", line))
+
+    return has_street or has_cep or (has_uf and len(line) >= 20) or (has_city_uf and has_comma and len(line) >= 20)
 
 
 def _is_category_line(line: str) -> bool:
@@ -664,34 +732,74 @@ def _parse_card_text(text: str) -> Dict[str, Any]:
 
     consumed: Set[int] = set()
 
-    # Phase 1: Find rating and reviews (usually adjacent)
+    # Phase 1: Find rating and reviews
+    # Try combined format FIRST: "4,7(1.234)" or "4,7 (1.234)"
     for i, line in enumerate(lines):
         if i in consumed:
             continue
-        if RATING_RE.match(line):
+        m = RATING_REVIEWS_RE.match(line)
+        if m:
             try:
-                r = float(line.replace(",", "."))
+                r = float(m.group(1).replace(",", "."))
                 if 1.0 <= r <= 5.0:
                     out["rating"] = r
+                    try:
+                        count = int(m.group(2).replace(".", "").replace(",", ""))
+                        out["userRatingCount"] = count
+                    except ValueError:
+                        pass
                     consumed.add(i)
-                    # Look ahead 1-3 lines for reviews
-                    for j in range(i + 1, min(i + 4, len(lines))):
-                        if j in consumed:
-                            continue
-                        m = REVIEWS_PAREN_RE.match(lines[j])
-                        if not m:
-                            m = REVIEWS_BARE_RE.match(lines[j])
-                        if m:
-                            try:
-                                count = int(m.group(1).replace(".", "").replace(",", ""))
-                                out["userRatingCount"] = count
-                                consumed.add(j)
-                                break
-                            except ValueError:
-                                pass
                     break
             except ValueError:
                 pass
+
+    # Phase 1b: If combined didn't match, try rating alone + look ahead for reviews
+    if "rating" not in out:
+        for i, line in enumerate(lines):
+            if i in consumed:
+                continue
+            if RATING_RE.match(line):
+                try:
+                    r = float(line.replace(",", "."))
+                    if 1.0 <= r <= 5.0:
+                        out["rating"] = r
+                        consumed.add(i)
+                        # Look ahead 1-3 lines for reviews
+                        for j in range(i + 1, min(i + 4, len(lines))):
+                            if j in consumed:
+                                continue
+                            m = REVIEWS_PAREN_RE.match(lines[j])
+                            if not m:
+                                m = REVIEWS_BARE_RE.match(lines[j])
+                            if m:
+                                try:
+                                    count = int(m.group(1).replace(".", "").replace(",", ""))
+                                    out["userRatingCount"] = count
+                                    consumed.add(j)
+                                    break
+                                except ValueError:
+                                    pass
+                        break
+                except ValueError:
+                    pass
+
+    # Phase 1c: If we have rating but no reviews, try to find reviews anywhere
+    if "rating" in out and "userRatingCount" not in out:
+        for i, line in enumerate(lines):
+            if i in consumed:
+                continue
+            m = REVIEWS_PAREN_RE.match(line)
+            if not m:
+                m = REVIEWS_BARE_RE.match(line)
+            if m:
+                try:
+                    count = int(m.group(1).replace(".", "").replace(",", ""))
+                    if 1 <= count <= 5_000_000:
+                        out["userRatingCount"] = count
+                        consumed.add(i)
+                        break
+                except ValueError:
+                    pass
 
     # Phase 2: Find category (line with " · " that's NOT an address)
     for i, line in enumerate(lines):
@@ -703,16 +811,33 @@ def _parse_card_text(text: str) -> Dict[str, Any]:
             consumed.add(i)
             break
 
-    # Phase 3: Find address — scan from end backwards, pick first address-like line
+    # Phase 3: Find address — scan ALL lines, run _parse_address_from_text
+    # on each address-like candidate, pick the one with most non-null fields.
+    best_addr_line: Optional[str] = None
+    best_addr_parts: Optional[Dict[str, Any]] = None
+    best_score = 0
     for i in range(len(lines) - 1, -1, -1):
         if i in consumed:
             continue
         line = lines[i]
-        if _is_address_line(line):
-            out["formattedAddress"] = line
-            out["addressParts"] = _parse_address_from_text(line)
-            consumed.add(i)
-            break
+        if not _is_address_line(line):
+            continue
+        parts = _parse_address_from_text(line)
+        # Score: count non-null fields (excluding "country" which is always "Brasil")
+        score = sum(1 for k, v in parts.items() if v is not None and k != "country")
+        if score > best_score:
+            best_score = score
+            best_addr_line = line
+            best_addr_parts = parts
+
+    if best_addr_line and best_addr_parts:
+        out["formattedAddress"] = best_addr_line
+        out["addressParts"] = best_addr_parts
+        # Mark the consumed line so we don't re-use it
+        for i, line in enumerate(lines):
+            if line == best_addr_line:
+                consumed.add(i)
+                break
 
     return out
 
@@ -885,6 +1010,7 @@ def scrape_google_maps(
     timeout_ms: int = 30000,
     max_scrolls: int = 25,
     lang: str = "pt-BR",
+    debug: bool = False,
 ) -> List[Dict[str, Any]]:
     """
     Scrape Google Maps for businesses matching the query in the given city/UF.
@@ -894,6 +1020,26 @@ def scrape_google_maps(
         userRatingCount, googleMapsUri, businessStatus, addressParts,
         latitude, longitude
     """
+    # Enable debug dumps for this request if requested
+    if debug:
+        os.environ["DEBUG_DUMP_RPC"] = "1"
+        os.environ["DEBUG_DUMP_CARDS"] = "1"
+        # Reset card dump counter
+        _CARD_DUMP_COUNTER[0] = 0
+        # Clear debug dir
+        try:
+            import shutil
+            if os.path.exists(DEBUG_DUMP_DIR):
+                shutil.rmtree(DEBUG_DUMP_DIR)
+            os.makedirs(DEBUG_DUMP_DIR, exist_ok=True)
+        except Exception:
+            pass
+        logger.setLevel(logging.DEBUG)
+        logger.info(f"[DEBUG] Enabled card+RPC dump to {DEBUG_DUMP_DIR}")
+        # Force module-level flags to refresh from env
+        global DEBUG_DUMP_RPC
+        DEBUG_DUMP_RPC = True
+
     url = _build_search_url(query, city, uf)
     logger.info(f"Scraping: {url}")
 
@@ -1060,7 +1206,7 @@ def scrape_google_maps(
         for dp in dom_places:
             ap = dp.get("addressParts") or {}
 
-            # Find matching RPC entry by featureId or placeId
+            # Find matching RPC entry by featureId or placeId (then name fallback)
             rpc_place: Optional[Dict[str, Any]] = None
             fid = dp.get("_featureId")
             pid = dp.get("placeId")
@@ -1068,6 +1214,22 @@ def scrape_google_maps(
                 rpc_place = collector.find_by_feature_id(fid)
             if not rpc_place and pid and pid.startswith("ChIJ"):
                 rpc_place = collector.find_by_place_id(pid)
+            # Last-resort: match by name (only if still missing key fields)
+            if not rpc_place:
+                dp_name = dp.get("name") or ""
+                needs_enrichment = (
+                    not dp.get("phone")
+                    or not dp.get("website")
+                    or not dp.get("formattedAddress")
+                    or not ap.get("route")
+                )
+                if needs_enrichment and dp_name:
+                    rpc_place = collector.find_by_name(dp_name)
+                    if rpc_place:
+                        logger.debug(
+                            f"Name-based RPC match for '{dp_name}' "
+                            f"(fid={fid}, pid={pid})"
+                        )
 
             if rpc_place:
                 # Enrich DOM entry with RPC data
