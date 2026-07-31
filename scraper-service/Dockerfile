@@ -12,7 +12,10 @@ FROM python:3.11-slim
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    # Install Playwright browsers to a system-wide path so they're
+    # accessible to the non-root `scraper` user at runtime.
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 # System deps required by Playwright Chromium
 # https://playwright.dev/python/docs/browsers#install-system-dependencies
@@ -48,13 +51,15 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 
-# Install Playwright Chromium browser
-RUN playwright install chromium
+# Install Playwright Chromium browser to /ms-playwright (system-wide)
+# The ENV PLAYWRIGHT_BROWSERS_PATH above tells playwright where to install.
+RUN playwright install chromium && \
+    chmod -R a+rX /ms-playwright
 
 # Copy app code
 COPY app.py gmaps_scraper.py ./
 
-# Run as non-root (Playwright is fine with this)
+# Run as non-root (Playwright is fine with this since browsers are in /ms-playwright)
 RUN useradd -m -u 1001 scraper
 USER scraper
 
