@@ -1,19 +1,19 @@
 """
 gmaps_scraper.py — Google Maps scraper using Playwright.
 
-Hybrid strategy:
-1. Hook page.on("response") to intercept RPC responses
-   (search.json / place.json / listugcposts etc.).
-2. Walk the nested JSON arrays to find place entries, identified by
-   place_id ("ChIJ...") or feature_id ("0x...:0x...").
-3. Click into each place to trigger place.json (carries phone + website
-   + full address).
-4. DOM extraction as fallback — gets name + googleMapsUri at minimum.
-5. Parse googleMapsUri for placeId / lat / lng as a final fallback.
+DOM-first hybrid strategy:
+1. Extract place cards from the DOM feed — gives us name + googleMapsUri
+   + placeId (ChIJ...) + featureId (0x...:0x...) + lat/lng.
+2. Hook page.on("response") to capture RPC responses (search.json,
+   place.json). Walk them and try to enrich our DOM-derived entries by
+   matching feature_id or place_id.
+3. Click each place card to trigger place.json — fires the RPC that
+   carries phone + website + structured address.
+4. If RPC enrichment finds new places not in the DOM (rare), we keep
+   them but mark with _featureId only.
 
-This combines the robustness of RPC interception (rich data) with the
-resilience of DOM scraping (always returns something even if RPC layout
-changes).
+The DOM is the source of truth for "what places exist on this page".
+RPC is only an enrichment layer.
 
 Usage as module:
     from gmaps_scraper import scrape_google_maps
@@ -26,8 +26,9 @@ import json
 import re
 import time
 import logging
+import os
 import urllib.parse
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set
 
 from playwright.sync_api import (
     Browser,
@@ -55,14 +56,26 @@ USER_AGENT = (
     "(KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36"
 )
 
-# Place IDs from Google Maps come in two flavors:
-#   - place_id  : "ChIJd0JWC4nj3JQRESbU6mByFXU" (canonical, ~27 chars)
-#   - feature_id: "0x94dce3890b564277:0x75157260ead42611" (hex lat:lng hash)
 PLACE_ID_RE = re.compile(r"^ChIJ[A-Za-z0-9_\-]{16,}$")
 FEATURE_ID_RE = re.compile(r"^0x[0-9a-fA-F]+:0x[0-9a-fA-F]+$")
 CEP_RE = re.compile(r"\b(\d{5})-(\d{3})\b")
-PHONE_RE = re.compile(r"^\+?[\d\s\-()]{8,}$")
+
+# A phone number must have at least 8 digits (BR landlines: 10, mobile: 11
+# with area code, or 8-9 without). We strip non-digits and check.
+PHONE_DIGITS_RE = re.compile(r"\d")
+# Phone string must start with + or contain digits with separators
+PHONE_STRING_RE = re.compile(r"^\+?[\d][\d\s\-()]{6,}$")
+
 URL_RE = re.compile(r"^https?://", re.IGNORECASE)
+
+# Brazilian bounds (rough): lat [-34, +5], lng [-74, -34]
+BR_LAT_MIN, BR_LAT_MAX = -34.0, 5.5
+BR_LNG_MIN, BR_LNG_MAX = -74.0, -34.0
+
+# Enable RPC dump for debugging (saves first N responses to /tmp/scraper_debug/)
+DEBUG_DUMP_RPC = os.getenv("DEBUG_DUMP_RPC", "0") == "1"
+DEBUG_DUMP_DIR = "/tmp/scraper_debug"
+DEBUG_DUMP_MAX = 3  # cap to avoid filling disk
 
 
 # ---------------------------------------------------------------------------
@@ -79,7 +92,7 @@ def _parse_uri_for_place(href: str) -> Dict[str, Any]:
     """
     Extract placeId / lat / lng / featureId from a Google Maps place URL.
 
-    Example URL structure:
+    Example URL:
       https://www.google.com/maps/place/Quintana+Gastronomia/data=!4m7!3m6!1s0x94dce3890b564277:0x75157260ead42611!8m2!3d-25.441833!4d-49.287054!16s%2Fg%2F1v8j1lc5!19sChIJd0JWC4nj3JQRESbU6mByFXU
 
     - !3d{lat}!4d{lng}     -> latitude/longitude
@@ -92,8 +105,15 @@ def _parse_uri_for_place(href: str) -> Dict[str, Any]:
 
     m = re.search(r"!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)", href)
     if m:
-        out["latitude"] = float(m.group(1))
-        out["longitude"] = float(m.group(2))
+        try:
+            lat = float(m.group(1))
+            lng = float(m.group(2))
+            # Validate bounds
+            if BR_LAT_MIN <= lat <= BR_LAT_MAX and BR_LNG_MIN <= lng <= BR_LNG_MAX:
+                out["latitude"] = lat
+                out["longitude"] = lng
+        except ValueError:
+            pass
 
     m = re.search(r"!19s=?(ChIJ[A-Za-z0-9_\-]+)", href)
     if m:
@@ -107,7 +127,6 @@ def _parse_uri_for_place(href: str) -> Dict[str, Any]:
         if m:
             out["featureId"] = m.group(1)
 
-    # Extract name from URL path (after /place/ and before /data= or @)
     m = re.search(r"/place/([^/]+?)(?:/data=|/@|\?|$)", href)
     if m:
         try:
@@ -137,30 +156,22 @@ def _parse_address_from_text(text: str) -> Dict[str, Any]:
     if not text:
         return out
 
-    # CEP: \d{5}-\d{3}
     cep_m = CEP_RE.search(text)
     if cep_m:
         out["postalCode"] = cep_m.group(0)
 
-    # UF: pattern "<sep>XX<sep>" where sep is , or - (Brazilian format uses both)
-    # Try " - XX, " first (most common in Google Maps BR)
     uf_m = re.search(r"(?:^|[\s,\-])([A-Z]{2})(?:\s*,\s*|\s*$|\s+Brasil)", text)
     if uf_m:
         out["administrativeArea"] = uf_m.group(1)
 
-    # City + UF together: " - City - UF, " or ", City - UF, "
-    # We use this to extract city too
     city_m = re.search(
         r",\s*([^,\n]+?)\s*-\s*([A-Z]{2})(?:\s*,|\s*$|\s+Brasil)",
         text,
     )
     if city_m:
         out["locality"] = city_m.group(1).strip()
-        # Override UF with the more specific match
         out["administrativeArea"] = city_m.group(2)
 
-    # Route + number: "Rua X, 123" / "Av. Y, 4567" etc.
-    # Greedy match on street name until comma, then optional number
     street_m = re.search(
         r"((?:Rua|Avenida|Av\.?|Travessa|Trav\.?|Alameda|Al\.?|Praça|Pc\.?|Rod\.?|Estrada|Est\.?|Viela|Beco)\s+[^,]+?)\s*,\s*(\d+)?",
         text,
@@ -171,18 +182,87 @@ def _parse_address_from_text(text: str) -> Dict[str, Any]:
         if street_m.group(2):
             out["streetNumber"] = street_m.group(2)
 
-    # Sublocality (bairro): text between first " - " and the next ","
-    # Format: "... - Centro, Curitiba - PR"
     bairro_m = re.search(r"\s-\s([^,\-\n]{3,40}?)\s*,", text)
     if bairro_m:
         candidate = bairro_m.group(1).strip()
-        # Don't override if it's the same as city
         if candidate and (not out.get("locality") or candidate.lower() != out["locality"].lower()):
-            # Skip if it looks like a street name or number
             if not re.match(r"^\d+$", candidate):
                 out["sublocality"] = candidate
 
     return out
+
+
+def _looks_like_business_name(s: str) -> bool:
+    """
+    Heuristic: does this string look like a real business name?
+    Returns True for 'Quintana Gastronomia', False for 'oulsavanK7zO5OUPvditoAw'
+    or 'Av. do Batel, 1440 - Batel'.
+    """
+    if not s or len(s) < 3 or len(s) > 120:
+        return False
+    # Has at least one letter
+    if not any(c.isalpha() for c in s):
+        return False
+    # Skip Google's internal IDs
+    if PLACE_ID_RE.match(s):
+        return False
+    if FEATURE_ID_RE.match(s):
+        return False
+    # Skip long alphanumeric-only strings (likely obfuscated IDs)
+    if re.match(r"^[A-Za-z0-9_\-]{20,}$", s) and not " " in s:
+        return False
+    # Not an address (no comma + digit pattern)
+    if re.match(r"^(Rua|Avenida|Av\.?|Travessa|Alameda|Praça|Rod\.?|Estrada)\s", s, re.IGNORECASE):
+        return False
+    # Not a phone or CEP
+    if PHONE_STRING_RE.match(s):
+        return False
+    if CEP_RE.fullmatch(s):
+        return False
+    # Not a URL
+    if URL_RE.match(s):
+        return False
+    return True
+
+
+def _validate_phone(s: str) -> Optional[str]:
+    """Return the phone if valid, None otherwise."""
+    if not s:
+        return None
+    # Reject CEPs explicitly (8 digits with dash in CEP format)
+    if CEP_RE.fullmatch(s):
+        return None
+    digits = PHONE_DIGITS_RE.findall(s)
+    if len(digits) < 10 or len(digits) > 15:
+        return None
+    # Must have either + (country code) or be 10-11 digits (BR landline/mobile)
+    return s
+
+
+def _validate_rating(f: float) -> Optional[float]:
+    """Return rating if in valid range, None otherwise."""
+    if f is None:
+        return None
+    try:
+        f = float(f)
+    except (TypeError, ValueError):
+        return None
+    if 1.0 <= f <= 5.0:
+        return f
+    return None
+
+
+def _validate_lat_lng(lat: Any, lng: Any) -> Optional[tuple]:
+    """Return (lat, lng) if both are valid BR coords, None otherwise."""
+    try:
+        lat_f = float(lat)
+        lng_f = float(lng)
+    except (TypeError, ValueError):
+        return None
+    # Strict Brazilian bounds (with small margin)
+    if -35.5 <= lat_f <= 6.0 and -75.0 <= lng_f <= -33.0:
+        return (lat_f, lng_f)
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -191,47 +271,40 @@ def _parse_address_from_text(text: str) -> Dict[str, Any]:
 
 class RpcCollector:
     """
-    Collects Google Maps internal RPC responses (search.json, place.json).
+    Captures Google Maps internal RPC responses (search.json, place.json).
 
-    Google Maps makes XHR calls to endpoints like:
-      /maps/rpc/search.json   — search results list
-      /maps/rpc/place.json    — place details (when clicked)
-      /maps/rpc/listugcposts  — reviews (we don't need this)
+    Strategy: walk the nested JSON, harvest (place_id, feature_id, and
+    surrounding strings/numbers) per "place container". A place container
+    is identified by containing BOTH:
+      - a feature_id (0x...:0x...) OR place_id (ChIJ...)
+      - a string that looks like a business name (per _looks_like_business_name)
 
-    Each response is a nested JSON array (NOT a JSON object). We walk
-    the tree recursively, looking for "place entries" — lists that
-    contain a place_id (ChIJ...) or feature_id (0x...:0x...).
+    All extracted fields are validated before being stored.
     """
 
     def __init__(self):
-        # placeId -> dict of fields (accumulated across responses)
+        # Keyed by featureId (preferred) or placeId
+        # Values: dict of partial fields
         self.places: Dict[str, Dict[str, Any]] = {}
-        # featureId -> placeId (so we can merge search results with place details)
-        self.feature_to_place: Dict[str, str] = {}
-        # Counters for logging
+        self.place_id_index: Dict[str, str] = {}  # placeId -> key in self.places
         self.rpc_count = 0
         self.rpc_search_count = 0
         self.rpc_place_count = 0
+        self._dumped = 0
 
     # ---- response hook ----
     def on_response(self, response: Response):
         try:
             url = response.url or ""
-            # Filter to Google Maps RPC endpoints
             if "/maps/rpc/" not in url and "/maps/preview/" not in url:
                 return
-            # Only JSON-like responses
             ct = response.headers.get("content-type", "")
             if "json" not in ct and ".json" not in url:
                 return
 
-            # Try to parse JSON. Google Maps prefixes responses with
-            # XSSI protection like ")]}'\n" — Playwright's response.json()
-            # usually handles this automatically.
             try:
                 data = response.json()
             except Exception:
-                # Try manual XSSI strip
                 try:
                     raw = response.text()
                     stripped = re.sub(r"^\)\]\}\'?\s*\n?", "", raw)
@@ -243,56 +316,75 @@ class RpcCollector:
                 return
 
             self.rpc_count += 1
-            if "search" in url or "listresults" in url:
+            is_search = "search" in url or "listresults" in url
+            is_place = "place" in url and "search" not in url
+            if is_search:
                 self.rpc_search_count += 1
-            elif "place" in url:
+            elif is_place:
                 self.rpc_place_count += 1
+
+            # Debug dump first few responses
+            if DEBUG_DUMP_RPC and self._dumped < DEBUG_DUMP_MAX:
+                self._dump_response(url, data, is_search, is_place)
+                self._dumped += 1
 
             self._extract_places_from_rpc(data)
         except Exception as e:
             logger.debug(f"on_response error: {e}")
 
+    def _dump_response(self, url: str, data: Any, is_search: bool, is_place: bool):
+        try:
+            os.makedirs(DEBUG_DUMP_DIR, exist_ok=True)
+            tag = "search" if is_search else ("place" if is_place else "other")
+            path = os.path.join(DEBUG_DUMP_DIR, f"rpc_{self._dumped:02d}_{tag}.json")
+            with open(path, "w", encoding="utf-8") as f:
+                # Truncate huge responses
+                s = json.dumps(data, ensure_ascii=False, default=str)[:200_000]
+                f.write(s)
+            logger.info(f"[DEBUG] dumped RPC response #{self._dumped} ({tag}) -> {path}")
+            # Also log URL for context
+            with open(os.path.join(DEBUG_DUMP_DIR, "urls.log"), "a") as f:
+                f.write(f"#{self._dumped} {tag}: {url[:200]}\n")
+        except Exception as e:
+            logger.debug(f"dump failed: {e}")
+
     # ---- recursive walker ----
     def _extract_places_from_rpc(self, data: Any):
-        """Walk the nested JSON looking for place entries."""
         visited: Set[int] = set()
 
-        def walk(node: Any, parent_list: Optional[List] = None, depth: int = 0):
+        def walk(node: Any, depth: int = 0):
             if id(node) in visited:
                 return
             visited.add(id(node))
-
             if depth > 30:
                 return
 
             if isinstance(node, list):
-                # Try to parse this list as a place entry
-                place = self._try_parse_place(node)
-                if place:
-                    self._merge_place(place)
-
-                # Recurse into children
+                # Only try parsing as place if list is reasonable size
+                # (Google's place entries are typically 10-30 elements)
+                if 5 <= len(node) <= 40:
+                    place = self._try_parse_place(node)
+                    if place:
+                        self._merge_place(place)
                 for item in node:
-                    walk(item, node, depth + 1)
+                    walk(item, depth + 1)
             elif isinstance(node, dict):
                 for v in node.values():
-                    walk(v, node, depth + 1)
+                    walk(v, depth + 1)
 
         walk(data)
 
     def _try_parse_place(self, arr: List) -> Optional[Dict[str, Any]]:
         """
-        Try to interpret a list as a Google Maps place entry.
+        Conservative place parser. Only accepts lists that contain
+        BOTH an ID (ChIJ or 0x...:0x...) AND a valid business name.
 
-        Returns None if the list doesn't look like a place.
-        Returns a dict with at least placeId and name otherwise.
+        Field extraction uses positional heuristics after validation.
         """
-        if not arr or len(arr) < 3:
+        if not arr or len(arr) < 5 or len(arr) > 40:
             return None
 
-        # Collect all scalar values from this list (shallow scan)
-        # AND from immediate sub-lists of length 1-3 (which Google uses
-        # as "metadata containers" like ["null", "ChIJ..."]).
+        # Harvest scalars (shallow + immediate sub-lists of size 1-4)
         strings: List[str] = []
         floats: List[float] = []
         ints: List[int] = []
@@ -310,12 +402,11 @@ class RpcCollector:
 
         for item in arr:
             _harvest(item)
-            # Look inside small sub-lists (metadata containers)
-            if isinstance(item, list) and 1 <= len(item) <= 3:
+            if isinstance(item, list) and 1 <= len(item) <= 4:
                 for sub in item:
                     _harvest(sub)
 
-        # Need a place_id (ChIJ...) or feature_id (0x...:0x...)
+        # Find IDs
         place_id: Optional[str] = None
         feature_id: Optional[str] = None
         for s in strings:
@@ -327,102 +418,88 @@ class RpcCollector:
         if not place_id and not feature_id:
             return None
 
-        # Find name — first non-trivial string that isn't an ID/URL/phone
+        # Find business name — must pass _looks_like_business_name
         name: Optional[str] = None
-        address: Optional[str] = None
-        phone: Optional[str] = None
-        website: Optional[str] = None
-        category: Optional[str] = None
-
-        # Sort candidates by length descending — names tend to be longer than
-        # categories, but addresses are the longest. We'll classify carefully.
-        candidates = [
-            s for s in strings
-            if s and not PLACE_ID_RE.match(s) and not FEATURE_ID_RE.match(s)
-        ]
-
-        # Phone: starts with + or matches phone pattern
-        for s in candidates:
-            if PHONE_RE.match(s) and ("+" in s or s.count("-") >= 1 or s.count(" ") >= 1):
-                phone = s
+        for s in strings:
+            if _looks_like_business_name(s) and not PLACE_ID_RE.match(s) and not FEATURE_ID_RE.match(s):
+                # Skip if it's clearly the address
+                if CEP_RE.search(s):
+                    continue
+                name = s
                 break
-
-        # Website: starts with http(s):// and not google.com
-        for s in candidates:
-            if URL_RE.match(s) and "google.com" not in s and "gstatic" not in s and "googleusercontent" not in s:
-                website = s
-                break
-
-        # Address: long string with comma + digit (CEP or street number)
-        # AND not a phone, not a URL, not a place_id
-        addr_candidates = [
-            s for s in candidates
-            if "," in s
-            and len(s) > 15
-            and not PHONE_RE.match(s)
-            and not URL_RE.match(s)
-            and (CEP_RE.search(s) or re.search(r"\d+", s))
-        ]
-        if addr_candidates:
-            # Pick the longest address-like string
-            address = max(addr_candidates, key=len)
-
-        # Name: first non-trivial string that isn't address/phone/website/category
-        # Prefer strings that look like business names (Title Case, no comma at end)
-        name_candidates = [
-            s for s in candidates
-            if s != address
-            and s != phone
-            and s != website
-            and not PHONE_RE.match(s)
-            and not URL_RE.match(s)
-            and len(s) >= 3
-            and len(s) <= 200
-            # Avoid strings that are clearly just hex/IDs
-            and not re.match(r"^[0-9a-f]+$", s)
-            and not s.startswith("0x")
-        ]
-        # Prefer strings that have a space and Title Case (likely names)
-        title_like = [s for s in name_candidates if " " in s and any(c.isupper() for c in s)]
-        if title_like:
-            # Pick a middle-length one (avoid super long or super short)
-            name = sorted(title_like, key=len)[len(title_like) // 2]
-        elif name_candidates:
-            name = name_candidates[0]
 
         if not name:
+            # Don't return a "place" without a real name — too risky
             return None
 
-        # Rating: small float in [0.5, 5.0]
-        rating: Optional[float] = None
-        for f in floats:
-            if 0.5 <= f <= 5.0:
-                rating = f
+        # Address: long string with comma + CEP or street pattern
+        address: Optional[str] = None
+        for s in strings:
+            if s == name or len(s) < 15:
+                continue
+            if "," not in s:
+                continue
+            # Skip URLs, IDs, phones
+            if URL_RE.match(s) or PHONE_STRING_RE.match(s):
+                continue
+            if PLACE_ID_RE.match(s) or FEATURE_ID_RE.match(s):
+                continue
+            # Address should have either CEP, or a street prefix, or end with UF
+            if (
+                CEP_RE.search(s)
+                or re.search(r"\s-\s([A-Z]{2})\s*[,]", s)
+                or re.match(r"^(Rua|Avenida|Av\.?|Travessa|Alameda|Praça|Rod\.?|Estrada)\s", s, re.IGNORECASE)
+            ):
+                address = s
                 break
 
-        # Review count: integer in (0, 1_000_000), prefer ones >= 1
+        # Phone: validate strictly
+        phone: Optional[str] = None
+        for s in strings:
+            if s == name or s == address:
+                continue
+            if PHONE_STRING_RE.match(s) and not CEP_RE.fullmatch(s):
+                validated = _validate_phone(s)
+                if validated:
+                    phone = validated
+                    break
+
+        # Website: starts with http(s)://, not google domains
+        website: Optional[str] = None
+        for s in strings:
+            if not URL_RE.match(s):
+                continue
+            if any(d in s for d in ("google.com", "gstatic", "googleusercontent", "googleapis")):
+                continue
+            website = s
+            break
+
+        # Rating: small float, validated
+        rating: Optional[float] = None
+        for f in floats:
+            r = _validate_rating(f)
+            if r is not None:
+                rating = r
+                break
+
+        # Review count: integer in reasonable range
         review_count: Optional[int] = None
         for i in sorted(ints, reverse=True):
-            if 1 <= i <= 1_000_000:
+            if 1 <= i <= 5_000_000:
                 review_count = i
                 break
 
-        # Lat/lng: a pair of floats where one is in [-90, 90] and
-        # the next is in [-180, 180]
-        lat: Optional[float] = None
-        lng: Optional[float] = None
+        # Lat/lng: pair of validated BR coords
+        latlng: Optional[tuple] = None
         for i, f in enumerate(floats):
-            if -90.0 <= f <= 90.0 and i + 1 < len(floats):
-                nxt = floats[i + 1]
-                if -180.0 <= nxt <= 180.0:
-                    # Filter out rating (0-5) — lat is typically abs > 5 in Brazil
-                    if abs(f) > 0.5 or abs(nxt) > 0.5:
-                        lat = f
-                        lng = nxt
-                        break
+            if i + 1 < len(floats):
+                candidate = _validate_lat_lng(f, floats[i + 1])
+                if candidate:
+                    latlng = candidate
+                    break
 
         place: Dict[str, Any] = {
-            "placeId": place_id or (f"feat:{feature_id}" if feature_id else None),
+            "placeId": place_id,
             "name": name,
             "formattedAddress": address,
             "rating": rating,
@@ -435,53 +512,57 @@ class RpcCollector:
         }
         if feature_id:
             place["_featureId"] = feature_id
-        if lat is not None and lng is not None:
-            place["latitude"] = lat
-            place["longitude"] = lng
+        if latlng:
+            place["latitude"] = latlng[0]
+            place["longitude"] = latlng[1]
 
         return place
 
     # ---- merge into accumulator ----
     def _merge_place(self, place: Dict[str, Any]):
-        """Merge a parsed place into our accumulator, keyed by placeId."""
         pid = place.get("placeId")
-        if not pid:
+        fid = place.get("_featureId")
+        # Prefer feature_id as key (more commonly present in search responses)
+        key = fid or pid
+        if not key:
             return
 
-        # If we already have this place by placeId, merge fields
-        if pid in self.places:
-            existing = self.places[pid]
+        if key in self.places:
+            existing = self.places[key]
             for k, v in place.items():
                 if v is not None and existing.get(k) is None:
                     existing[k] = v
-                # Special case: addressParts — merge subfields
                 if k == "addressParts" and isinstance(v, dict):
                     ex_ap = existing.get("addressParts") or {}
                     for sub_k, sub_v in v.items():
                         if sub_v is not None and ex_ap.get(sub_k) is None:
                             ex_ap[sub_k] = sub_v
                     existing["addressParts"] = ex_ap
-            # Re-link featureId
-            fid = place.get("_featureId")
-            if fid and pid and pid not in self.feature_to_place.values():
-                self.feature_to_place[fid] = pid
-            return
+            if pid and pid not in self.place_id_index:
+                self.place_id_index[pid] = key
+        else:
+            self.places[key] = place
+            if pid:
+                self.place_id_index[pid] = key
 
-        # New place — store it
-        self.places[pid] = place
-        fid = place.get("_featureId")
-        if fid:
-            self.feature_to_place[fid] = pid
+    def find_by_feature_id(self, fid: str) -> Optional[Dict[str, Any]]:
+        return self.places.get(fid)
+
+    def find_by_place_id(self, pid: str) -> Optional[Dict[str, Any]]:
+        key = self.place_id_index.get(pid)
+        if key:
+            return self.places.get(key)
+        return None
 
 
 # ---------------------------------------------------------------------------
-# DOM extraction (fallback)
+# DOM extraction — source of truth for "what places exist"
 # ---------------------------------------------------------------------------
 
 def _extract_dom_entries(page: Page) -> List[Dict[str, Any]]:
     """
     Extract place entries from current DOM state.
-    Returns list of dicts with at minimum: placeId, name, googleMapsUri.
+    Returns list of dicts with: placeId, name, googleMapsUri, lat, lng.
     """
     results: List[Dict[str, Any]] = []
     try:
@@ -492,13 +573,13 @@ def _extract_dom_entries(page: Page) -> List[Dict[str, Any]]:
     except Exception:
         return results
 
-    seen: Set[str] = set()
+    seen_hrefs: Set[str] = set()
     for entry in entries:
         try:
             href = entry.get_attribute("href") or ""
-            if "/maps/place/" not in href or href in seen:
+            if "/maps/place/" not in href or href in seen_hrefs:
                 continue
-            seen.add(href)
+            seen_hrefs.add(href)
 
             aria_label = (entry.get_attribute("aria-label") or "").strip()
             name = aria_label or None
@@ -514,18 +595,20 @@ def _extract_dom_entries(page: Page) -> List[Dict[str, Any]]:
                 except Exception:
                     pass
 
-            if not name:
-                continue
-
-            # Parse href for placeId / lat / lng
             parsed = _parse_uri_for_place(href)
-            # Prefer URL-decoded name from path if aria-label is missing or short
             if parsed.get("urlName") and (not name or len(name) < 3):
+                name = parsed["urlName"]
+
+            # Validate name with our heuristic
+            if not name or not _looks_like_business_name(name):
+                # If URL gave us a name, use that even if heuristic is weak
+                if not parsed.get("urlName"):
+                    continue
                 name = parsed["urlName"]
 
             place_id = parsed.get("placeId") or f"dom:{abs(hash(href)) & 0xFFFFFFFF:08x}"
 
-            place = {
+            place: Dict[str, Any] = {
                 "placeId": place_id,
                 "name": name,
                 "formattedAddress": None,
@@ -606,7 +689,6 @@ def scrape_google_maps(
         page: Page = context.new_page()
         page.set_default_timeout(timeout_ms)
 
-        # Hook RPC responses — primary data source
         page.on("response", collector.on_response)
 
         try:
@@ -614,7 +696,7 @@ def scrape_google_maps(
         except Exception as e:
             logger.warning(f"goto failed: {e}")
 
-        # Accept cookies banner if present
+        # Accept cookies
         try:
             page.wait_for_selector(
                 'button[aria-label*="Accept" i], button[aria-label*="Aceitar" i]',
@@ -625,7 +707,7 @@ def scrape_google_maps(
         except Exception:
             pass
 
-        # Wait for results panel to appear
+        # Wait for results panel
         try:
             page.wait_for_selector(
                 'div[role="feed"] a[href*="/maps/place/"], a[role="button"][href*="/maps/place/"]',
@@ -635,26 +717,27 @@ def scrape_google_maps(
         except Exception:
             logger.warning("Results panel did not appear in time")
 
-        # Give RPC time to fire after results panel renders
+        # Give RPC time to fire
         page.wait_for_timeout(3000)
 
-        # Initial DOM extraction (always do — gives us googleMapsUri)
+        # Initial DOM extraction
         dom_places = _extract_dom_entries(page)
         logger.info(
             f"Initial: DOM={len(dom_places)} entries, "
             f"RPC={len(collector.places)} places "
-            f"(search calls: {collector.rpc_search_count}, "
-            f"place calls: {collector.rpc_place_count})"
+            f"(rpc_total={collector.rpc_count}, "
+            f"search_calls={collector.rpc_search_count}, "
+            f"place_calls={collector.rpc_place_count})"
         )
 
         # ============================================================
-        # Scroll loop — load more results, fire more search RPCs
+        # Scroll loop
         # ============================================================
         last_rpc_count = len(collector.places)
         last_dom_count = len(dom_places)
         stable_rounds = 0
         for i in range(max_scrolls):
-            if len(collector.places) >= max_results and len(dom_places) >= max_results:
+            if len(dom_places) >= max_results:
                 break
             try:
                 page.evaluate(
@@ -669,7 +752,6 @@ def scrape_google_maps(
                 pass
             page.wait_for_timeout(2200)
 
-            # Refresh DOM after each scroll
             dom_places = _extract_dom_entries(page)
 
             new_rpc_count = len(collector.places)
@@ -686,175 +768,122 @@ def scrape_google_maps(
                 stable_rounds = 0
             last_rpc_count = new_rpc_count
             last_dom_count = new_dom_count
-            logger.info(
-                f"Scroll {i+1}: RPC={new_rpc_count}, DOM={new_dom_count}"
-            )
+            if (i + 1) % 3 == 0:
+                logger.info(
+                    f"Scroll {i+1}: RPC={new_rpc_count}, DOM={new_dom_count}"
+                )
 
         # ============================================================
-        # Click into each place to trigger place.json
-        # (gets us phone + website + full address)
+        # Click into a few places to trigger place.json (enrichment)
+        # Cap at 3 clicks to keep total runtime reasonable (~10-15s)
         # ============================================================
-        # Build DOM index by name for matching with RPC results
-        dom_by_name: Dict[str, Dict[str, Any]] = {}
-        for dp in dom_places:
-            if dp.get("name"):
-                dom_by_name.setdefault(dp["name"], dp)
+        # Pick top 3 DOM entries that are missing phone/website
+        click_targets = [
+            dp for dp in dom_places
+            if not dp.get("phone") or not dp.get("website") or not dp.get("formattedAddress")
+        ][:3]
 
-        # If RPC found places, click each one missing phone/website/address.
-        # If RPC found nothing, click each DOM entry to trigger place.json.
-        if collector.places:
-            click_targets = list(collector.places.values())
-        else:
-            click_targets = dom_places
+        logger.info(f"Clicking into {len(click_targets)} places to fetch details...")
 
-        detail_limit = min(len(click_targets), 12)  # cap to avoid being flagged
-        logger.info(f"Clicking into {detail_limit} places to fetch details...")
-
-        for idx, target in enumerate(click_targets[:detail_limit]):
-            # Skip if we already have rich data
-            if (
-                target.get("phone")
-                and target.get("website")
-                and target.get("formattedAddress")
-            ):
-                continue
-
+        for idx, target in enumerate(click_targets):
             target_name = target.get("name")
             if not target_name:
                 continue
-
             try:
-                # Find the DOM link whose aria-label matches the target name
+                links = page.query_selector_all(
+                    'div[role="feed"] a[href*="/maps/place/"]'
+                )
                 link = None
-                try:
-                    links = page.query_selector_all(
-                        'div[role="feed"] a[href*="/maps/place/"]'
-                    )
-                except Exception:
-                    links = []
                 for l in links:
                     aria = (l.get_attribute("aria-label") or "").strip()
                     if aria == target_name:
                         link = l
                         break
-
                 if not link:
-                    # Fallback: try partial match
+                    # Try partial match
                     for l in links:
                         aria = (l.get_attribute("aria-label") or "").strip()
-                        if target_name.lower() in aria.lower() or aria.lower() in target_name.lower():
+                        if target_name.lower() in aria.lower():
                             link = l
                             break
-
                 if not link:
-                    logger.debug(f"[{idx+1}/{detail_limit}] no link for '{target_name}'")
                     continue
 
                 link.click(timeout=5000)
-                # Wait for place.json RPC to fire and be processed
-                page.wait_for_timeout(2500)
-
-                logger.debug(
-                    f"[{idx+1}/{detail_limit}] clicked '{target_name}' — "
+                # Shorter wait — place.json usually fires within 1s
+                page.wait_for_timeout(1800)
+                logger.info(
+                    f"[{idx+1}/{len(click_targets)}] clicked '{target_name}' — "
                     f"RPC places now: {len(collector.places)}"
                 )
             except Exception as e:
                 logger.debug(f"click into '{target_name}' failed: {e}")
                 continue
 
-        # Final DOM extraction (in case more entries loaded after clicks)
+        # Final DOM extraction
         dom_places = _extract_dom_entries(page)
-        for dp in dom_places:
-            if dp.get("name"):
-                dom_by_name.setdefault(dp["name"], dp)
 
         # ============================================================
-        # Merge: RPC is primary, DOM fills in googleMapsUri + lat/lng
+        # Merge: DOM is primary, RPC enriches
         # ============================================================
         results: List[Dict[str, Any]] = []
 
-        if collector.places:
-            # RPC mode — merge DOM data into RPC entries
-            for r in collector.places.values():
-                # Find matching DOM entry by name
-                dp = dom_by_name.get(r["name"])
-                if dp:
-                    if not r.get("googleMapsUri"):
-                        r["googleMapsUri"] = dp.get("googleMapsUri")
-                    # Fill missing lat/lng from URL
-                    if not r.get("latitude") and dp.get("googleMapsUri"):
-                        parsed = _parse_uri_for_place(dp["googleMapsUri"])
-                        if parsed.get("latitude"):
-                            r["latitude"] = parsed["latitude"]
-                        if parsed.get("longitude"):
-                            r["longitude"] = parsed["longitude"]
-                    # If RPC placeId is synthetic (feat:), use real one from URL
-                    if r.get("placeId", "").startswith("feat:") and dp.get("googleMapsUri"):
-                        parsed = _parse_uri_for_place(dp["googleMapsUri"])
-                        if parsed.get("placeId"):
-                            r["placeId"] = parsed["placeId"]
-                    # Fill missing address parts from DOM default
-                    if not r.get("addressParts"):
-                        r["addressParts"] = dp.get("addressParts", {})
-                # Ensure addressParts has all keys
-                ap = r.get("addressParts") or {}
-                default_ap = {
-                    "streetNumber": None,
-                    "route": None,
-                    "sublocality": None,
-                    "locality": None,
-                    "administrativeArea": None,
-                    "postalCode": None,
-                    "country": "Brasil",
-                }
-                for k, v in default_ap.items():
-                    ap.setdefault(k, v)
-                r["addressParts"] = ap
-                # Fill administrativeArea from uf if missing
-                if not ap.get("administrativeArea"):
-                    ap["administrativeArea"] = uf
-                # Fill locality from city if missing
-                if not ap.get("locality"):
-                    ap["locality"] = city
-                # Fill country
-                if not ap.get("country"):
-                    ap["country"] = "Brasil"
-                # Fill formattedAddress fallback
-                if not r.get("formattedAddress"):
-                    parts = []
-                    if ap.get("route"):
-                        route = ap["route"]
-                        if ap.get("streetNumber"):
-                            route += f", {ap['streetNumber']}"
-                        parts.append(route)
-                    if ap.get("sublocality"):
-                        parts.append(ap["sublocality"])
-                    loc = ap.get("locality") or city
-                    uf_v = ap.get("administrativeArea") or uf
-                    parts.append(f"{loc} - {uf_v}")
-                    if ap.get("postalCode"):
-                        parts.append(ap["postalCode"])
-                    parts.append(ap.get("country") or "Brasil")
-                    r["formattedAddress"] = ", ".join(parts)
-                results.append(r)
-        else:
-            # DOM-only fallback — already have name + googleMapsUri + lat/lng
-            logger.warning(
-                "RPC interception returned 0 places — using DOM-only results"
-            )
-            for dp in dom_places:
-                ap = dp.get("addressParts") or {}
-                ap["locality"] = ap.get("locality") or city
-                ap["administrativeArea"] = ap.get("administrativeArea") or uf
-                ap["country"] = ap.get("country") or "Brasil"
-                dp["addressParts"] = ap
-                # Build a fallback formattedAddress
-                if not dp.get("formattedAddress"):
-                    parts = [city, uf, "Brasil"]
-                    dp["formattedAddress"] = ", ".join(parts)
-                results.append(dp)
+        for dp in dom_places:
+            ap = dp.get("addressParts") or {}
 
-        # Truncate to max_results
+            # Find matching RPC entry by featureId or placeId
+            rpc_place: Optional[Dict[str, Any]] = None
+            fid = dp.get("_featureId")
+            pid = dp.get("placeId")
+            if fid:
+                rpc_place = collector.find_by_feature_id(fid)
+            if not rpc_place and pid and pid.startswith("ChIJ"):
+                rpc_place = collector.find_by_place_id(pid)
+
+            if rpc_place:
+                # Enrich DOM entry with RPC data
+                for k in ("formattedAddress", "rating", "userRatingCount",
+                          "website", "phone", "businessStatus"):
+                    if rpc_place.get(k) is not None and not dp.get(k):
+                        dp[k] = rpc_place[k]
+                # Merge addressParts
+                rpc_ap = rpc_place.get("addressParts") or {}
+                for sub_k, sub_v in rpc_ap.items():
+                    if sub_v is not None and not ap.get(sub_k):
+                        ap[sub_k] = sub_v
+                # Lat/lng (RPC may have it even if URL didn't)
+                if not dp.get("latitude") and rpc_place.get("latitude") is not None:
+                    dp["latitude"] = rpc_place["latitude"]
+                if not dp.get("longitude") and rpc_place.get("longitude") is not None:
+                    dp["longitude"] = rpc_place["longitude"]
+
+            # Fill defaults
+            ap["locality"] = ap.get("locality") or city
+            ap["administrativeArea"] = ap.get("administrativeArea") or uf
+            ap["country"] = ap.get("country") or "Brasil"
+            dp["addressParts"] = ap
+
+            # Build fallback formattedAddress
+            if not dp.get("formattedAddress"):
+                parts = []
+                if ap.get("route"):
+                    route = ap["route"]
+                    if ap.get("streetNumber"):
+                        route += f", {ap['streetNumber']}"
+                    parts.append(route)
+                if ap.get("sublocality"):
+                    parts.append(ap["sublocality"])
+                loc = ap.get("locality") or city
+                uf_v = ap.get("administrativeArea") or uf
+                parts.append(f"{loc} - {uf_v}")
+                if ap.get("postalCode"):
+                    parts.append(ap["postalCode"])
+                parts.append(ap.get("country") or "Brasil")
+                dp["formattedAddress"] = ", ".join(parts)
+
+            results.append(dp)
+
+        # Truncate
         if len(results) > max_results:
             results = results[:max_results]
 
@@ -862,7 +891,7 @@ def scrape_google_maps(
 
     logger.info(
         f"Collected {len(results)} places for '{query}' in {city}/{uf} "
-        f"(RPC: {len(collector.places)}, DOM: {len(dom_places)})"
+        f"(RPC enriched: {len(collector.places)} candidates)"
     )
     return results
 
@@ -888,6 +917,7 @@ if __name__ == "__main__":
 
     if args.debug:
         logger.setLevel(logging.DEBUG)
+        os.environ["DEBUG_DUMP_RPC"] = "1"
 
     out = scrape_google_maps(
         args.query, args.city, args.uf,
