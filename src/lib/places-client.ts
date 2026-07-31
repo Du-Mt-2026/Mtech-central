@@ -1,11 +1,19 @@
 /**
- * Google Places API (New) client — Places Text Search v1
- * Env: GOOGLE_PLACES_API_KEY
+ * Places client — usa o microsserviço Python (scraper-service) por padrão.
+ * Faz fallback para a Google Places API se SCRAPER_URL não estiver
+ * configurado ou retornar erro.
+ *
+ * Env:
+ *   SCRAPER_URL          URL interna do microsserviço (ex: http://scraper:5000)
+ *   GOOGLE_PLACES_API_KEY  fallback (opcional)
  */
 import { PrismaClient } from '@prisma/client';
 const prisma = new PrismaClient();
 const PLACES_ENDPOINT = 'https://places.googleapis.com/v1/places:searchText';
 const PLACE_DETAILS_ENDPOINT = (id: string) => `https://places.googleapis.com/v1/places/${id}`;
+
+const SCRAPER_URL = process.env.SCRAPER_URL || '';
+const SCRAPER_TIMEOUT_MS = 90_000; // 90s — Playwright pode demorar
 
 export interface PlaceSearchResult {
   placeId: string;
@@ -45,19 +53,133 @@ function getApiKey(): string {
   return key;
 }
 
+// ============================================================
+// Scraper microservice client (substitui Places API)
+// ============================================================
+
+interface ScraperResponse {
+  leads: Array<{
+    placeId?: string;
+    name?: string;
+    formattedAddress?: string;
+    website?: string;
+    phone?: string;
+    internationalPhoneNumber?: string;
+    rating?: number;
+    userRatingCount?: number;
+    googleMapsUri?: string;
+    businessStatus?: string;
+    addressParts?: {
+      streetNumber?: string;
+      route?: string;
+      sublocality?: string;
+      locality?: string;
+      administrativeArea?: string;
+      postalCode?: string;
+      country?: string;
+    };
+    latitude?: number;
+    longitude?: number;
+  }>;
+  count: number;
+  query: string;
+  city: string;
+  uf: string;
+  elapsed_ms: number;
+}
+
+/**
+ * Chama o microsserviço Python que faz scraping direto do Google Maps.
+ * Lança erro se o scraper não estiver disponível ou retornar status != 200.
+ */
+async function searchViaScraper(
+  query: string,
+  city: string,
+  uf: string,
+  pageSize: number
+): Promise<PlaceSearchResult[]> {
+  if (!SCRAPER_URL) {
+    throw new Error('SCRAPER_URL não configurado');
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), SCRAPER_TIMEOUT_MS);
+
+  try {
+    const res = await fetch(`${SCRAPER_URL.replace(/\/$/, '')}/scrape`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        query,
+        city,
+        uf,
+        max_results: Math.min(Math.max(pageSize, 10), 200),
+        headless: true,
+        lang: 'pt-BR',
+      }),
+      signal: controller.signal,
+    });
+
+    if (!res.ok) {
+      const txt = await res.text().catch(() => '');
+      throw new Error(`Scraper ${res.status}: ${txt.slice(0, 200)}`);
+    }
+
+    const data = (await res.json()) as ScraperResponse;
+    const places = data.leads ?? [];
+
+    return places
+      .filter((p): p is NonNullable<typeof p> & { placeId: string } => Boolean(p && p.placeId))
+      .map((p) => ({
+        placeId: p.placeId,
+        name: p.name ?? '',
+        formattedAddress: p.formattedAddress ?? '',
+        website: p.website,
+        phone: p.phone ?? p.internationalPhoneNumber,
+        rating: typeof p.rating === 'number' ? p.rating : undefined,
+        userRatingCount: typeof p.userRatingCount === 'number' ? p.userRatingCount : undefined,
+        googleMapsUri: p.googleMapsUri,
+        businessStatus: p.businessStatus,
+        addressParts: p.addressParts ?? extractAddressParts([]),
+      }));
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 export async function searchPlaces(
   query: string,
   opts: { languageCode?: string; regionCode?: string; pageSize?: number; city?: string; state?: string } = {}
 ): Promise<PlaceSearchResult[]> {
-  const apiKey = getApiKey();
   const { languageCode = 'pt-BR', regionCode = 'BR', pageSize = 20, city, state } = opts;
-  // Construir textQuery com localizacao - Google Places e inteligente pra geolocalizar
+
+  // ============================================================
+  // Tenta primeiro o microsserviço Python (scraper) — sem custo de API
+  // ============================================================
+  if (SCRAPER_URL && city && state) {
+    const uf = state.trim().toUpperCase().slice(0, 2);
+    try {
+      console.log(`[places-client] usando scraper: query="${query}" city=${city} uf=${uf}`);
+      const results = await searchViaScraper(query.trim(), city.trim(), uf, pageSize);
+      if (results.length > 0) {
+        await upsertLeads(results);
+        return results;
+      }
+      console.warn('[places-client] scraper retornou 0 resultados — tentando Places API');
+    } catch (e: any) {
+      console.warn(`[places-client] scraper falhou: ${e.message}. Tentando Places API...`);
+    }
+  }
+
+  // ============================================================
+  // Fallback: Google Places API
+  // ============================================================
+  const apiKey = getApiKey();
   let textQuery = query.trim();
   const locParts: string[] = [];
   if (city && city.trim()) locParts.push(city.trim());
   if (state && state.trim()) locParts.push(state.trim().toUpperCase());
   if (locParts.length > 0) {
-    // Se o usuario nao incluiu "em <cidade>" na query, append "in <cidade UF>"
     if (!/\b(em|in|no|na)\b/i.test(textQuery)) {
       textQuery = `${textQuery} in ${locParts.join(' ')}`;
     }
@@ -100,6 +222,14 @@ export async function searchPlaces(
     businessStatus: p.businessStatus,
     addressParts: extractAddressParts(p.addressComponents ?? []),
   }));
+  await upsertLeads(results);
+  return results;
+}
+
+/**
+ * Faz upsert dos leads no banco (compartilhado entre scraper e Places API).
+ */
+async function upsertLeads(results: PlaceSearchResult[]): Promise<void> {
   for (const r of results) {
     try {
       await prisma.lead.upsert({
@@ -136,7 +266,6 @@ export async function searchPlaces(
       console.error('Upsert place failed:', r.placeId, e);
     }
   }
-  return results;
 }
 
 export async function getPlaceDetails(placeId: string): Promise<PlaceDetails> {
