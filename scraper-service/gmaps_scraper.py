@@ -561,10 +561,14 @@ class RpcCollector:
 
 # Regex for rating in BR format: "4,7" or "4.7" (decimal separator , or .)
 RATING_RE = re.compile(r"^\d+[.,]\d$")
-# Regex for review count in BR format: "(1.234)" or "(1234)" with parens
-REVIEWS_RE = re.compile(r"^\(([\d.,]+)\)$")
-# Regex for review count without parens (sometimes shows up)
-REVIEWS_NO_PAREN_RE = re.compile(r"^([\d.,]+)\s*(?:opiniões|reviews|avaliações)$", re.IGNORECASE)
+# Regex for review count in BR format. Google uses several variants:
+#   "(1.234)"
+#   "(1.234) opiniões"
+#   "1.234 opiniões"
+#   "1.234 reviews"
+#   "1.234 avaliações"
+REVIEWS_PAREN_RE = re.compile(r"^\(([\d.,]+)\)\s*(?:opiniões|reviews|avaliações)?$", re.IGNORECASE)
+REVIEWS_BARE_RE = re.compile(r"^([\d.,]+)\s*(?:opiniões|reviews|avaliações)$", re.IGNORECASE)
 
 # Categories that appear in Google Maps cards — used to identify category lines
 KNOWN_CATEGORIES = {
@@ -574,7 +578,8 @@ KNOWN_CATEGORIES = {
     "loja", "store", "shop", "shopping", "posto", "banco", "bank",
     "consultório", "consultorio", "clínica", "clinica", "escritório",
     "escritorio", "advogado", "lawyer", "dentista", "dentist",
-    "tratamento estético", "estética", "estetica",
+    "tratamento estético", "estética", "estetica", "italian", "italiana",
+    "japonesa", "japanese", "churrascaria", "frutos do mar", "seafood",
 }
 
 # Status keywords (used to identify status lines)
@@ -582,20 +587,72 @@ STATUS_OPEN_KEYWORDS = {"aberto", "abre", "open", "fecha às", "fecha as", "fech
 STATUS_CLOSED_KEYWORDS = {"fechado", "closed", "fecha agora"}
 
 
+def _is_address_line(line: str) -> bool:
+    """
+    Heuristic: does this line look like an address?
+    Returns True for:
+      "Av. do Batel, 1440 - Batel, Curitiba - PR"
+      "Rua dos Pinheiros, 123 - Centro, Curitiba - PR, 80000-000"
+      "Shopping Crystal, R. Comendador Araújo, 731 - Sala 321"
+    Returns False for:
+      "Curitiba - PR, Brasil" (too short, only city/UF)
+      "Restaurante de frutos do mar · $$ · Shopping Crystal, R. ..."
+      "Aberto · Fecha 23h"
+    """
+    if not line or len(line) < 15:
+        return False
+    # Must have a comma
+    if "," not in line:
+        return False
+    # Skip status lines
+    lower = line.lower()
+    if any(kw in lower for kw in STATUS_OPEN_KEYWORDS):
+        return False
+    if any(kw in lower for kw in STATUS_CLOSED_KEYWORDS):
+        return False
+    # Skip pure rating/reviews
+    if RATING_RE.match(line):
+        return False
+    if REVIEWS_PAREN_RE.match(line) or REVIEWS_BARE_RE.match(line):
+        return False
+    # Must have either:
+    # (a) a street prefix (Rua, Av., etc.)
+    # (b) a CEP (XXXXX-XXX)
+    # (c) a UF code (XX) at end or near end
+    # AND must be reasonably long (> 20 chars typically)
+    if len(line) < 20:
+        return False
+    has_street = bool(re.match(
+        r"^(Rua|Avenida|Av\.?|Travessa|Trav\.?|Alameda|Al\.?|Praça|Pc\.?|Rod\.?|Estrada|Est\.?|Viela|Beco|R\.?)\s",
+        line,
+        re.IGNORECASE,
+    ))
+    has_cep = bool(CEP_RE.search(line))
+    has_uf = bool(re.search(r"\b[A-Z]{2}\b\s*[,]\s*\d{5}-\d{3}|\b[A-Z]{2}\b\s*$|\b[A-Z]{2}\b\s+Brasil", line))
+    return has_street or has_cep or has_uf
+
+
+def _is_category_line(line: str) -> bool:
+    """Heuristic: is this line a category (e.g. 'Restaurante · $$')?"""
+    if not line or " · " not in line:
+        return False
+    # Categories don't have street/CEP/UF
+    if _is_address_line(line):
+        return False
+    # Category lines are short-ish
+    if len(line) > 120:
+        return False
+    # First segment should look like a category
+    first = line.split(" · ")[0].strip().lower()
+    return any(cat in first for cat in KNOWN_CATEGORIES) or len(first) < 50
+
+
 def _parse_card_text(text: str) -> Dict[str, Any]:
     """
     Parse the inner_text() of a Google Maps result card.
 
-    Typical card layout (after stripping HTML):
-        Quintana Gastronomia
-        4,7
-        (1.234)
-        Restaurante · $$
-        Aberto · Fecha 23h
-        Av. do Batel, 1440 - Batel, Curitiba - PR
-
     Returns dict with optional keys:
-        rating, userRatingCount, category, formattedAddress, addressParts, businessStatus
+        rating, userRatingCount, category, formattedAddress, addressParts
     """
     out: Dict[str, Any] = {}
     if not text:
@@ -605,25 +662,25 @@ def _parse_card_text(text: str) -> Dict[str, Any]:
     if not lines:
         return out
 
-    # Track which lines we've consumed to find address at the end
     consumed: Set[int] = set()
 
+    # Phase 1: Find rating and reviews (usually adjacent)
     for i, line in enumerate(lines):
         if i in consumed:
             continue
-
-        # Rating: line that is just "X,X" or "X.X" with value 1.0-5.0
         if RATING_RE.match(line):
             try:
                 r = float(line.replace(",", "."))
                 if 1.0 <= r <= 5.0:
                     out["rating"] = r
                     consumed.add(i)
-                    # Look ahead for reviews in next 1-2 lines
-                    for j in range(i + 1, min(i + 3, len(lines))):
+                    # Look ahead 1-3 lines for reviews
+                    for j in range(i + 1, min(i + 4, len(lines))):
                         if j in consumed:
                             continue
-                        m = REVIEWS_RE.match(lines[j])
+                        m = REVIEWS_PAREN_RE.match(lines[j])
+                        if not m:
+                            m = REVIEWS_BARE_RE.match(lines[j])
                         if m:
                             try:
                                 count = int(m.group(1).replace(".", "").replace(",", ""))
@@ -632,61 +689,30 @@ def _parse_card_text(text: str) -> Dict[str, Any]:
                                 break
                             except ValueError:
                                 pass
-                        m2 = REVIEWS_NO_PAREN_RE.match(lines[j])
-                        if m2:
-                            try:
-                                count = int(m2.group(1).replace(".", "").replace(",", ""))
-                                out["userRatingCount"] = count
-                                consumed.add(j)
-                                break
-                            except ValueError:
-                                pass
+                    break
             except ValueError:
                 pass
-            continue
 
-    # Category: line with " · " separator and short tokens (e.g. "Restaurante · $$")
+    # Phase 2: Find category (line with " · " that's NOT an address)
     for i, line in enumerate(lines):
         if i in consumed:
             continue
-        if " · " in line and len(line) < 80:
-            # Check if first token looks like a category
+        if _is_category_line(line):
             first = line.split(" · ")[0].strip().lower()
-            if any(cat in first for cat in KNOWN_CATEGORIES) or len(first) < 30:
-                # Don't overwrite category if already set
-                if "category" not in out:
-                    out["category"] = first
-                    consumed.add(i)
+            out["category"] = first
+            consumed.add(i)
+            break
 
-    # Address: look for a line that ends with ", XX" (UF) or has a street prefix
-    # Iterate from end backwards — address is usually the last meaningful line
+    # Phase 3: Find address — scan from end backwards, pick first address-like line
     for i in range(len(lines) - 1, -1, -1):
         if i in consumed:
             continue
         line = lines[i]
-        # Skip very short lines
-        if len(line) < 15:
-            continue
-        # Skip status lines
-        lower = line.lower()
-        if any(kw in lower for kw in STATUS_OPEN_KEYWORDS) or any(kw in lower for kw in STATUS_CLOSED_KEYWORDS):
-            continue
-        # Skip rating line
-        if RATING_RE.match(line):
-            continue
-        # Skip "·" lines (categories)
-        if " · " in line and len(line) < 80:
-            continue
-        # Address: has comma AND has digits OR ends with UF
-        if "," in line:
-            if (
-                re.search(r"\d", line)  # has a digit (street number or CEP)
-                or re.search(r"\b[A-Z]{2}\b", line)  # has UF code
-            ):
-                out["formattedAddress"] = line
-                out["addressParts"] = _parse_address_from_text(line)
-                consumed.add(i)
-                break
+        if _is_address_line(line):
+            out["formattedAddress"] = line
+            out["addressParts"] = _parse_address_from_text(line)
+            consumed.add(i)
+            break
 
     return out
 
@@ -697,30 +723,47 @@ def _get_card_text(entry) -> str:
 
     Strategy:
     1. Try entry.inner_text() — sometimes the <a> itself has all the card text
-    2. Try parent.inner_text() — go up to find the card container
+    2. Try parent.inner_text() via evaluate_handle — go up to find the card container
     3. Try grandparent.inner_text() — one more level up
     Returns whichever has the most lines (most info).
     """
     candidates: List[str] = []
     try:
-        candidates.append(entry.inner_text() or "")
+        t = entry.inner_text() or ""
+        if t:
+            candidates.append(t)
     except Exception:
         pass
 
+    # Use evaluate to walk up the DOM via JS — more reliable than evaluate_handle
     try:
-        parent = entry.evaluate_handle("el => el.parentElement")
-        if parent:
-            candidates.append(parent.inner_text() or "")
-            grandparent = parent.evaluate_handle("el => el.parentElement")
-            if grandparent:
-                candidates.append(grandparent.inner_text() or "")
+        # Walk up parent chain, collect inner_text from each level up to 5 ancestors
+        texts = entry.evaluate("""
+            (el) => {
+              const texts = [];
+              let node = el;
+              for (let i = 0; i < 5 && node; i++) {
+                try {
+                  texts.push(node.innerText || '');
+                } catch (e) {}
+                node = node.parentElement;
+              }
+              return texts;
+            }
+        """)
+        if isinstance(texts, list):
+            candidates.extend([t for t in texts if t])
     except Exception:
         pass
 
-    # Pick the candidate with the most newlines (most info)
     if not candidates:
         return ""
+    # Pick the candidate with the most newlines (most info)
     return max(candidates, key=lambda t: t.count("\n"))
+
+
+# Counter for dumping cards (debug only)
+_CARD_DUMP_COUNTER = [0]
 
 
 def _extract_dom_entries(page: Page) -> List[Dict[str, Any]]:
@@ -731,6 +774,13 @@ def _extract_dom_entries(page: Page) -> List[Dict[str, Any]]:
     addressParts, category.
     """
     results: List[Dict[str, Any]] = []
+    debug_dump = os.getenv("DEBUG_DUMP_CARDS", "0") == "1"
+    if debug_dump:
+        try:
+            os.makedirs(DEBUG_DUMP_DIR, exist_ok=True)
+        except Exception:
+            pass
+
     try:
         entries = page.query_selector_all(
             'div[role="feed"] a[href*="/maps/place/"], '
@@ -765,6 +815,27 @@ def _extract_dom_entries(page: Page) -> List[Dict[str, Any]]:
             # Parse card text for rating/reviews/address/category
             card_text = _get_card_text(entry)
             card_data = _parse_card_text(card_text)
+
+            # Debug: dump first 5 cards for inspection
+            if debug_dump and _CARD_DUMP_COUNTER[0] < 5 and card_text:
+                _CARD_DUMP_COUNTER[0] += 1
+                try:
+                    path = os.path.join(
+                        DEBUG_DUMP_DIR,
+                        f"card_{_CARD_DUMP_COUNTER[0]:02d}_{name[:30]}.txt",
+                    )
+                    # Sanitize filename
+                    path = re.sub(r"[^A-Za-z0-9_/.-]", "_", path)
+                    with open(path, "w", encoding="utf-8") as f:
+                        f.write(f"=== NAME: {name} ===\n")
+                        f.write(f"=== HREF: {href} ===\n\n")
+                        f.write("=== CARD TEXT ===\n")
+                        f.write(card_text)
+                        f.write(f"\n\n=== PARSED ===\n")
+                        f.write(json.dumps(card_data, ensure_ascii=False, indent=2, default=str))
+                    logger.info(f"[DEBUG] dumped card #{_CARD_DUMP_COUNTER[0]} -> {path}")
+                except Exception as e:
+                    logger.debug(f"card dump failed: {e}")
 
             place: Dict[str, Any] = {
                 "placeId": place_id,
