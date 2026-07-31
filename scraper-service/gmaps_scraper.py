@@ -317,6 +317,7 @@ class RpcCollector:
         self.rpc_search_count = 0
         self.rpc_place_count = 0
         self._dumped = 0
+        self.raw_details: Dict[str, Dict[str, Any]] = {}  # feature_id -> details
 
     # ---- response hook ----
     def on_response(self, response: Response):
@@ -349,6 +350,15 @@ class RpcCollector:
             elif is_place:
                 self.rpc_place_count += 1
 
+            # Extract raw details from every place RPC (regex on raw text)
+            # This runs BEFORE the dump limit, so all clicks get enriched
+            if is_place:
+                try:
+                    raw_text = response.text()
+                    self._extract_raw_details(url, raw_text)
+                except Exception:
+                    pass
+
             # Debug dump first few responses
             if DEBUG_DUMP_RPC and self._dumped < DEBUG_DUMP_MAX:
                 self._dump_response(url, data, is_search, is_place)
@@ -358,21 +368,71 @@ class RpcCollector:
         except Exception as e:
             logger.debug(f"on_response error: {e}")
 
+    def _extract_raw_details(self, url: str, raw_text: str):
+        """Extract place details from raw RPC response text via regex."""
+        fid_match = re.search(r'!1s(0x[0-9a-fA-F]+)(?:%3A|:)(0x[0-9a-fA-F]+)', url)
+        if not fid_match:
+            return
+        feature_id = f"{fid_match.group(1)}:{fid_match.group(2)}"
+
+        details: Dict[str, Any] = {}
+
+        m = re.search(r'"([0-9]+(?:\.[0-9]{3})+)\s+avalia', raw_text)
+        if not m:
+            m = re.search(r'"([0-9]+(?:\.[0-9]{3})+)\s+opini', raw_text)
+        if m:
+            try:
+                count = int(m.group(1).replace(".", ""))
+                if 1 <= count <= 5_000_000:
+                    details["userRatingCount"] = count
+            except ValueError:
+                pass
+
+        if "userRatingCount" not in details:
+            m2 = re.search(r'\b[1-5][.,][0-9]\b,\s*([0-9]{2,6})', raw_text)
+            if m2:
+                try:
+                    count = int(m2.group(1))
+                    if 10 <= count <= 5_000_000:
+                        details["userRatingCount"] = count
+                except ValueError:
+                    pass
+
+        for wm in re.finditer(r'"(https?://[^"]+)",\s*"([a-z0-9.-]+\.[a-z]{2,})"', raw_text, re.IGNORECASE):
+            url_val = wm.group(1)
+            if not any(d in url_val for d in ("google.com", "gstatic", "googleusercontent", "googleapis", "search.google")):
+                details["website"] = url_val
+                break
+
+        pm = re.search(r'"(\+55\s*\(?[0-9]{2}\)?\s*[0-9]{4,5}-?[0-9]{4})"', raw_text)
+        if pm:
+            details["phone"] = pm.group(1)
+
+        cm = re.search(r'"([0-9]{5}-[0-9]{3})"', raw_text)
+        if cm:
+            details["postalCode"] = cm.group(1)
+
+        am = re.search(r'"((?:Rua|Avenida|Av\.?|Travessa|Alameda|Praça|Rod\.?|Estrada|R\.)\s[^"]+,[^"]*[0-9]{5}-[0-9]{3})"', raw_text, re.IGNORECASE)
+        if am:
+            details["formattedAddress"] = am.group(1)
+
+        if details:
+            self.raw_details[feature_id] = details
+
     def _dump_response(self, url: str, data: Any, is_search: bool, is_place: bool):
         try:
             os.makedirs(DEBUG_DUMP_DIR, exist_ok=True)
             tag = "search" if is_search else ("place" if is_place else "other")
             path = os.path.join(DEBUG_DUMP_DIR, f"rpc_{self._dumped:02d}_{tag}.json")
             with open(path, "w", encoding="utf-8") as f:
-                # Truncate huge responses
                 s = json.dumps(data, ensure_ascii=False, default=str)[:200_000]
                 f.write(s)
             logger.info(f"[DEBUG] dumped RPC response #{self._dumped} ({tag}) -> {path}")
-            # Also log URL for context
             with open(os.path.join(DEBUG_DUMP_DIR, "urls.log"), "a") as f:
                 f.write(f"#{self._dumped} {tag}: {url[:200]}\n")
         except Exception as e:
             logger.debug(f"dump failed: {e}")
+
 
     # ---- recursive walker ----
     def _extract_places_from_rpc(self, data: Any):
@@ -571,6 +631,9 @@ class RpcCollector:
             if pid:
                 self.place_id_index[pid] = key
 
+    def find_raw_by_feature_id(self, fid: str) -> Optional[Dict[str, Any]]:
+        return self.raw_details.get(fid)
+
     def find_by_feature_id(self, fid: str) -> Optional[Dict[str, Any]]:
         return self.places.get(fid)
 
@@ -721,6 +784,15 @@ def _is_category_line(line: str) -> bool:
     if any(first.startswith(w + " ") or first.startswith(w + ",") for w in status_words):
         return False
     return any(cat in first for cat in KNOWN_CATEGORIES) or len(first) < 50
+
+
+# Valid Brazilian state abbreviations — reject false UF matches
+# like "II" from street names ("Alameda Dom Pedro II")
+VALID_BR_UFS = frozenset({
+    "AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA",
+    "MT", "MS", "MG", "PA", "PB", "PR", "PE", "PI", "RJ", "RN",
+    "RS", "RO", "RR", "SC", "SP", "SE", "TO",
+})
 
 
 def _parse_card_text(text: str) -> Dict[str, Any]:
@@ -1120,6 +1192,48 @@ def _get_card_text(
     return ""
 
 
+def _extract_rating_aria(entry) -> Optional[int]:
+    """Extract userRatingCount from rating span aria-label by walking up DOM."""
+    try:
+        aria = entry.evaluate("""
+            el => {
+                let node = el;
+                for (let i = 0; i < 6; i++) {
+                    if (!node.parentElement) break;
+                    node = node.parentElement;
+                    const spans = node.querySelectorAll('span[aria-label]');
+                    for (const s of spans) {
+                        const lbl = s.getAttribute('aria-label') || '';
+                        if (/estrela|avalia|opini/i.test(lbl) && /[0-9]/.test(lbl)) {
+                            return lbl;
+                        }
+                    }
+                }
+                return '';
+            }
+        """)
+        if not aria:
+            return None
+        m = re.search(r'([0-9]{1,3}(?:[.,][0-9]{3})+)', aria)
+        if m:
+            try:
+                c = int(m.group(1).replace('.', '').replace(',', ''))
+                if 1 <= c <= 5000000:
+                    return c
+            except ValueError:
+                pass
+        for m2 in re.finditer(r'([0-9]+)', aria):
+            try:
+                n = int(m2.group(1))
+                if n >= 10:
+                    return n
+            except ValueError:
+                continue
+        return None
+    except Exception as e:
+        logger.debug(f"_extract_rating_aria error: {e}")
+        return None
+
 # Counter for dumping cards (debug only)
 _CARD_DUMP_COUNTER = [0]
 
@@ -1184,6 +1298,20 @@ def _extract_dom_entries(page: Page) -> List[Dict[str, Any]]:
             card_text = _get_card_text(entry, page=page, all_aria_labels=all_aria_labels)
             card_data = _parse_card_text(card_text)
 
+            # Extract userRatingCount from rating aria-label
+            if not card_data.get("userRatingCount"):
+                aria_count = _extract_rating_aria(entry)
+                if aria_count:
+                    card_data["userRatingCount"] = aria_count
+
+            # Validate Brazilian UF — reject "II" from street names
+            _ap = card_data.get("addressParts") or {}
+            if _ap.get("administrativeArea"):
+                _uf = str(_ap["administrativeArea"]).upper().strip()
+                if _uf not in VALID_BR_UFS:
+                    _ap["administrativeArea"] = None
+                    card_data["addressParts"] = _ap
+
             # Debug: dump first 5 cards for inspection
             if debug_dump and _CARD_DUMP_COUNTER[0] < 5 and card_text:
                 _CARD_DUMP_COUNTER[0] += 1
@@ -1201,6 +1329,23 @@ def _extract_dom_entries(page: Page) -> List[Dict[str, Any]]:
                         f.write(card_text)
                         f.write(f"\n\n=== PARSED ===\n")
                         f.write(json.dumps(card_data, ensure_ascii=False, indent=2, default=str))
+                        # Dump all aria-labels for debugging
+                        try:
+                            aria_els = entry.query_selector_all("[aria-label]")
+                            f.write(f"\n\n=== ARIA LABELS ({len(aria_els)}) ===\n")
+                            for al in aria_els[:30]:
+                                lbl = (al.get_attribute("aria-label") or "").strip()
+                                tag = al.evaluate("el => el.tagName")
+                                f.write(f"  [{tag}] {lbl}\n")
+                        except Exception:
+                            pass
+                        # Dump full inner_text for comparison
+                        try:
+                            full_text = entry.inner_text()
+                            f.write(f"\n\n=== FULL INNER TEXT ===\n")
+                            f.write(full_text[:2000])
+                        except Exception:
+                            pass
                     logger.info(f"[DEBUG] dumped card #{_CARD_DUMP_COUNTER[0]} -> {path}")
                 except Exception as e:
                     logger.debug(f"card dump failed: {e}")
@@ -1399,7 +1544,7 @@ def scrape_google_maps(
         click_targets = [
             dp for dp in dom_places
             if not dp.get("phone") or not dp.get("website") or not dp.get("formattedAddress")
-        ][:3]
+        ][:5]
 
         logger.info(f"Clicking into {len(click_targets)} places to fetch details...")
 
@@ -1468,11 +1613,11 @@ def scrape_google_maps(
                 )
                 if needs_enrichment and dp_name:
                     rpc_place = collector.find_by_name(dp_name)
-                    if rpc_place:
-                        logger.debug(
-                            f"Name-based RPC match for '{dp_name}' "
-                            f"(fid={fid}, pid={pid})"
-                        )
+
+            # Also check raw_details (regex-extracted from RPC raw text)
+            raw_d = None
+            if fid:
+                raw_d = collector.find_raw_by_feature_id(fid)
 
             if rpc_place:
                 # Enrich DOM entry with RPC data
@@ -1490,6 +1635,18 @@ def scrape_google_maps(
                     dp["latitude"] = rpc_place["latitude"]
                 if not dp.get("longitude") and rpc_place.get("longitude") is not None:
                     dp["longitude"] = rpc_place["longitude"]
+
+            # Merge raw_details (regex-extracted) for missing fields
+            if raw_d:
+                for k in ("userRatingCount", "website", "phone", "postalCode", "formattedAddress"):
+                    if raw_d.get(k) and not dp.get(k):
+                        if k == "postalCode":
+                            ap[k] = raw_d[k]
+                            dp["addressParts"] = ap
+                        elif k == "formattedAddress":
+                            dp[k] = raw_d[k]
+                        else:
+                            dp[k] = raw_d[k]
 
             # Fill defaults
             ap["locality"] = ap.get("locality") or city
