@@ -559,10 +559,176 @@ class RpcCollector:
 # DOM extraction — source of truth for "what places exist"
 # ---------------------------------------------------------------------------
 
+# Regex for rating in BR format: "4,7" or "4.7" (decimal separator , or .)
+RATING_RE = re.compile(r"^\d+[.,]\d$")
+# Regex for review count in BR format: "(1.234)" or "(1234)" with parens
+REVIEWS_RE = re.compile(r"^\(([\d.,]+)\)$")
+# Regex for review count without parens (sometimes shows up)
+REVIEWS_NO_PAREN_RE = re.compile(r"^([\d.,]+)\s*(?:opiniões|reviews|avaliações)$", re.IGNORECASE)
+
+# Categories that appear in Google Maps cards — used to identify category lines
+KNOWN_CATEGORIES = {
+    "restaurante", "restaurant", "bar", "café", "cafe", "padaria", "bakery",
+    "pizzaria", "pizza", "hotel", "mercado", "supermercado", "farmácia",
+    "farmacia", "academia", "gym", "salão", "salon", "barbeiro", "barber",
+    "loja", "store", "shop", "shopping", "posto", "banco", "bank",
+    "consultório", "consultorio", "clínica", "clinica", "escritório",
+    "escritorio", "advogado", "lawyer", "dentista", "dentist",
+    "tratamento estético", "estética", "estetica",
+}
+
+# Status keywords (used to identify status lines)
+STATUS_OPEN_KEYWORDS = {"aberto", "abre", "open", "fecha às", "fecha as", "fecha"}
+STATUS_CLOSED_KEYWORDS = {"fechado", "closed", "fecha agora"}
+
+
+def _parse_card_text(text: str) -> Dict[str, Any]:
+    """
+    Parse the inner_text() of a Google Maps result card.
+
+    Typical card layout (after stripping HTML):
+        Quintana Gastronomia
+        4,7
+        (1.234)
+        Restaurante · $$
+        Aberto · Fecha 23h
+        Av. do Batel, 1440 - Batel, Curitiba - PR
+
+    Returns dict with optional keys:
+        rating, userRatingCount, category, formattedAddress, addressParts, businessStatus
+    """
+    out: Dict[str, Any] = {}
+    if not text:
+        return out
+
+    lines = [l.strip() for l in text.split("\n") if l.strip()]
+    if not lines:
+        return out
+
+    # Track which lines we've consumed to find address at the end
+    consumed: Set[int] = set()
+
+    for i, line in enumerate(lines):
+        if i in consumed:
+            continue
+
+        # Rating: line that is just "X,X" or "X.X" with value 1.0-5.0
+        if RATING_RE.match(line):
+            try:
+                r = float(line.replace(",", "."))
+                if 1.0 <= r <= 5.0:
+                    out["rating"] = r
+                    consumed.add(i)
+                    # Look ahead for reviews in next 1-2 lines
+                    for j in range(i + 1, min(i + 3, len(lines))):
+                        if j in consumed:
+                            continue
+                        m = REVIEWS_RE.match(lines[j])
+                        if m:
+                            try:
+                                count = int(m.group(1).replace(".", "").replace(",", ""))
+                                out["userRatingCount"] = count
+                                consumed.add(j)
+                                break
+                            except ValueError:
+                                pass
+                        m2 = REVIEWS_NO_PAREN_RE.match(lines[j])
+                        if m2:
+                            try:
+                                count = int(m2.group(1).replace(".", "").replace(",", ""))
+                                out["userRatingCount"] = count
+                                consumed.add(j)
+                                break
+                            except ValueError:
+                                pass
+            except ValueError:
+                pass
+            continue
+
+    # Category: line with " · " separator and short tokens (e.g. "Restaurante · $$")
+    for i, line in enumerate(lines):
+        if i in consumed:
+            continue
+        if " · " in line and len(line) < 80:
+            # Check if first token looks like a category
+            first = line.split(" · ")[0].strip().lower()
+            if any(cat in first for cat in KNOWN_CATEGORIES) or len(first) < 30:
+                # Don't overwrite category if already set
+                if "category" not in out:
+                    out["category"] = first
+                    consumed.add(i)
+
+    # Address: look for a line that ends with ", XX" (UF) or has a street prefix
+    # Iterate from end backwards — address is usually the last meaningful line
+    for i in range(len(lines) - 1, -1, -1):
+        if i in consumed:
+            continue
+        line = lines[i]
+        # Skip very short lines
+        if len(line) < 15:
+            continue
+        # Skip status lines
+        lower = line.lower()
+        if any(kw in lower for kw in STATUS_OPEN_KEYWORDS) or any(kw in lower for kw in STATUS_CLOSED_KEYWORDS):
+            continue
+        # Skip rating line
+        if RATING_RE.match(line):
+            continue
+        # Skip "·" lines (categories)
+        if " · " in line and len(line) < 80:
+            continue
+        # Address: has comma AND has digits OR ends with UF
+        if "," in line:
+            if (
+                re.search(r"\d", line)  # has a digit (street number or CEP)
+                or re.search(r"\b[A-Z]{2}\b", line)  # has UF code
+            ):
+                out["formattedAddress"] = line
+                out["addressParts"] = _parse_address_from_text(line)
+                consumed.add(i)
+                break
+
+    return out
+
+
+def _get_card_text(entry) -> str:
+    """
+    Get the full text of a Google Maps result card from an <a> element.
+
+    Strategy:
+    1. Try entry.inner_text() — sometimes the <a> itself has all the card text
+    2. Try parent.inner_text() — go up to find the card container
+    3. Try grandparent.inner_text() — one more level up
+    Returns whichever has the most lines (most info).
+    """
+    candidates: List[str] = []
+    try:
+        candidates.append(entry.inner_text() or "")
+    except Exception:
+        pass
+
+    try:
+        parent = entry.evaluate_handle("el => el.parentElement")
+        if parent:
+            candidates.append(parent.inner_text() or "")
+            grandparent = parent.evaluate_handle("el => el.parentElement")
+            if grandparent:
+                candidates.append(grandparent.inner_text() or "")
+    except Exception:
+        pass
+
+    # Pick the candidate with the most newlines (most info)
+    if not candidates:
+        return ""
+    return max(candidates, key=lambda t: t.count("\n"))
+
+
 def _extract_dom_entries(page: Page) -> List[Dict[str, Any]]:
     """
     Extract place entries from current DOM state.
-    Returns list of dicts with: placeId, name, googleMapsUri, lat, lng.
+    Returns list of dicts with: placeId, name, googleMapsUri, lat, lng,
+    and (when available) rating, userRatingCount, formattedAddress,
+    addressParts, category.
     """
     results: List[Dict[str, Any]] = []
     try:
@@ -584,38 +750,30 @@ def _extract_dom_entries(page: Page) -> List[Dict[str, Any]]:
             aria_label = (entry.get_attribute("aria-label") or "").strip()
             name = aria_label or None
 
-            if not name:
-                try:
-                    text = (entry.inner_text() or "").strip()
-                    for line in text.split("\n"):
-                        line = line.strip()
-                        if line and len(line) > 1:
-                            name = line
-                            break
-                except Exception:
-                    pass
-
             parsed = _parse_uri_for_place(href)
             if parsed.get("urlName") and (not name or len(name) < 3):
                 name = parsed["urlName"]
 
             # Validate name with our heuristic
             if not name or not _looks_like_business_name(name):
-                # If URL gave us a name, use that even if heuristic is weak
                 if not parsed.get("urlName"):
                     continue
                 name = parsed["urlName"]
 
             place_id = parsed.get("placeId") or f"dom:{abs(hash(href)) & 0xFFFFFFFF:08x}"
 
+            # Parse card text for rating/reviews/address/category
+            card_text = _get_card_text(entry)
+            card_data = _parse_card_text(card_text)
+
             place: Dict[str, Any] = {
                 "placeId": place_id,
                 "name": name,
-                "formattedAddress": None,
-                "rating": None,
-                "userRatingCount": None,
+                "formattedAddress": card_data.get("formattedAddress"),
+                "rating": card_data.get("rating"),
+                "userRatingCount": card_data.get("userRatingCount"),
                 "googleMapsUri": href.split("?")[0] if href else href,
-                "addressParts": {
+                "addressParts": card_data.get("addressParts") or {
                     "streetNumber": None,
                     "route": None,
                     "sublocality": None,
