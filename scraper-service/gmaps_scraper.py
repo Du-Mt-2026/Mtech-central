@@ -95,7 +95,7 @@ def _parse_uri_for_place(href: str) -> Dict[str, Any]:
         out["latitude"] = float(m.group(1))
         out["longitude"] = float(m.group(2))
 
-    m = re.search(r"!19s=(ChIJ[A-Za-z0-9_\-]+)", href)
+    m = re.search(r"!19s=?(ChIJ[A-Za-z0-9_\-]+)", href)
     if m:
         out["placeId"] = m.group(1)
 
@@ -121,8 +121,9 @@ def _parse_uri_for_place(href: str) -> Dict[str, Any]:
 def _parse_address_from_text(text: str) -> Dict[str, Any]:
     """
     Best-effort Brazilian address parser.
-    Returns dict with keys: streetNumber, route, sublocality, locality,
-    administrativeArea, postalCode, country.
+    Expected BR format from Google Maps:
+      "Rua dos Pinheiros, 123 - Centro, Curitiba - PR, 80000-000, Brasil"
+      <route>, <number> - <sublocality>, <locality> - <UF>, <CEP>, <country>
     """
     out: Dict[str, Any] = {
         "streetNumber": None,
@@ -136,23 +137,32 @@ def _parse_address_from_text(text: str) -> Dict[str, Any]:
     if not text:
         return out
 
+    # CEP: \d{5}-\d{3}
     cep_m = CEP_RE.search(text)
     if cep_m:
         out["postalCode"] = cep_m.group(0)
 
-    # UF: ", XX" near end or before "Brasil"
-    uf_m = re.search(r",\s*([A-Z]{2})\s*(?:,|\s*$|\s*Brasil)", text)
+    # UF: pattern "<sep>XX<sep>" where sep is , or - (Brazilian format uses both)
+    # Try " - XX, " first (most common in Google Maps BR)
+    uf_m = re.search(r"(?:^|[\s,\-])([A-Z]{2})(?:\s*,\s*|\s*$|\s+Brasil)", text)
     if uf_m:
         out["administrativeArea"] = uf_m.group(1)
 
-    # City: between "," and " - UF"
-    city_m = re.search(r",\s*([^,\n]+?)\s*-\s*([A-Z]{2})", text)
+    # City + UF together: " - City - UF, " or ", City - UF, "
+    # We use this to extract city too
+    city_m = re.search(
+        r",\s*([^,\n]+?)\s*-\s*([A-Z]{2})(?:\s*,|\s*$|\s+Brasil)",
+        text,
+    )
     if city_m:
         out["locality"] = city_m.group(1).strip()
+        # Override UF with the more specific match
+        out["administrativeArea"] = city_m.group(2)
 
-    # Street + number (Brazilian format)
+    # Route + number: "Rua X, 123" / "Av. Y, 4567" etc.
+    # Greedy match on street name until comma, then optional number
     street_m = re.search(
-        r"((?:Rua|Avenida|Av\.?|Travessa|Trav\.?|Alameda|Al\.?|Praça|Pc\.?|Rod\.?|Estrada|Est\.?|Viela)\s+[^,]+?)(?:,?\s*(\d+))?",
+        r"((?:Rua|Avenida|Av\.?|Travessa|Trav\.?|Alameda|Al\.?|Praça|Pc\.?|Rod\.?|Estrada|Est\.?|Viela|Beco)\s+[^,]+?)\s*,\s*(\d+)?",
         text,
         re.IGNORECASE,
     )
@@ -161,14 +171,16 @@ def _parse_address_from_text(text: str) -> Dict[str, Any]:
         if street_m.group(2):
             out["streetNumber"] = street_m.group(2)
 
-    # Sublocality (bairro) — heuristic: text after " - " before city/UF
-    # This is unreliable without structured input, leave as None unless clearly present
-    bairro_m = re.search(r"-\s*([^,\-\n]{3,40}?)\s*,", text)
+    # Sublocality (bairro): text between first " - " and the next ","
+    # Format: "... - Centro, Curitiba - PR"
+    bairro_m = re.search(r"\s-\s([^,\-\n]{3,40}?)\s*,", text)
     if bairro_m:
         candidate = bairro_m.group(1).strip()
-        # Skip if it looks like the city (already captured)
-        if candidate and out.get("locality") and candidate.lower() != out["locality"].lower():
-            out["sublocality"] = candidate
+        # Don't override if it's the same as city
+        if candidate and (not out.get("locality") or candidate.lower() != out["locality"].lower()):
+            # Skip if it looks like a street name or number
+            if not re.match(r"^\d+$", candidate):
+                out["sublocality"] = candidate
 
     return out
 
@@ -279,20 +291,29 @@ class RpcCollector:
             return None
 
         # Collect all scalar values from this list (shallow scan)
+        # AND from immediate sub-lists of length 1-3 (which Google uses
+        # as "metadata containers" like ["null", "ChIJ..."]).
         strings: List[str] = []
         floats: List[float] = []
         ints: List[int] = []
 
-        for item in arr:
+        def _harvest(item: Any):
             if isinstance(item, str):
                 strings.append(item)
             elif isinstance(item, bool):
-                continue
+                pass
             elif isinstance(item, int):
                 ints.append(item)
                 floats.append(float(item))
             elif isinstance(item, float):
                 floats.append(item)
+
+        for item in arr:
+            _harvest(item)
+            # Look inside small sub-lists (metadata containers)
+            if isinstance(item, list) and 1 <= len(item) <= 3:
+                for sub in item:
+                    _harvest(sub)
 
         # Need a place_id (ChIJ...) or feature_id (0x...:0x...)
         place_id: Optional[str] = None
