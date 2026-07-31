@@ -18,6 +18,7 @@ import json
 import re
 import time
 import logging
+import urllib.parse  # explicit import — `__import__('urllib').parse` fails at runtime
 from typing import Any, Dict, List, Optional
 
 from playwright.sync_api import (
@@ -283,7 +284,7 @@ USER_AGENT = (
 def _build_search_url(query: str, city: str, uf: str) -> str:
     """Build the Google Maps search URL with a geo-anchored query."""
     q = f"{query} em {city}, {uf}, Brasil"
-    return f"https://www.google.com/maps/search/{__import__('urllib').parse.quote(q)}"
+    return f"https://www.google.com/maps/search/{urllib.parse.quote(q)}"
 
 
 def _collect_rpc_responses(page: Page) -> List[Dict[str, Any]]:
