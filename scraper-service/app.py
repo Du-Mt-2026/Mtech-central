@@ -11,6 +11,7 @@ Run:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import time
@@ -91,7 +92,10 @@ async def scrape(req: ScrapeRequest) -> ScrapeResponse:
     )
     t0 = time.time()
     try:
-        leads = scrape_google_maps(
+        # Playwright's sync API cannot run inside FastAPI's asyncio loop.
+        # Offload to a worker thread — keeps the scraper code unchanged.
+        leads = await asyncio.to_thread(
+            scrape_google_maps,
             query=req.query,
             city=req.city,
             uf=req.uf,
