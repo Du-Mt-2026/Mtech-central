@@ -46,3 +46,6 @@ bigquery-service-account.json
 infra/traefik/certs/origin.key
 infra/traefik/certs/*.key
 .bigquery-creds.json
+
+# uploads de usuarios (PDFs, imagens coladas, etc) - nunca devem ser trackeados
+upload/
