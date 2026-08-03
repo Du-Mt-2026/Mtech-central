@@ -42,6 +42,16 @@ export async function middleware(req: NextRequest) {
     return NextResponse.next()
   }
 
+  // Internal scripts (backfill, maintenance) — bypass cookie auth with shared secret
+  const internalSecret = req.headers.get('x-internal-secret')
+  if (
+    internalSecret &&
+    process.env.INTERNAL_API_SECRET &&
+    internalSecret === process.env.INTERNAL_API_SECRET
+  ) {
+    return NextResponse.next()
+  }
+
   // Check for session cookie
   const token = req.cookies.get(COOKIE_NAME)?.value
 

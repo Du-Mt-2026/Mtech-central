@@ -45,3 +45,4 @@ bigquery-service-account.json
 # chaves privadas TLS
 infra/traefik/certs/origin.key
 infra/traefik/certs/*.key
+.bigquery-creds.json

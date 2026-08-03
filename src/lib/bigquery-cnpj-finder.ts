@@ -96,7 +96,7 @@ async function getBigQueryClient(): Promise<any | null> {
 }
 
 function normalizeName(s: string): string {
-  return s.toLowerCase().trim().replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim();
+  return s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().replace(/[^\w\s]/g, " ").replace(/\s+/g, " ").trim();
 }
 
 function computeScore(
@@ -148,7 +148,7 @@ function computeScore(
 }
 
 function rowToResult(row: any, queryName: string, cidadeFiltro: string | null): BigQueryMatch {
-  const cnpjCompleto = (row.cnpj_base || '') + (row.cnpj_ordem || '') + (row.cnpj_dv || '');
+  const cnpjCompleto = String(row.cnpj_completo || row.cnpj || '');
   const { score, matchedBy } = computeScore(queryName, row.razao_social || row.nome_fantasia || '', row.situacao_cadastral || '', row.municipio || null, cidadeFiltro);
   return {
     cnpj: cnpjCompleto,
@@ -172,31 +172,29 @@ export function estimateQueryCost(useUFFilter: boolean): number {
 function buildSQL(normalizedName: string, uf: string, limit: number, useUFFilter: boolean): string {
   const ufUpper = uf.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 2);
   const escapedName = normalizedName.replace(/'/g, "''");
-  const whereUF = useUFFilter ? `AND e.uf = '${ufUpper}'` : '';
+  const whereUF = useUFFilter ? `AND e.sigla_uf = '${ufUpper}'` : '';
 
   return `
     WITH candidatos AS (
       SELECT
-        e.cnpj_base,
-        e.cnpj_ordem,
-        e.cnpj_dv,
-        e.razao_social,
-        e.nome_fantasia,
-        e.situacao_cadastral,
-        e.municipio,
-        e.uf,
-        e.cnae_principal AS cnae_codigo,
-        c.descricao AS cnae_texto,
-        em.capital_social
+        e.cnpj AS cnpj_completo,
+        emp.razao_social AS razao_social,
+        e.nome_fantasia AS nome_fantasia,
+        e.situacao_cadastral AS situacao_cadastral,
+        mun.nome AS municipio,
+        e.sigla_uf AS uf,
+        e.cnae_fiscal_principal AS cnae_codigo,
+        CAST(NULL AS STRING) AS cnae_texto,
+        emp.capital_social AS capital_social
       FROM \`basedosdados.br_me_cnpj.estabelecimentos\` e
-      LEFT JOIN \`basedosdados.br_me_cnpj.empresas\` em
-        ON e.cnpj_base = em.cnpj_base
-      LEFT JOIN \`basedosdados.br_me_cnpj.cnae\` c
-        ON e.cnae_principal = c.cnae
+      LEFT JOIN \`basedosdados.br_me_cnpj.empresas\` emp
+        ON emp.cnpj_basico = e.cnpj_basico
+      LEFT JOIN \`basedosdados.br_bd_diretorios_brasil.municipio\` mun
+        ON mun.id_municipio = e.id_municipio
       WHERE 1=1
         ${whereUF}
         AND (
-          LOWER(e.razao_social) LIKE '%${escapedName}%'
+          LOWER(emp.razao_social) LIKE '%${escapedName}%'
           OR LOWER(e.nome_fantasia) LIKE '%${escapedName}%'
         )
       LIMIT ${limit}
@@ -271,4 +269,119 @@ export async function pingBigQuery(): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+// ===========================================================================
+// COLETA MASSIVA POR CNAE + UF (v7)
+// ===========================================================================
+
+export type LeadByCnaeInput = {
+  cnpj: string;
+  razaoSocial: string | null;
+  nomeFantasia: string | null;
+  situacaoCadastral: string | null;
+  municipio: string | null;
+  uf: string | null;
+  cnaeCodigo: string | null;
+  cnaeTexto: string | null;
+  capitalSocial: number | null;
+  porte: string | null;
+  naturezaJuridica: string | null;
+  dataAbertura: string | null;
+  logradouroTipo: string | null;
+  logradouro: string | null;
+  numero: string | null;
+  bairro: string | null;
+  cep: string | null;
+  site: string | null;
+};
+
+export async function findLeadsByCnaeUF(
+  ufs: string[],
+  cnaePrefixes: string[],
+  limit: number = 500,
+  situacaoFiltro: string = '01'
+): Promise<LeadByCnaeInput[]> {
+  const ufsSan = ufs
+    .map(u => String(u || '').toUpperCase().replace(/[^A-Z]/g, ''))
+    .filter(u => u.length === 2);
+  const cnaeSan = cnaePrefixes
+    .map(p => String(p || '').replace(/\D/g, ''))
+    .filter(p => p.length >= 2 && p.length <= 7);
+
+  if (ufsSan.length === 0 || cnaeSan.length === 0) {
+    throw new Error('ufs e cnaePrefixes são obrigatórios');
+  }
+
+  const projectId = process.env.BIGQUERY_PROJECT_ID;
+  const credsJson = process.env.BIGQUERY_CREDENTIALS_JSON;
+  if (!projectId || !credsJson) {
+    throw new Error('BigQuery não configurado. Verifique BIGQUERY_PROJECT_ID e BIGQUERY_CREDENTIALS_JSON no .env');
+  }
+
+  const { BigQuery } = await import('@google-cloud/bigquery');
+  const bigquery = new BigQuery({
+    projectId,
+    credentials: JSON.parse(credsJson),
+    location: 'US',
+  });
+
+  const ufsList = ufsSan.map(u => `'${u}'`).join(', ');
+  const cnaeClause = cnaeSan
+    .map(p => `SUBSTR(e.cnae_fiscal_principal, 1, ${p.length}) = '${p}'`)
+    .join(' OR ');
+
+  const query = `
+    SELECT
+      e.cnpj AS cnpj,
+      emp.razao_social AS razao_social,
+      e.nome_fantasia AS nome_fantasia,
+      e.situacao_cadastral AS situacao_cadastral,
+      mun.nome AS municipio,
+      e.sigla_uf AS uf,
+      e.cnae_fiscal_principal AS cnae_codigo,
+      CAST(NULL AS STRING) AS cnae_texto,
+      emp.capital_social AS capital_social,
+      emp.porte AS porte,
+      emp.natureza_juridica AS natureza_juridica,
+      e.data_inicio_atividade AS data_abertura,
+      e.tipo_logradouro AS logradouro_tipo,
+      e.logradouro AS logradouro,
+      e.numero AS numero,
+      e.bairro AS bairro,
+      e.cep AS cep
+    FROM \`basedosdados.br_me_cnpj.estabelecimentos\` e
+    LEFT JOIN \`basedosdados.br_me_cnpj.empresas\` emp
+      ON emp.cnpj_basico = e.cnpj_basico
+    LEFT JOIN \`basedosdados.br_bd_diretorios_brasil.municipio\` mun
+      ON mun.id_municipio = e.id_municipio
+    WHERE e.sigla_uf IN (${ufsList})
+      AND (${cnaeClause})
+      AND e.situacao_cadastral = '${situacaoFiltro}'
+    LIMIT ${limit}
+  `.trim();
+
+  console.log('[bigquery] Executando findLeadsByCnaeUF...');
+  const [rows] = await bigquery.query({ query, location: 'US' });
+
+  return (rows as any[]).map(r => ({
+    cnpj: String(r.cnpj || ''),
+    razaoSocial: r.razao_social || null,
+    nomeFantasia: r.nome_fantasia || null,
+    situacaoCadastral: r.situacao_cadastral || null,
+    municipio: r.municipio || null,
+    uf: r.uf || null,
+    cnaeCodigo: r.cnae_codigo || null,
+    cnaeTexto: r.cnae_texto || null,
+    capitalSocial: r.capital_social != null ? Number(r.capital_social) : null,
+    porte: r.porte || null,
+    naturezaJuridica: r.natureza_juridica || null,
+    dataAbertura: r.data_abertura ? String(r.data_abertura) : null,
+    logradouroTipo: r.logradouro_tipo || null,
+    logradouro: r.logradouro || null,
+    numero: r.numero ? String(r.numero) : null,
+    bairro: r.bairro || null,
+    cep: r.cep ? String(r.cep) : null,
+    site: null,
+  }));
 }

@@ -49,6 +49,34 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     cnpjFound = lead.cnpj;
     cnpjSource = 'existing';
     steps.push('existing:cnpj_valido');
+
+    // === SHORTCUT v8: se lead veio do BigQuery collect com dados completos,
+    // marcar receitawsStatus='ok' sem chamar ReceitaWS (dados ja sao da propria RFB)
+    if (
+      lead.cnpjSource &&
+      lead.cnpjSource.startsWith('bigquery') &&
+      lead.razaoSocial &&
+      lead.cnaePrincipalTexto
+    ) {
+      await prisma.lead.update({
+        where: { id },
+        data: {
+          receitawsStatus: 'ok',
+          receitawsFetchedAt: new Date(),
+          cnpjFetchStatus: 'ok',
+          cnpjFetchedAt: lead.cnpjFetchedAt ?? new Date(),
+        },
+      });
+      const updated = await prisma.lead.findUnique({ where: { id } });
+      return NextResponse.json({
+        ok: true,
+        cached: true,
+        cnpj: lead.cnpj,
+        cnpjSource: lead.cnpjSource,
+        steps: ['existing:cnpj_valido', 'shortcut:bigquery_complete_data'],
+        lead: updated,
+      });
+    }
   }
 
   // ============ CAMADA 1: Scraper ============
@@ -100,7 +128,7 @@ if (lead.website && !cnpjFound) {
       steps.push('bigquery:fallback_no_uf');
       matches = await findCnpjByNameNoUF(lead.name, {
         limit: 10,
-        minScore: 70,
+        minScore: 60,
         cidade: lead.locality ?? undefined,
       });
     }
@@ -172,6 +200,8 @@ if (lead.website && !cnpjFound) {
           cnpjSource: cnpjSource === 'bigquery'
             ? `bigquery+receitaws`
             : `${cnpjSource}+receitaws`,
+          cnpjFetchStatus: 'ok',
+          cnpjFetchedAt: new Date(),
         },
       });
       steps.push('receitaws:ok');
