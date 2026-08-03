@@ -1,9 +1,10 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Building2, Search, Loader2, RefreshCw, MapPin, Phone, Globe,
-  ExternalLink, BadgeCheck, AlertCircle, X, Filter,
+  ExternalLink, BadgeCheck, AlertCircle, X, Filter, Download,
+  CheckSquare, Square, Trash2, CheckCheck,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -30,6 +31,8 @@ interface Lead {
   cnaePrincipalCodigo: string | null; cnaePrincipalTexto: string | null;
   receitawsStatus: string; receitawsFetchedAt: string | null;
   createdAt: string;
+  pipelineStatus?: string;
+  score?: number | null;
 }
 
 interface Stats {
@@ -38,6 +41,15 @@ interface Stats {
 }
 
 const PAGE_SIZE = 20;
+
+const PIPELINE_STATUS_OPTIONS = [
+  { value: '', label: 'Todos status' },
+  { value: 'novo', label: 'Novo' },
+  { value: 'contatado', label: 'Contatado' },
+  { value: 'qualificado', label: 'Qualificado' },
+  { value: 'cliente', label: 'Cliente' },
+  { value: 'descartado', label: 'Descartado' },
+];
 
 const STAT_VARIANTS: Record<string, string> = {
   muted: 'bg-zinc-800/60 text-zinc-300 border border-zinc-700/50',
@@ -59,10 +71,40 @@ export default function LeadsTab() {
   const [filterState, setFilterState] = useState('');
   const [filterCnpjStatus, setFilterCnpjStatus] = useState('all');
   const [filterReceitaws, setFilterReceitaws] = useState('all');
+  const [filterPipelineStatus, setFilterPipelineStatus] = useState('');
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [fetchingCnpjFor, setFetchingCnpjFor] = useState<string | null>(null);
+
+  // ===== MULTI-SELEÇÃO (persiste entre páginas) =====
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [exporting, setExporting] = useState(false);
+
+  const toggleSelection = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const selectAllOnPage = useCallback(() => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      leads.forEach((l) => next.add(l.id));
+      return next;
+    });
+  }, [leads]);
+
+  const clearSelection = useCallback(() => {
+    setSelectedIds(new Set());
+  }, []);
+
+  const selectedCount = selectedIds.size;
+  const allOnPageSelected = leads.length > 0 && leads.every((l) => selectedIds.has(l.id));
+  const someOnPageSelected = leads.some((l) => selectedIds.has(l.id));
 
   const fetchLeads = useCallback(async () => {
     setLoading(true); setError(null);
@@ -74,6 +116,7 @@ export default function LeadsTab() {
       if (savedSearchInput.trim()) params.set('query', savedSearchInput.trim());
       if (filterCity) params.set('city', filterCity);
       if (filterState) params.set('state', filterState);
+      if (filterPipelineStatus) params.set('pipelineStatus', filterPipelineStatus);
       const res = await fetch(`/api/leads?${params.toString()}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
@@ -83,9 +126,49 @@ export default function LeadsTab() {
     } catch (e: any) {
       setError(e.message || 'Erro ao carregar leads');
     } finally { setLoading(false); }
-  }, [page, savedSearchInput, filterCity, filterState, filterCnpjStatus, filterReceitaws]);
+  }, [page, savedSearchInput, filterCity, filterState, filterCnpjStatus, filterReceitaws, filterPipelineStatus]);
 
   useEffect(() => { fetchLeads(); }, [fetchLeads]);
+
+  // ===== EXPORT CSV =====
+  const handleExportCSV = async () => {
+    if (selectedCount === 0) {
+      toast.warning('Selecione ao menos um lead para exportar.');
+      return;
+    }
+    setExporting(true);
+    const toastId = toast.loading(`Exportando ${selectedCount} lead(s) para CSV...`);
+    try {
+      const res = await fetch('/api/leads/export', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ leadIds: Array.from(selectedIds), format: 'csv' }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const now = new Date();
+      const stamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`;
+      a.href = url;
+      a.download = `leads_${stamp}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      toast.success(`CSV exportado com ${selectedCount} lead(s)`, {
+        id: toastId,
+        description: `Arquivo: leads_${stamp}.csv`,
+        duration: 5000,
+      });
+    } catch (e: any) {
+      toast.error('Erro ao exportar CSV', {
+        id: toastId,
+        description: e.message || 'Erro desconhecido',
+        duration: 6000,
+      });
+    } finally { setExporting(false); }
+  };
 
   const handleSearch = async () => {
     if (!searchInput.trim()) return;
@@ -236,13 +319,14 @@ export default function LeadsTab() {
             { value: 'all', label: 'Todos' }, { value: 'ok', label: 'OK' },
             { value: 'pending', label: 'Pendente' }, { value: 'error', label: 'Erro' },
           ]} />
+          <FilterSelect label="Pipeline" value={filterPipelineStatus} onChange={setFilterPipelineStatus} options={PIPELINE_STATUS_OPTIONS} />
           <button onClick={fetchLeads} className="inline-flex items-center gap-2 rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground hover:bg-muted/50">
             <RefreshCw className="h-4 w-4" /> Atualizar
           </button>
         </div>
       </div>
 
-      {/* Container 2: Buscar nos leads salvos (NOVO) */}
+      {/* Container 2: Buscar nos leads salvos */}
       <div className="rounded-lg border border-border bg-card p-4">
         <div className="mb-2 flex items-center gap-2 text-sm font-medium text-foreground">
           <Filter className="h-4 w-4 text-primary" />
@@ -275,6 +359,44 @@ export default function LeadsTab() {
         </div>
       )}
 
+      {/* ===== BARRA DE SELEÇÃO ===== */}
+      {leads.length > 0 && (
+        <div className="flex items-center gap-3 rounded-md border border-border bg-card px-4 py-2 text-sm">
+          <button
+            onClick={selectAllOnPage}
+            title={allOnPageSelected ? 'Desselecionar página' : 'Selecionar página'}
+            className="inline-flex items-center gap-1.5 text-foreground hover:text-primary"
+          >
+            {allOnPageSelected ? (
+              <CheckSquare className="h-4 w-4 text-primary" />
+            ) : someOnPageSelected ? (
+              <CheckCheck className="h-4 w-4 text-amber-500" />
+            ) : (
+              <Square className="h-4 w-4" />
+            )}
+            <span>{allOnPageSelected ? 'Desselecionar página' : 'Selecionar página'}</span>
+          </button>
+          <span className="text-muted-foreground">|</span>
+          <span className="text-muted-foreground">
+            Página: {leads.filter((l) => selectedIds.has(l.id)).length}/{leads.length}
+          </span>
+          {selectedCount > 0 && (
+            <>
+              <span className="text-muted-foreground">|</span>
+              <span className="font-medium text-primary">
+                {selectedCount} selecionado{selectedCount === 1 ? '' : 's'} no total
+              </span>
+              <button
+                onClick={clearSelection}
+                className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+              >
+                <X className="h-3 w-3" /> limpar
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
       {loading ? (
         <div className="flex justify-center py-10">
           <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
@@ -285,9 +407,20 @@ export default function LeadsTab() {
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
-          {leads.map((lead) => (
-            <LeadCard key={lead.id} lead={lead} onSelect={() => setSelectedLead(lead)} onFetchCnpj={(force) => handleFetchCnpj(lead, force)} fetching={fetchingCnpjFor === lead.id} />
-          ))}
+          {leads.map((lead) => {
+            const isSelected = selectedIds.has(lead.id);
+            return (
+              <LeadCard
+                key={lead.id}
+                lead={lead}
+                isSelected={isSelected}
+                onToggleSelect={() => toggleSelection(lead.id)}
+                onSelect={() => setSelectedLead(lead)}
+                onFetchCnpj={(force) => handleFetchCnpj(lead, force)}
+                fetching={fetchingCnpjFor === lead.id}
+              />
+            );
+          })}
         </div>
       )}
 
@@ -305,6 +438,16 @@ export default function LeadsTab() {
 
       {selectedLead && (
         <LeadDetailDialog lead={selectedLead} onClose={() => setSelectedLead(null)} onFetchCnpj={(force) => handleFetchCnpj(selectedLead, force)} fetching={fetchingCnpjFor === selectedLead.id} />
+      )}
+
+      {/* ===== BARRA DE AÇÕES FLUTUANTE (aparece quando há selecionados) ===== */}
+      {selectedCount > 0 && (
+        <BulkActionBar
+          count={selectedCount}
+          onClear={clearSelection}
+          onExportCSV={handleExportCSV}
+          exporting={exporting}
+        />
       )}
     </div>
   );
@@ -353,19 +496,53 @@ function CnpjStatusBadge({ lead }: { lead: Lead }) {
   );
 }
 
-function LeadCard({ lead, onSelect, onFetchCnpj, fetching }: { lead: Lead; onSelect: () => void; onFetchCnpj: (force: boolean) => void; fetching: boolean; }) {
+function LeadCard({ lead, isSelected, onToggleSelect, onSelect, onFetchCnpj, fetching }: {
+  lead: Lead;
+  isSelected: boolean;
+  onToggleSelect: () => void;
+  onSelect: () => void;
+  onFetchCnpj: (force: boolean) => void;
+  fetching: boolean;
+}) {
   return (
-    <div className="rounded-lg border border-border bg-card p-4 shadow-sm transition hover:shadow-md">
-      <div className="flex items-start justify-between gap-2">
-        <button onClick={onSelect} className="flex-1 text-left font-semibold text-foreground hover:text-primary">{lead.name || lead.razaoSocial || '(sem nome)'}</button>
-        <CnpjStatusBadge lead={lead} />
+    <div
+      className={`rounded-lg border bg-card p-4 shadow-sm transition hover:shadow-md ${
+        isSelected ? 'border-primary ring-2 ring-primary/30' : 'border-border'
+      }`}
+    >
+      <div className="flex items-start gap-2">
+        <button
+          onClick={onToggleSelect}
+          title={isSelected ? 'Remover da seleção' : 'Selecionar'}
+          className="mt-0.5 shrink-0"
+          aria-label={isSelected ? 'Remover da seleção' : 'Selecionar'}
+        >
+          {isSelected ? (
+            <CheckSquare className="h-5 w-5 text-primary" />
+          ) : (
+            <Square className="h-5 w-5 text-muted-foreground hover:text-foreground" />
+          )}
+        </button>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-start justify-between gap-2">
+            <button onClick={onSelect} className="flex-1 text-left font-semibold text-foreground hover:text-primary truncate">
+              {lead.name || lead.razaoSocial || '(sem nome)'}
+            </button>
+            <CnpjStatusBadge lead={lead} />
+          </div>
+          {lead.nomeFantasia && lead.nomeFantasia !== lead.name && (<p className="mt-0.5 text-sm text-muted-foreground">{lead.nomeFantasia}</p>)}
+        </div>
       </div>
-      {lead.nomeFantasia && lead.nomeFantasia !== lead.name && (<p className="mt-0.5 text-sm text-muted-foreground">{lead.nomeFantasia}</p>)}
       {lead.formattedAddress && (<p className="mt-2 flex items-start gap-1 text-xs text-muted-foreground"><MapPin className="mt-0.5 h-3 w-3 shrink-0" />{lead.formattedAddress}</p>)}
       <div className="mt-2 flex flex-wrap gap-2 text-xs">
         {lead.phone && (<span className="inline-flex items-center gap-1 text-muted-foreground"><Phone className="h-3 w-3" /> {lead.phone}</span>)}
         {lead.website && (<a href={lead.website} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground hover:underline"><Globe className="h-3 w-3" /> site</a>)}
         {lead.googleMapsUri && (<a href={lead.googleMapsUri} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground hover:underline"><ExternalLink className="h-3 w-3" /> maps</a>)}
+        {lead.pipelineStatus && lead.pipelineStatus !== 'novo' && (
+          <span className="inline-flex items-center gap-1 rounded bg-blue-900/40 px-1.5 py-0.5 text-blue-300 border border-blue-700/50">
+            {lead.pipelineStatus}
+          </span>
+        )}
       </div>
       {lead.cnaePrincipalTexto && (<p className="mt-2 text-xs text-muted-foreground/80">CNAE: {lead.cnaePrincipalTexto}</p>)}
       <div className="mt-3 flex gap-2">
@@ -447,6 +624,45 @@ function DetailRow({ label, value }: { label: string; value: string | null | und
     <div>
       <p className="text-xs uppercase tracking-wide text-muted-foreground/70">{label}</p>
       <p className="text-foreground">{value || '—'}</p>
+    </div>
+  );
+}
+
+// ===== BARRA DE AÇÕES FLUTUANTE =====
+function BulkActionBar({ count, onClear, onExportCSV, exporting }: {
+  count: number;
+  onClear: () => void;
+  onExportCSV: () => void;
+  exporting: boolean;
+}) {
+  return (
+    <div className="fixed bottom-6 left-1/2 z-40 -translate-x-1/2">
+      <div className="flex items-center gap-3 rounded-lg border border-border bg-card px-4 py-3 shadow-2xl">
+        <div className="flex items-center gap-2">
+          <span className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-sm font-bold text-primary-foreground">
+            {count}
+          </span>
+          <span className="text-sm font-medium text-foreground">
+            {count === 1 ? 'lead selecionado' : 'leads selecionados'}
+          </span>
+        </div>
+        <span className="text-muted-foreground">|</span>
+        <button
+          onClick={onExportCSV}
+          disabled={exporting}
+          className="inline-flex items-center gap-2 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+        >
+          {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+          Exportar CSV
+        </button>
+        <button
+          onClick={onClear}
+          className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground hover:bg-muted/50"
+        >
+          <Trash2 className="h-4 w-4" />
+          Limpar
+        </button>
+      </div>
     </div>
   );
 }
