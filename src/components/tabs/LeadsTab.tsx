@@ -1,10 +1,10 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   Building2, Search, Loader2, RefreshCw, MapPin, Phone, Globe,
   ExternalLink, BadgeCheck, AlertCircle, X, Filter, Download,
-  CheckSquare, Square, Trash2, CheckCheck,
+  CheckSquare, Square, Trash2, CheckCheck, ChevronsUpDown,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -40,7 +40,7 @@ interface Stats {
   receitawsOk: number; receitawsPending: number;
 }
 
-const PAGE_SIZE = 20;
+const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
 
 const PIPELINE_STATUS_OPTIONS = [
   { value: '', label: 'Todos status' },
@@ -67,12 +67,20 @@ export default function LeadsTab() {
   const [searchInput, setSearchInput] = useState('');
   const [searching, setSearching] = useState(false);
   const [savedSearchInput, setSavedSearchInput] = useState('');
+
+  // Filtros para a busca no Google Places (categoria 4)
+  const [placesCity, setPlacesCity] = useState('');
+  const [placesState, setPlacesState] = useState('');
+
+  // Filtros para os leads salvos (categoria 2)
   const [filterCity, setFilterCity] = useState('');
   const [filterState, setFilterState] = useState('');
   const [filterCnpjStatus, setFilterCnpjStatus] = useState('all');
   const [filterReceitaws, setFilterReceitaws] = useState('all');
   const [filterPipelineStatus, setFilterPipelineStatus] = useState('');
+
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
   const [total, setTotal] = useState(0);
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [fetchingCnpjFor, setFetchingCnpjFor] = useState<string | null>(null);
@@ -80,6 +88,7 @@ export default function LeadsTab() {
   // ===== MULTI-SELEÇÃO (persiste entre páginas) =====
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [exporting, setExporting] = useState(false);
+  const [selectingAll, setSelectingAll] = useState(false);
 
   const toggleSelection = useCallback((id: string) => {
     setSelectedIds((prev) => {
@@ -93,24 +102,72 @@ export default function LeadsTab() {
   const selectAllOnPage = useCallback(() => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
-      leads.forEach((l) => next.add(l.id));
+      // Se todos da página já estão selecionados → desseleciona SÓ os da página
+      const allSelected = leads.length > 0 && leads.every((l) => next.has(l.id));
+      if (allSelected) {
+        leads.forEach((l) => next.delete(l.id));
+      } else {
+        leads.forEach((l) => next.add(l.id));
+      }
       return next;
     });
   }, [leads]);
+
+  const selectAllMatching = useCallback(async () => {
+    setSelectingAll(true);
+    const toastId = toast.loading('Selecionando todos os leads que casam com o filtro...');
+    try {
+      // Busca TODOS os IDs que casam com o filtro atual (sem paginação)
+      const params = new URLSearchParams({
+        page: '1',
+        pageSize: String(Math.min(total || 1000, 1000)),
+        cnpjStatus: filterCnpjStatus,
+        receitawsStatus: filterReceitaws,
+      });
+      if (savedSearchInput.trim()) params.set('query', savedSearchInput.trim());
+      if (filterCity) params.set('city', filterCity);
+      if (filterState) params.set('state', filterState);
+      if (filterPipelineStatus) params.set('pipelineStatus', filterPipelineStatus);
+
+      const res = await fetch(`/api/leads?${params.toString()}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      const allLeadIds: string[] = (data.leads || []).map((l: Lead) => l.id);
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        allLeadIds.forEach((id) => next.add(id));
+        return next;
+      });
+      toast.success(`${allLeadIds.length} leads selecionados`, {
+        id: toastId,
+        description: 'Seleção persiste entre páginas',
+        duration: 4000,
+      });
+    } catch (e: any) {
+      toast.error('Erro ao selecionar todos', {
+        id: toastId,
+        description: e.message || 'Erro desconhecido',
+        duration: 6000,
+      });
+    } finally { setSelectingAll(false); }
+  }, [total, savedSearchInput, filterCity, filterState, filterCnpjStatus, filterReceitaws, filterPipelineStatus]);
 
   const clearSelection = useCallback(() => {
     setSelectedIds(new Set());
   }, []);
 
   const selectedCount = selectedIds.size;
+  const pageSelectedCount = leads.filter((l) => selectedIds.has(l.id)).length;
   const allOnPageSelected = leads.length > 0 && leads.every((l) => selectedIds.has(l.id));
-  const someOnPageSelected = leads.some((l) => selectedIds.has(l.id));
+  const someOnPageSelected = !allOnPageSelected && leads.some((l) => selectedIds.has(l.id));
 
-  const fetchLeads = useCallback(async () => {
+  // ===== FETCH COM PAGE OVERRIDE (corrige bug #3) =====
+  const fetchLeads = useCallback(async (pageOverride?: number) => {
+    const actualPage = pageOverride ?? page;
     setLoading(true); setError(null);
     try {
       const params = new URLSearchParams({
-        page: String(page), pageSize: String(PAGE_SIZE),
+        page: String(actualPage), pageSize: String(pageSize),
         cnpjStatus: filterCnpjStatus, receitawsStatus: filterReceitaws,
       });
       if (savedSearchInput.trim()) params.set('query', savedSearchInput.trim());
@@ -123,10 +180,14 @@ export default function LeadsTab() {
       setLeads(data.leads || []);
       setTotal(data.total || 0);
       setStats(data.stats || null);
+      // Se a página atual não tem leads mas há leads no total, volta para página 1
+      if ((data.leads || []).length === 0 && (data.total || 0) > 0 && actualPage > 1) {
+        setPage(1);
+      }
     } catch (e: any) {
       setError(e.message || 'Erro ao carregar leads');
     } finally { setLoading(false); }
-  }, [page, savedSearchInput, filterCity, filterState, filterCnpjStatus, filterReceitaws, filterPipelineStatus]);
+  }, [page, pageSize, savedSearchInput, filterCity, filterState, filterCnpjStatus, filterReceitaws, filterPipelineStatus]);
 
   useEffect(() => { fetchLeads(); }, [fetchLeads]);
 
@@ -177,11 +238,17 @@ export default function LeadsTab() {
       const res = await fetch('/api/leads/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: searchInput, pageSize: 20, city: filterCity || undefined, state: filterState || undefined }),
+        body: JSON.stringify({
+          query: searchInput,
+          pageSize: 20,
+          city: placesCity || undefined,
+          state: placesState || undefined,
+        }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      await fetchLeads();
+      await fetchLeads(1);
+      setPage(1);
       if (data.count > 0) {
         toast.success(`${data.count} leads encontrados no Google Places!`, { duration: 4000 });
       } else {
@@ -193,10 +260,11 @@ export default function LeadsTab() {
     } finally { setSearching(false); }
   };
 
+  // handleSearchSaved com page override (corrige bug #3)
   const handleSearchSaved = async () => {
     if (!savedSearchInput.trim()) return;
     setPage(1);
-    await fetchLeads();
+    await fetchLeads(1);
   };
 
   const handleFetchCnpj = async (lead: Lead, force = false) => {
@@ -267,6 +335,11 @@ export default function LeadsTab() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedLead?.id]);
 
+  // Reset page quando filtros mudam (corrige bug #3 - parte 2)
+  useEffect(() => {
+    setPage(1);
+  }, [savedSearchInput, filterCity, filterState, filterCnpjStatus, filterReceitaws, filterPipelineStatus, pageSize]);
+
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-3">
@@ -287,12 +360,17 @@ export default function LeadsTab() {
         </div>
       )}
 
-      {/* Container 1: Buscar no Places + Filtros (sempre visivel) */}
+      {/* Container 1: Buscar no Places + FILTROS PRÓPRIOS (#4) */}
       <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+        <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+          <Search className="h-4 w-4 text-primary" />
+          Buscar no Google Places
+          <span className="text-xs font-normal text-muted-foreground">(cria novos leads a partir do Google Maps)</span>
+        </div>
         <div className="flex gap-2">
           <input
             type="text"
-            placeholder="buscar no places…"
+            placeholder="ex: pizzaria, farmácia, restaurante…"
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
@@ -305,6 +383,40 @@ export default function LeadsTab() {
           >
             {searching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
             Buscar no Places
+          </button>
+        </div>
+        <div className="flex flex-wrap items-end gap-3 border-t border-border pt-3">
+          <FilterInput label="Cidade" value={placesCity} onChange={setPlacesCity} placeholder="Cidade" />
+          <FilterInput label="UF" value={placesState} onChange={(v) => setPlacesState(v.toUpperCase().slice(0, 2))} placeholder="UF" maxLength={2} />
+          <p className="text-xs text-muted-foreground self-center">
+            Estes filtros aplicam-se à busca no Google Places (criação de novos leads)
+          </p>
+        </div>
+      </div>
+
+      {/* Container 2: Buscar nos leads salvos + FILTROS DE LEADS SALVOS (#2) */}
+      <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+        <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+          <Filter className="h-4 w-4 text-primary" />
+          Buscar nos leads salvos
+          <span className="text-xs font-normal text-muted-foreground">(filtra por nome, CNPJ, razão social ou endereço)</span>
+        </div>
+        <div className="flex gap-2">
+          <input
+            type="text"
+            placeholder="ex: pizzaria, 11.222.333, Criciúma…"
+            value={savedSearchInput}
+            onChange={(e) => setSavedSearchInput(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleSearchSaved()}
+            className="flex-1 rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+          />
+          <button
+            onClick={handleSearchSaved}
+            disabled={loading || !savedSearchInput.trim()}
+            className="inline-flex items-center gap-2 rounded-md border border-border bg-background px-4 py-2 text-sm font-medium text-foreground hover:bg-muted/50 disabled:opacity-50"
+          >
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+            Buscar
           </button>
         </div>
 
@@ -320,35 +432,8 @@ export default function LeadsTab() {
             { value: 'pending', label: 'Pendente' }, { value: 'error', label: 'Erro' },
           ]} />
           <FilterSelect label="Pipeline" value={filterPipelineStatus} onChange={setFilterPipelineStatus} options={PIPELINE_STATUS_OPTIONS} />
-          <button onClick={fetchLeads} className="inline-flex items-center gap-2 rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground hover:bg-muted/50">
+          <button onClick={() => fetchLeads(1)} className="inline-flex items-center gap-2 rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground hover:bg-muted/50">
             <RefreshCw className="h-4 w-4" /> Atualizar
-          </button>
-        </div>
-      </div>
-
-      {/* Container 2: Buscar nos leads salvos */}
-      <div className="rounded-lg border border-border bg-card p-4">
-        <div className="mb-2 flex items-center gap-2 text-sm font-medium text-foreground">
-          <Filter className="h-4 w-4 text-primary" />
-          Buscar nos leads salvos
-          <span className="text-xs font-normal text-muted-foreground">(filtra por nome, CNPJ, razão social ou endereço)</span>
-        </div>
-        <div className="flex gap-2">
-          <input
-            type="text"
-            placeholder="buscar nos salvos…"
-            value={savedSearchInput}
-            onChange={(e) => setSavedSearchInput(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleSearchSaved()}
-            className="flex-1 rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-          />
-          <button
-            onClick={handleSearchSaved}
-            disabled={loading || !savedSearchInput.trim()}
-            className="inline-flex items-center gap-2 rounded-md border border-border bg-background px-4 py-2 text-sm font-medium text-foreground hover:bg-muted/50 disabled:opacity-50"
-          >
-            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
-            Buscar
           </button>
         </div>
       </div>
@@ -359,9 +444,9 @@ export default function LeadsTab() {
         </div>
       )}
 
-      {/* ===== BARRA DE SELEÇÃO ===== */}
+      {/* ===== BARRA DE SELEÇÃO (#1: sem botão limpar, com Selecionar tudo) ===== */}
       {leads.length > 0 && (
-        <div className="flex items-center gap-3 rounded-md border border-border bg-card px-4 py-2 text-sm">
+        <div className="flex items-center gap-3 rounded-md border border-border bg-card px-4 py-2 text-sm flex-wrap">
           <button
             onClick={selectAllOnPage}
             title={allOnPageSelected ? 'Desselecionar página' : 'Selecionar página'}
@@ -377,8 +462,22 @@ export default function LeadsTab() {
             <span>{allOnPageSelected ? 'Desselecionar página' : 'Selecionar página'}</span>
           </button>
           <span className="text-muted-foreground">|</span>
+          <button
+            onClick={selectAllMatching}
+            disabled={selectingAll || total === 0}
+            title="Selecionar todos os leads que casam com o filtro (todas as páginas)"
+            className="inline-flex items-center gap-1.5 text-foreground hover:text-primary disabled:opacity-50"
+          >
+            {selectingAll ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <ChevronsUpDown className="h-4 w-4" />
+            )}
+            <span>Selecionar tudo ({total})</span>
+          </button>
+          <span className="text-muted-foreground">|</span>
           <span className="text-muted-foreground">
-            Página: {leads.filter((l) => selectedIds.has(l.id)).length}/{leads.length}
+            Página: {pageSelectedCount}/{leads.length}
           </span>
           {selectedCount > 0 && (
             <>
@@ -386,12 +485,6 @@ export default function LeadsTab() {
               <span className="font-medium text-primary">
                 {selectedCount} selecionado{selectedCount === 1 ? '' : 's'} no total
               </span>
-              <button
-                onClick={clearSelection}
-                className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-              >
-                <X className="h-3 w-3" /> limpar
-              </button>
             </>
           )}
         </div>
@@ -424,14 +517,30 @@ export default function LeadsTab() {
         </div>
       )}
 
-      {total > PAGE_SIZE && (
-        <div className="flex items-center justify-between">
+      {/* Paginação + page size (#5) */}
+      {total > 0 && (
+        <div className="flex items-center justify-between flex-wrap gap-3">
           <p className="text-sm text-muted-foreground">
-            Mostrando {(page - 1) * PAGE_SIZE + 1}-{Math.min(page * PAGE_SIZE, total)} de {total}
+            Mostrando {(page - 1) * pageSize + 1}-{Math.min(page * pageSize, total)} de {total}
           </p>
-          <div className="flex gap-2">
-            <button onClick={() => setPage(Math.max(1, page - 1))} disabled={page === 1} className="rounded border border-border px-3 py-1 text-sm text-foreground disabled:opacity-50 hover:bg-muted/50">Anterior</button>
-            <button onClick={() => setPage(page + 1)} disabled={page * PAGE_SIZE >= total} className="rounded border border-border px-3 py-1 text-sm text-foreground disabled:opacity-50 hover:bg-muted/50">Próximo</button>
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-muted-foreground">Por página:</label>
+              <select
+                value={String(pageSize)}
+                onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}
+                className="rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground focus:border-primary focus:outline-none"
+              >
+                {PAGE_SIZE_OPTIONS.map((s) => (
+                  <option key={s} value={String(s)}>{s}</option>
+                ))}
+              </select>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => setPage(Math.max(1, page - 1))} disabled={page === 1} className="rounded border border-border px-3 py-1 text-sm text-foreground disabled:opacity-50 hover:bg-muted/50">Anterior</button>
+              <span className="rounded border border-border px-3 py-1 text-sm text-foreground bg-muted/30">Pág {page}</span>
+              <button onClick={() => setPage(page + 1)} disabled={page * pageSize >= total} className="rounded border border-border px-3 py-1 text-sm text-foreground disabled:opacity-50 hover:bg-muted/50">Próximo</button>
+            </div>
           </div>
         </div>
       )}
