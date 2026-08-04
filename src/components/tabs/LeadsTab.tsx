@@ -138,6 +138,7 @@ export default function LeadsTab() {
         allLeadIds.forEach((id) => next.add(id));
         return next;
       });
+      setAllMatchingSelected(true);
       toast.success(`${allLeadIds.length} leads selecionados`, {
         id: toastId,
         description: 'Seleção persiste entre páginas',
@@ -160,6 +161,22 @@ export default function LeadsTab() {
   const pageSelectedCount = leads.filter((l) => selectedIds.has(l.id)).length;
   const allOnPageSelected = leads.length > 0 && leads.every((l) => selectedIds.has(l.id));
   const someOnPageSelected = !allOnPageSelected && leads.some((l) => selectedIds.has(l.id));
+
+  // Estado 2: tudo selecionado — quando TODOS os leads que casam com o filtro estão selecionados
+  // (só verificamos isso se a seleção for > 0 e o usuário já tiver clicado em "Selecionar tudo")
+  const [allMatchingSelected, setAllMatchingSelected] = useState(false);
+
+  // Reset allMatchingSelected quando filtros mudam (porque a lista filtrada mudou)
+  useEffect(() => {
+    setAllMatchingSelected(false);
+  }, [savedSearchInput, filterCity, filterState, filterCnpjStatus, filterReceitaws, filterPipelineStatus, pageSize]);
+
+  // Detecta quando o usuário desseleciona manualmente algum lead — sai do estado "tudo selecionado"
+  useEffect(() => {
+    if (allMatchingSelected && selectedCount === 0) {
+      setAllMatchingSelected(false);
+    }
+  }, [selectedCount, allMatchingSelected]);
 
   // ===== FETCH COM PAGE OVERRIDE (corrige bug #3) =====
   const fetchLeads = useCallback(async (pageOverride?: number) => {
@@ -444,37 +461,55 @@ export default function LeadsTab() {
         </div>
       )}
 
-      {/* ===== BARRA DE SELEÇÃO (#1: sem botão limpar, com Selecionar tudo) ===== */}
+      {/* ===== BARRA DE SELEÇÃO (3 estados) ===== */}
       {leads.length > 0 && (
         <div className="flex items-center gap-3 rounded-md border border-border bg-card px-4 py-2 text-sm flex-wrap">
-          <button
-            onClick={selectAllOnPage}
-            title={allOnPageSelected ? 'Desselecionar página' : 'Selecionar página'}
-            className="inline-flex items-center gap-1.5 text-foreground hover:text-primary"
-          >
-            {allOnPageSelected ? (
+          {allMatchingSelected ? (
+            // ESTADO 2: tudo selecionado — só botão "Desselecionar"
+            <button
+              onClick={() => {
+                setSelectedIds(new Set());
+                setAllMatchingSelected(false);
+              }}
+              title="Desselecionar todos os leads"
+              className="inline-flex items-center gap-1.5 text-foreground hover:text-primary"
+            >
               <CheckSquare className="h-4 w-4 text-primary" />
-            ) : someOnPageSelected ? (
-              <CheckCheck className="h-4 w-4 text-amber-500" />
-            ) : (
-              <Square className="h-4 w-4" />
-            )}
-            <span>{allOnPageSelected ? 'Desselecionar página' : 'Selecionar página'}</span>
-          </button>
-          <span className="text-muted-foreground">|</span>
-          <button
-            onClick={selectAllMatching}
-            disabled={selectingAll || total === 0}
-            title="Selecionar todos os leads que casam com o filtro (todas as páginas)"
-            className="inline-flex items-center gap-1.5 text-foreground hover:text-primary disabled:opacity-50"
-          >
-            {selectingAll ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <ChevronsUpDown className="h-4 w-4" />
-            )}
-            <span>Selecionar tudo ({total})</span>
-          </button>
+              <span>Desselecionar</span>
+            </button>
+          ) : (
+            // ESTADO 0 e 1: "Selecionar página"/"Desselecionar página" + "Selecionar tudo (N)"
+            <>
+              <button
+                onClick={selectAllOnPage}
+                title={allOnPageSelected ? 'Desselecionar página' : 'Selecionar página'}
+                className="inline-flex items-center gap-1.5 text-foreground hover:text-primary"
+              >
+                {allOnPageSelected ? (
+                  <CheckSquare className="h-4 w-4 text-primary" />
+                ) : someOnPageSelected ? (
+                  <CheckCheck className="h-4 w-4 text-amber-500" />
+                ) : (
+                  <Square className="h-4 w-4" />
+                )}
+                <span>{allOnPageSelected ? 'Desselecionar página' : 'Selecionar página'}</span>
+              </button>
+              <span className="text-muted-foreground">|</span>
+              <button
+                onClick={selectAllMatching}
+                disabled={selectingAll || total === 0}
+                title="Selecionar todos os leads que casam com o filtro (todas as páginas)"
+                className="inline-flex items-center gap-1.5 text-foreground hover:text-primary disabled:opacity-50"
+              >
+                {selectingAll ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <ChevronsUpDown className="h-4 w-4" />
+                )}
+                <span>Selecionar tudo ({total})</span>
+              </button>
+            </>
+          )}
           <span className="text-muted-foreground">|</span>
           <span className="text-muted-foreground">
             Página: {pageSelectedCount}/{leads.length}

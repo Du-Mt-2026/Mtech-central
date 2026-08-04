@@ -38,13 +38,25 @@ export async function GET(req: NextRequest) {
 
   const where: any = {};
   if (query) {
-    where.OR = [
+    // Bug fix: query.replace(/\D/g, '') vira string vazia quando query não tem dígitos,
+    // e contains:'' casa com qualquer cnpj não-nulo. Só aplicamos filtro de CNPJ se houver dígitos.
+    const cnpjDigits = query.replace(/\D/g, '');
+    const orConditions: any[] = [
       { name: { contains: query, mode: 'insensitive' } },
       { formattedAddress: { contains: query, mode: 'insensitive' } },
-      { cnpj: { contains: query.replace(/\D/g, '') } },
       { razaoSocial: { contains: query, mode: 'insensitive' } },
       { nomeFantasia: { contains: query, mode: 'insensitive' } },
+      { locality: { contains: query, mode: 'insensitive' } },
+      { administrativeArea: { contains: query, mode: 'insensitive' } },
+      { phone: { contains: query, mode: 'insensitive' } },
+      { emailReceita: { contains: query, mode: 'insensitive' } },
+      { cnaePrincipalTexto: { contains: query, mode: 'insensitive' } },
     ];
+    if (cnpjDigits) {
+      orConditions.push({ cnpj: { contains: cnpjDigits } });
+      orConditions.push({ cnpjFormatted: { contains: cnpjDigits } });
+    }
+    where.OR = orConditions;
   }
   if (city) where.locality = { contains: city, mode: 'insensitive' };
   if (state) where.administrativeArea = { equals: state.toUpperCase() };
