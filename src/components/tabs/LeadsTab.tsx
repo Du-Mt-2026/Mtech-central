@@ -477,12 +477,12 @@ export default function LeadsTab() {
               <CheckSquare className="h-4 w-4 text-primary" />
               <span>Desselecionar</span>
             </button>
-          ) : (
-            // ESTADO 0 e 1: "Selecionar página"/"Desselecionar página" + "Selecionar tudo (N)"
+          ) : selectedCount > 0 ? (
+            // ESTADO 1: página selecionada (ou alguns leads) — "Desselecionar" + "Selecionar tudo (N)"
             <>
               <button
                 onClick={selectAllOnPage}
-                title={allOnPageSelected ? 'Desselecionar página' : 'Selecionar página'}
+                title="Desselecionar página atual"
                 className="inline-flex items-center gap-1.5 text-foreground hover:text-primary"
               >
                 {allOnPageSelected ? (
@@ -492,7 +492,7 @@ export default function LeadsTab() {
                 ) : (
                   <Square className="h-4 w-4" />
                 )}
-                <span>{allOnPageSelected ? 'Desselecionar página' : 'Selecionar página'}</span>
+                <span>Desselecionar</span>
               </button>
               <span className="text-muted-foreground">|</span>
               <button
@@ -509,6 +509,16 @@ export default function LeadsTab() {
                 <span>Selecionar tudo ({total})</span>
               </button>
             </>
+          ) : (
+            // ESTADO 0: nada selecionado — só "Selecionar página"
+            <button
+              onClick={selectAllOnPage}
+              title="Selecionar página atual"
+              className="inline-flex items-center gap-1.5 text-foreground hover:text-primary"
+            >
+              <Square className="h-4 w-4" />
+              <span>Selecionar página</span>
+            </button>
           )}
           <span className="text-muted-foreground">|</span>
           <span className="text-muted-foreground">

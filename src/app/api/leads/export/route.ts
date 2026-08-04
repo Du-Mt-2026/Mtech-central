@@ -3,11 +3,14 @@ import { NextRequest, NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
 const prisma = new PrismaClient();
 
-// Escape RFC 4180 — sempre coloca aspas quando há vírgula, aspas, quebra de linha, ou leading/trailing whitespace
+// Separador ponto-e-vírgula — padrão do Excel brasileiro (abi/pt-BR)
+const SEP = ';';
+
+// Escape RFC 4180 adaptado para `;` — sempre coloca aspas quando há `;`, aspas, quebra de linha, ou leading/trailing whitespace
 function csvEscape(value: any): string {
   if (value === null || value === undefined) return '';
   const s = String(value);
-  if (s.includes(',') || s.includes('"') || s.includes('\n') || s.includes('\r') || s !== s.trim()) {
+  if (s.includes(SEP) || s.includes('"') || s.includes('\n') || s.includes('\r') || s !== s.trim()) {
     return `"${s.replace(/"/g, '""')}"`;
   }
   return s;
@@ -65,6 +68,33 @@ function pipelineLabel(status: string | null | undefined): string {
   return map[status] || status;
 }
 
+// Encurta URL do Google Maps — usa place_id quando disponível (muito mais curto e estável)
+// Entrada típica: https://www.google.com/maps/place/Nonna%27s+Cantina+e+Pizzaria/data=!4m7!3m6!1s0x9521831f82bfb97b:0x7c2102cc59bf3078!8m2!3d-28.6754608!4d-49.408657!16s%2Fg%2F11c5bg1ql8!19sChIJe7m_gh-DIZUReDC_WcwCIXw
+// Saída:         https://www.google.com/maps/place/?q=place_id:ChIJe7m_gh-DIZUReDC_WcwCIXw
+function shortenMapsUrl(uri: string | null | undefined): string {
+  if (!uri) return '';
+  // Extrai place_id do final da URL (depois de !19s ou !1s)
+  const placeIdMatch = uri.match(/!1?s[=:]([A-Za-z0-9_-]{10,})/);
+  if (placeIdMatch && placeIdMatch[1]) {
+    return `https://www.google.com/maps/place/?q=place_id:${placeIdMatch[1]}`;
+  }
+  // Fallback: se a URL for muito longa (>200 chars), trunca no primeiro `!` ou `?`
+  if (uri.length > 200) {
+    const cutIdx = uri.indexOf('?');
+    if (cutIdx > 0) return uri.slice(0, cutIdx);
+    const dataIdx = uri.indexOf('/data=');
+    if (dataIdx > 0) return uri.slice(0, dataIdx);
+  }
+  return uri;
+}
+
+// Concatena endereço completo (logradouro + número + complemento)
+function formatEndereco(l: any): string {
+  return [l.enderecoLogradouro, l.enderecoNumero, l.enderecoComplemento]
+    .filter(Boolean)
+    .join(', ') || '';
+}
+
 export async function POST(req: NextRequest) {
   const body = await req.json();
   const { leadIds, format = 'csv' } = body;
@@ -81,13 +111,27 @@ export async function POST(req: NextRequest) {
     orderBy: [{ score: 'desc' }, { createdAt: 'desc' }],
   });
 
-  // Cabeçalhos amigáveis, em PT-BR, com agrupamento lógico
+  // Cabeçalhos amigáveis, em PT-BR, agrupados logicamente.
+  // Ordem prioriza as colunas mais úteis para o usuário comercial (Nome, Contato, Endereço, CNPJ).
   const headers = [
-    // Identificação
+    // === Identificação (mais importante) ===
     'Nome',
     'Nome Fantasia',
     'Razão Social',
-    // CNPJ
+    // === Contato (essencial para prospecção) ===
+    'Telefone',
+    'Telefone (Receita)',
+    'Email',
+    'Website',
+    // === Endereço (Google Places — sempre presente) ===
+    'Endereço',
+    'Cidade',
+    'UF',
+    // === Google Places (métricas de relevância) ===
+    'Rating',
+    'Avaliações',
+    'Google Maps',
+    // === CNPJ (preenchido após fetch) ===
     'CNPJ',
     'Situação Cadastral',
     'Status CNPJ',
@@ -95,35 +139,19 @@ export async function POST(req: NextRequest) {
     'Natureza Jurídica',
     'Porte',
     'Capital Social',
-    // Contato
-    'Telefone',
-    'Telefone (Receita)',
-    'Email (Receita)',
-    'Website',
-    // Endereço (Receita — autoritativo)
-    'Endereço (Receita)',
-    'Bairro',
-    'Município',
-    'UF',
-    'CEP',
-    // Endereço (Google Places — fallback)
-    'Endereço (Google)',
-    'Cidade (Google)',
-    'UF (Google)',
-    // Atividade
     'CNAE Principal',
-    'CNAE Código',
-    // Google Places
-    'Rating',
-    'Avaliações',
-    'Google Maps',
-    // Pipeline / Score / Tags
+    // === Endereço Receita (mais detalhado que Google) ===
+    'Bairro',
+    'Município (Receita)',
+    'UF (Receita)',
+    'CEP',
+    // === Pipeline / Score / Tags ===
     'Pipeline',
     'Score',
     'Tags',
     'Listas',
     'Status ReceitaWS',
-    // Auditoria
+    // === Auditoria ===
     'Criado em',
   ];
 
@@ -132,6 +160,19 @@ export async function POST(req: NextRequest) {
     lead.name || '',
     lead.nomeFantasia || '',
     lead.razaoSocial || '',
+    // Contato
+    formatPhone(lead.phone),
+    formatPhone(lead.telefoneReceita),
+    lead.emailReceita || '',
+    lead.website || '',
+    // Endereço (Google Places)
+    lead.formattedAddress || '',
+    lead.locality || '',
+    lead.administrativeArea || '',
+    // Google Places
+    lead.rating != null ? lead.rating.toFixed(1) : '',
+    lead.userRatingCount != null ? String(lead.userRatingCount) : '',
+    shortenMapsUrl(lead.googleMapsUri),
     // CNPJ
     lead.cnpjFormatted || lead.cnpj || '',
     lead.situacaoCadastral || '',
@@ -140,28 +181,12 @@ export async function POST(req: NextRequest) {
     lead.naturezaJuridica || '',
     lead.porte || '',
     lead.capitalSocial != null ? `R$ ${lead.capitalSocial.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '',
-    // Contato
-    formatPhone(lead.phone),
-    formatPhone(lead.telefoneReceita),
-    lead.emailReceita || '',
-    lead.website || '',
-    // Endereço (Receita)
-    [lead.enderecoLogradouro, lead.enderecoNumero, lead.enderecoComplemento].filter(Boolean).join(', ') || '',
+    lead.cnaePrincipalTexto || '',
+    // Endereço Receita
     lead.enderecoBairro || '',
     lead.enderecoMunicipio || '',
     lead.enderecoUf || '',
     lead.enderecoCep || '',
-    // Endereço (Google)
-    lead.formattedAddress || '',
-    lead.locality || '',
-    lead.administrativeArea || '',
-    // Atividade
-    lead.cnaePrincipalTexto || '',
-    lead.cnaePrincipalCodigo || '',
-    // Google Places
-    lead.rating != null ? lead.rating.toFixed(1) : '',
-    lead.userRatingCount != null ? String(lead.userRatingCount) : '',
-    lead.googleMapsUri || '',
     // Pipeline / Score / Tags
     pipelineLabel(lead.pipelineStatus),
     lead.score != null ? String(lead.score) : '',
@@ -172,7 +197,7 @@ export async function POST(req: NextRequest) {
     formatDateBR(lead.createdAt),
   ]);
 
-  const csv = [headers, ...rows].map((r) => r.map(csvEscape).join(',')).join('\r\n');
+  const csv = [headers, ...rows].map((r) => r.map(csvEscape).join(SEP)).join('\r\n');
 
   return new NextResponse('\ufeff' + csv, {
     headers: {
