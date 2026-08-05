@@ -78,7 +78,7 @@ export interface LeadRow {
 // ============================================================
 import type { Cell, Worksheet, Alignment, Borders, Fill, Font } from 'exceljs';
 
-const THIN_BORDER: Borders = {
+const THIN_BORDER: Partial<Borders> = {
   top: { style: 'thin', color: { argb: COLORS.BLACK } },
   bottom: { style: 'thin', color: { argb: COLORS.BLACK } },
   left: { style: 'thin', color: { argb: COLORS.BLACK } },
