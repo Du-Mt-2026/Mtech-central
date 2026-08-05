@@ -157,6 +157,46 @@ export default function LeadsTab() {
     setSelectedIds(new Set());
   }, []);
 
+  // ===== EXCLUIR LEADS SELECIONADOS (chama API batch com action=delete) =====
+  const [deleting, setDeleting] = useState(false);
+  const handleDeleteSelected = useCallback(async () => {
+    if (selectedIds.size === 0) return;
+    const count = selectedIds.size;
+    // Confirmação dupla — excluir é destrutivo
+    const ok = window.confirm(
+      `Tem certeza que deseja EXCLUIR ${count} lead${count === 1 ? '' : 's'}?\n\n` +
+      `Esta ação não pode ser desfeita. Os leads serão removidos permanentemente do banco.`
+    );
+    if (!ok) return;
+
+    setDeleting(true);
+    const toastId = toast.loading(`Excluindo ${count} lead(s)...`);
+    try {
+      const ids = Array.from(selectedIds);
+      const res = await fetch('/api/leads/batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'delete', leadIds: ids }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `HTTP ${res.status}`);
+      }
+      const data = await res.json();
+      toast.success(`${count} lead(s) excluído(s) com sucesso`, { id: toastId });
+      // Limpa seleção e reseta estado "tudo selecionado"
+      setSelectedIds(new Set());
+      setAllMatchingSelected(false);
+      // Recarrega a lista
+      fetchLeads();
+      fetchStats();
+    } catch (e: any) {
+      toast.error('Erro ao excluir leads: ' + (e.message || 'desconhecido'), { id: toastId, duration: 6000 });
+    } finally {
+      setDeleting(false);
+    }
+  }, [selectedIds, fetchLeads, fetchStats]);
+
   const selectedCount = selectedIds.size;
   const pageSelectedCount = leads.filter((l) => selectedIds.has(l.id)).length;
   const allOnPageSelected = leads.length > 0 && leads.every((l) => selectedIds.has(l.id));
@@ -599,6 +639,8 @@ export default function LeadsTab() {
         <BulkActionBar
           count={selectedCount}
           onClear={clearSelection}
+          onDelete={handleDeleteSelected}
+          deleting={deleting}
           onExportCSV={handleExportCSV}
           exporting={exporting}
         />
@@ -783,9 +825,11 @@ function DetailRow({ label, value }: { label: string; value: string | null | und
 }
 
 // ===== BARRA DE AÇÕES FLUTUANTE =====
-function BulkActionBar({ count, onClear, onExportCSV, exporting }: {
+function BulkActionBar({ count, onClear, onDelete, deleting, onExportCSV, exporting }: {
   count: number;
   onClear: () => void;
+  onDelete: () => void;
+  deleting: boolean;
   onExportCSV: () => void;
   exporting: boolean;
 }) {
@@ -810,11 +854,21 @@ function BulkActionBar({ count, onClear, onExportCSV, exporting }: {
           Exportar CSV
         </button>
         <button
+          onClick={onDelete}
+          disabled={deleting}
+          title="Excluir permanentemente os leads selecionados"
+          className="inline-flex items-center gap-1.5 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-1.5 text-sm font-medium text-destructive hover:bg-destructive/20 disabled:opacity-50"
+        >
+          {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+          Excluir
+        </button>
+        <button
           onClick={onClear}
+          title="Apenas desmarcar a seleção (não exclui os leads)"
           className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground hover:bg-muted/50"
         >
-          <Trash2 className="h-4 w-4" />
-          Limpar
+          <X className="h-4 w-4" />
+          Desmarcar
         </button>
       </div>
     </div>
