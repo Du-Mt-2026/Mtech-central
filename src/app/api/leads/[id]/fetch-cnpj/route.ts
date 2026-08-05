@@ -24,6 +24,8 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
   const body = await req.json().catch(() => ({}));
   const force = body?.force === true;
   const cnpjHint: string | null = body?.cnpjHint ? String(body.cnpjHint).replace(/\D/g, '') : null;
+  // skipReceitaws: quando true + cnpjHint, salva CNPJ sem chamar ReceitaWS (instantaneo)
+  const skipReceitaws = body?.skipReceitaws === true;
 
   const lead = await prisma.lead.findUnique({ where: { id } });
   if (!lead) {
@@ -192,6 +194,31 @@ if (lead.website && !cnpjFound) {
       console.error('[fetch-cnpj] websearch error:', e);
     }
   }
+  // === SHORTCUT: skipReceitaws (cnpjHint fornecido, salvar sem ReceitaWS) ===
+  if (cnpjFound && skipReceitaws) {
+    steps.push('skip_receitaws:salvando_cnpj_direto');
+    await prisma.lead.update({
+      where: { id },
+      data: {
+        cnpj: cnpjFound,
+        cnpjFormatted: formatCnpj(cnpjFound),
+        cnpjSource,
+        cnpjFetchStatus: 'ok',
+        cnpjFetchedAt: new Date(),
+        receitawsStatus: 'pending',
+      },
+    });
+    const updated = await prisma.lead.findUnique({ where: { id } });
+    return NextResponse.json({
+      ok: true,
+      cnpj: cnpjFound,
+      cnpjSource,
+      steps,
+      lead: updated,
+      message: 'CNPJ salvo sem ReceitaWS (skipReceitaws=true). Enriquecimento pendente.',
+    });
+  }
+
   // ============ CAMADA 3: ReceitaWS enrichment ============
   if (cnpjFound) {
     steps.push('receitaws:start');
