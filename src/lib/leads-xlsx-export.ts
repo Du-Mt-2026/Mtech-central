@@ -503,7 +503,7 @@ function buildPrecificacaoSheet(wb: ExcelJS.Workbook) {
 // MAIN: generateLeadsXlsx
 // ============================================================
 
-export async function generateLeadsXlsx(leads: LeadRow[], cityName?: string): Promise<Buffer> {
+export async function generateLeadsXlsx(leads: LeadRow[], cityName?: string): Promise<Uint8Array> {
   const wb = new ExcelJS.Workbook();
   wb.creator = 'OctopusZap';
   wb.created = new Date();
@@ -515,5 +515,7 @@ export async function generateLeadsXlsx(leads: LeadRow[], cityName?: string): Pr
   buildPrecificacaoSheet(wb);
 
   const buffer = await wb.xlsx.writeBuffer();
-  return Buffer.from(buffer);
+  // Converte para Uint8Array (BodyInit válido para NextResponse).
+  // Buffer não é aceito diretamente pelo tipo BodyInit no Next.js 16.
+  return new Uint8Array(buffer);
 }
