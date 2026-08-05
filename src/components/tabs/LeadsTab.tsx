@@ -157,45 +157,12 @@ export default function LeadsTab() {
     setSelectedIds(new Set());
   }, []);
 
-  // ===== EXCLUIR LEADS SELECIONADOS (chama API batch com action=delete) =====
+  // Estado de "excluindo" para o botão Excluir mostrar spinner
   const [deleting, setDeleting] = useState(false);
-  const handleDeleteSelected = useCallback(async () => {
-    if (selectedIds.size === 0) return;
-    const count = selectedIds.size;
-    // Confirmação dupla — excluir é destrutivo
-    const ok = window.confirm(
-      `Tem certeza que deseja EXCLUIR ${count} lead${count === 1 ? '' : 's'}?\n\n` +
-      `Esta ação não pode ser desfeita. Os leads serão removidos permanentemente do banco.`
-    );
-    if (!ok) return;
 
-    setDeleting(true);
-    const toastId = toast.loading(`Excluindo ${count} lead(s)...`);
-    try {
-      const ids = Array.from(selectedIds);
-      const res = await fetch('/api/leads/batch', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'delete', leadIds: ids }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || `HTTP ${res.status}`);
-      }
-      const data = await res.json();
-      toast.success(`${count} lead(s) excluído(s) com sucesso`, { id: toastId });
-      // Limpa seleção e reseta estado "tudo selecionado"
-      setSelectedIds(new Set());
-      setAllMatchingSelected(false);
-      // Recarrega a lista
-      fetchLeads();
-      fetchStats();
-    } catch (e: any) {
-      toast.error('Erro ao excluir leads: ' + (e.message || 'desconhecido'), { id: toastId, duration: 6000 });
-    } finally {
-      setDeleting(false);
-    }
-  }, [selectedIds, fetchLeads, fetchStats]);
+  // refreshNonce — incrementado para forçar reload da lista após operações
+  // destrutivas (excluir em lote) sem depender de mudança de filtros/página
+  const [refreshNonce, setRefreshNonce] = useState(0);
 
   const selectedCount = selectedIds.size;
   const pageSelectedCount = leads.filter((l) => selectedIds.has(l.id)).length;
@@ -246,7 +213,46 @@ export default function LeadsTab() {
     } finally { setLoading(false); }
   }, [page, pageSize, savedSearchInput, filterCity, filterState, filterCnpjStatus, filterReceitaws, filterPipelineStatus]);
 
-  useEffect(() => { fetchLeads(); }, [fetchLeads]);
+  useEffect(() => { fetchLeads(); }, [fetchLeads, refreshNonce]);
+
+  // ===== EXCLUIR LEADS SELECIONADOS (chama API batch com action=delete) =====
+  // Definido APÓS fetchLeads para evitar referência antes da declaração.
+  const handleDeleteSelected = useCallback(async () => {
+    if (selectedIds.size === 0) return;
+    const count = selectedIds.size;
+    // Confirmação dupla — excluir é destrutivo
+    const ok = window.confirm(
+      `Tem certeza que deseja EXCLUIR ${count} lead${count === 1 ? '' : 's'}?\n\n` +
+      `Esta ação não pode ser desfeita. Os leads serão removidos permanentemente do banco.`
+    );
+    if (!ok) return;
+
+    setDeleting(true);
+    const toastId = toast.loading(`Excluindo ${count} lead(s)...`);
+    try {
+      const ids = Array.from(selectedIds);
+      const res = await fetch('/api/leads/batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'delete', leadIds: ids }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `HTTP ${res.status}`);
+      }
+      toast.success(`${count} lead(s) excluído(s) com sucesso`, { id: toastId });
+      // Limpa seleção e reseta estado "tudo selecionado"
+      setSelectedIds(new Set());
+      setAllMatchingSelected(false);
+      // Volta para página 1 e força reload via refreshNonce
+      setPage(1);
+      setRefreshNonce((n) => n + 1);
+    } catch (e: any) {
+      toast.error('Erro ao excluir leads: ' + (e.message || 'desconhecido'), { id: toastId, duration: 6000 });
+    } finally {
+      setDeleting(false);
+    }
+  }, [selectedIds]);
 
   // ===== EXPORT CSV =====
   const handleExportCSV = async () => {
