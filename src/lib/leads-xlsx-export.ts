@@ -76,9 +76,9 @@ export interface LeadRow {
 // ============================================================
 // HELPERS — APPLY STYLES TO CELLS
 // ============================================================
-import type { Cell, Worksheet, Alignment, Border, Fill, Font } from 'exceljs';
+import type { Cell, Worksheet, Alignment, Borders, Fill, Font } from 'exceljs';
 
-const THIN_BORDER: Border = {
+const THIN_BORDER: Borders = {
   top: { style: 'thin', color: { argb: COLORS.BLACK } },
   bottom: { style: 'thin', color: { argb: COLORS.BLACK } },
   left: { style: 'thin', color: { argb: COLORS.BLACK } },
@@ -519,7 +519,8 @@ export async function generateLeadsXlsx(leads: LeadRow[], cityName?: string): Pr
   // Necessário porque TS 5+ rejeita Uint8Array<ArrayBufferLike> como BodyInit
   // e BlobPart (SharedArrayBuffer não tem .resizable/.resize/.detached etc.).
   // ArrayBuffer puro é sempre um BufferSource válido → BodyInit válido.
+  // buffer é um Node Buffer (subclasse de Uint8Array) — copiar byte a byte.
   const ab = new ArrayBuffer(buffer.byteLength);
-  new Uint8Array(ab).set(new Uint8Array(buffer as ArrayBuffer));
+  new Uint8Array(ab).set(buffer);
   return ab;
 }
