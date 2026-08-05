@@ -27,6 +27,7 @@ const ROLE_PROTECTED_ROUTES: Array<{ pattern: RegExp; minRole: string }> = [
   { pattern: /^\/api\/auth\/change-password/, minRole: 'operador' }, // any logged-in user
   { pattern: /^\/api\/antiban/, minRole: 'admin' },
   { pattern: /^\/api\/users/, minRole: 'master' },
+  { pattern: /^\/api\/admin/, minRole: 'master' }, // backfill, maintenance, etc.
 ]
 
 export async function middleware(req: NextRequest) {

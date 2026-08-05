@@ -91,6 +91,17 @@ export interface ReceitaWSResponse {
   efr?: string;
   situacao_especial?: string;
   data_situacao_especial?: string;
+  // ===== BUG FIX: ReceitaWS retorna endereço no TOP LEVEL (não dentro de 'endereco') =====
+  // Antes a interface esperava `r.endereco?.bairro` etc., mas a API retorna esses campos
+  // soltos no JSON raiz. Mantemos 'endereco' como opcional pra compat retroativa.
+  bairro?: string;
+  cep?: string;
+  municipio?: string;
+  uf?: string;
+  numero?: string;
+  complemento?: string;
+  logradouro?: string;
+  tipo_logradouro?: string;
   endereco?: {
     bairro?: string;
     cep?: string;
@@ -101,7 +112,10 @@ export interface ReceitaWSResponse {
     logradouro?: string;
     tipo_logradouro?: string;
   };
-  atividade_principal?: { code: string; text: string };
+  // ===== BUG FIX: atividade_principal é um ARRAY de {code, text}, não um objeto =====
+  // A ReceitaWS sempre retorna array (mesmo com 1 elemento). Antes o código esperava
+  // {code, text} e sempre pegava undefined.
+  atividade_principal?: { code: string; text: string }[];
   atividades_secundarias?: { code: string; text: string }[];
 }
 
@@ -195,6 +209,28 @@ export async function consultarReceitaWS(
 }
 
 export function receitawsToDBFields(r: ReceitaWSResponse): Record<string, any> {
+  // ===== BUG FIX: ReceitaWS retorna endereço no TOP LEVEL =====
+  // Antes: r.endereco?.bairro (sempre undefined — API não usa 'endereco')
+  // Agora: r.bairro ?? r.endereco?.bairro (fallback pra compat retroativa)
+  const end = r.endereco ?? {};
+  const bairro = r.bairro ?? end.bairro ?? null;
+  const cep = r.cep ?? end.cep ?? null;
+  const municipio = r.municipio ?? end.municipio ?? null;
+  const uf = r.uf ?? end.uf ?? null;
+  const numero = r.numero ?? end.numero ?? null;
+  const complemento = r.complemento ?? end.complemento ?? null;
+  const logradouro = r.logradouro ?? end.logradouro ?? null;
+  const tipoLogradouro = r.tipo_logradouro ?? end.tipo_logradouro ?? null;
+
+  // ===== BUG FIX: atividade_principal é um ARRAY =====
+  // Antes: r.atividade_principal?.code (sempre undefined — API retorna array)
+  // Agora: pega o primeiro elemento do array
+  const atividadePrincipal = Array.isArray(r.atividade_principal)
+    ? r.atividade_principal[0]
+    : r.atividade_principal;
+  const cnaeCodigo = atividadePrincipal?.code ?? null;
+  const cnaeTexto = atividadePrincipal?.text ?? null;
+
   return {
     razaoSocial: r.nome ?? null,
     nomeFantasia: r.fantasia ?? null,
@@ -208,16 +244,16 @@ export function receitawsToDBFields(r: ReceitaWSResponse): Record<string, any> {
     tipoEmpresa: r.tipo ?? null,
     emailReceita: r.email ?? null,
     telefoneReceita: r.telefone ?? null,
-    enderecoBairro: r.endereco?.bairro ?? null,
-    enderecoCep: r.endereco?.cep ?? null,
-    enderecoMunicipio: r.endereco?.municipio ?? null,
-    enderecoUf: r.endereco?.uf ?? null,
-    enderecoNumero: r.endereco?.numero ?? null,
-    enderecoComplemento: r.endereco?.complemento ?? null,
-    enderecoLogradouro: r.endereco?.logradouro ?? null,
-    enderecoTipoLogradouro: r.endereco?.tipo_logradouro ?? null,
-    cnaePrincipalCodigo: r.atividade_principal?.code ?? null,
-    cnaePrincipalTexto: r.atividade_principal?.text ?? null,
+    enderecoBairro: bairro,
+    enderecoCep: cep,
+    enderecoMunicipio: municipio,
+    enderecoUf: uf,
+    enderecoNumero: numero,
+    enderecoComplemento: complemento,
+    enderecoLogradouro: logradouro,
+    enderecoTipoLogradouro: tipoLogradouro,
+    cnaePrincipalCodigo: cnaeCodigo,
+    cnaePrincipalTexto: cnaeTexto,
     cnafeSecundarioJson: r.atividades_secundarias?.length ? JSON.stringify(r.atividades_secundarias) : null,
     receitawsJson: JSON.stringify(r),
     receitawsFetchedAt: new Date(),
