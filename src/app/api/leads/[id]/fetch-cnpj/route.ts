@@ -23,6 +23,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
   const { id } = await params;
   const body = await req.json().catch(() => ({}));
   const force = body?.force === true;
+  const cnpjHint: string | null = body?.cnpjHint ? String(body.cnpjHint).replace(/\D/g, '') : null;
 
   const lead = await prisma.lead.findUnique({ where: { id } });
   if (!lead) {
@@ -44,8 +45,15 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
   let cnpjSource: string = 'scraper';
   let bigQueryScore: number | null = null;
 
-  // Se ja tem CNPJ valido, pula scraper e bigquery, vai direto pra ReceitaWS
-  if (lead.cnpj && validateCnpj(lead.cnpj)) {
+  // === CAMADA 0: cnpjHint (CNPJ fornecido pelo caller, ex: via web search) ===
+  if (cnpjHint && validateCnpj(cnpjHint)) {
+    cnpjFound = cnpjHint;
+    cnpjSource = 'websearch:zai';
+    steps.push('hint:cnpj_valido');
+  }
+
+  // Se ja tem CNPJ valido no banco (e nenhum hint foi fornecido), usa o do banco
+  if (!cnpjFound && lead.cnpj && validateCnpj(lead.cnpj)) {
     cnpjFound = lead.cnpj;
     cnpjSource = 'existing';
     steps.push('existing:cnpj_valido');
