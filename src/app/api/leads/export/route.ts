@@ -96,6 +96,75 @@ function formatEndereco(l: any): string {
     .join(', ') || '';
 }
 
+/**
+ * Defensive fallback: when structured fields are NULL but receitawsJson is saved,
+ * parse the JSON locally to extract the missing fields on the fly.
+ *
+ * This protects the export from any past bugs in receitawsToDBFields (like the
+ * one fixed in 99499e6 — address fields were read from r.endereco?.bairro
+ * instead of r.bairro, leaving them NULL even when JSON had the data).
+ *
+ * With this fallback, the XLSX export will show correct data immediately after
+ * deploy, without needing to run /api/admin/backfill-receitaws-fields first.
+ */
+function fallbackFromReceitawsJson(lead: any): any {
+  if (!lead.receitawsJson) return lead;
+
+  let parsed: any;
+  try {
+    parsed = typeof lead.receitawsJson === 'string'
+      ? JSON.parse(lead.receitawsJson)
+      : lead.receitawsJson;
+  } catch {
+    return lead;
+  }
+  if (!parsed || typeof parsed !== 'object') return lead;
+
+  // Helper: pick first non-null value from a list of candidates
+  const first = (...vals: any[]) => {
+    for (const v of vals) {
+      if (v !== undefined && v !== null && v !== '') return v;
+    }
+    return null;
+  };
+
+  // atividade_principal is an array [{code, text}] in the actual API
+  const atvPrinc = Array.isArray(parsed.atividade_principal)
+    ? parsed.atividade_principal[0]
+    : parsed.atividade_principal;
+
+  return {
+    ...lead,
+    // Address fields (top-level in ReceitaWS API, NOT under 'endereco')
+    enderecoBairro: first(lead.enderecoBairro, parsed.bairro, parsed.endereco?.bairro),
+    enderecoCep: first(lead.enderecoCep, parsed.cep, parsed.endereco?.cep),
+    enderecoMunicipio: first(lead.enderecoMunicipio, parsed.municipio, parsed.endereco?.municipio),
+    enderecoUf: first(lead.enderecoUf, parsed.uf, parsed.endereco?.uf),
+    enderecoNumero: first(lead.enderecoNumero, parsed.numero, parsed.endereco?.numero),
+    enderecoComplemento: first(lead.enderecoComplemento, parsed.complemento, parsed.endereco?.complemento),
+    enderecoLogradouro: first(lead.enderecoLogradouro, parsed.logradouro, parsed.endereco?.logradouro),
+    enderecoTipoLogradouro: first(lead.enderecoTipoLogradouro, parsed.tipo_logradouro, parsed.endereco?.tipo_logradouro),
+    // CNAE
+    cnaePrincipalCodigo: first(lead.cnaePrincipalCodigo, atvPrinc?.code),
+    cnaePrincipalTexto: first(lead.cnaePrincipalTexto, atvPrinc?.text),
+    // Other ReceitaWS fields
+    razaoSocial: first(lead.razaoSocial, parsed.nome),
+    nomeFantasia: first(lead.nomeFantasia, parsed.fantasia),
+    situacaoCadastral: first(lead.situacaoCadastral, parsed.situacao),
+    dataSituacaoCadastral: first(lead.dataSituacaoCadastral, parsed.data_situacao),
+    motivoSituacaoCadastral: first(lead.motivoSituacaoCadastral, parsed.motivo_situacao),
+    naturezaJuridica: first(lead.naturezaJuridica, parsed.natureza_juridica),
+    dataAbertura: first(lead.dataAbertura, parsed.abertura),
+    porte: first(lead.porte, parsed.porte),
+    tipoEmpresa: first(lead.tipoEmpresa, parsed.tipo),
+    emailReceita: first(lead.emailReceita, parsed.email),
+    telefoneReceita: first(lead.telefoneReceita, parsed.telefone),
+    capitalSocial: lead.capitalSocial != null
+      ? lead.capitalSocial
+      : (parsed.capital_social ? parseFloat(String(parsed.capital_social).replace(',', '.')) : null),
+  };
+}
+
 export async function POST(req: NextRequest) {
   const body = await req.json();
   const { leadIds, format = 'csv' } = body;
@@ -111,6 +180,10 @@ export async function POST(req: NextRequest) {
     },
     orderBy: [{ score: 'desc' }, { createdAt: 'desc' }],
   });
+
+  // Apply defensive fallback: parse receitawsJson to fill any NULL structured fields.
+  // This is a no-op for leads without receitawsJson or with all fields populated.
+  const enrichedLeads = leads.map((lead) => fallbackFromReceitawsJson(lead));
 
   // Cabeçalhos amigáveis, em PT-BR, agrupados logicamente.
   // Ordem prioriza as colunas mais úteis para o usuário comercial (Nome, Contato, Endereço, CNPJ).
@@ -156,7 +229,7 @@ export async function POST(req: NextRequest) {
     'Criado em',
   ];
 
-  const rows = leads.map((lead) => [
+  const rows = enrichedLeads.map((lead) => [
     // Identificação
     lead.name || '',
     lead.nomeFantasia || '',
@@ -200,7 +273,7 @@ export async function POST(req: NextRequest) {
 
   // === FORMATO XLSX: gera planilha estilizada (4 sheets) ===
   if (format === 'xlsx') {
-    const leadRows: LeadRow[] = leads.map((lead, i) => ({
+    const leadRows: LeadRow[] = enrichedLeads.map((lead, i) => ({
       name: lead.name || '',
       nomeFantasia: lead.nomeFantasia || '',
       razaoSocial: lead.razaoSocial || '',
