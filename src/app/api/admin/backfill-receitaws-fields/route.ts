@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Prisma } from '@prisma/client';
 import { receitawsToDBFields, type ReceitaWSResponse } from '@/lib/receitaws-client';
 
 const prisma = new PrismaClient();
@@ -30,7 +30,9 @@ export async function POST(req: NextRequest) {
   // Busca todos os leads que têm receitawsJson mas campos faltando
   const leads = await prisma.lead.findMany({
     where: {
-      receitawsJson: { not: null },
+      // Prisma 6: filtros em campo Json? não aceitam `null` literal.
+      // Usamos Prisma.DbNull para significar "SQL NULL" (coluna sem valor).
+      receitawsJson: { not: Prisma.DbNull },
       OR: [
         { enderecoBairro: null },
         { enderecoCep: null },
