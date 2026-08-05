@@ -1,6 +1,7 @@
 // /opt/octupuszap/src/app/api/leads/export/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
+import { generateLeadsXlsx, type LeadRow } from '@/lib/leads-xlsx-export';
 const prisma = new PrismaClient();
 
 // Separador ponto-e-vírgula — padrão do Excel brasileiro (abi/pt-BR)
@@ -197,6 +198,60 @@ export async function POST(req: NextRequest) {
     formatDateBR(lead.createdAt),
   ]);
 
+  // === FORMATO XLSX: gera planilha estilizada (4 sheets) ===
+  if (format === 'xlsx') {
+    const leadRows: LeadRow[] = leads.map((lead, i) => ({
+      name: lead.name || '',
+      nomeFantasia: lead.nomeFantasia || '',
+      razaoSocial: lead.razaoSocial || '',
+      telefone: formatPhone(lead.phone),
+      telefoneReceita: formatPhone(lead.telefoneReceita),
+      email: lead.emailReceita || '',
+      website: lead.website || '',
+      endereco: lead.formattedAddress || '',
+      cidade: lead.locality || '',
+      uf: lead.administrativeArea || '',
+      rating: lead.rating != null ? lead.rating.toFixed(1) : '',
+      avaliacoes: lead.userRatingCount != null ? String(lead.userRatingCount) : '',
+      googleMaps: shortenMapsUrl(lead.googleMapsUri),
+      cnpj: lead.cnpjFormatted || lead.cnpj || '',
+      situacaoCadastral: lead.situacaoCadastral || '',
+      statusCnpj: cnpjStatusLabel(lead),
+      dataAbertura: lead.dataAbertura || '',
+      naturezaJuridica: lead.naturezaJuridica || '',
+      porte: lead.porte || '',
+      capitalSocial: lead.capitalSocial != null ? `R$ ${lead.capitalSocial.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '',
+      cnaePrincipal: lead.cnaePrincipalTexto || '',
+      bairro: lead.enderecoBairro || '',
+      municipioReceita: lead.enderecoMunicipio || '',
+      ufReceita: lead.enderecoUf || '',
+      cep: lead.enderecoCep || '',
+      pipeline: pipelineLabel(lead.pipelineStatus),
+      score: lead.score != null ? String(lead.score) : '',
+      tags: lead.tagAssignments.map((a) => a.tag.name).join('; '),
+      listas: lead.listMemberships.map((m) => m.list.name).join('; '),
+      statusReceitaws: receitawsStatusLabel(lead.receitawsStatus),
+      criadoEm: formatDateBR(lead.createdAt),
+    }));
+
+    // Detectar cidade mais comum para título
+    const cities = leadRows.map(l => l.cidade).filter(Boolean);
+    const cityCount = new Map<string, number>();
+    for (const c of cities) cityCount.set(c, (cityCount.get(c) || 0) + 1);
+    const topCity = Array.from(cityCount.entries()).sort((a, b) => b[1] - a[1])[0];
+    const cityName = topCity ? `${topCity[0]}/${leadRows.find(l => l.cidade === topCity[0])?.uf || ''}` : undefined;
+
+    const xlsxBuffer = await generateLeadsXlsx(leadRows, cityName);
+
+    return new NextResponse(xlsxBuffer, {
+      headers: {
+        'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'Content-Disposition': `attachment; filename="leads_${new Date().toISOString().slice(0, 10)}.xlsx"`,
+      },
+    });
+  }
+
+  // === FORMATO CSV (default): CSV plano com BOM ===
   const csv = [headers, ...rows].map((r) => r.map(csvEscape).join(SEP)).join('\r\n');
 
   return new NextResponse('\ufeff' + csv, {

@@ -254,19 +254,19 @@ export default function LeadsTab() {
     }
   }, [selectedIds]);
 
-  // ===== EXPORT CSV =====
+  // ===== EXPORT XLSX (planilha estilizada) =====
   const handleExportCSV = async () => {
     if (selectedCount === 0) {
       toast.warning('Selecione ao menos um lead para exportar.');
       return;
     }
     setExporting(true);
-    const toastId = toast.loading(`Exportando ${selectedCount} lead(s) para CSV...`);
+    const toastId = toast.loading(`Gerando planilha Excel com ${selectedCount} lead(s)...`);
     try {
       const res = await fetch('/api/leads/export', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ leadIds: Array.from(selectedIds), format: 'csv' }),
+        body: JSON.stringify({ leadIds: Array.from(selectedIds), format: 'xlsx' }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const blob = await res.blob();
@@ -275,18 +275,18 @@ export default function LeadsTab() {
       const now = new Date();
       const stamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`;
       a.href = url;
-      a.download = `leads_${stamp}.csv`;
+      a.download = `leads_${stamp}.xlsx`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-      toast.success(`CSV exportado com ${selectedCount} lead(s)`, {
+      toast.success(`Excel exportado com ${selectedCount} lead(s)`, {
         id: toastId,
-        description: `Arquivo: leads_${stamp}.csv`,
+        description: `Arquivo: leads_${stamp}.xlsx (4 abas: Leads, Resumo, Scripts, Precificação)`,
         duration: 5000,
       });
     } catch (e: any) {
-      toast.error('Erro ao exportar CSV', {
+      toast.error('Erro ao exportar Excel', {
         id: toastId,
         description: e.message || 'Erro desconhecido',
         duration: 6000,
@@ -857,7 +857,7 @@ function BulkActionBar({ count, onClear, onDelete, deleting, onExportCSV, export
           className="inline-flex items-center gap-2 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
         >
           {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-          Exportar CSV
+          Exportar Excel
         </button>
         <button
           onClick={onDelete}
