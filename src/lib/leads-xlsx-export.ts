@@ -503,7 +503,7 @@ function buildPrecificacaoSheet(wb: ExcelJS.Workbook) {
 // MAIN: generateLeadsXlsx
 // ============================================================
 
-export async function generateLeadsXlsx(leads: LeadRow[], cityName?: string): Promise<Uint8Array> {
+export async function generateLeadsXlsx(leads: LeadRow[], cityName?: string): Promise<ArrayBuffer> {
   const wb = new ExcelJS.Workbook();
   wb.creator = 'OctopusZap';
   wb.created = new Date();
@@ -515,7 +515,11 @@ export async function generateLeadsXlsx(leads: LeadRow[], cityName?: string): Pr
   buildPrecificacaoSheet(wb);
 
   const buffer = await wb.xlsx.writeBuffer();
-  // Converte para Uint8Array (BodyInit válido para NextResponse).
-  // Buffer não é aceito diretamente pelo tipo BodyInit no Next.js 16.
-  return new Uint8Array(buffer);
+  // Cópia para um ArrayBuffer "puro" (não ArrayBufferLike/SharedArrayBuffer).
+  // Necessário porque TS 5+ rejeita Uint8Array<ArrayBufferLike> como BodyInit
+  // e BlobPart (SharedArrayBuffer não tem .resizable/.resize/.detached etc.).
+  // ArrayBuffer puro é sempre um BufferSource válido → BodyInit válido.
+  const ab = new ArrayBuffer(buffer.byteLength);
+  new Uint8Array(ab).set(new Uint8Array(buffer as ArrayBuffer));
+  return ab;
 }

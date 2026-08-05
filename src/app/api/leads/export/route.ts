@@ -243,9 +243,8 @@ export async function POST(req: NextRequest) {
 
     const xlsxBuffer = await generateLeadsXlsx(leadRows, cityName);
 
-    // Blob é sempre um BodyInit válido em qualquer versão do TypeScript.
-    // Uint8Array/Buffer direto quebra em TS 5+ (lib.dom tipa BodyInit de forma estrita).
-    return new NextResponse(new Blob([xlsxBuffer]), {
+    // generateLeadsXlsx retorna ArrayBuffer puro (BufferSource válido → BodyInit válido).
+    return new NextResponse(xlsxBuffer, {
       headers: {
         'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         'Content-Disposition': `attachment; filename="leads_${new Date().toISOString().slice(0, 10)}.xlsx"`,
