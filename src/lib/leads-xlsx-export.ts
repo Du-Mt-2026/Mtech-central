@@ -78,6 +78,9 @@ export interface LeadRow {
 // ============================================================
 import type { Cell, Worksheet, Alignment, Borders, Fill, Font } from 'exceljs';
 
+// Alias conveniente — cell.alignment aceita Partial<Alignment>.
+type Align = Partial<Alignment>;
+
 const THIN_BORDER: Partial<Borders> = {
   top: { style: 'thin', color: { argb: COLORS.BLACK } },
   bottom: { style: 'thin', color: { argb: COLORS.BLACK } },
@@ -88,11 +91,11 @@ const THIN_BORDER: Partial<Borders> = {
 function applyHeaderStyle(cell: Cell) {
   cell.font = {
     name: FONT, size: 11, bold: true, color: { argb: COLORS.WHITE },
-  } as Partial<Font>;
+  } satisfies Partial<Font>;
   cell.fill = {
     type: 'pattern', pattern: 'solid', fgColor: { argb: COLORS.DARK_GREEN },
-  } as Fill;
-  cell.alignment = { horizontal: 'center', vertical: 'center', wrapText: true } as Alignment;
+  } satisfies Fill;
+  cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true } satisfies Align;
   cell.border = THIN_BORDER;
 }
 
@@ -103,13 +106,13 @@ function applyDataStyle(
   const { bold = false, align = 'left', altRow = false } = opts;
   cell.font = {
     name: FONT, size: 10, bold, color: { argb: COLORS.BLACK },
-  } as Partial<Font>;
+  } satisfies Partial<Font>;
   if (altRow) {
     cell.fill = {
       type: 'pattern', pattern: 'solid', fgColor: { argb: COLORS.LIGHT_GREEN },
-    } as Fill;
+    } satisfies Fill;
   }
-  cell.alignment = { horizontal: align, vertical: 'center', wrapText: true } as Alignment;
+  cell.alignment = { horizontal: align, vertical: 'middle', wrapText: true } satisfies Align;
   cell.border = THIN_BORDER;
 }
 
@@ -125,11 +128,11 @@ function applyPriorityStyle(cell: Cell, stars: string) {
   }
   cell.font = {
     name: FONT, size: 10, bold: true, color: { argb: fontColor },
-  } as Partial<Font>;
+  } satisfies Partial<Font>;
   cell.fill = {
     type: 'pattern', pattern: 'solid', fgColor: { argb: bg },
-  } as Fill;
-  cell.alignment = { horizontal: 'center', vertical: 'center', wrapText: true } as Alignment;
+  } satisfies Fill;
+  cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true } satisfies Align;
   cell.border = THIN_BORDER;
 }
 
@@ -194,14 +197,14 @@ function buildLeadsSheet(wb: ExcelJS.Workbook, leads: LeadRow[], cityName?: stri
   const cityPart = cityName ? ` | ${cityName}` : '';
   const titleCell = ws.getCell(1, 1);
   titleCell.value = `LEADS EXPORTADOS - OctopusZap${cityPart} | ${dateStr}`;
-  titleCell.font = { name: FONT, size: 14, bold: true, color: { argb: COLORS.DARK_GREEN } } as Partial<Font>;
-  titleCell.alignment = { horizontal: 'center', vertical: 'center' } as Alignment;
+  titleCell.font = { name: FONT, size: 14, bold: true, color: { argb: COLORS.DARK_GREEN } } satisfies Partial<Font>;
+  titleCell.alignment = { horizontal: 'center', vertical: 'middle' } satisfies Align;
 
   // Linha 2: Warning
   const warningCell = ws.getCell(2, 1);
   warningCell.value = `⚠️ Total de ${leads.length} lead(s) exportado(s). Dados enriquecidos via Google Places, ReceitaWS e BigQuery.`;
-  warningCell.font = { name: FONT, size: 10, italic: true, color: { argb: COLORS.WARNING_RED } } as Partial<Font>;
-  warningCell.alignment = { horizontal: 'center', vertical: 'center' } as Alignment;
+  warningCell.font = { name: FONT, size: 10, italic: true, color: { argb: COLORS.WARNING_RED } } satisfies Partial<Font>;
+  warningCell.alignment = { horizontal: 'center', vertical: 'middle' } satisfies Align;
 
   // Linha 4: Headers
   LEAD_HEADERS.forEach((h, idx) => {
@@ -302,7 +305,7 @@ function buildResumoSheet(wb: ExcelJS.Workbook, leads: LeadRow[]) {
   // Linha 1: Título
   const titleCell = ws.getCell(1, 1);
   titleCell.value = 'RESUMO POR CATEGORIA - Agrupamento dos leads exportados';
-  titleCell.font = { name: FONT, size: 13, bold: true, color: { argb: COLORS.DARK_GREEN } } as Partial<Font>;
+  titleCell.font = { name: FONT, size: 13, bold: true, color: { argb: COLORS.DARK_GREEN } } satisfies Partial<Font>;
 
   // Linha 3: Headers
   const headers = ['Categoria', 'Qtd', 'Observação', 'Ticket Médio', 'Prioridade'];
@@ -397,7 +400,7 @@ function buildScriptsSheet(wb: ExcelJS.Workbook) {
   // Título
   const titleCell = ws.getCell(1, 1);
   titleCell.value = 'SCRIPTS DE ABORDAGEM POR CATEGORIA - Prontos para usar no WhatsApp';
-  titleCell.font = { name: FONT, size: 13, bold: true, color: { argb: COLORS.DARK_GREEN } } as Partial<Font>;
+  titleCell.font = { name: FONT, size: 13, bold: true, color: { argb: COLORS.DARK_GREEN } } satisfies Partial<Font>;
 
   // Linha 2: Headers
   const h1 = ws.getCell(2, 1);
@@ -413,13 +416,13 @@ function buildScriptsSheet(wb: ExcelJS.Workbook) {
 
     const c1 = ws.getCell(rowIdx, 1);
     c1.value = cat;
-    c1.font = { name: FONT, size: 10, bold: true, color: { argb: COLORS.DARK_GREEN } } as Partial<Font>;
-    c1.alignment = { vertical: 'center', wrapText: true } as Alignment;
+    c1.font = { name: FONT, size: 10, bold: true, color: { argb: COLORS.DARK_GREEN } } satisfies Partial<Font>;
+    c1.alignment = { vertical: 'middle', wrapText: true } satisfies Align;
 
     const c2 = ws.getCell(rowIdx, 2);
     c2.value = script;
-    c2.font = { name: FONT, size: 10 } as Partial<Font>;
-    c2.alignment = { vertical: 'center', wrapText: true } as Alignment;
+    c2.font = { name: FONT, size: 10 } satisfies Partial<Font>;
+    c2.alignment = { vertical: 'middle', wrapText: true } satisfies Align;
   });
 }
 
@@ -453,7 +456,7 @@ function buildPrecificacaoSheet(wb: ExcelJS.Workbook) {
   // Título
   const titleCell = ws.getCell(1, 1);
   titleCell.value = 'PRECIFICAÇÃO SUGERIDA POR TIPO DE SITE';
-  titleCell.font = { name: FONT, size: 13, bold: true, color: { argb: COLORS.DARK_GREEN } } as Partial<Font>;
+  titleCell.font = { name: FONT, size: 13, bold: true, color: { argb: COLORS.DARK_GREEN } } satisfies Partial<Font>;
 
   // Linha 2: Headers
   const headers = ['TIPO DE SITE', 'PREÇO', 'IDEAL PARA', 'INCLUI'];
@@ -469,8 +472,8 @@ function buildPrecificacaoSheet(wb: ExcelJS.Workbook) {
     row.forEach((val, colIdx) => {
       const cell = ws.getCell(rowIdx, colIdx + 1);
       cell.value = val;
-      cell.font = { name: FONT, size: 10 } as Partial<Font>;
-      cell.alignment = { vertical: 'center', wrapText: true } as Alignment;
+      cell.font = { name: FONT, size: 10 } satisfies Partial<Font>;
+      cell.alignment = { vertical: 'middle', wrapText: true } satisfies Align;
     });
   });
 
@@ -478,7 +481,7 @@ function buildPrecificacaoSheet(wb: ExcelJS.Workbook) {
   const upsellRowIdx = 3 + PRECIFICACAO.length + 1;
   const upsellCell = ws.getCell(upsellRowIdx, 1);
   upsellCell.value = 'SERVIÇOS ADICIONAIS (Upsell)';
-  upsellCell.font = { name: FONT, size: 10, bold: true } as Partial<Font>;
+  upsellCell.font = { name: FONT, size: 10, bold: true } satisfies Partial<Font>;
 
   // Headers novamente
   headers.forEach((h, idx) => {
@@ -493,8 +496,8 @@ function buildPrecificacaoSheet(wb: ExcelJS.Workbook) {
     row.forEach((val, colIdx) => {
       const cell = ws.getCell(rowIdx, colIdx + 1);
       cell.value = val;
-      cell.font = { name: FONT, size: 10 } as Partial<Font>;
-      cell.alignment = { vertical: 'center', wrapText: true } as Alignment;
+      cell.font = { name: FONT, size: 10 } satisfies Partial<Font>;
+      cell.alignment = { vertical: 'middle', wrapText: true } satisfies Align;
     });
   });
 }
