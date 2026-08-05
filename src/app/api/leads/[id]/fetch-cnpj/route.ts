@@ -118,8 +118,8 @@ if (lead.website && !cnpjFound) {
 
     let matches = uf
       ? await findCnpjByName(lead.name, uf, {
-          limit: 10,
-          minScore: 60,
+          limit: 20,
+          minScore: 50,
           cidade: lead.locality ?? undefined,
         })
       : [];
@@ -127,8 +127,8 @@ if (lead.website && !cnpjFound) {
     if (matches.length === 0) {
       steps.push('bigquery:fallback_no_uf');
       matches = await findCnpjByNameNoUF(lead.name, {
-        limit: 10,
-        minScore: 60,
+        limit: 20,
+        minScore: 50,
         cidade: lead.locality ?? undefined,
       });
     }

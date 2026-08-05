@@ -169,10 +169,73 @@ export function estimateQueryCost(useUFFilter: boolean): number {
   return useUFFilter ? 200_000_000 : 50_000_000_000;
 }
 
-function buildSQL(normalizedName: string, uf: string, limit: number, useUFFilter: boolean): string {
+/**
+ * Gera variações do nome para busca fuzzy no BigQuery.
+ * Google Maps frequentemente tem nomes com sufixos de marketing:
+ * "Mega Story Copiadoras - Venda, Locação de impressoras e suprimentos - Cartucho de toner"
+ * Já a razao_social na Receita Federal é formal: "MEGA STORY COMERCIO DE COPIADORAS LTDA"
+ *
+ * Variações geradas (únicas, em ordem de prioridade):
+ * 1. Nome completo normalizado (raro de match)
+ * 2. Primeiras 4 palavras (captura "loja x comercio de produtos")
+ * 3. Primeiras 3 palavras
+ * 4. Primeiras 2 palavras (mais comum de match)
+ * 5. Nome antes do primeiro separador de marketing ("-", "|", "—", "–")
+ */
+function generateNameVariations(normalizedName: string): string[] {
+  const variations = new Set<string>();
+  variations.add(normalizedName);
+
+  // Nome antes do primeiro separador de marketing
+  const marketingSplit = normalizedName.split(/\s+[\-|–—]+\s+/)[0]?.trim();
+  if (marketingSplit && marketingSplit.length >= 3) {
+    variations.add(marketingSplit);
+  }
+
+  const words = normalizedName.split(/\s+/).filter(w => w.length > 0);
+
+  // Variações por número de palavras: 2, 3, 4 palavras
+  for (const n of [4, 3, 2]) {
+    if (words.length >= n) {
+      const variant = words.slice(0, n).join(' ');
+      if (variant.length >= 3) variations.add(variant);
+    }
+  }
+
+  // Também gera variação a partir do marketingSplit (palavras)
+  if (marketingSplit && marketingSplit !== normalizedName) {
+    const mw = marketingSplit.split(/\s+/).filter(w => w.length > 0);
+    for (const n of [3, 2]) {
+      if (mw.length >= n) {
+        const variant = mw.slice(0, n).join(' ');
+        if (variant.length >= 3) variations.add(variant);
+      }
+    }
+  }
+
+  // Filtra variações muito curtas (< 3 chars) ou muito longas (> 60 chars)
+  return Array.from(variations).filter(v => v.length >= 3 && v.length <= 60);
+}
+
+function buildSQL(normalizedNames: string[], uf: string, limit: number, useUFFilter: boolean): string {
   const ufUpper = uf.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 2);
-  const escapedName = normalizedName.replace(/'/g, "''");
   const whereUF = useUFFilter ? `AND e.sigla_uf = '${ufUpper}'` : '';
+
+  // Constrói cláusulas OR para cada variação de nome
+  // Cada variação é buscada como substring em razao_social OU nome_fantasia
+  const orClauses: string[] = [];
+  for (const name of normalizedNames) {
+    const escaped = name.replace(/'/g, "''");
+    orClauses.push(`LOWER(emp.razao_social) LIKE '%${escaped}%'`);
+    orClauses.push(`LOWER(e.nome_fantasia) LIKE '%${escaped}%'`);
+  }
+  const orCondition = orClauses.join('\n          OR ');
+
+  // Para ordenação, usa a variação mais curta (mais específica que provavelmente match)
+  const shortestName = normalizedNames
+    .slice()
+    .sort((a, b) => a.length - b.length)[0]
+    .replace(/'/g, "''");
 
   return `
     WITH candidatos AS (
@@ -194,17 +257,18 @@ function buildSQL(normalizedName: string, uf: string, limit: number, useUFFilter
       WHERE 1=1
         ${whereUF}
         AND (
-          LOWER(emp.razao_social) LIKE '%${escapedName}%'
-          OR LOWER(e.nome_fantasia) LIKE '%${escapedName}%'
+          ${orCondition}
         )
       LIMIT ${limit}
     )
     SELECT * FROM candidatos
     ORDER BY
       CASE
-        WHEN LOWER(razao_social) = LOWER('${escapedName}') THEN 0
-        WHEN LOWER(razao_social) LIKE LOWER('${escapedName}%') THEN 1
-        ELSE 2
+        WHEN LOWER(razao_social) = LOWER('${shortestName}') THEN 0
+        WHEN LOWER(razao_social) LIKE LOWER('${shortestName}%') THEN 1
+        WHEN LOWER(razao_social) LIKE LOWER('%${shortestName}%') THEN 2
+        WHEN LOWER(nome_fantasia) LIKE LOWER('${shortestName}%') THEN 3
+        ELSE 4
       END,
       CASE situacao_cadastral WHEN '01' THEN 0 ELSE 1 END
     LIMIT ${limit}
@@ -222,8 +286,9 @@ export async function findCnpjByName(
   const norm = normalizeName(name);
   if (norm.length < 3) return [];
 
-  const { limit = 20, minScore = 60, cidade = null } = opts;
-  const sql = buildSQL(norm, uf, limit, true);
+  const { limit = 20, minScore = 50, cidade = null } = opts;
+  const variations = generateNameVariations(norm);
+  const sql = buildSQL(variations, uf, limit, true);
 
   try {
     const [job] = await client.createQueryJob({ query: sql, location: 'US', params: {} });
@@ -246,8 +311,9 @@ export async function findCnpjByNameNoUF(
   const norm = normalizeName(name);
   if (norm.length < 3) return [];
 
-  const { limit = 20, minScore = 60, cidade = null } = opts;
-  const sql = buildSQL(norm, '', limit, false);
+  const { limit = 20, minScore = 50, cidade = null } = opts;
+  const variations = generateNameVariations(norm);
+  const sql = buildSQL(variations, '', limit, false);
 
   try {
     const [job] = await client.createQueryJob({ query: sql, location: 'US' });
