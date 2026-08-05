@@ -517,13 +517,10 @@ export async function generateLeadsXlsx(leads: LeadRow[], cityName?: string): Pr
   buildScriptsSheet(wb);
   buildPrecificacaoSheet(wb);
 
-  const buffer = await wb.xlsx.writeBuffer();
-  // Cópia para um ArrayBuffer "puro" (não ArrayBufferLike/SharedArrayBuffer).
-  // Necessário porque TS 5+ rejeita Uint8Array<ArrayBufferLike> como BodyInit
-  // e BlobPart (SharedArrayBuffer não tem .resizable/.resize/.detached etc.).
-  // ArrayBuffer puro é sempre um BufferSource válido → BodyInit válido.
-  // buffer é um Node Buffer (subclasse de Uint8Array) — copiar byte a byte.
-  const ab = new ArrayBuffer(buffer.byteLength);
-  new Uint8Array(ab).set(buffer);
-  return ab;
+  // exceljs declara `declare interface Buffer extends ArrayBuffer {}` no seu
+  // index.d.ts (linha 1) — esse Buffer extends ArrayBuffer mas NÃO é
+  // ArrayLike<number> (sem .length). Por isso .set(buffer) falha.
+  // Como ele extends ArrayBuffer, podemos usar diretamente como ArrayBuffer,
+  // que é BodyInit válido para NextResponse.
+  return await wb.xlsx.writeBuffer() as ArrayBuffer;
 }
