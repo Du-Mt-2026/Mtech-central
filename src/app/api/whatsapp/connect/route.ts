@@ -133,11 +133,99 @@ export async function POST(request: Request) {
 
         // If the instance has a stored session but is in 'close' state,
         // the session is STALE — Evolution Go can't restore it.
-        // Fall through to the normal connect flow. The connectInstance() function
-        // will detect the stale jid and disconnect+reconnect to get a fresh QR code.
-        // If that still fails, the zombie detection below will delete and recreate.
+        //
+        // CRITICAL FIX (2026-08-11): Previously this branch only logged and fell
+        // through to the normal connect flow. The normal flow calls /instance/connect
+        // (which returns the stale jid) and then /instance/qr (which returns a NEW
+        // QR code). But the stale jid is STILL stored in Evolution Go's database.
+        //
+        // When the user scans the QR code with their phone, WhatsApp servers see
+        // that there's already an "active" session registered for that phone number
+        // (the stale one), and REJECT the new connection with the error:
+        //   "Não foi possível conectar o dispositivo. Tente novamente mais tarde"
+        //
+        // THE FIX: Delete the instance entirely (which clears the stale jid from
+        // Evolution Go's database) and create a fresh one. The fresh instance has
+        // no jid, so WhatsApp servers accept the new QR code scan.
+        //
+        // This was the root cause of chips failing to reconnect after being
+        // disconnected for a while (Meta expires idle sessions, but Evolution Go
+        // keeps the jid in its DB).
         if (hasStoredSession && realStateValue === 'close') {
-          console.log(`[Connect] Chip "${chip.name}" has STALE stored session (jid=${storedJid}, state=close). Will try disconnect+reconnect...`)
+          console.log(`[Connect] Chip "${chip.name}" has STALE stored session (jid=${storedJid}, state=close). Forcing delete + recreate to clear stale jid...`)
+
+          try {
+            // 1. Disconnect (in case there's any pending connection)
+            try {
+              await routerDisconnectInstance(existing.name || instanceName)
+            } catch (e) {
+              console.log(`[Connect] Disconnect before delete failed (ok): ${e}`)
+            }
+            await new Promise(r => setTimeout(r, 1000))
+
+            // 2. Delete the instance — this clears the stale jid
+            try {
+              await routerDeleteInstance(existing.name || instanceName)
+            } catch (e) {
+              console.warn(`[Connect] Delete failed (continuing): ${e}`)
+            }
+            await new Promise(r => setTimeout(r, 2000))
+
+            // 3. Clear the instance ID cache — old UUID/token is invalid
+            clearInstanceIdCache()
+
+            // 4. Create a fresh instance with the SAME name
+            const newInstance = await createInstance(instanceName)
+            const freshName = newInstance.name || instanceName
+
+            // 5. Connect the fresh instance
+            const freshConnect = await routerConnectInstance(freshName, webhookUrl)
+
+            // 6. Wait for QR code (4s for client goroutine to start)
+            let freshQrcode: string | null = freshConnect.qrcode
+            let freshCode: string | null = freshConnect.code || freshConnect.pairingCode || null
+            let freshState: string = freshConnect.state || 'close'
+
+            if (!freshQrcode && freshState !== 'open') {
+              await new Promise(r => setTimeout(r, 4000))
+              const qrRetry = await fetchQRWithRetry(freshName, 4, 3000)
+              freshQrcode = qrRetry.qrcode
+              freshCode = freshCode ?? qrRetry.code
+              if (qrRetry.state === 'open') freshState = 'open'
+            }
+
+            const isConnected = freshState === 'open'
+            const newStatus = isConnected ? 'connected' : 'connecting'
+
+            await db.chip.update({
+              where: { id: chipId },
+              data: {
+                status: newStatus,
+                evolutionInstance: freshName,
+                qrPairingCode: freshCode,
+                lastSeen: isConnected ? new Date() : chip.lastSeen,
+                ...(isConnected ? { isQrPaired: true } : {}),
+              },
+            })
+
+            if (isConnected) {
+              enableRejectCallAfterConnection(freshName).catch(err => {
+                console.warn(`[Connect] Failed to enable rejectCall for ${freshName}:`, err)
+              })
+            }
+
+            console.log(`[Connect] Stale session cleared. Fresh instance "${freshName}" ready (qrcode=${!!freshQrcode}, state=${freshState}).`)
+
+            return NextResponse.json({
+              instanceName: freshName,
+              qrcode: freshQrcode || null,
+              code: freshCode || null,
+              state: freshState,
+            })
+          } catch (recoveryErr: any) {
+            console.error(`[Connect] Stale session recovery failed for "${chip.name}":`, recoveryErr)
+            // Fall through to normal flow as last resort
+          }
         }
 
         // No stored session and state=close — normal case, just fall through.
