@@ -499,11 +499,23 @@ class RpcCollector:
             elif isinstance(item, float):
                 floats.append(item)
 
-        for item in arr:
+        # Deep harvest — recurse up to 3 levels into sub-lists.
+        # Google Maps RPC responses often nest phone/website inside
+        # sub-arrays (e.g. contact info in a "phone" array, website in a
+        # "urls" array). Going 1 level deep misses these.
+        def _harvest_deep(item: Any, depth: int = 0):
+            if depth > 3:
+                return
             _harvest(item)
-            if isinstance(item, list) and 1 <= len(item) <= 4:
+            if isinstance(item, list):
                 for sub in item:
-                    _harvest(sub)
+                    if isinstance(sub, (str, int, float)):
+                        _harvest(sub)
+                    elif isinstance(sub, list) and 1 <= len(sub) <= 8:
+                        _harvest_deep(sub, depth + 1)
+
+        for item in arr:
+            _harvest_deep(item)
 
         # Find IDs
         place_id: Optional[str] = None
@@ -978,6 +990,70 @@ def _parse_card_text(text: str) -> Dict[str, Any]:
                 consumed.add(i)
                 break
 
+    # Phase 4: Extract phone from text (BR formats)
+    # Google Maps cards sometimes show phone numbers on the card itself:
+    #   "+55 48 99991-2345"  /  "(48) 99991-2345"  /  "48 9999-1234"
+    if "phone" not in out or not out.get("phone"):
+        for i, line in enumerate(lines):
+            if i in consumed:
+                continue
+            # Skip the address line (already consumed or about to be)
+            if line == best_addr_line:
+                continue
+            # Strict BR phone regex: optional +55, area code in parens or not,
+            # mobile (9 digits) or landline (8 digits), with dash or space
+            phone_m = re.search(
+                r"(\+?55?\s?\(?\d{2}\)?\s?\d{4,5}-?\d{4})",
+                line,
+            )
+            if phone_m:
+                candidate = phone_m.group(1).strip()
+                validated = _validate_phone(candidate)
+                if validated:
+                    out["phone"] = validated
+                    consumed.add(i)
+                    break
+            # Also try just "(48) 99991-2345" without +55
+            phone_m2 = re.search(r"\(?\d{2}\)?\s?\d{4,5}-\d{4}", line)
+            if phone_m2:
+                candidate = phone_m2.group(0).strip()
+                # Reject if it's actually a CEP (8 digits in 5-3 format)
+                if not CEP_RE.fullmatch(candidate):
+                    validated = _validate_phone(candidate)
+                    if validated:
+                        out["phone"] = validated
+                        consumed.add(i)
+                        break
+
+    # Phase 5: Extract website URL from text
+    # Some cards show a website URL inline (especially sponsored listings)
+    if "website" not in out or not out.get("website"):
+        for i, line in enumerate(lines):
+            if i in consumed:
+                continue
+            # Skip the address line (already consumed or about to be)
+            if line == best_addr_line:
+                continue
+            # Find URL that's not a Google domain
+            url_m = re.search(r"(https?://[a-z0-9.-]+\.[a-z]{2,}[^\s]*)", line, re.IGNORECASE)
+            if url_m:
+                url = url_m.group(1).rstrip(",.;:")
+                if not any(d in url for d in (
+                    "google.com", "gstatic", "googleusercontent",
+                    "googleapis", "search.google", "maps.google",
+                )):
+                    out["website"] = url
+                    consumed.add(i)
+                    break
+            # Also try bare domain like "www.example.com.br"
+            domain_m = re.search(r"\b(www\.[a-z0-9-]+\.[a-z]{2,}(?:\.[a-z]{2,})?)\b", line, re.IGNORECASE)
+            if domain_m:
+                url = "https://" + domain_m.group(1)
+                if not any(d in url for d in ("google.com", "gstatic")):
+                    out["website"] = url
+                    consumed.add(i)
+                    break
+
     return out
 
 
@@ -1251,6 +1327,138 @@ def _extract_rating_aria(entry) -> Optional[int]:
 _CARD_DUMP_COUNTER = [0]
 
 
+def _extract_phone_website_from_dom(entry, page: Optional[Page] = None) -> Dict[str, Optional[str]]:
+    """
+    Extract phone and website directly from a Google Maps card DOM.
+
+    Google Maps renders action buttons on each card:
+      - "Site" button:  <a data-item-id="authority:example.com" href="..."> or
+                        <a aria-label="Site: example.com">
+      - "Ligar" button: <button data-item-id="phone:+5548999912345"> or
+                        <button aria-label="Ligar para +55 48 99991-2345">
+      - Sometimes wrapped in: <a href="tel:+55..."> or <a href="https://...">
+
+    Also walks UP 4 ancestors from the entry <a> to find action buttons
+    that are siblings of the card link.
+    """
+    out: Dict[str, Optional[str]] = {"phone": None, "website": None}
+    try:
+        result = entry.evaluate("""
+            (el) => {
+              const out = {phone: null, website: null};
+              // Walk up to 5 ancestors — the action buttons are usually in
+              // a parent container that wraps the card link.
+              let scope = el;
+              for (let i = 0; i < 6 && scope; i++) {
+                // 1. Look for elements with data-item-id
+                const elems = scope.querySelectorAll('[data-item-id]');
+                for (const e of elems) {
+                  const iid = e.getAttribute('data-item-id') || '';
+                  // Phone patterns: "phone:tel:+55..." or "phone:+55..."
+                  if (!out.phone && iid.startsWith('phone:')) {
+                    let p = iid.replace(/^phone:(tel:)?/, '');
+                    if (p) out.phone = p;
+                  }
+                  // Website pattern: "authority:example.com.br"
+                  if (!out.website && iid.startsWith('authority:')) {
+                    let w = iid.replace(/^authority:/, '');
+                    // Strip trailing slashes / queries
+                    if (w && !w.startsWith('google.com')) {
+                      out.website = w.startsWith('http') ? w : ('https://' + w);
+                    }
+                  }
+                  // Alternative phone pattern in some layouts
+                  if (!out.phone) {
+                    const al = e.getAttribute('aria-label') || '';
+                    const telM = al.match(/\\+?\\d[\\d\\s\\-()]{8,}/);
+                    if (telM && /(?:telefone|ligar|call|phone)/i.test(al)) {
+                      out.phone = telM[0].trim();
+                    }
+                  }
+                }
+
+                // 2. Look for <a href="tel:..."> links
+                if (!out.phone) {
+                  const tels = scope.querySelectorAll('a[href^="tel:"]');
+                  if (tels.length) {
+                    const h = tels[0].getAttribute('href') || '';
+                    const m = h.match(/tel:(\\+?[\\d]+)/);
+                    if (m) out.phone = m[1];
+                  }
+                }
+
+                // 3. Look for "Site" link by aria-label or text
+                if (!out.website) {
+                  const anchors = scope.querySelectorAll('a');
+                  for (const a of anchors) {
+                    const al = (a.getAttribute('aria-label') || '').toLowerCase();
+                    const txt = (a.textContent || '').toLowerCase().trim();
+                    // Match "Site", "Website", "Site: example.com"
+                    if (al.startsWith('site') || al.startsWith('website') ||
+                        txt === 'site' || txt.startsWith('site:') ||
+                        txt.startsWith('website')) {
+                      let href = a.getAttribute('href') || '';
+                      // Google sometimes wraps external links in
+                      // /url?q=https://... — extract the actual URL
+                      const m = href.match(/[?&]q=([^&]+)/);
+                      if (m) {
+                        try { href = decodeURIComponent(m[1]); } catch (e) {}
+                      }
+                      if (href && !href.includes('google.com/') &&
+                          !href.includes('maps.google.') &&
+                          !href.startsWith('#') &&
+                          !href.startsWith('javascript:')) {
+                        out.website = href;
+                        break;
+                      }
+                    }
+                  }
+                }
+
+                // 4. Look for buttons with aria-label containing phone
+                if (!out.phone) {
+                  const btns = scope.querySelectorAll('button[aria-label], a[aria-label]');
+                  for (const b of btns) {
+                    const al = (b.getAttribute('aria-label') || '').trim();
+                    // Skip if it's the place name itself
+                    if (al.length < 5 || al.length > 80) continue;
+                    // Look for phone pattern with BR format
+                    const phoneM = al.match(/(\\+?55?\\s?\\(?\\d{2}\\)?\\s?\\d{4,5}-?\\d{4})/);
+                    if (phoneM) {
+                      out.phone = phoneM[1];
+                      break;
+                    }
+                    // Look for "(48) 99991-2345" format
+                    const phoneM2 = al.match(/\\(?\\d{2}\\)?\\s?\\d{4,5}-?\\d{4}/);
+                    if (phoneM2 && /(?:telefone|ligar|call|phone|contato)/i.test(al)) {
+                      out.phone = phoneM2[0];
+                      break;
+                    }
+                  }
+                }
+
+                // Stop early if we have both
+                if (out.phone && out.website) break;
+                scope = scope.parentElement;
+              }
+              return out;
+            }
+        """)
+        if isinstance(result, dict):
+            if result.get("phone"):
+                validated = _validate_phone(result["phone"])
+                if validated:
+                    out["phone"] = validated
+            if result.get("website"):
+                # Strip trailing slash for consistency
+                w = str(result["website"]).rstrip("/")
+                if URL_RE.match(w):
+                    out["website"] = w
+    except Exception as e:
+        logger.debug(f"_extract_phone_website_from_dom error: {e}")
+    return out
+
+
 def _extract_dom_entries(page: Page) -> List[Dict[str, Any]]:
     """
     Extract place entries from current DOM state.
@@ -1316,6 +1524,15 @@ def _extract_dom_entries(page: Page) -> List[Dict[str, Any]]:
                 aria_count = _extract_rating_aria(entry)
                 if aria_count:
                     card_data["userRatingCount"] = aria_count
+
+            # Extract phone + website directly from card DOM (action buttons)
+            # This is the KEY improvement - previously these were always None
+            # and only filled by RPC enrichment (which only fired for ~5 cards).
+            dom_phone_website = _extract_phone_website_from_dom(entry, page=page)
+            if dom_phone_website.get("phone") and not card_data.get("phone"):
+                card_data["phone"] = dom_phone_website["phone"]
+            if dom_phone_website.get("website") and not card_data.get("website"):
+                card_data["website"] = dom_phone_website["website"]
 
             # Validate Brazilian UF — reject "II" from street names
             _ap = card_data.get("addressParts") or {}
@@ -1550,14 +1767,16 @@ def scrape_google_maps(
                 )
 
         # ============================================================
-        # Click into a few places to trigger place.json (enrichment)
-        # Cap at 3 clicks to keep total runtime reasonable (~10-15s)
+        # Click into places to trigger place.json (enrichment)
+        # Increased cap from 5 to 30 — with the new DOM-based phone/website
+        # extraction, fewer places will need clicking, but those that do
+        # (e.g. cards without action buttons visible) still benefit.
+        # Total runtime: ~30 places * 1.2s = ~36s (acceptable for 60 results).
         # ============================================================
-        # Pick top 3 DOM entries that are missing phone/website
         click_targets = [
             dp for dp in dom_places
             if not dp.get("phone") or not dp.get("website") or not dp.get("formattedAddress")
-        ][:5]
+        ][:30]
 
         logger.info(f"Clicking into {len(click_targets)} places to fetch details...")
 
@@ -1586,12 +1805,33 @@ def scrape_google_maps(
                     continue
 
                 link.click(timeout=5000)
-                # Shorter wait — place.json usually fires within 1s
-                page.wait_for_timeout(1800)
+                # Shorter wait - place.json usually fires within 1s
+                page.wait_for_timeout(1200)
                 logger.info(
-                    f"[{idx+1}/{len(click_targets)}] clicked '{target_name}' — "
+                    f"[{idx+1}/{len(click_targets)}] clicked '{target_name}' - "
                     f"RPC places now: {len(collector.places)}"
                 )
+
+                # After each click, RE-EXTRACT DOM entries for this card so
+                # the action buttons (which only appear when card is focused)
+                # become visible in DOM. This dramatically improves phone/website
+                # coverage for cards that didn't show buttons on initial load.
+                if (idx + 1) % 5 == 0:
+                    fresh = _extract_dom_entries(page)
+                    # Merge fresh into dom_places by placeId
+                    dom_by_id = {dp.get("placeId"): dp for dp in dom_places}
+                    for fp in fresh:
+                        pid = fp.get("placeId")
+                        if not pid:
+                            continue
+                        if pid in dom_by_id:
+                            existing = dom_by_id[pid]
+                            for k, v in fp.items():
+                                if v is not None and not existing.get(k):
+                                    existing[k] = v
+                        else:
+                            dom_places.append(fp)
+                            dom_by_id[pid] = fp
             except Exception as e:
                 logger.debug(f"click into '{target_name}' failed: {e}")
                 continue
