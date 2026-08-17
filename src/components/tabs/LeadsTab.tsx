@@ -159,7 +159,7 @@ export default function LeadsTab() {
     }
 
     const toastId = toast.loading(`Buscando "${searchInput}" no Google Maps...`, {
-      description: 'O scraper está navegando no Google Maps. Isso pode levar 30-60 segundos.',
+      description: 'O scraper abre o Chromium headless e coleta os cards. Pode levar de 1 a 3 minutos.',
     });
     try {
       const res = await fetch('/api/prospeccao/search', {
@@ -472,7 +472,7 @@ export default function LeadsTab() {
         {searching && (
           <p className="text-xs text-muted-foreground flex items-center gap-1">
             <Clock className="h-3 w-3" /> O scraper abre o Google Maps no Chromium headless e coleta
-            os cards de negócios. Pode levar 30-60 segundos.
+            os cards de negócios. Pode levar de 1 a 3 minutos dependendo da consulta.
           </p>
         )}
       </div>

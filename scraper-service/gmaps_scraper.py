@@ -1629,6 +1629,7 @@ def scrape_google_maps(
     max_scrolls: int = 25,
     lang: str = "pt-BR",
     debug: bool = False,
+    deadline_ms: int = 0,
 ) -> List[Dict[str, Any]]:
     """
     Scrape Google Maps for businesses matching the query in the given city/UF.
@@ -1637,6 +1638,13 @@ def scrape_google_maps(
         placeId, name, formattedAddress, website, phone, rating,
         userRatingCount, googleMapsUri, businessStatus, addressParts,
         latitude, longitude
+
+    deadline_ms:
+        Hard wall-clock budget. When elapsed, the scraper stops scrolling
+        and clicking and returns whatever it has collected so far. This
+        prevents the Next.js client (which has its own AbortController)
+        from killing the request mid-flight and producing an opaque
+        "This operation was aborted" error. Set to 0 to disable.
     """
     # Enable debug dumps for this request if requested
     if debug:
@@ -1658,8 +1666,23 @@ def scrape_google_maps(
         global DEBUG_DUMP_RPC
         DEBUG_DUMP_RPC = True
 
+    # Wall-clock budget tracker
+    _t_start = time.time()
+
+    def _elapsed_ms() -> int:
+        return int((time.time() - _t_start) * 1000)
+
+    def _deadline_exceeded() -> bool:
+        if deadline_ms <= 0:
+            return False
+        return _elapsed_ms() >= deadline_ms
+
     url = _build_search_url(query, city, uf)
-    logger.info(f"Scraping: {url}")
+    logger.info(
+        f"Scraping: {url}  "
+        f"(max_results={max_results}, max_scrolls={max_scrolls}, "
+        f"deadline_ms={deadline_ms})"
+    )
 
     collector = RpcCollector()
 
@@ -1720,7 +1743,8 @@ def scrape_google_maps(
             f"RPC={len(collector.places)} places "
             f"(rpc_total={collector.rpc_count}, "
             f"search_calls={collector.rpc_search_count}, "
-            f"place_calls={collector.rpc_place_count})"
+            f"place_calls={collector.rpc_place_count}, "
+            f"elapsed={_elapsed_ms()}ms)"
         )
 
         # ============================================================
@@ -1731,6 +1755,13 @@ def scrape_google_maps(
         stable_rounds = 0
         for i in range(max_scrolls):
             if len(dom_places) >= max_results:
+                break
+            if _deadline_exceeded():
+                logger.info(
+                    f"Deadline reached at scroll {i} "
+                    f"(elapsed={_elapsed_ms()}ms, budget={deadline_ms}ms) — "
+                    f"returning {len(dom_places)} places collected so far"
+                )
                 break
             try:
                 page.evaluate(
@@ -1763,7 +1794,8 @@ def scrape_google_maps(
             last_dom_count = new_dom_count
             if (i + 1) % 3 == 0:
                 logger.info(
-                    f"Scroll {i+1}: RPC={new_rpc_count}, DOM={new_dom_count}"
+                    f"Scroll {i+1}: RPC={new_rpc_count}, DOM={new_dom_count}, "
+                    f"elapsed={_elapsed_ms()}ms"
                 )
 
         # ============================================================
@@ -1784,6 +1816,13 @@ def scrape_google_maps(
             target_name = target.get("name")
             if not target_name:
                 continue
+            if _deadline_exceeded():
+                logger.info(
+                    f"Deadline reached at click {idx}/{len(click_targets)} "
+                    f"(elapsed={_elapsed_ms()}ms, budget={deadline_ms}ms) — "
+                    f"stopping click enrichment, returning partial results"
+                )
+                break
             try:
                 links = page.query_selector_all(
                     'div[role="feed"] a[href*="/maps/place/"]'
@@ -1935,7 +1974,8 @@ def scrape_google_maps(
 
     logger.info(
         f"Collected {len(results)} places for '{query}' in {city}/{uf} "
-        f"(RPC enriched: {len(collector.places)} candidates)"
+        f"(RPC enriched: {len(collector.places)} candidates, "
+        f"elapsed={_elapsed_ms()}ms, deadline={'n/a' if deadline_ms <= 0 else deadline_ms})"
     )
     return results
 
@@ -1957,6 +1997,8 @@ if __name__ == "__main__":
     p.add_argument("--max", type=int, default=60)
     p.add_argument("--headed", action="store_true")
     p.add_argument("--debug", action="store_true")
+    p.add_argument("--deadline-ms", type=int, default=0,
+                   help="Hard wall-clock budget in ms (0 = unlimited)")
     args = p.parse_args()
 
     if args.debug:
@@ -1967,6 +2009,7 @@ if __name__ == "__main__":
         args.query, args.city, args.uf,
         max_results=args.max,
         headless=not args.headed,
+        deadline_ms=args.deadline_ms,
     )
     json.dump(out, sys.stdout, ensure_ascii=False, indent=2)
     print()

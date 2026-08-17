@@ -54,6 +54,15 @@ class ScrapeRequest(BaseModel):
     max_scrolls: int = Field(25, ge=1, le=100)
     lang: str = "pt-BR"
     debug: bool = Field(False, description="Enable card+RPC dump to /tmp/scraper_debug/ for this request")
+    deadline_ms: int = Field(
+        0,
+        ge=0,
+        description=(
+            "Hard time budget in milliseconds. When elapsed, the scraper stops "
+            "scrolling/clicking and returns whatever it has collected so far "
+            "(partial results). 0 = no deadline (use max_scrolls only)."
+        ),
+    )
 
 
 class ScrapeResponse(BaseModel):
@@ -89,7 +98,8 @@ async def scrape(req: ScrapeRequest) -> ScrapeResponse:
     """
     logger.info(
         f"scrape request: query={req.query!r} city={req.city!r} uf={req.uf!r} "
-        f"max={req.max_results} headless={req.headless} debug={req.debug}"
+        f"max={req.max_results} headless={req.headless} debug={req.debug} "
+        f"deadline_ms={req.deadline_ms}"
     )
     t0 = time.time()
     try:
@@ -105,6 +115,7 @@ async def scrape(req: ScrapeRequest) -> ScrapeResponse:
             max_scrolls=req.max_scrolls,
             lang=req.lang,
             debug=req.debug,
+            deadline_ms=req.deadline_ms,
         )
     except Exception as e:
         logger.exception("scrape failed")

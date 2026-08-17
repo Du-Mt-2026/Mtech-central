@@ -13,7 +13,10 @@ const PLACES_ENDPOINT = 'https://places.googleapis.com/v1/places:searchText';
 const PLACE_DETAILS_ENDPOINT = (id: string) => `https://places.googleapis.com/v1/places/${id}`;
 
 const SCRAPER_URL = process.env.SCRAPER_URL || '';
-const SCRAPER_TIMEOUT_MS = 90_000; // 90s — Playwright pode demorar
+// 4 minutos por padrão — o scraper pode levar ~160s no pior caso
+// (45s goto + 20s wait_for_selector + 25 scrolls × 2.2s + 30 clicks × 1.2s).
+// Ajustável via env para deploy em HW mais lento.
+const SCRAPER_TIMEOUT_MS = Number(process.env.SCRAPER_TIMEOUT_MS) || 240_000;
 
 export interface PlaceSearchResult {
   placeId: string;
@@ -106,6 +109,9 @@ async function searchViaScraper(
   const timeout = setTimeout(() => controller.abort(), SCRAPER_TIMEOUT_MS);
 
   try {
+    // Envia o deadline para o scraper Python — ele para os loops graciosamente
+    // e retorna resultados parciais em vez de estourar o timeout do cliente.
+    const deadlineMs = Math.max(SCRAPER_TIMEOUT_MS - 10_000, 30_000); // 10s de folga
     const res = await fetch(`${SCRAPER_URL.replace(/\/$/, '')}/scrape`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -116,6 +122,7 @@ async function searchViaScraper(
         max_results: Math.min(Math.max(pageSize, 10), 200),
         headless: true,
         lang: 'pt-BR',
+        deadline_ms: deadlineMs,
       }),
       signal: controller.signal,
     });
@@ -142,6 +149,25 @@ async function searchViaScraper(
         businessStatus: p.businessStatus,
         addressParts: p.addressParts ?? extractAddressParts([]),
       }));
+  } catch (e: any) {
+    // Detecta AbortError (timeout do cliente) — produz mensagem acionável.
+    // O Node não expõe e.name === 'AbortError' de forma 100% confiável em
+    // todas as versões; também checamos a mensagem padrão.
+    const isAbort =
+      e?.name === 'AbortError' ||
+      e?.name === 'TimeoutError' ||
+      /aborted/i.test(String(e?.message || ''));
+
+    if (isAbort) {
+      throw new Error(
+        `Scraper demorou mais de ${Math.round(SCRAPER_TIMEOUT_MS / 1000)}s e foi interrompido pelo cliente. ` +
+        `Isso geralmente indica que o Google Maps está lento (anti-bot, captcha, ou rede), ` +
+        `ou que o container "scraper" está sobrecarregado. ` +
+        `Aumente SCRAPER_TIMEOUT_MS ou tente uma busca mais específica. ` +
+        `Diagnóstico: docker compose logs scraper --tail 50`
+      );
+    }
+    throw e;
   } finally {
     clearTimeout(timeout);
   }
