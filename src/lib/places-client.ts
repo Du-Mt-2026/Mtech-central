@@ -160,23 +160,44 @@ export async function searchPlaces(
   // ============================================================
   if (SCRAPER_URL) {
     const uf = (state || '').trim().toUpperCase().slice(0, 2);
+    console.log(`[places-client] usando scraper: query="${query}" city=${city || '(vazio)'} uf=${uf || '(vazio)'}`);
     try {
-      console.log(`[places-client] usando scraper: query="${query}" city=${city || '(vazio)'} uf=${uf || '(vazio)'}`);
       const results = await searchViaScraper(query.trim(), (city || '').trim(), uf, pageSize);
       if (results.length > 0) {
         // NÃO faz upsertLeads — novo fluxo prospecção é stateless
         // (apenas o /api/leads/search antigo persiste no banco)
         return results;
       }
-      console.warn('[places-client] scraper retornou 0 resultados — tentando Places API');
+      // Scraper returned 0 results — surface as a CLEAR error so the user
+      // knows the scraper ran but found nothing (likely Google Maps blocked
+      // the request, or the query had no matches). Previously we fell
+      // through to Places API which then errored with a confusing 403.
+      throw new Error(
+        `Scraper retornou 0 resultados para "${query}". ` +
+        `Possíveis causas: Google Maps bloqueou o headless browser (considere rebuildar o container scraper), ` +
+        `ou a busca não teve correspondências. Tente reformular a busca.`
+      );
     } catch (e: any) {
-      console.warn(`[places-client] scraper falhou: ${e.message}. Tentando Places API...`);
+      // If it's already our descriptive error, rethrow as-is
+      if (e.message && e.message.startsWith('Scraper retornou 0 resultados')) {
+        throw e;
+      }
+      // Otherwise it's a network/HTTP error from the scraper call
+      console.error(`[places-client] scraper falhou: ${e.message}`);
+      throw new Error(
+        `Scraper indisponível: ${e.message}. ` +
+        `Verifique se o container "scraper" está saudável (docker compose ps scraper) ` +
+        `e se o log não mostra erros (docker compose logs scraper --tail 50).`
+      );
     }
   }
 
   // ============================================================
-  // Fallback: Google Places API
+  // Fallback: Google Places API (apenas se SCRAPER_URL não estiver setado)
+  // Em produção, o SCRAPER_URL é sempre setado via docker-compose.yml,
+  // então este caminho só roda em desenvolvimento local sem scraper.
   // ============================================================
+  console.warn('[places-client] SCRAPER_URL não configurado — usando Google Places API (fallback)');
   const apiKey = getApiKey();
   let textQuery = query.trim();
   const locParts: string[] = [];
