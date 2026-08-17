@@ -155,14 +155,17 @@ export async function searchPlaces(
 
   // ============================================================
   // Tenta primeiro o microsserviço Python (scraper) — sem custo de API
+  // Nota: city/state podem ser vazios (novo fluxo prospecção) — o scraper
+  // coloca a query direto no Google Maps quando city/uf estão vazios.
   // ============================================================
-  if (SCRAPER_URL && city && state) {
-    const uf = state.trim().toUpperCase().slice(0, 2);
+  if (SCRAPER_URL) {
+    const uf = (state || '').trim().toUpperCase().slice(0, 2);
     try {
-      console.log(`[places-client] usando scraper: query="${query}" city=${city} uf=${uf}`);
-      const results = await searchViaScraper(query.trim(), city.trim(), uf, pageSize);
+      console.log(`[places-client] usando scraper: query="${query}" city=${city || '(vazio)'} uf=${uf || '(vazio)'}`);
+      const results = await searchViaScraper(query.trim(), (city || '').trim(), uf, pageSize);
       if (results.length > 0) {
-        await upsertLeads(results);
+        // NÃO faz upsertLeads — novo fluxo prospecção é stateless
+        // (apenas o /api/leads/search antigo persiste no banco)
         return results;
       }
       console.warn('[places-client] scraper retornou 0 resultados — tentando Places API');

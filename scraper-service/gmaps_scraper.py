@@ -83,8 +83,21 @@ DEBUG_DUMP_MAX = 3  # cap to avoid filling disk
 # ---------------------------------------------------------------------------
 
 def _build_search_url(query: str, city: str, uf: str) -> str:
-    """Build the Google Maps search URL with a geo-anchored query."""
-    q = f"{query} em {city}, {uf}, Brasil"
+    """Build the Google Maps search URL.
+
+    When city/uf are provided, builds a geo-anchored query like:
+        "{query} em {city}, {uf}, Brasil"
+
+    When city/uf are empty (new prospecção flow), just pastes the raw query
+    directly into Google Maps search — the user is responsible for including
+    any geographic context in the query string (e.g. "informatica Palhoça").
+    """
+    if city and uf:
+        q = f"{query} em {city}, {uf}, Brasil"
+    elif city:
+        q = f"{query} em {city}, Brasil"
+    else:
+        q = query
     return f"https://www.google.com/maps/search/{urllib.parse.quote(q)}"
 
 

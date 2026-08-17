@@ -46,9 +46,9 @@ app = FastAPI(
 # ---------------------------------------------------------------------------
 
 class ScrapeRequest(BaseModel):
-    query: str = Field(..., description="Business type or name (e.g. 'restaurantes')")
-    city: str = Field(..., description="City name (e.g. 'Curitiba')")
-    uf: str = Field(..., description="2-letter state code (e.g. 'PR')")
+    query: str = Field(..., description="Business type or name (e.g. 'restaurantes' or 'informatica Palhoça')")
+    city: str = Field("", description="City name (e.g. 'Curitiba'). Empty = use raw query only.")
+    uf: str = Field("", description="2-letter state code (e.g. 'PR'). Empty = use raw query only.")
     max_results: int = Field(60, ge=1, le=200)
     headless: bool = True
     max_scrolls: int = Field(25, ge=1, le=100)
