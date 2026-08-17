@@ -1623,10 +1623,10 @@ def scrape_google_maps(
     city: str,
     uf: str,
     *,
-    max_results: int = 60,
+    max_results: int = 40,
     headless: bool = True,
-    timeout_ms: int = 30000,
-    max_scrolls: int = 25,
+    timeout_ms: int = 25000,
+    max_scrolls: int = 12,
     lang: str = "pt-BR",
     debug: bool = False,
     deadline_ms: int = 0,
@@ -1708,7 +1708,9 @@ def scrape_google_maps(
         page.on("response", collector.on_response)
 
         try:
-            page.goto(url, wait_until="domcontentloaded", timeout=45000)
+            # Reduzido de 45s → 25s. Antes: goto podia demorar até 45s e
+            # sozinho consumia metade do budget de 70s do deadline.
+            page.goto(url, wait_until="domcontentloaded", timeout=25000)
         except Exception as e:
             logger.warning(f"goto failed: {e}")
 
@@ -1716,7 +1718,7 @@ def scrape_google_maps(
         try:
             page.wait_for_selector(
                 'button[aria-label*="Accept" i], button[aria-label*="Aceitar" i]',
-                timeout=4000,
+                timeout=3000,
             )
             page.click('button[aria-label*="Accept" i], button[aria-label*="Aceitar" i]')
             logger.info("Cookies banner accepted")
@@ -1725,9 +1727,11 @@ def scrape_google_maps(
 
         # Wait for results panel
         try:
+            # Reduzido de 20s → 12s. Na maioria dos casos o painel aparece
+            # em <5s; 12s ainda cobre casos lentos sem desperdiçar budget.
             page.wait_for_selector(
                 'div[role="feed"] a[href*="/maps/place/"], a[role="button"][href*="/maps/place/"]',
-                timeout=20000,
+                timeout=12000,
             )
             logger.info("Results panel appeared")
         except Exception:
@@ -1800,15 +1804,15 @@ def scrape_google_maps(
 
         # ============================================================
         # Click into places to trigger place.json (enrichment)
-        # Increased cap from 5 to 30 — with the new DOM-based phone/website
-        # extraction, fewer places will need clicking, but those that do
-        # (e.g. cards without action buttons visible) still benefit.
-        # Total runtime: ~30 places * 1.2s = ~36s (acceptable for 60 results).
+        # Cap reduced from 30 to 15 — with the new DOM-based phone/website
+        # extraction, most cards already have phone/website from initial
+        # scroll. Clicking is only needed for cards missing those fields.
+        # 15 clicks × 1.2s = ~18s, well within the 70s deadline budget.
         # ============================================================
         click_targets = [
             dp for dp in dom_places
             if not dp.get("phone") or not dp.get("website") or not dp.get("formattedAddress")
-        ][:30]
+        ][:15]
 
         logger.info(f"Clicking into {len(click_targets)} places to fetch details...")
 

@@ -159,15 +159,28 @@ export default function LeadsTab() {
     }
 
     const toastId = toast.loading(`Buscando "${searchInput}" no Google Maps...`, {
-      description: 'O scraper abre o Chromium headless e coleta os cards. Pode levar de 1 a 3 minutos.',
+      description: 'O scraper abre o Chromium headless e coleta os cards. Pode levar de 30s a 1min.',
     });
     try {
       const res = await fetch('/api/prospeccao/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: searchInput, pageSize: 60 }),
+        body: JSON.stringify({ query: searchInput, pageSize: 40 }),
       });
       if (!res.ok) {
+        // HTTP 524 = Cloudflare timeout (origem demorou >100s). Caso típico:
+        // o scraper ficou preso em captcha/anti-bot. O Cloudflare cortou a
+        // conexão antes do nosso AbortController (80s) — provavelmente o
+        // container scraper travou em wait_for_selector. Mensagem clara
+        // orienta o usuário a checar logs do scraper.
+        if (res.status === 524) {
+          throw new Error(
+            'Timeout do Cloudflare (HTTP 524) — o scraper demorou mais de 100s. ' +
+            'Provável causa: Google Maps está bloqueando o headless (captcha/anti-bot). ' +
+            'Diagnóstico: docker compose logs scraper --tail 100. ' +
+            'Tente uma busca mais específica (ex: "informatica Palhoça" em vez de "informatica").'
+          );
+        }
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || `HTTP ${res.status}`);
       }
@@ -472,7 +485,7 @@ export default function LeadsTab() {
         {searching && (
           <p className="text-xs text-muted-foreground flex items-center gap-1">
             <Clock className="h-3 w-3" /> O scraper abre o Google Maps no Chromium headless e coleta
-            os cards de negócios. Pode levar de 1 a 3 minutos dependendo da consulta.
+            os cards de negócios. Pode levar de 30s a 1min.
           </p>
         )}
       </div>

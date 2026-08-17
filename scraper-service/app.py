@@ -49,9 +49,12 @@ class ScrapeRequest(BaseModel):
     query: str = Field(..., description="Business type or name (e.g. 'restaurantes' or 'informatica Palhoça')")
     city: str = Field("", description="City name (e.g. 'Curitiba'). Empty = use raw query only.")
     uf: str = Field("", description="2-letter state code (e.g. 'PR'). Empty = use raw query only.")
-    max_results: int = Field(60, ge=1, le=200)
+    max_results: int = Field(40, ge=1, le=200)
     headless: bool = True
-    max_scrolls: int = Field(25, ge=1, le=100)
+    # 12 scrolls × 2.2s = ~26s. Combinado com goto (~10s) + wait_for_selector (~5s)
+    # + click loop (~18s) = ~60s típico, com folga para o limite de 70s do deadline_ms.
+    # Antes era 25 scrolls = ~55s só no scroll, estourando o budget.
+    max_scrolls: int = Field(12, ge=1, le=100)
     lang: str = "pt-BR"
     debug: bool = Field(False, description="Enable card+RPC dump to /tmp/scraper_debug/ for this request")
     deadline_ms: int = Field(

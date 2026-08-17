@@ -13,10 +13,12 @@ const PLACES_ENDPOINT = 'https://places.googleapis.com/v1/places:searchText';
 const PLACE_DETAILS_ENDPOINT = (id: string) => `https://places.googleapis.com/v1/places/${id}`;
 
 const SCRAPER_URL = process.env.SCRAPER_URL || '';
-// 4 minutos por padrão — o scraper pode levar ~160s no pior caso
-// (45s goto + 20s wait_for_selector + 25 scrolls × 2.2s + 30 clicks × 1.2s).
-// Ajustável via env para deploy em HW mais lento.
-const SCRAPER_TIMEOUT_MS = Number(process.env.SCRAPER_TIMEOUT_MS) || 240_000;
+// 80s por padrão — DEVE ficar abaixo do limite do Cloudflare (100s hard).
+// O tráfego é: Browser → Cloudflare → Traefik → Next.js → Scraper.
+// Se exceder 100s, o Cloudflare retorna HTTP 524 ("A Timeout Occurred")
+// e o usuário vê um erro genérico, sem a mensagem clara do nosso handler.
+// Para rodar sem Cloudflare na frente, pode setar SCRAPER_TIMEOUT_MS=240000.
+const SCRAPER_TIMEOUT_MS = Number(process.env.SCRAPER_TIMEOUT_MS) || 80_000;
 
 export interface PlaceSearchResult {
   placeId: string;
