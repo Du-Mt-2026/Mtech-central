@@ -108,6 +108,13 @@ async function searchViaScraper(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), SCRAPER_TIMEOUT_MS);
 
+  // Log para confirmar que a versão nova do código está rodando no container.
+  // Se você NÃO vir esta linha em `docker compose logs app`, o rebuild não pegou.
+  console.log(
+    `[places-client] searchViaScraper start: timeout=${SCRAPER_TIMEOUT_MS}ms, ` +
+    `deadline_ms=${Math.max(SCRAPER_TIMEOUT_MS - 10_000, 30_000)}`
+  );
+
   try {
     // Envia o deadline para o scraper Python — ele para os loops graciosamente
     // e retorna resultados parciais em vez de estourar o timeout do cliente.
@@ -205,13 +212,18 @@ export async function searchPlaces(
       );
     } catch (e: any) {
       // If it's already our descriptive error, rethrow as-is
-      if (e.message && e.message.startsWith('Scraper retornou 0 resultados')) {
+      const msg = String(e?.message || '');
+      if (
+        msg.startsWith('Scraper retornou 0 resultados') ||
+        msg.startsWith('Scraper demorou mais de') ||
+        msg.startsWith('Scraper indisponível:')
+      ) {
         throw e;
       }
       // Otherwise it's a network/HTTP error from the scraper call
-      console.error(`[places-client] scraper falhou: ${e.message}`);
+      console.error(`[places-client] scraper falhou: ${msg}`);
       throw new Error(
-        `Scraper indisponível: ${e.message}. ` +
+        `Scraper indisponível: ${msg}. ` +
         `Verifique se o container "scraper" está saudável (docker compose ps scraper) ` +
         `e se o log não mostra erros (docker compose logs scraper --tail 50).`
       );
